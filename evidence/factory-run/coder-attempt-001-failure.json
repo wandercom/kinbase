@@ -1,0 +1,42 @@
+{
+  "schema_version": "guildhall-factory-author-attempt/1",
+  "role": "Coder",
+  "attempt": 1,
+  "ratification_manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "prompt_sha256": "c597b12323bdf5aa4805535a02dc84a4db5a90d72cb95ab6ad020a9b5e4c44c8",
+  "launch_sha256": "93cfea49e9b115ecba8dd19e557fcfdbe2e9f067cca8af6591f68e27207062e0",
+  "binding_sha256": "c6248c500cd4578ea86dfd5d5649d99ed8c0ca10e8c63c99c99db301a8f7eeb5",
+  "event_stream_sha256": "881925945716cd8f9fd175494cf68b323a3b72ce8842e543c9023691e7d7b95a",
+  "exit_file_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+  "exit_code": 1,
+  "thread_id": "01a0728b-d872-7df3-8a5d-e4e7450145eb",
+  "reported_model": "glm-5.3:cloud",
+  "terminal_event": "turn.failed",
+  "terminal_reason": "transport disconnected after five reconnect attempts",
+  "last_internal_failure": "apply_patch was unavailable and experiment.py retained an indentation error at line 971",
+  "git_state": {
+    "head": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+    "branch": "factory/coder-ac8a13d1",
+    "commits_authored": 0,
+    "untracked_product_paths": [
+      "guildhall/",
+      "pyproject.toml"
+    ],
+    "changed_paths_outside_assignment": [],
+    "tests_touched": false,
+    "spec_touched": false,
+    "evidence_touched": false
+  },
+  "static_state": {
+    "python_files": 29,
+    "syntax_errors": [
+      {
+        "path": "guildhall/experiment.py",
+        "error": "expected an indented block after 'for' statement on line 970"
+      }
+    ]
+  },
+  "disposition": "RECOVERABLE_AUTHOR_ATTEMPT_FAILURE",
+  "gate_effect": "NONE"
+}
