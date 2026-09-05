@@ -1,0 +1,7242 @@
+{
+ "adjudicated_labels": {
+  "m000": [
+   "codebase"
+  ],
+  "m001": [
+   "company"
+  ],
+  "m002": [
+   "none"
+  ],
+  "m003": [
+   "none"
+  ],
+  "m004": [
+   "codebase",
+   "personal"
+  ],
+  "m005": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m006": [
+   "personal"
+  ],
+  "m007": [
+   "codebase"
+  ],
+  "m008": [
+   "company"
+  ],
+  "m009": [
+   "none"
+  ],
+  "m010": [
+   "none"
+  ],
+  "m011": [
+   "codebase",
+   "personal"
+  ],
+  "m012": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m013": [
+   "personal"
+  ],
+  "m014": [
+   "codebase"
+  ],
+  "m015": [
+   "company"
+  ],
+  "m016": [
+   "none"
+  ],
+  "m017": [
+   "none"
+  ],
+  "m018": [
+   "codebase",
+   "personal"
+  ],
+  "m019": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m020": [
+   "personal"
+  ],
+  "m021": [
+   "codebase"
+  ],
+  "m022": [
+   "company"
+  ],
+  "m023": [
+   "none"
+  ],
+  "m024": [
+   "none"
+  ],
+  "m025": [
+   "codebase",
+   "personal"
+  ],
+  "m026": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m027": [
+   "personal"
+  ],
+  "m028": [
+   "codebase"
+  ],
+  "m029": [
+   "company"
+  ],
+  "m030": [
+   "none"
+  ],
+  "m031": [
+   "none"
+  ],
+  "m032": [
+   "codebase",
+   "personal"
+  ],
+  "m033": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m034": [
+   "personal"
+  ],
+  "m035": [
+   "codebase"
+  ],
+  "m036": [
+   "company"
+  ],
+  "m037": [
+   "none"
+  ],
+  "m038": [
+   "none"
+  ],
+  "m039": [
+   "codebase",
+   "personal"
+  ],
+  "m040": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m041": [
+   "personal"
+  ],
+  "m042": [
+   "codebase"
+  ],
+  "m043": [
+   "company"
+  ],
+  "m044": [
+   "none"
+  ],
+  "m045": [
+   "none"
+  ],
+  "m046": [
+   "codebase",
+   "personal"
+  ],
+  "m047": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m048": [
+   "personal"
+  ],
+  "m049": [
+   "codebase"
+  ],
+  "m050": [
+   "company"
+  ],
+  "m051": [
+   "none"
+  ],
+  "m052": [
+   "none"
+  ],
+  "m053": [
+   "codebase",
+   "personal"
+  ],
+  "m054": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m055": [
+   "personal"
+  ],
+  "m056": [
+   "codebase"
+  ],
+  "m057": [
+   "company"
+  ],
+  "m058": [
+   "none"
+  ],
+  "m059": [
+   "none"
+  ],
+  "m060": [
+   "codebase",
+   "personal"
+  ],
+  "m061": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m062": [
+   "personal"
+  ],
+  "m063": [
+   "codebase"
+  ],
+  "m064": [
+   "company"
+  ],
+  "m065": [
+   "none"
+  ],
+  "m066": [
+   "none"
+  ],
+  "m067": [
+   "codebase",
+   "personal"
+  ],
+  "m068": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m069": [
+   "personal"
+  ],
+  "m070": [
+   "codebase"
+  ],
+  "m071": [
+   "company"
+  ],
+  "m072": [
+   "none"
+  ],
+  "m073": [
+   "none"
+  ],
+  "m074": [
+   "codebase",
+   "personal"
+  ],
+  "m075": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m076": [
+   "personal"
+  ],
+  "m077": [
+   "codebase"
+  ],
+  "m078": [
+   "company"
+  ],
+  "m079": [
+   "none"
+  ],
+  "m080": [
+   "none"
+  ],
+  "m081": [
+   "codebase",
+   "personal"
+  ],
+  "m082": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m083": [
+   "personal"
+  ],
+  "m084": [
+   "codebase"
+  ],
+  "m085": [
+   "company"
+  ],
+  "m086": [
+   "none"
+  ],
+  "m087": [
+   "none"
+  ],
+  "m088": [
+   "codebase",
+   "personal"
+  ],
+  "m089": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m090": [
+   "personal"
+  ],
+  "m091": [
+   "codebase"
+  ],
+  "m092": [
+   "company"
+  ],
+  "m093": [
+   "none"
+  ],
+  "m094": [
+   "none"
+  ],
+  "m095": [
+   "codebase",
+   "personal"
+  ],
+  "m096": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m097": [
+   "personal"
+  ],
+  "m098": [
+   "codebase"
+  ],
+  "m099": [
+   "company"
+  ],
+  "m100": [
+   "none"
+  ],
+  "m101": [
+   "none"
+  ],
+  "m102": [
+   "codebase",
+   "personal"
+  ],
+  "m103": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m104": [
+   "personal"
+  ],
+  "m105": [
+   "codebase"
+  ],
+  "m106": [
+   "company"
+  ],
+  "m107": [
+   "none"
+  ],
+  "m108": [
+   "none"
+  ],
+  "m109": [
+   "codebase",
+   "personal"
+  ],
+  "m110": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m111": [
+   "personal"
+  ],
+  "m112": [
+   "codebase"
+  ],
+  "m113": [
+   "company"
+  ],
+  "m114": [
+   "none"
+  ],
+  "m115": [
+   "none"
+  ],
+  "m116": [
+   "codebase",
+   "personal"
+  ],
+  "m117": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m118": [
+   "personal"
+  ],
+  "m119": [
+   "codebase"
+  ],
+  "m120": [
+   "company"
+  ],
+  "m121": [
+   "none"
+  ],
+  "m122": [
+   "none"
+  ],
+  "m123": [
+   "codebase",
+   "personal"
+  ],
+  "m124": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m125": [
+   "personal"
+  ],
+  "m126": [
+   "codebase"
+  ],
+  "m127": [
+   "company"
+  ],
+  "m128": [
+   "none"
+  ],
+  "m129": [
+   "none"
+  ],
+  "m130": [
+   "codebase",
+   "personal"
+  ],
+  "m131": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m132": [
+   "personal"
+  ],
+  "m133": [
+   "codebase"
+  ],
+  "m134": [
+   "company"
+  ],
+  "m135": [
+   "none"
+  ],
+  "m136": [
+   "none"
+  ],
+  "m137": [
+   "codebase",
+   "personal"
+  ],
+  "m138": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m139": [
+   "personal"
+  ],
+  "m140": [
+   "codebase"
+  ],
+  "m141": [
+   "company"
+  ],
+  "m142": [
+   "none"
+  ],
+  "m143": [
+   "none"
+  ],
+  "m144": [
+   "codebase",
+   "personal"
+  ],
+  "m145": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m146": [
+   "personal"
+  ],
+  "m147": [
+   "codebase"
+  ],
+  "m148": [
+   "company"
+  ],
+  "m149": [
+   "none"
+  ],
+  "m150": [
+   "none"
+  ],
+  "m151": [
+   "codebase",
+   "personal"
+  ],
+  "m152": [
+   "codebase",
+   "company",
+   "personal"
+  ],
+  "m153": [
+   "personal"
+  ]
+ },
+ "adjudication_digest": "30ab6f162c08e7eb23028ab624c36ff0b1ccc0dece2661bce8de351fff66baae",
+ "adjudication_frozen_before_classifier_runs": true,
+ "annotations": {
+  "annotator_a": {
+   "m000": [
+    "codebase"
+   ],
+   "m001": [
+    "company"
+   ],
+   "m002": [
+    "none"
+   ],
+   "m003": [
+    "none"
+   ],
+   "m004": [
+    "codebase",
+    "personal"
+   ],
+   "m005": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m006": [
+    "personal"
+   ],
+   "m007": [
+    "codebase"
+   ],
+   "m008": [
+    "company"
+   ],
+   "m009": [
+    "none"
+   ],
+   "m010": [
+    "none"
+   ],
+   "m011": [
+    "codebase",
+    "personal"
+   ],
+   "m012": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m013": [
+    "personal"
+   ],
+   "m014": [
+    "codebase"
+   ],
+   "m015": [
+    "company"
+   ],
+   "m016": [
+    "none"
+   ],
+   "m017": [
+    "none"
+   ],
+   "m018": [
+    "codebase",
+    "personal"
+   ],
+   "m019": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m020": [
+    "personal"
+   ],
+   "m021": [
+    "codebase"
+   ],
+   "m022": [
+    "company"
+   ],
+   "m023": [
+    "none"
+   ],
+   "m024": [
+    "none"
+   ],
+   "m025": [
+    "codebase",
+    "personal"
+   ],
+   "m026": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m027": [
+    "personal"
+   ],
+   "m028": [
+    "codebase"
+   ],
+   "m029": [
+    "company"
+   ],
+   "m030": [
+    "none"
+   ],
+   "m031": [
+    "none"
+   ],
+   "m032": [
+    "codebase",
+    "personal"
+   ],
+   "m033": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m034": [
+    "personal"
+   ],
+   "m035": [
+    "codebase"
+   ],
+   "m036": [
+    "company"
+   ],
+   "m037": [
+    "none"
+   ],
+   "m038": [
+    "none"
+   ],
+   "m039": [
+    "codebase",
+    "personal"
+   ],
+   "m040": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m041": [
+    "personal"
+   ],
+   "m042": [
+    "codebase"
+   ],
+   "m043": [
+    "company"
+   ],
+   "m044": [
+    "none"
+   ],
+   "m045": [
+    "none"
+   ],
+   "m046": [
+    "codebase",
+    "personal"
+   ],
+   "m047": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m048": [
+    "personal"
+   ],
+   "m049": [
+    "codebase"
+   ],
+   "m050": [
+    "company"
+   ],
+   "m051": [
+    "none"
+   ],
+   "m052": [
+    "none"
+   ],
+   "m053": [
+    "codebase",
+    "personal"
+   ],
+   "m054": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m055": [
+    "personal"
+   ],
+   "m056": [
+    "codebase"
+   ],
+   "m057": [
+    "company"
+   ],
+   "m058": [
+    "none"
+   ],
+   "m059": [
+    "none"
+   ],
+   "m060": [
+    "codebase",
+    "personal"
+   ],
+   "m061": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m062": [
+    "personal"
+   ],
+   "m063": [
+    "codebase"
+   ],
+   "m064": [
+    "company"
+   ],
+   "m065": [
+    "none"
+   ],
+   "m066": [
+    "none"
+   ],
+   "m067": [
+    "codebase",
+    "personal"
+   ],
+   "m068": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m069": [
+    "personal"
+   ],
+   "m070": [
+    "codebase"
+   ],
+   "m071": [
+    "company"
+   ],
+   "m072": [
+    "none"
+   ],
+   "m073": [
+    "none"
+   ],
+   "m074": [
+    "codebase",
+    "personal"
+   ],
+   "m075": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m076": [
+    "personal"
+   ],
+   "m077": [
+    "codebase"
+   ],
+   "m078": [
+    "company"
+   ],
+   "m079": [
+    "none"
+   ],
+   "m080": [
+    "none"
+   ],
+   "m081": [
+    "codebase",
+    "personal"
+   ],
+   "m082": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m083": [
+    "personal"
+   ],
+   "m084": [
+    "codebase"
+   ],
+   "m085": [
+    "company"
+   ],
+   "m086": [
+    "none"
+   ],
+   "m087": [
+    "none"
+   ],
+   "m088": [
+    "codebase",
+    "personal"
+   ],
+   "m089": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m090": [
+    "personal"
+   ],
+   "m091": [
+    "codebase"
+   ],
+   "m092": [
+    "company"
+   ],
+   "m093": [
+    "none"
+   ],
+   "m094": [
+    "none"
+   ],
+   "m095": [
+    "codebase",
+    "personal"
+   ],
+   "m096": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m097": [
+    "personal"
+   ],
+   "m098": [
+    "codebase"
+   ],
+   "m099": [
+    "company"
+   ],
+   "m100": [
+    "none"
+   ],
+   "m101": [
+    "none"
+   ],
+   "m102": [
+    "codebase",
+    "personal"
+   ],
+   "m103": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m104": [
+    "personal"
+   ],
+   "m105": [
+    "codebase"
+   ],
+   "m106": [
+    "company"
+   ],
+   "m107": [
+    "none"
+   ],
+   "m108": [
+    "none"
+   ],
+   "m109": [
+    "codebase",
+    "personal"
+   ],
+   "m110": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m111": [
+    "personal"
+   ],
+   "m112": [
+    "codebase"
+   ],
+   "m113": [
+    "company"
+   ],
+   "m114": [
+    "none"
+   ],
+   "m115": [
+    "none"
+   ],
+   "m116": [
+    "codebase",
+    "personal"
+   ],
+   "m117": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m118": [
+    "personal"
+   ],
+   "m119": [
+    "codebase"
+   ],
+   "m120": [
+    "company"
+   ],
+   "m121": [
+    "none"
+   ],
+   "m122": [
+    "none"
+   ],
+   "m123": [
+    "codebase",
+    "personal"
+   ],
+   "m124": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m125": [
+    "personal"
+   ],
+   "m126": [
+    "codebase"
+   ],
+   "m127": [
+    "company"
+   ],
+   "m128": [
+    "none"
+   ],
+   "m129": [
+    "none"
+   ],
+   "m130": [
+    "codebase",
+    "personal"
+   ],
+   "m131": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m132": [
+    "personal"
+   ],
+   "m133": [
+    "codebase"
+   ],
+   "m134": [
+    "company"
+   ],
+   "m135": [
+    "none"
+   ],
+   "m136": [
+    "none"
+   ],
+   "m137": [
+    "codebase",
+    "personal"
+   ],
+   "m138": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m139": [
+    "personal"
+   ],
+   "m140": [
+    "codebase"
+   ],
+   "m141": [
+    "company"
+   ],
+   "m142": [
+    "none"
+   ],
+   "m143": [
+    "none"
+   ],
+   "m144": [
+    "codebase",
+    "personal"
+   ],
+   "m145": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m146": [
+    "personal"
+   ],
+   "m147": [
+    "codebase"
+   ],
+   "m148": [
+    "company"
+   ],
+   "m149": [
+    "none"
+   ],
+   "m150": [
+    "none"
+   ],
+   "m151": [
+    "codebase",
+    "personal"
+   ],
+   "m152": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m153": [
+    "personal"
+   ]
+  },
+  "annotator_b": {
+   "m000": [
+    "codebase"
+   ],
+   "m001": [
+    "company"
+   ],
+   "m002": [
+    "none"
+   ],
+   "m003": [
+    "none"
+   ],
+   "m004": [
+    "codebase",
+    "personal"
+   ],
+   "m005": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m006": [
+    "personal"
+   ],
+   "m007": [
+    "codebase",
+    "none"
+   ],
+   "m008": [
+    "company"
+   ],
+   "m009": [
+    "none"
+   ],
+   "m010": [
+    "none"
+   ],
+   "m011": [
+    "codebase",
+    "personal"
+   ],
+   "m012": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m013": [
+    "personal"
+   ],
+   "m014": [
+    "codebase"
+   ],
+   "m015": [
+    "company"
+   ],
+   "m016": [
+    "none"
+   ],
+   "m017": [
+    "none"
+   ],
+   "m018": [
+    "codebase",
+    "personal"
+   ],
+   "m019": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m020": [
+    "personal"
+   ],
+   "m021": [
+    "codebase"
+   ],
+   "m022": [
+    "company"
+   ],
+   "m023": [
+    "none"
+   ],
+   "m024": [
+    "none"
+   ],
+   "m025": [
+    "codebase",
+    "personal"
+   ],
+   "m026": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m027": [
+    "personal"
+   ],
+   "m028": [
+    "codebase"
+   ],
+   "m029": [
+    "company"
+   ],
+   "m030": [
+    "none"
+   ],
+   "m031": [
+    "none"
+   ],
+   "m032": [
+    "codebase",
+    "personal"
+   ],
+   "m033": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m034": [
+    "personal"
+   ],
+   "m035": [
+    "codebase"
+   ],
+   "m036": [
+    "company"
+   ],
+   "m037": [
+    "none"
+   ],
+   "m038": [
+    "none"
+   ],
+   "m039": [
+    "codebase",
+    "personal"
+   ],
+   "m040": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m041": [
+    "personal"
+   ],
+   "m042": [
+    "codebase"
+   ],
+   "m043": [
+    "company"
+   ],
+   "m044": [
+    "none"
+   ],
+   "m045": [
+    "none"
+   ],
+   "m046": [
+    "codebase",
+    "personal"
+   ],
+   "m047": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m048": [
+    "personal"
+   ],
+   "m049": [
+    "codebase"
+   ],
+   "m050": [
+    "company"
+   ],
+   "m051": [
+    "none"
+   ],
+   "m052": [
+    "none"
+   ],
+   "m053": [
+    "codebase",
+    "none",
+    "personal"
+   ],
+   "m054": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m055": [
+    "personal"
+   ],
+   "m056": [
+    "codebase"
+   ],
+   "m057": [
+    "company"
+   ],
+   "m058": [
+    "none"
+   ],
+   "m059": [
+    "none"
+   ],
+   "m060": [
+    "codebase",
+    "personal"
+   ],
+   "m061": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m062": [
+    "personal"
+   ],
+   "m063": [
+    "codebase"
+   ],
+   "m064": [
+    "company"
+   ],
+   "m065": [
+    "none"
+   ],
+   "m066": [
+    "none"
+   ],
+   "m067": [
+    "codebase",
+    "personal"
+   ],
+   "m068": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m069": [
+    "personal"
+   ],
+   "m070": [
+    "codebase"
+   ],
+   "m071": [
+    "company"
+   ],
+   "m072": [
+    "none"
+   ],
+   "m073": [
+    "none"
+   ],
+   "m074": [
+    "codebase",
+    "personal"
+   ],
+   "m075": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m076": [
+    "none",
+    "personal"
+   ],
+   "m077": [
+    "codebase"
+   ],
+   "m078": [
+    "company"
+   ],
+   "m079": [
+    "none"
+   ],
+   "m080": [
+    "none"
+   ],
+   "m081": [
+    "codebase",
+    "personal"
+   ],
+   "m082": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m083": [
+    "personal"
+   ],
+   "m084": [
+    "codebase"
+   ],
+   "m085": [
+    "company"
+   ],
+   "m086": [
+    "none"
+   ],
+   "m087": [
+    "none"
+   ],
+   "m088": [
+    "codebase",
+    "personal"
+   ],
+   "m089": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m090": [
+    "personal"
+   ],
+   "m091": [
+    "codebase"
+   ],
+   "m092": [
+    "company"
+   ],
+   "m093": [
+    "none"
+   ],
+   "m094": [
+    "none"
+   ],
+   "m095": [
+    "codebase",
+    "personal"
+   ],
+   "m096": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m097": [
+    "personal"
+   ],
+   "m098": [
+    "codebase"
+   ],
+   "m099": [
+    "company",
+    "none"
+   ],
+   "m100": [
+    "none"
+   ],
+   "m101": [
+    "none"
+   ],
+   "m102": [
+    "codebase",
+    "personal"
+   ],
+   "m103": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m104": [
+    "personal"
+   ],
+   "m105": [
+    "codebase"
+   ],
+   "m106": [
+    "company"
+   ],
+   "m107": [
+    "none"
+   ],
+   "m108": [
+    "none"
+   ],
+   "m109": [
+    "codebase",
+    "personal"
+   ],
+   "m110": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m111": [
+    "personal"
+   ],
+   "m112": [
+    "codebase"
+   ],
+   "m113": [
+    "company"
+   ],
+   "m114": [
+    "none"
+   ],
+   "m115": [
+    "none"
+   ],
+   "m116": [
+    "codebase",
+    "personal"
+   ],
+   "m117": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m118": [
+    "personal"
+   ],
+   "m119": [
+    "codebase"
+   ],
+   "m120": [
+    "company"
+   ],
+   "m121": [
+    "none"
+   ],
+   "m122": [
+    "none"
+   ],
+   "m123": [
+    "codebase",
+    "personal"
+   ],
+   "m124": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m125": [
+    "personal"
+   ],
+   "m126": [
+    "codebase"
+   ],
+   "m127": [
+    "company"
+   ],
+   "m128": [
+    "none"
+   ],
+   "m129": [
+    "none"
+   ],
+   "m130": [
+    "codebase",
+    "personal"
+   ],
+   "m131": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m132": [
+    "personal"
+   ],
+   "m133": [
+    "codebase"
+   ],
+   "m134": [
+    "company"
+   ],
+   "m135": [
+    "none"
+   ],
+   "m136": [
+    "none"
+   ],
+   "m137": [
+    "codebase",
+    "personal"
+   ],
+   "m138": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m139": [
+    "personal"
+   ],
+   "m140": [
+    "codebase"
+   ],
+   "m141": [
+    "company"
+   ],
+   "m142": [
+    "none"
+   ],
+   "m143": [
+    "none"
+   ],
+   "m144": [
+    "codebase",
+    "personal"
+   ],
+   "m145": [
+    "codebase",
+    "company",
+    "none",
+    "personal"
+   ],
+   "m146": [
+    "personal"
+   ],
+   "m147": [
+    "codebase"
+   ],
+   "m148": [
+    "company"
+   ],
+   "m149": [
+    "none"
+   ],
+   "m150": [
+    "none"
+   ],
+   "m151": [
+    "codebase",
+    "personal"
+   ],
+   "m152": [
+    "codebase",
+    "company",
+    "personal"
+   ],
+   "m153": [
+    "personal"
+   ]
+  }
+ },
+ "calibration_manifest": "tests/fixtures/gold/calibration-manifest.json",
+ "calibration_message_ids": [
+  "cal000",
+  "cal001",
+  "cal002",
+  "cal003",
+  "cal004",
+  "cal005",
+  "cal006",
+  "cal007",
+  "cal008",
+  "cal009",
+  "cal010",
+  "cal011",
+  "cal012",
+  "cal013",
+  "cal014",
+  "cal015",
+  "cal016",
+  "cal017",
+  "cal018",
+  "cal019",
+  "cal020",
+  "cal021",
+  "cal022",
+  "cal023",
+  "cal024",
+  "cal025",
+  "cal026",
+  "cal027",
+  "cal028",
+  "cal029",
+  "cal030",
+  "cal031",
+  "cal032",
+  "cal033",
+  "cal034",
+  "cal035",
+  "cal036",
+  "cal037",
+  "cal038",
+  "cal039",
+  "cal040",
+  "cal041",
+  "cal042",
+  "cal043",
+  "cal044",
+  "cal045",
+  "cal046",
+  "cal047",
+  "cal048",
+  "cal049",
+  "cal050",
+  "cal051",
+  "cal052",
+  "cal053",
+  "cal054",
+  "cal055",
+  "cal056",
+  "cal057",
+  "cal058",
+  "cal059"
+ ],
+ "canary_message_count": 140,
+ "canary_slots": {
+  "c000": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "company_sqlite",
+    "receipts"
+   ],
+   "transformation_family": "exact"
+  },
+  "c001": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_worktree",
+    "logs"
+   ],
+   "transformation_family": "nfd"
+  },
+  "c002": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_objects",
+    "caches"
+   ],
+   "transformation_family": "nfkc"
+  },
+  "c003": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "kin_events",
+    "host_projection"
+   ],
+   "transformation_family": "hex"
+  },
+  "c004": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "shared_outbox",
+    "process_artifacts"
+   ],
+   "transformation_family": "base64"
+  },
+  "c005": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "receipts",
+    "evidence_packet"
+   ],
+   "transformation_family": "percent"
+  },
+  "c006": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "logs",
+    "service_response"
+   ],
+   "transformation_family": "json_escape"
+  },
+  "c007": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "caches",
+    "company_sqlite"
+   ],
+   "transformation_family": "delimiter"
+  },
+  "c008": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "host_projection",
+    "codebase_git_worktree"
+   ],
+   "transformation_family": "fragmentation"
+  },
+  "c009": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "process_artifacts",
+    "codebase_git_objects"
+   ],
+   "transformation_family": "case"
+  },
+  "c010": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "service_response",
+    "shared_outbox"
+   ],
+   "transformation_family": "reversible_composition"
+  },
+  "c011": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "company_sqlite",
+    "receipts"
+   ],
+   "transformation_family": "exact"
+  },
+  "c012": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_worktree",
+    "logs"
+   ],
+   "transformation_family": "nfd"
+  },
+  "c013": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_objects",
+    "caches"
+   ],
+   "transformation_family": "nfkc"
+  },
+  "c014": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "kin_events",
+    "host_projection"
+   ],
+   "transformation_family": "hex"
+  },
+  "c015": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "shared_outbox",
+    "process_artifacts"
+   ],
+   "transformation_family": "base64"
+  },
+  "c016": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "receipts",
+    "evidence_packet"
+   ],
+   "transformation_family": "percent"
+  },
+  "c017": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "logs",
+    "service_response"
+   ],
+   "transformation_family": "json_escape"
+  },
+  "c018": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "caches",
+    "company_sqlite"
+   ],
+   "transformation_family": "delimiter"
+  },
+  "c019": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "host_projection",
+    "codebase_git_worktree"
+   ],
+   "transformation_family": "fragmentation"
+  },
+  "c020": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "evidence_packet",
+    "kin_events"
+   ],
+   "transformation_family": "whitespace"
+  },
+  "c021": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "service_response",
+    "shared_outbox"
+   ],
+   "transformation_family": "reversible_composition"
+  },
+  "c022": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "company_sqlite",
+    "receipts"
+   ],
+   "transformation_family": "exact"
+  },
+  "c023": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_worktree",
+    "logs"
+   ],
+   "transformation_family": "nfd"
+  },
+  "c024": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_objects",
+    "caches"
+   ],
+   "transformation_family": "nfkc"
+  },
+  "c025": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "kin_events",
+    "host_projection"
+   ],
+   "transformation_family": "hex"
+  },
+  "c026": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "shared_outbox",
+    "process_artifacts"
+   ],
+   "transformation_family": "base64"
+  },
+  "c027": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "receipts",
+    "evidence_packet"
+   ],
+   "transformation_family": "percent"
+  },
+  "c028": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "logs",
+    "service_response"
+   ],
+   "transformation_family": "json_escape"
+  },
+  "c029": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "caches",
+    "company_sqlite"
+   ],
+   "transformation_family": "delimiter"
+  },
+  "c030": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "process_artifacts",
+    "codebase_git_objects"
+   ],
+   "transformation_family": "case"
+  },
+  "c031": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "evidence_packet",
+    "kin_events"
+   ],
+   "transformation_family": "whitespace"
+  },
+  "c032": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "service_response",
+    "shared_outbox"
+   ],
+   "transformation_family": "reversible_composition"
+  },
+  "c033": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "company_sqlite",
+    "receipts"
+   ],
+   "transformation_family": "exact"
+  },
+  "c034": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_worktree",
+    "logs"
+   ],
+   "transformation_family": "nfd"
+  },
+  "c035": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_objects",
+    "caches"
+   ],
+   "transformation_family": "nfkc"
+  },
+  "c036": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "kin_events",
+    "host_projection"
+   ],
+   "transformation_family": "hex"
+  },
+  "c037": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "shared_outbox",
+    "process_artifacts"
+   ],
+   "transformation_family": "base64"
+  },
+  "c038": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "receipts",
+    "evidence_packet"
+   ],
+   "transformation_family": "percent"
+  },
+  "c039": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "logs",
+    "service_response"
+   ],
+   "transformation_family": "json_escape"
+  },
+  "c040": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "host_projection",
+    "codebase_git_worktree"
+   ],
+   "transformation_family": "fragmentation"
+  },
+  "c041": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "process_artifacts",
+    "codebase_git_objects"
+   ],
+   "transformation_family": "case"
+  },
+  "c042": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "evidence_packet",
+    "kin_events"
+   ],
+   "transformation_family": "whitespace"
+  },
+  "c043": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "service_response",
+    "shared_outbox"
+   ],
+   "transformation_family": "reversible_composition"
+  },
+  "c044": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "company_sqlite",
+    "receipts"
+   ],
+   "transformation_family": "exact"
+  },
+  "c045": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_worktree",
+    "logs"
+   ],
+   "transformation_family": "nfd"
+  },
+  "c046": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_objects",
+    "caches"
+   ],
+   "transformation_family": "nfkc"
+  },
+  "c047": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "kin_events",
+    "host_projection"
+   ],
+   "transformation_family": "hex"
+  },
+  "c048": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "shared_outbox",
+    "process_artifacts"
+   ],
+   "transformation_family": "base64"
+  },
+  "c049": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "receipts",
+    "evidence_packet"
+   ],
+   "transformation_family": "percent"
+  },
+  "c050": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "caches",
+    "company_sqlite"
+   ],
+   "transformation_family": "delimiter"
+  },
+  "c051": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "host_projection",
+    "codebase_git_worktree"
+   ],
+   "transformation_family": "fragmentation"
+  },
+  "c052": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "process_artifacts",
+    "codebase_git_objects"
+   ],
+   "transformation_family": "case"
+  },
+  "c053": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "evidence_packet",
+    "kin_events"
+   ],
+   "transformation_family": "whitespace"
+  },
+  "c054": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "service_response",
+    "shared_outbox"
+   ],
+   "transformation_family": "reversible_composition"
+  },
+  "c055": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "company_sqlite",
+    "receipts"
+   ],
+   "transformation_family": "exact"
+  },
+  "c056": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_worktree",
+    "logs"
+   ],
+   "transformation_family": "nfd"
+  },
+  "c057": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_objects",
+    "caches"
+   ],
+   "transformation_family": "nfkc"
+  },
+  "c058": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "kin_events",
+    "host_projection"
+   ],
+   "transformation_family": "hex"
+  },
+  "c059": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "shared_outbox",
+    "process_artifacts"
+   ],
+   "transformation_family": "base64"
+  },
+  "c060": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "logs",
+    "service_response"
+   ],
+   "transformation_family": "json_escape"
+  },
+  "c061": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "caches",
+    "company_sqlite"
+   ],
+   "transformation_family": "delimiter"
+  },
+  "c062": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "host_projection",
+    "codebase_git_worktree"
+   ],
+   "transformation_family": "fragmentation"
+  },
+  "c063": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "process_artifacts",
+    "codebase_git_objects"
+   ],
+   "transformation_family": "case"
+  },
+  "c064": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "evidence_packet",
+    "kin_events"
+   ],
+   "transformation_family": "whitespace"
+  },
+  "c065": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "service_response",
+    "shared_outbox"
+   ],
+   "transformation_family": "reversible_composition"
+  },
+  "c066": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "company_sqlite",
+    "receipts"
+   ],
+   "transformation_family": "exact"
+  },
+  "c067": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_worktree",
+    "logs"
+   ],
+   "transformation_family": "nfd"
+  },
+  "c068": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_objects",
+    "caches"
+   ],
+   "transformation_family": "nfkc"
+  },
+  "c069": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "kin_events",
+    "host_projection"
+   ],
+   "transformation_family": "hex"
+  },
+  "c070": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "receipts",
+    "evidence_packet"
+   ],
+   "transformation_family": "percent"
+  },
+  "c071": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "logs",
+    "service_response"
+   ],
+   "transformation_family": "json_escape"
+  },
+  "c072": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "caches",
+    "company_sqlite"
+   ],
+   "transformation_family": "delimiter"
+  },
+  "c073": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "host_projection",
+    "codebase_git_worktree"
+   ],
+   "transformation_family": "fragmentation"
+  },
+  "c074": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "process_artifacts",
+    "codebase_git_objects"
+   ],
+   "transformation_family": "case"
+  },
+  "c075": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "evidence_packet",
+    "kin_events"
+   ],
+   "transformation_family": "whitespace"
+  },
+  "c076": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "service_response",
+    "shared_outbox"
+   ],
+   "transformation_family": "reversible_composition"
+  },
+  "c077": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "company_sqlite",
+    "receipts"
+   ],
+   "transformation_family": "exact"
+  },
+  "c078": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_worktree",
+    "logs"
+   ],
+   "transformation_family": "nfd"
+  },
+  "c079": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_objects",
+    "caches"
+   ],
+   "transformation_family": "nfkc"
+  },
+  "c080": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "shared_outbox",
+    "process_artifacts"
+   ],
+   "transformation_family": "base64"
+  },
+  "c081": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "receipts",
+    "evidence_packet"
+   ],
+   "transformation_family": "percent"
+  },
+  "c082": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "logs",
+    "service_response"
+   ],
+   "transformation_family": "json_escape"
+  },
+  "c083": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "caches",
+    "company_sqlite"
+   ],
+   "transformation_family": "delimiter"
+  },
+  "c084": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "host_projection",
+    "codebase_git_worktree"
+   ],
+   "transformation_family": "fragmentation"
+  },
+  "c085": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "process_artifacts",
+    "codebase_git_objects"
+   ],
+   "transformation_family": "case"
+  },
+  "c086": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "evidence_packet",
+    "kin_events"
+   ],
+   "transformation_family": "whitespace"
+  },
+  "c087": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "service_response",
+    "shared_outbox"
+   ],
+   "transformation_family": "reversible_composition"
+  },
+  "c088": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "company_sqlite",
+    "receipts"
+   ],
+   "transformation_family": "exact"
+  },
+  "c089": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_worktree",
+    "logs"
+   ],
+   "transformation_family": "nfd"
+  },
+  "c090": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "kin_events",
+    "host_projection"
+   ],
+   "transformation_family": "hex"
+  },
+  "c091": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "shared_outbox",
+    "process_artifacts"
+   ],
+   "transformation_family": "base64"
+  },
+  "c092": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "receipts",
+    "evidence_packet"
+   ],
+   "transformation_family": "percent"
+  },
+  "c093": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "logs",
+    "service_response"
+   ],
+   "transformation_family": "json_escape"
+  },
+  "c094": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "caches",
+    "company_sqlite"
+   ],
+   "transformation_family": "delimiter"
+  },
+  "c095": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "host_projection",
+    "codebase_git_worktree"
+   ],
+   "transformation_family": "fragmentation"
+  },
+  "c096": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "process_artifacts",
+    "codebase_git_objects"
+   ],
+   "transformation_family": "case"
+  },
+  "c097": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "evidence_packet",
+    "kin_events"
+   ],
+   "transformation_family": "whitespace"
+  },
+  "c098": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "service_response",
+    "shared_outbox"
+   ],
+   "transformation_family": "reversible_composition"
+  },
+  "c099": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "company_sqlite",
+    "receipts"
+   ],
+   "transformation_family": "exact"
+  },
+  "c100": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_objects",
+    "caches"
+   ],
+   "transformation_family": "nfkc"
+  },
+  "c101": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "kin_events",
+    "host_projection"
+   ],
+   "transformation_family": "hex"
+  },
+  "c102": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "shared_outbox",
+    "process_artifacts"
+   ],
+   "transformation_family": "base64"
+  },
+  "c103": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "receipts",
+    "evidence_packet"
+   ],
+   "transformation_family": "percent"
+  },
+  "c104": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "logs",
+    "service_response"
+   ],
+   "transformation_family": "json_escape"
+  },
+  "c105": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "caches",
+    "company_sqlite"
+   ],
+   "transformation_family": "delimiter"
+  },
+  "c106": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "host_projection",
+    "codebase_git_worktree"
+   ],
+   "transformation_family": "fragmentation"
+  },
+  "c107": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "process_artifacts",
+    "codebase_git_objects"
+   ],
+   "transformation_family": "case"
+  },
+  "c108": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "evidence_packet",
+    "kin_events"
+   ],
+   "transformation_family": "whitespace"
+  },
+  "c109": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "service_response",
+    "shared_outbox"
+   ],
+   "transformation_family": "reversible_composition"
+  },
+  "c110": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_worktree",
+    "logs"
+   ],
+   "transformation_family": "nfd"
+  },
+  "c111": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_objects",
+    "caches"
+   ],
+   "transformation_family": "nfkc"
+  },
+  "c112": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "kin_events",
+    "host_projection"
+   ],
+   "transformation_family": "hex"
+  },
+  "c113": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "shared_outbox",
+    "process_artifacts"
+   ],
+   "transformation_family": "base64"
+  },
+  "c114": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "receipts",
+    "evidence_packet"
+   ],
+   "transformation_family": "percent"
+  },
+  "c115": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "logs",
+    "service_response"
+   ],
+   "transformation_family": "json_escape"
+  },
+  "c116": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "caches",
+    "company_sqlite"
+   ],
+   "transformation_family": "delimiter"
+  },
+  "c117": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "host_projection",
+    "codebase_git_worktree"
+   ],
+   "transformation_family": "fragmentation"
+  },
+  "c118": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "process_artifacts",
+    "codebase_git_objects"
+   ],
+   "transformation_family": "case"
+  },
+  "c119": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "evidence_packet",
+    "kin_events"
+   ],
+   "transformation_family": "whitespace"
+  },
+  "c120": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "company_sqlite",
+    "receipts"
+   ],
+   "transformation_family": "exact"
+  },
+  "c121": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_worktree",
+    "logs"
+   ],
+   "transformation_family": "nfd"
+  },
+  "c122": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_objects",
+    "caches"
+   ],
+   "transformation_family": "nfkc"
+  },
+  "c123": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "kin_events",
+    "host_projection"
+   ],
+   "transformation_family": "hex"
+  },
+  "c124": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "shared_outbox",
+    "process_artifacts"
+   ],
+   "transformation_family": "base64"
+  },
+  "c125": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "receipts",
+    "evidence_packet"
+   ],
+   "transformation_family": "percent"
+  },
+  "c126": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "logs",
+    "service_response"
+   ],
+   "transformation_family": "json_escape"
+  },
+  "c127": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "caches",
+    "company_sqlite"
+   ],
+   "transformation_family": "delimiter"
+  },
+  "c128": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "host_projection",
+    "codebase_git_worktree"
+   ],
+   "transformation_family": "fragmentation"
+  },
+  "c129": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "process_artifacts",
+    "codebase_git_objects"
+   ],
+   "transformation_family": "case"
+  },
+  "c130": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "service_response",
+    "shared_outbox"
+   ],
+   "transformation_family": "reversible_composition"
+  },
+  "c131": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "company_sqlite",
+    "receipts"
+   ],
+   "transformation_family": "exact"
+  },
+  "c132": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_worktree",
+    "logs"
+   ],
+   "transformation_family": "nfd"
+  },
+  "c133": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "codebase_git_objects",
+    "caches"
+   ],
+   "transformation_family": "nfkc"
+  },
+  "c134": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "kin_events",
+    "host_projection"
+   ],
+   "transformation_family": "hex"
+  },
+  "c135": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "shared_outbox",
+    "process_artifacts"
+   ],
+   "transformation_family": "base64"
+  },
+  "c136": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "receipts",
+    "evidence_packet"
+   ],
+   "transformation_family": "percent"
+  },
+  "c137": {
+   "expected_destination_denial": [
+    "company",
+    "codebase"
+   ],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal"
+   ],
+   "kind": "hard_block",
+   "planted_surfaces": [
+    "logs",
+    "service_response"
+   ],
+   "transformation_family": "json_escape"
+  },
+  "c138": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "caches",
+    "company_sqlite"
+   ],
+   "transformation_family": "delimiter"
+  },
+  "c139": {
+   "expected_destination_denial": [],
+   "gold_atom_label": "observation",
+   "gold_destination_labels": [
+    "personal",
+    "codebase"
+   ],
+   "kind": "approval_gated",
+   "planted_surfaces": [
+    "host_projection",
+    "codebase_git_worktree"
+   ],
+   "transformation_family": "fragmentation"
+  }
+ },
+ "generator_seed": 20260905,
+ "held_out_message_count": 154,
+ "messages": [
+  {
+   "canary_slots": [
+    "c000"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "scheduler lookahead is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m000",
+   "mixed": false,
+   "scope": "scheduling/diagnosis",
+   "stratum": "codebase_fact",
+   "template": "In this repository the scheduler lookahead is bounded by the checked-in default. My private note marker is {c000}.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c001"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "retry budget direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m001",
+   "mixed": false,
+   "scope": "resilience/retry",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, retry budget direction is owned by the architecture authority. Marker {c001}.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c002"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is tenant isolation still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m002",
+   "mixed": false,
+   "scope": "multitenancy/isolation",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether tenant isolation still matters here at all. Marker {c002}.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c003"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening cache invalidation for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m003",
+   "mixed": false,
+   "scope": "caching/invalidation",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening cache invalidation; revert afterwards. Marker {c003}.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c004"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "migration ordering must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m004",
+   "mixed": true,
+   "scope": "storage/migrations",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c004}. Separately, migration ordering must stay inside the repository default.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c005"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "queue backpressure direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements queue backpressure through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m005",
+   "mixed": true,
+   "scope": "queueing/backpressure",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c005}. Organization-wide, queue backpressure direction is set centrally. In this service we implement queue backpressure through the shared helper.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c006"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m006",
+   "mixed": false,
+   "scope": "identity/rotation",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c006}.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c007"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "index rebuild is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m007",
+   "mixed": false,
+   "scope": "search/indexing",
+   "stratum": "codebase_fact",
+   "template": "In this repository the index rebuild is bounded by the checked-in default. My private note marker is {c007}.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c008"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "audit retention direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m008",
+   "mixed": false,
+   "scope": "compliance/retention",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, audit retention direction is owned by the architecture authority. Marker {c008}.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c009"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is feature flag default still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m009",
+   "mixed": false,
+   "scope": "delivery/flags",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether feature flag default still matters here at all. Marker {c009}.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening scheduler lookahead for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m010",
+   "mixed": false,
+   "scope": "scheduling/diagnosis",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening scheduler lookahead; revert afterwards. Marker (no marker).",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c010"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "retry budget must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m011",
+   "mixed": true,
+   "scope": "resilience/retry",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c010}. Separately, retry budget must stay inside the repository default.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c011"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "tenant isolation direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements tenant isolation through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m012",
+   "mixed": true,
+   "scope": "multitenancy/isolation",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c011}. Organization-wide, tenant isolation direction is set centrally. In this service we implement tenant isolation through the shared helper.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c012"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m013",
+   "mixed": false,
+   "scope": "caching/invalidation",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c012}.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c013"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "migration ordering is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m014",
+   "mixed": false,
+   "scope": "storage/migrations",
+   "stratum": "codebase_fact",
+   "template": "In this repository the migration ordering is bounded by the checked-in default. My private note marker is {c013}.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c014"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "queue backpressure direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m015",
+   "mixed": false,
+   "scope": "queueing/backpressure",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, queue backpressure direction is owned by the architecture authority. Marker {c014}.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c015"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is token rotation still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m016",
+   "mixed": false,
+   "scope": "identity/rotation",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether token rotation still matters here at all. Marker {c015}.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c016"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening index rebuild for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m017",
+   "mixed": false,
+   "scope": "search/indexing",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening index rebuild; revert afterwards. Marker {c016}.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c017"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "audit retention must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m018",
+   "mixed": true,
+   "scope": "compliance/retention",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c017}. Separately, audit retention must stay inside the repository default.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c018"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "feature flag default direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements feature flag default through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m019",
+   "mixed": true,
+   "scope": "delivery/flags",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c018}. Organization-wide, feature flag default direction is set centrally. In this service we implement feature flag default through the shared helper.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c019"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m020",
+   "mixed": false,
+   "scope": "scheduling/diagnosis",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c019}.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "constraint",
+     "retry budget is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m021",
+   "mixed": false,
+   "scope": "resilience/retry",
+   "stratum": "codebase_fact",
+   "template": "In this repository the retry budget is bounded by the checked-in default. My private note marker is (no marker).",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c020"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "tenant isolation direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m022",
+   "mixed": false,
+   "scope": "multitenancy/isolation",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, tenant isolation direction is owned by the architecture authority. Marker {c020}.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c021"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is cache invalidation still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m023",
+   "mixed": false,
+   "scope": "caching/invalidation",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether cache invalidation still matters here at all. Marker {c021}.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c022"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening migration ordering for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m024",
+   "mixed": false,
+   "scope": "storage/migrations",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening migration ordering; revert afterwards. Marker {c022}.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c023"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "queue backpressure must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m025",
+   "mixed": true,
+   "scope": "queueing/backpressure",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c023}. Separately, queue backpressure must stay inside the repository default.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c024"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "token rotation direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements token rotation through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m026",
+   "mixed": true,
+   "scope": "identity/rotation",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c024}. Organization-wide, token rotation direction is set centrally. In this service we implement token rotation through the shared helper.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c025"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m027",
+   "mixed": false,
+   "scope": "search/indexing",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c025}.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c026"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "audit retention is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m028",
+   "mixed": false,
+   "scope": "compliance/retention",
+   "stratum": "codebase_fact",
+   "template": "In this repository the audit retention is bounded by the checked-in default. My private note marker is {c026}.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c027"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "feature flag default direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m029",
+   "mixed": false,
+   "scope": "delivery/flags",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, feature flag default direction is owned by the architecture authority. Marker {c027}.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c028"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is scheduler lookahead still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m030",
+   "mixed": false,
+   "scope": "scheduling/diagnosis",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether scheduler lookahead still matters here at all. Marker {c028}.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c029"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening retry budget for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m031",
+   "mixed": false,
+   "scope": "resilience/retry",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening retry budget; revert afterwards. Marker {c029}.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "tenant isolation must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m032",
+   "mixed": true,
+   "scope": "multitenancy/isolation",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week (no marker). Separately, tenant isolation must stay inside the repository default.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c030"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "cache invalidation direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements cache invalidation through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m033",
+   "mixed": true,
+   "scope": "caching/invalidation",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c030}. Organization-wide, cache invalidation direction is set centrally. In this service we implement cache invalidation through the shared helper.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c031"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m034",
+   "mixed": false,
+   "scope": "storage/migrations",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c031}.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c032"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "queue backpressure is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m035",
+   "mixed": false,
+   "scope": "queueing/backpressure",
+   "stratum": "codebase_fact",
+   "template": "In this repository the queue backpressure is bounded by the checked-in default. My private note marker is {c032}.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c033"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "token rotation direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m036",
+   "mixed": false,
+   "scope": "identity/rotation",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, token rotation direction is owned by the architecture authority. Marker {c033}.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c034"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is index rebuild still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m037",
+   "mixed": false,
+   "scope": "search/indexing",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether index rebuild still matters here at all. Marker {c034}.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c035"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening audit retention for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m038",
+   "mixed": false,
+   "scope": "compliance/retention",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening audit retention; revert afterwards. Marker {c035}.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c036"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "feature flag default must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m039",
+   "mixed": true,
+   "scope": "delivery/flags",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c036}. Separately, feature flag default must stay inside the repository default.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c037"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "scheduler lookahead direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements scheduler lookahead through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m040",
+   "mixed": true,
+   "scope": "scheduling/diagnosis",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c037}. Organization-wide, scheduler lookahead direction is set centrally. In this service we implement scheduler lookahead through the shared helper.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c038"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m041",
+   "mixed": false,
+   "scope": "resilience/retry",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c038}.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c039"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "tenant isolation is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m042",
+   "mixed": false,
+   "scope": "multitenancy/isolation",
+   "stratum": "codebase_fact",
+   "template": "In this repository the tenant isolation is bounded by the checked-in default. My private note marker is {c039}.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "decision",
+     "cache invalidation direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m043",
+   "mixed": false,
+   "scope": "caching/invalidation",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, cache invalidation direction is owned by the architecture authority. Marker (no marker).",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c040"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is migration ordering still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m044",
+   "mixed": false,
+   "scope": "storage/migrations",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether migration ordering still matters here at all. Marker {c040}.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c041"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening queue backpressure for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m045",
+   "mixed": false,
+   "scope": "queueing/backpressure",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening queue backpressure; revert afterwards. Marker {c041}.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c042"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "token rotation must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m046",
+   "mixed": true,
+   "scope": "identity/rotation",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c042}. Separately, token rotation must stay inside the repository default.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c043"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "index rebuild direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements index rebuild through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m047",
+   "mixed": true,
+   "scope": "search/indexing",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c043}. Organization-wide, index rebuild direction is set centrally. In this service we implement index rebuild through the shared helper.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c044"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m048",
+   "mixed": false,
+   "scope": "compliance/retention",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c044}.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c045"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "feature flag default is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m049",
+   "mixed": false,
+   "scope": "delivery/flags",
+   "stratum": "codebase_fact",
+   "template": "In this repository the feature flag default is bounded by the checked-in default. My private note marker is {c045}.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c046"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "scheduler lookahead direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m050",
+   "mixed": false,
+   "scope": "scheduling/diagnosis",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, scheduler lookahead direction is owned by the architecture authority. Marker {c046}.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c047"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is retry budget still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m051",
+   "mixed": false,
+   "scope": "resilience/retry",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether retry budget still matters here at all. Marker {c047}.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c048"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening tenant isolation for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m052",
+   "mixed": false,
+   "scope": "multitenancy/isolation",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening tenant isolation; revert afterwards. Marker {c048}.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c049"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "cache invalidation must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m053",
+   "mixed": true,
+   "scope": "caching/invalidation",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c049}. Separately, cache invalidation must stay inside the repository default.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "migration ordering direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements migration ordering through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m054",
+   "mixed": true,
+   "scope": "storage/migrations",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently (no marker). Organization-wide, migration ordering direction is set centrally. In this service we implement migration ordering through the shared helper.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c050"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m055",
+   "mixed": false,
+   "scope": "queueing/backpressure",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c050}.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c051"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "token rotation is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m056",
+   "mixed": false,
+   "scope": "identity/rotation",
+   "stratum": "codebase_fact",
+   "template": "In this repository the token rotation is bounded by the checked-in default. My private note marker is {c051}.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c052"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "index rebuild direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m057",
+   "mixed": false,
+   "scope": "search/indexing",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, index rebuild direction is owned by the architecture authority. Marker {c052}.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c053"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is audit retention still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m058",
+   "mixed": false,
+   "scope": "compliance/retention",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether audit retention still matters here at all. Marker {c053}.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c054"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening feature flag default for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m059",
+   "mixed": false,
+   "scope": "delivery/flags",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening feature flag default; revert afterwards. Marker {c054}.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c055"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "scheduler lookahead must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m060",
+   "mixed": true,
+   "scope": "scheduling/diagnosis",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c055}. Separately, scheduler lookahead must stay inside the repository default.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c056"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "retry budget direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements retry budget through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m061",
+   "mixed": true,
+   "scope": "resilience/retry",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c056}. Organization-wide, retry budget direction is set centrally. In this service we implement retry budget through the shared helper.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c057"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m062",
+   "mixed": false,
+   "scope": "multitenancy/isolation",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c057}.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c058"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "cache invalidation is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m063",
+   "mixed": false,
+   "scope": "caching/invalidation",
+   "stratum": "codebase_fact",
+   "template": "In this repository the cache invalidation is bounded by the checked-in default. My private note marker is {c058}.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c059"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "migration ordering direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m064",
+   "mixed": false,
+   "scope": "storage/migrations",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, migration ordering direction is owned by the architecture authority. Marker {c059}.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "question",
+     "is queue backpressure still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m065",
+   "mixed": false,
+   "scope": "queueing/backpressure",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether queue backpressure still matters here at all. Marker (no marker).",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c060"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening token rotation for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m066",
+   "mixed": false,
+   "scope": "identity/rotation",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening token rotation; revert afterwards. Marker {c060}.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c061"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "index rebuild must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m067",
+   "mixed": true,
+   "scope": "search/indexing",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c061}. Separately, index rebuild must stay inside the repository default.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c062"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "audit retention direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements audit retention through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m068",
+   "mixed": true,
+   "scope": "compliance/retention",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c062}. Organization-wide, audit retention direction is set centrally. In this service we implement audit retention through the shared helper.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c063"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m069",
+   "mixed": false,
+   "scope": "delivery/flags",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c063}.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c064"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "scheduler lookahead is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m070",
+   "mixed": false,
+   "scope": "scheduling/diagnosis",
+   "stratum": "codebase_fact",
+   "template": "In this repository the scheduler lookahead is bounded by the checked-in default. My private note marker is {c064}.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c065"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "retry budget direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m071",
+   "mixed": false,
+   "scope": "resilience/retry",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, retry budget direction is owned by the architecture authority. Marker {c065}.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c066"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is tenant isolation still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m072",
+   "mixed": false,
+   "scope": "multitenancy/isolation",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether tenant isolation still matters here at all. Marker {c066}.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c067"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening cache invalidation for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m073",
+   "mixed": false,
+   "scope": "caching/invalidation",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening cache invalidation; revert afterwards. Marker {c067}.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c068"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "migration ordering must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m074",
+   "mixed": true,
+   "scope": "storage/migrations",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c068}. Separately, migration ordering must stay inside the repository default.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c069"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "queue backpressure direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements queue backpressure through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m075",
+   "mixed": true,
+   "scope": "queueing/backpressure",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c069}. Organization-wide, queue backpressure direction is set centrally. In this service we implement queue backpressure through the shared helper.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m076",
+   "mixed": false,
+   "scope": "identity/rotation",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker (no marker).",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c070"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "index rebuild is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m077",
+   "mixed": false,
+   "scope": "search/indexing",
+   "stratum": "codebase_fact",
+   "template": "In this repository the index rebuild is bounded by the checked-in default. My private note marker is {c070}.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c071"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "audit retention direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m078",
+   "mixed": false,
+   "scope": "compliance/retention",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, audit retention direction is owned by the architecture authority. Marker {c071}.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c072"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is feature flag default still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m079",
+   "mixed": false,
+   "scope": "delivery/flags",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether feature flag default still matters here at all. Marker {c072}.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c073"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening scheduler lookahead for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m080",
+   "mixed": false,
+   "scope": "scheduling/diagnosis",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening scheduler lookahead; revert afterwards. Marker {c073}.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c074"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "retry budget must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m081",
+   "mixed": true,
+   "scope": "resilience/retry",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c074}. Separately, retry budget must stay inside the repository default.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c075"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "tenant isolation direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements tenant isolation through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m082",
+   "mixed": true,
+   "scope": "multitenancy/isolation",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c075}. Organization-wide, tenant isolation direction is set centrally. In this service we implement tenant isolation through the shared helper.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c076"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m083",
+   "mixed": false,
+   "scope": "caching/invalidation",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c076}.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c077"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "migration ordering is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m084",
+   "mixed": false,
+   "scope": "storage/migrations",
+   "stratum": "codebase_fact",
+   "template": "In this repository the migration ordering is bounded by the checked-in default. My private note marker is {c077}.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c078"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "queue backpressure direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m085",
+   "mixed": false,
+   "scope": "queueing/backpressure",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, queue backpressure direction is owned by the architecture authority. Marker {c078}.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c079"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is token rotation still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m086",
+   "mixed": false,
+   "scope": "identity/rotation",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether token rotation still matters here at all. Marker {c079}.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening index rebuild for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m087",
+   "mixed": false,
+   "scope": "search/indexing",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening index rebuild; revert afterwards. Marker (no marker).",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c080"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "audit retention must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m088",
+   "mixed": true,
+   "scope": "compliance/retention",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c080}. Separately, audit retention must stay inside the repository default.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c081"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "feature flag default direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements feature flag default through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m089",
+   "mixed": true,
+   "scope": "delivery/flags",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c081}. Organization-wide, feature flag default direction is set centrally. In this service we implement feature flag default through the shared helper.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c082"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m090",
+   "mixed": false,
+   "scope": "scheduling/diagnosis",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c082}.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c083"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "retry budget is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m091",
+   "mixed": false,
+   "scope": "resilience/retry",
+   "stratum": "codebase_fact",
+   "template": "In this repository the retry budget is bounded by the checked-in default. My private note marker is {c083}.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c084"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "tenant isolation direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m092",
+   "mixed": false,
+   "scope": "multitenancy/isolation",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, tenant isolation direction is owned by the architecture authority. Marker {c084}.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c085"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is cache invalidation still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m093",
+   "mixed": false,
+   "scope": "caching/invalidation",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether cache invalidation still matters here at all. Marker {c085}.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c086"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening migration ordering for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m094",
+   "mixed": false,
+   "scope": "storage/migrations",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening migration ordering; revert afterwards. Marker {c086}.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c087"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "queue backpressure must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m095",
+   "mixed": true,
+   "scope": "queueing/backpressure",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c087}. Separately, queue backpressure must stay inside the repository default.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c088"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "token rotation direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements token rotation through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m096",
+   "mixed": true,
+   "scope": "identity/rotation",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c088}. Organization-wide, token rotation direction is set centrally. In this service we implement token rotation through the shared helper.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c089"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m097",
+   "mixed": false,
+   "scope": "search/indexing",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c089}.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "constraint",
+     "audit retention is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m098",
+   "mixed": false,
+   "scope": "compliance/retention",
+   "stratum": "codebase_fact",
+   "template": "In this repository the audit retention is bounded by the checked-in default. My private note marker is (no marker).",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c090"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "feature flag default direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m099",
+   "mixed": false,
+   "scope": "delivery/flags",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, feature flag default direction is owned by the architecture authority. Marker {c090}.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c091"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is scheduler lookahead still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m100",
+   "mixed": false,
+   "scope": "scheduling/diagnosis",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether scheduler lookahead still matters here at all. Marker {c091}.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c092"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening retry budget for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m101",
+   "mixed": false,
+   "scope": "resilience/retry",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening retry budget; revert afterwards. Marker {c092}.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c093"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "tenant isolation must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m102",
+   "mixed": true,
+   "scope": "multitenancy/isolation",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c093}. Separately, tenant isolation must stay inside the repository default.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c094"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "cache invalidation direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements cache invalidation through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m103",
+   "mixed": true,
+   "scope": "caching/invalidation",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c094}. Organization-wide, cache invalidation direction is set centrally. In this service we implement cache invalidation through the shared helper.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c095"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m104",
+   "mixed": false,
+   "scope": "storage/migrations",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c095}.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c096"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "queue backpressure is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m105",
+   "mixed": false,
+   "scope": "queueing/backpressure",
+   "stratum": "codebase_fact",
+   "template": "In this repository the queue backpressure is bounded by the checked-in default. My private note marker is {c096}.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c097"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "token rotation direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m106",
+   "mixed": false,
+   "scope": "identity/rotation",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, token rotation direction is owned by the architecture authority. Marker {c097}.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c098"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is index rebuild still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m107",
+   "mixed": false,
+   "scope": "search/indexing",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether index rebuild still matters here at all. Marker {c098}.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c099"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening audit retention for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m108",
+   "mixed": false,
+   "scope": "compliance/retention",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening audit retention; revert afterwards. Marker {c099}.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "feature flag default must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m109",
+   "mixed": true,
+   "scope": "delivery/flags",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week (no marker). Separately, feature flag default must stay inside the repository default.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c100"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "scheduler lookahead direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements scheduler lookahead through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m110",
+   "mixed": true,
+   "scope": "scheduling/diagnosis",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c100}. Organization-wide, scheduler lookahead direction is set centrally. In this service we implement scheduler lookahead through the shared helper.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c101"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m111",
+   "mixed": false,
+   "scope": "resilience/retry",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c101}.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c102"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "tenant isolation is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m112",
+   "mixed": false,
+   "scope": "multitenancy/isolation",
+   "stratum": "codebase_fact",
+   "template": "In this repository the tenant isolation is bounded by the checked-in default. My private note marker is {c102}.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c103"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "cache invalidation direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m113",
+   "mixed": false,
+   "scope": "caching/invalidation",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, cache invalidation direction is owned by the architecture authority. Marker {c103}.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c104"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is migration ordering still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m114",
+   "mixed": false,
+   "scope": "storage/migrations",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether migration ordering still matters here at all. Marker {c104}.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c105"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening queue backpressure for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m115",
+   "mixed": false,
+   "scope": "queueing/backpressure",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening queue backpressure; revert afterwards. Marker {c105}.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c106"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "token rotation must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m116",
+   "mixed": true,
+   "scope": "identity/rotation",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c106}. Separately, token rotation must stay inside the repository default.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c107"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "index rebuild direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements index rebuild through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m117",
+   "mixed": true,
+   "scope": "search/indexing",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c107}. Organization-wide, index rebuild direction is set centrally. In this service we implement index rebuild through the shared helper.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c108"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m118",
+   "mixed": false,
+   "scope": "compliance/retention",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c108}.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c109"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "feature flag default is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m119",
+   "mixed": false,
+   "scope": "delivery/flags",
+   "stratum": "codebase_fact",
+   "template": "In this repository the feature flag default is bounded by the checked-in default. My private note marker is {c109}.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "decision",
+     "scheduler lookahead direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m120",
+   "mixed": false,
+   "scope": "scheduling/diagnosis",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, scheduler lookahead direction is owned by the architecture authority. Marker (no marker).",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c110"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is retry budget still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m121",
+   "mixed": false,
+   "scope": "resilience/retry",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether retry budget still matters here at all. Marker {c110}.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c111"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening tenant isolation for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m122",
+   "mixed": false,
+   "scope": "multitenancy/isolation",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening tenant isolation; revert afterwards. Marker {c111}.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c112"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "cache invalidation must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m123",
+   "mixed": true,
+   "scope": "caching/invalidation",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c112}. Separately, cache invalidation must stay inside the repository default.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c113"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "migration ordering direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements migration ordering through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m124",
+   "mixed": true,
+   "scope": "storage/migrations",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c113}. Organization-wide, migration ordering direction is set centrally. In this service we implement migration ordering through the shared helper.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c114"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m125",
+   "mixed": false,
+   "scope": "queueing/backpressure",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c114}.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c115"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "token rotation is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m126",
+   "mixed": false,
+   "scope": "identity/rotation",
+   "stratum": "codebase_fact",
+   "template": "In this repository the token rotation is bounded by the checked-in default. My private note marker is {c115}.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c116"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "index rebuild direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m127",
+   "mixed": false,
+   "scope": "search/indexing",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, index rebuild direction is owned by the architecture authority. Marker {c116}.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c117"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is audit retention still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m128",
+   "mixed": false,
+   "scope": "compliance/retention",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether audit retention still matters here at all. Marker {c117}.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c118"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening feature flag default for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m129",
+   "mixed": false,
+   "scope": "delivery/flags",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening feature flag default; revert afterwards. Marker {c118}.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c119"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "scheduler lookahead must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m130",
+   "mixed": true,
+   "scope": "scheduling/diagnosis",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c119}. Separately, scheduler lookahead must stay inside the repository default.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "retry budget direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements retry budget through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m131",
+   "mixed": true,
+   "scope": "resilience/retry",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently (no marker). Organization-wide, retry budget direction is set centrally. In this service we implement retry budget through the shared helper.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c120"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m132",
+   "mixed": false,
+   "scope": "multitenancy/isolation",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c120}.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c121"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "cache invalidation is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m133",
+   "mixed": false,
+   "scope": "caching/invalidation",
+   "stratum": "codebase_fact",
+   "template": "In this repository the cache invalidation is bounded by the checked-in default. My private note marker is {c121}.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c122"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "migration ordering direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m134",
+   "mixed": false,
+   "scope": "storage/migrations",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, migration ordering direction is owned by the architecture authority. Marker {c122}.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c123"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is queue backpressure still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m135",
+   "mixed": false,
+   "scope": "queueing/backpressure",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether queue backpressure still matters here at all. Marker {c123}.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c124"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening token rotation for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m136",
+   "mixed": false,
+   "scope": "identity/rotation",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening token rotation; revert afterwards. Marker {c124}.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c125"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "index rebuild must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m137",
+   "mixed": true,
+   "scope": "search/indexing",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c125}. Separately, index rebuild must stay inside the repository default.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c126"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "audit retention direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements audit retention through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m138",
+   "mixed": true,
+   "scope": "compliance/retention",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c126}. Organization-wide, audit retention direction is set centrally. In this service we implement audit retention through the shared helper.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c127"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m139",
+   "mixed": false,
+   "scope": "delivery/flags",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c127}.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c128"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "scheduler lookahead is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m140",
+   "mixed": false,
+   "scope": "scheduling/diagnosis",
+   "stratum": "codebase_fact",
+   "template": "In this repository the scheduler lookahead is bounded by the checked-in default. My private note marker is {c128}.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c129"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "retry budget direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m141",
+   "mixed": false,
+   "scope": "resilience/retry",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, retry budget direction is owned by the architecture authority. Marker {c129}.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "question",
+     "is tenant isolation still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m142",
+   "mixed": false,
+   "scope": "multitenancy/isolation",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether tenant isolation still matters here at all. Marker (no marker).",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [
+    "c130"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening cache invalidation for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m143",
+   "mixed": false,
+   "scope": "caching/invalidation",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening cache invalidation; revert afterwards. Marker {c130}.",
+   "topic": "cache invalidation"
+  },
+  {
+   "canary_slots": [
+    "c131"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "migration ordering must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m144",
+   "mixed": true,
+   "scope": "storage/migrations",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c131}. Separately, migration ordering must stay inside the repository default.",
+   "topic": "migration ordering"
+  },
+  {
+   "canary_slots": [
+    "c132"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "queue backpressure direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements queue backpressure through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m145",
+   "mixed": true,
+   "scope": "queueing/backpressure",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c132}. Organization-wide, queue backpressure direction is set centrally. In this service we implement queue backpressure through the shared helper.",
+   "topic": "queue backpressure"
+  },
+  {
+   "canary_slots": [
+    "c133"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m146",
+   "mixed": false,
+   "scope": "identity/rotation",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker {c133}.",
+   "topic": "token rotation"
+  },
+  {
+   "canary_slots": [
+    "c134"
+   ],
+   "gold_atoms": [
+    [
+     "constraint",
+     "index rebuild is bounded by the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m147",
+   "mixed": false,
+   "scope": "search/indexing",
+   "stratum": "codebase_fact",
+   "template": "In this repository the index rebuild is bounded by the checked-in default. My private note marker is {c134}.",
+   "topic": "index rebuild"
+  },
+  {
+   "canary_slots": [
+    "c135"
+   ],
+   "gold_atoms": [
+    [
+     "decision",
+     "audit retention direction is owned by the architecture authority",
+     [
+      "company"
+     ]
+    ]
+   ],
+   "message_id": "m148",
+   "mixed": false,
+   "scope": "compliance/retention",
+   "stratum": "company_architecture",
+   "template": "Organization-wide, audit retention direction is owned by the architecture authority. Marker {c135}.",
+   "topic": "audit retention"
+  },
+  {
+   "canary_slots": [
+    "c136"
+   ],
+   "gold_atoms": [
+    [
+     "question",
+     "is feature flag default still relevant",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m149",
+   "mixed": false,
+   "scope": "delivery/flags",
+   "stratum": "ambiguous_non_fact",
+   "template": "I wonder whether feature flag default still matters here at all. Marker {c136}.",
+   "topic": "feature flag default"
+  },
+  {
+   "canary_slots": [
+    "c137"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "try widening scheduler lookahead for today's incident",
+     [
+      "none"
+     ]
+    ]
+   ],
+   "message_id": "m150",
+   "mixed": false,
+   "scope": "scheduling/diagnosis",
+   "stratum": "temporary_suggestion",
+   "template": "For today's incident only, try widening scheduler lookahead; revert afterwards. Marker {c137}.",
+   "topic": "scheduler lookahead"
+  },
+  {
+   "canary_slots": [
+    "c138"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the on-call rotation",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "constraint",
+     "retry budget must stay inside the repository default",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m151",
+   "mixed": true,
+   "scope": "resilience/retry",
+   "stratum": "mixed_personal_codebase",
+   "template": "Personally I remember the rotation being brutal that week {c138}. Separately, retry budget must stay inside the repository default.",
+   "topic": "retry budget"
+  },
+  {
+   "canary_slots": [
+    "c139"
+   ],
+   "gold_atoms": [
+    [
+     "observation",
+     "personal recollection about the review meeting",
+     [
+      "personal"
+     ]
+    ],
+    [
+     "decision",
+     "tenant isolation direction is set organization-wide",
+     [
+      "company"
+     ]
+    ],
+    [
+     "constraint",
+     "this service implements tenant isolation through the shared helper",
+     [
+      "codebase"
+     ]
+    ]
+   ],
+   "message_id": "m152",
+   "mixed": true,
+   "scope": "multitenancy/isolation",
+   "stratum": "mixed_three_store",
+   "template": "I recall the review meeting differently {c139}. Organization-wide, tenant isolation direction is set centrally. In this service we implement tenant isolation through the shared helper.",
+   "topic": "tenant isolation"
+  },
+  {
+   "canary_slots": [],
+   "gold_atoms": [
+    [
+     "observation",
+     "private recollection with no shared content",
+     [
+      "personal"
+     ]
+    ]
+   ],
+   "message_id": "m153",
+   "mixed": false,
+   "scope": "caching/invalidation",
+   "stratum": "private_only",
+   "template": "A private recollection with no shared content. Marker (no marker).",
+   "topic": "cache invalidation"
+  }
+ ],
+ "mixed_message_count": 44,
+ "provenance": "Deliberately constructed synthetic templates authored by the Tester for the acceptance instrument. No text derives from any real private conversation. spec/verification.md 'Evidence packet' requires committed V-2/V-3 fixtures to contain only generators, placeholder IDs, structural gold labels, and policies.",
+ "schema": "guildhall-acceptance-routing-gold/1"
+}

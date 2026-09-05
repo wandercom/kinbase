@@ -1,0 +1,174 @@
+{
+ "approval_count": 11,
+ "authority": "spec/product.md P-9; spec/verification.md V-9",
+ "blinded": true,
+ "item_count": 20,
+ "items": [
+  {
+   "atom_kind": "rationale",
+   "gold_decision": "approve",
+   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "item_id": "op07",
+   "proposed_destination": "codebase",
+   "rendered_statement": "The index rebuild runs nightly because the corpus is bounded."
+  },
+  {
+   "atom_kind": "observation",
+   "gold_decision": "reject",
+   "gold_reason": "protected provenance, non-durable, or not destination-eligible",
+   "item_id": "op12",
+   "proposed_destination": "none",
+   "rendered_statement": "A credential-shaped value appears in this note: AKIA<<REDACTED-SHAPE>>."
+  },
+  {
+   "atom_kind": "observation",
+   "gold_decision": "reject",
+   "gold_reason": "protected provenance, non-durable, or not destination-eligible",
+   "item_id": "op13",
+   "proposed_destination": "personal",
+   "rendered_statement": "Private note naming an individual and their home schedule."
+  },
+  {
+   "atom_kind": "observation",
+   "gold_decision": "reject",
+   "gold_reason": "protected provenance, non-durable, or not destination-eligible",
+   "item_id": "op15",
+   "proposed_destination": "none",
+   "rendered_statement": "A transcript path from the private session store."
+  },
+  {
+   "atom_kind": "decision",
+   "gold_decision": "approve",
+   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "item_id": "op06",
+   "proposed_destination": "company",
+   "rendered_statement": "Token rotation is owned by the identity steward."
+  },
+  {
+   "atom_kind": "constraint",
+   "gold_decision": "approve",
+   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "item_id": "op05",
+   "proposed_destination": "codebase",
+   "rendered_statement": "Queue backpressure is applied before the worker pool, not inside it."
+  },
+  {
+   "atom_kind": "constraint",
+   "gold_decision": "approve",
+   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "item_id": "op02",
+   "proposed_destination": "codebase",
+   "rendered_statement": "Tenant isolation is enforced at the shared helper boundary."
+  },
+  {
+   "atom_kind": "question",
+   "gold_decision": "reject",
+   "gold_reason": "protected provenance, non-durable, or not destination-eligible",
+   "item_id": "op16",
+   "proposed_destination": "none",
+   "rendered_statement": "Ambiguous musing with no decidable claim."
+  },
+  {
+   "atom_kind": "constraint",
+   "gold_decision": "approve",
+   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "item_id": "op10",
+   "proposed_destination": "codebase",
+   "rendered_statement": "The scheduler never writes outside its declared root."
+  },
+  {
+   "atom_kind": "constraint",
+   "gold_decision": "approve",
+   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "item_id": "op00",
+   "proposed_destination": "codebase",
+   "rendered_statement": "Diagnosis must read the deployed lookahead, not the source default."
+  },
+  {
+   "atom_kind": "observation",
+   "gold_decision": "reject",
+   "gold_reason": "protected provenance, non-durable, or not destination-eligible",
+   "item_id": "op19",
+   "proposed_destination": "none",
+   "rendered_statement": "Unreviewed branch ADR asserting a new global rule."
+  },
+  {
+   "atom_kind": "observation",
+   "gold_decision": "reject",
+   "gold_reason": "protected provenance, non-durable, or not destination-eligible",
+   "item_id": "op17",
+   "proposed_destination": "none",
+   "rendered_statement": "Copied chorus repeating one prior with no independent source."
+  },
+  {
+   "atom_kind": "decision",
+   "gold_decision": "approve",
+   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "item_id": "op04",
+   "proposed_destination": "company",
+   "rendered_statement": "Migrations must be backward-compatible across one release."
+  },
+  {
+   "atom_kind": "constraint",
+   "gold_decision": "approve",
+   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "item_id": "op08",
+   "proposed_destination": "codebase",
+   "rendered_statement": "Audit records are retained for the declared retention class."
+  },
+  {
+   "atom_kind": "observation",
+   "gold_decision": "reject",
+   "gold_reason": "protected provenance, non-durable, or not destination-eligible",
+   "item_id": "op18",
+   "proposed_destination": "personal",
+   "rendered_statement": "Contact details for a named authority."
+  },
+  {
+   "atom_kind": "decision",
+   "gold_decision": "approve",
+   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "item_id": "op01",
+   "proposed_destination": "company",
+   "rendered_statement": "Retry budgets are set organization-wide by the architecture authority."
+  },
+  {
+   "atom_kind": "rationale",
+   "gold_decision": "approve",
+   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "item_id": "op03",
+   "proposed_destination": "codebase",
+   "rendered_statement": "Cache invalidation is wholesale because objects are small."
+  },
+  {
+   "atom_kind": "observation",
+   "gold_decision": "reject",
+   "gold_reason": "protected provenance, non-durable, or not destination-eligible",
+   "item_id": "op14",
+   "proposed_destination": "none",
+   "rendered_statement": "Temporary incident workaround valid only for today."
+  },
+  {
+   "atom_kind": "decision",
+   "gold_decision": "approve",
+   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "item_id": "op09",
+   "proposed_destination": "company",
+   "rendered_statement": "Feature-flag defaults are owned by the delivery steward."
+  },
+  {
+   "atom_kind": "observation",
+   "gold_decision": "reject",
+   "gold_reason": "protected provenance, non-durable, or not destination-eligible",
+   "item_id": "op11",
+   "proposed_destination": "personal",
+   "rendered_statement": "Personal recollection about a colleague's performance review."
+  }
+ ],
+ "provenance": "Deliberately constructed synthetic items authored by the Tester. No text derives from any real private conversation.",
+ "schema": "guildhall-acceptance-operator-exercise/1",
+ "thresholds": {
+  "accuracy_minimum": 0.95,
+  "median_decision_seconds_maximum": 30.0
+ }
+}

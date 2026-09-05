@@ -1,0 +1,16 @@
+# Guildhall acceptance-instrument dependencies.
+#
+# Lane rule (Tester dispatch): dependencies stay beneath tests/ so no shared
+# packaging file is edited. Install into tests/.venv via tests/run-acceptance.sh.
+#
+# verification.md "Nonfunctional proof gates" requires the full test suite to run
+# "without undeclared network access", so every dependency is pinned by name and
+# floor here and nothing is fetched at run time.
+pytest>=8.0
+pytest-timeout>=2.3
+
+# Optional accelerator for Ed25519 test keys. The suite ships a self-contained
+# RFC 8032 implementation in acceptance/_harness/ed25519_pure.py and runs without
+# this package; when present it is used for speed only and must agree byte-for-byte
+# with the pure implementation (asserted in test_harness_selftest.py).
+cryptography>=42.0 ; python_version >= "3.9"
