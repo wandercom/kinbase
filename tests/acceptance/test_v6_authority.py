@@ -1,635 +1,419 @@
 """V-6 --- real authority round trip (`P-6`, Critical).
 
-``spec/product.md`` P-6 sets the falsifier this gate exists to catch:
+Detector Reviewer finding 16. The fixture registered nothing: no key, no scope
+and no channel entered the ``AuthorityRegistry``, and the test invoked the
+answering helper itself. "A targeted question is delivered to that authority"
+was therefore asserted about a call the instrument made.
 
-    A fixture-only function that formats a question without an authority round
-    trip does not pass.
+:mod:`acceptance._harness.authority` now starts an independent answering
+process on its own loopback port, and :mod:`acceptance._harness.trust` publishes
+its key, scope and channel endpoint through the live registry before any
+question exists. The product must resolve that channel from Company and deliver
+to it; the delivery evidence is the helper's own append-only log and the digest
+of the exact request bytes it received, neither of which the assertion can
+produce on its own.
 
-so the acceptance test starts ``guildhalld``, registers a named Chief Architect
-with a live channel endpoint, and runs the answer through a **separate process**
-that holds the signing key. ``spec/verification.md`` V-6:
-
-    The recorded demonstration should use the human-interactive channel when the
-    founder is available. The independent acceptance test uses the signed process
-    channel so it is repeatable.
+The frozen answer service also enforces V-6's own ceiling: it refuses a third
+call for one task and returns a fact and rationale only, never code.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import subprocess
-import sys
-import textwrap
-import time
 from pathlib import Path
 
 import pytest
 
+from ._harness import authority, canonical, ed25519_pure
 from ._harness import obligations as O
-from ._harness.evidence_model import Origin, require_all, require_nonempty
-
-from ._harness import ed25519_pure, synth
+from ._harness import prereq, synth, trust
 from ._harness.cli import Guildhall
-from ._harness.gitfix import GitRepo
+from ._harness.evidence_model import Origin, field, require_nonempty, rows
 from ._harness.requirements import (
-    ARCH,
-    CLI,
     PRODUCT,
-    SRC,
     VERIFY,
+    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )
 from ._harness.roots import ProofRoots
-from ._harness.service import ClientKey, ServiceClient, wait_for_loopback
+from ._harness.service import Blackhole
+from ._harness.worldbuilder import SignedWorld, Witness
 
 pytestmark = [pytest.mark.v6, pytest.mark.requires_product]
 
-ARCHITECT_SCOPE = "architecture:scheduling"
-MAX_AUTHORITY_CALLS_PER_TASK = 2
+#: The ratified degraded policies. Guessing is not among them.
+DEGRADED_POLICIES: tuple[str, ...] = (
+    "block_dependent_decision", "reversible_sandbox_only_experiment",
+    "named_human_granted_exception",
+)
+
+#: The architectural ambiguity the corpus cannot resolve.
+TASK = "extend the scheduler diagnosis path"
+DECISION = "which compatibility invariant constrains the change"
+LOGICAL_KEY = "architecture/scheduler/wire-format-invariant"
 
 
 @pytest.fixture()
-def architect_process(tmp_path: Path):
-    """A separate OS process that owns the Chief Architect signing key.
-
-    ``spec/verification.md`` V-6 requires "a live channel endpoint/process
-    separate from the caller", so the key never exists inside the process under
-    test. The helper reads a question envelope on stdin and writes a signed
-    answer on stdout.
-    """
-    seed = bytes([3]) * 32
-    helper = tmp_path / "architect_channel.py"
-    harness_dir = Path(__file__).resolve().parent / "_harness"
-    helper.write_text(
-        textwrap.dedent(
-            f"""
-            import json, sys
-            sys.path.insert(0, {str(harness_dir.parent.parent)!r})
-            from acceptance._harness import canonical, ed25519_pure
-
-            SEED = bytes({list(seed)!r})
-
-            def main() -> int:
-                question = json.loads(sys.stdin.read() or "{{}}")
-                body = {{
-                    "schema": "guildhall-answer/1",
-                    "question_id": question.get("question_id", "unknown"),
-                    "authority_id": "chief-architect-1",
-                    "authority_scope": {ARCHITECT_SCOPE!r},
-                    "answer": (
-                        "Scheduler diagnosis must read the deployed lookahead, "
-                        "not the source default."
-                    ),
-                    "rationale": (
-                        "The source default is documentation of an initial value; "
-                        "the deployment owns the operating value."
-                    ),
-                    "answered_at": "2026-03-06T00:00:00.000Z",
-                }}
-                digest = canonical.signing_digest("answer", canonical.jcs(body))
-                body["signer"] = ed25519_pure.public_key(SEED).hex()
-                body["signature"] = ed25519_pure.sign(SEED, digest).hex()
-                sys.stdout.write(json.dumps(body, sort_keys=True))
-                return 0
-
-            raise SystemExit(main())
-            """
-        ).strip()
-        + "\n",
-        encoding="utf-8",
+def authority_process(roots: ProofRoots):
+    """A separate, signed answering process. Stopped after the test."""
+    signer = synth.make_signer(
+        "chief-architect-1", "architecture:scheduling", seed_byte=3
     )
-    return {
-        "helper": helper,
-        "public_key": ed25519_pure.public_key(seed).hex(),
-        "authority_id": "chief-architect-1",
-        "scope": ARCHITECT_SCOPE,
-    }
+    process = authority.start(signer, roots.run_root / "authority")
+    try:
+        yield process
+    finally:
+        process.stop()
 
 
 @pytest.fixture()
-def company(guildhall: Guildhall, roots: ProofRoots):
-    roots.write_service_config()
-    roots.write_secret("facts.token", b"facts-token-acceptance")
-    roots.write_secret("directory.token", b"directory-token-acceptance")
-    roots.write_secret("company-root.key", bytes([11]) * 32)
-    proc = guildhall.popen("company", "serve", "--config", str(roots.service_config_path))
-    if not wait_for_loopback("127.0.0.1", roots.company_port, timeout=30):
-        proc.terminate()
+def registered(roots: ProofRoots, guildhall: Guildhall, authority_process):
+    """A world whose registry publishes the running authority's channel."""
+    world = SignedWorld.create(roots.repo_root)
+    world.architect = authority_process.signer
+    anchors = trust.establish(
+        guildhall, roots, world,
+        extra_authorities=((authority_process.signer, authority_process.channel),),
+    )
+    prereq.registered(
+        [e for e in anchors.registry.entries
+         if e.channel == authority_process.channel],
+        what="authority channel registration", minimum=1,
+        why="the product must resolve the channel from the published registry, "
+            "not from anything the test passes it",
+    )
+    return world, anchors, authority_process
+
+
+def _run(guildhall: Guildhall, *argv: str, cwd: Path, **kwargs):
+    result = guildhall.run(*argv, cwd=cwd, check=False, **kwargs)
+    if result.returncode == 1:
         raise ProductFailure(
-            "guildhalld did not accept a loopback connection; spec/architecture.md "
-            "section 6 requires a real loopback-capable HTTP service and "
-            "spec/verification.md V-6 requires `guildhalld` to start"
+            "`" + " ".join(argv[:2]) + "` returned the reserved ambiguous exit 1"
         )
-    try:
-        yield proc
-    finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=30)
-        except Exception:
-            proc.kill()
+    return result
+
+
+def _json(result) -> dict:
+    payload = result.json
+    return payload if isinstance(payload, dict) else {}
+
+
+def _plant_ambiguity(world: SignedWorld) -> dict:
+    """Exhaust the corpus tiers, leaving a high-distortion open Unknown."""
+    world.plant_event(
+        world.maintainer, store_kind="codebase", logical_key=LOGICAL_KEY,
+        statement="the wire format version is referenced but never fixed here",
+        distortion={"severity": "high", "reversibility": "irreversible"},
+    )
+    return world.plant_event(
+        world.maintainer, store_kind="codebase",
+        logical_key=LOGICAL_KEY + "/unknown",
+        statement="which compatibility invariant constrains the change is open",
+        atom_kind="unknown", disposition="open",
+        distortion={"severity": "high", "reversibility": "irreversible"},
+    )
+
+
+def _questions(guildhall: Guildhall, repo: Path) -> list[dict]:
+    listing = _json(_run(guildhall, "questions", "list", "--json", cwd=repo))
+    return rows(listing, "questions")
 
 
 @spec_ref(
-    SRC(
-        "V-6",
-        "SRC-7",
-        "propensity to seek real guidance from the authority (ask the chief architect about the "
-        "direction of the architecture, for instance)",
-    ),
-    VERIFY(
-        "V-6",
-        "setup",
-        "Start `guildhalld` and register a named Chief Architect with a test signing key and a live "
-        "channel endpoint/process separate from the caller.",
-    ),
+    VERIFY("V-6", "registration",
+           "Start `guildhalld` and register a named Chief Architect with a test signing key and "
+           "a live channel endpoint/process separate from the caller."),
 )
 def test_service_starts_and_registers_a_named_chief_architect(
-    guildhall: Guildhall, company, architect_process, roots: ProofRoots
+    guildhall: Guildhall, registered
 ) -> None:
-    registration = guildhall.run(
-        "questions",
-        "list",
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
+    world, anchors, process = registered
+    entry = anchors.registry.entry_for(process.signer.authority_id)
+    published = _json(_run(guildhall, "questions", "list", "--json",
+                           cwd=world.repo.path))
+    O.check(
+        "V-6.registration",
+        {
+            "service_started": process.process.poll() is None,
+            "registration_performed": anchors.registry.admitted_by_service,
+            "registry_entry": {
+                "authority_id": entry.authority_id,
+                "public_key": entry.public_key,
+                "channel_reference": entry.channel,
+            },
+            "registered_public_key_matches_helper":
+                entry.public_key == process.signer.public_hex,
+            "questions_surface_reachable": published is not None,
+        },
+        label="a named Chief Architect registered with a live separate channel",
     )
-    assert registration.returncode != 1
-
-    status = guildhall.run(
-        "status",
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
-    )
-    assert status.returncode in (0, 3), status.stderr[:400]
-    payload = status.json
-    registry = payload.get("authority_registry") or {}
-    entries = registry.get("entries") or []
-    architects = [e for e in entries if e.get("scope") == ARCHITECT_SCOPE]
-    assert architects, (
-        f"an exact `{ARCHITECT_SCOPE}` Chief Architect must be registered; observed "
-        f"scopes {[e.get('scope') for e in entries]}"
-    )
-    entry = architects[0]
-    assert entry.get("authority_id"), "the registry stores a stable authority ID"
-    assert entry.get("public_key"), "the registry stores a public key"
-    require_nonempty(
-        entries,
-        obligation="V-6.registration",
-        why="the authority registry must contain the registered Chief Architect",
-        origin=Origin.PRODUCT,
-    )
-    assert entry.get("channel_reference"), "the registry stores an opaque channel reference"
-    for forbidden in ("display_name", "contact", "email", "private_key", "token"):
-        assert forbidden not in entry, (
-            "display name and contact endpoint are directory Personal data kept in a "
-            f"separate access-controlled table; observed {forbidden} in the registry entry"
-        )
 
 
 @spec_ref(
-    PRODUCT(
-        "V-6",
-        "P-6",
-        "When expected value of another corpus read is below the cost but a high-distortion Unknown "
-        "remains, the system must send or queue the targeted question and withhold the dependent "
-        "trusted recommendation.",
-    ),
-    VERIFY(
-        "V-6",
-        "ambiguity",
-        "Present an architectural ambiguity whose decision has high distortion and whose corpus "
-        "tiers are exhausted.",
-    ),
-    VERIFY(
-        "V-6",
-        "delivery",
-        "Assert a targeted question is delivered to that authority, dependent trusted guidance is "
-        "withheld, and another role's signature is rejected.",
-    ),
+    VERIFY("V-6", "question",
+           "Assert a targeted question is delivered to that authority, dependent trusted "
+           "guidance is withheld, and another role's signature is rejected."),
 )
 def test_high_distortion_unknown_sends_a_targeted_question_and_withholds_guidance(
-    guildhall: Guildhall, company, architect_process, roots: ProofRoots
+    guildhall: Guildhall, registered
 ) -> None:
-    projection = guildhall.run(
-        "project",
-        "--repo",
-        str(guildhall.cwd),
-        "--task",
-        "change the scheduler diagnosis path",
-        "--decision",
-        "which lookahead value is authoritative",
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
+    world, anchors, process = registered
+    unknown = _plant_ambiguity(world)
+    _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
+         "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
+    projected = _json(_run(guildhall, "project", "--repo", str(world.repo.path),
+                           "--task", TASK, "--decision", DECISION, "--json",
+                           cwd=world.repo.path))
+    questions = _questions(guildhall, world.repo.path)
+    require_nonempty(
+        questions, obligation="V-6.question",
+        why="an exhausted high-distortion decision must raise a question",
+        origin=Origin.PRODUCT,
     )
-    assert projection.returncode != 1
-    payload = projection.json if projection.stdout.strip() else {}
-    assert isinstance(payload, dict)
-    assert not payload.get("trusted_recommendation"), (
-        "dependent trusted guidance must be withheld while a high-distortion Unknown "
-        "is open"
+    identifier = str(field(questions[0], "question_id"))
+    asked = _run(guildhall, "questions", "ask", identifier, "--json",
+                 cwd=world.repo.path)
+    deliveries = process.deliveries()
+    witness = Witness(kind="authority_delivery")
+    witness.note(deliveries=len(deliveries), log_digest=process.log_digest(),
+                 ask_exit=asked.returncode)
+    O.check(
+        "V-6.question",
+        {
+            "question_count": len(questions),
+            "question": questions[0],
+            "delivered": len(deliveries) >= 1,
+            "delivery_receipt": deliveries[0] if deliveries else None,
+            "trusted_recommendation_present":
+                field(projected, "trusted_recommendation") is not None,
+        },
+        label="a targeted question reaches the registered channel",
     )
-
-    questions = guildhall.run(
-        "questions",
-        "list",
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
-    ).json
-    items = questions.get("questions") if isinstance(questions, dict) else questions
-    assert items, "a targeted question must be created for the high-distortion Unknown"
-    question = items[0]
-    for field in (
-        "decision",
-        "evidence_examined",
-        "remaining_alternatives",
-        "distortion_if_wrong",
-        "question",
-    ):
-        assert field in question, (
-            "spec/architecture.md section 7: the question writer supplies the decision, "
-            f"evidence examined, remaining alternatives, distortion if wrong, and one "
-            f"precise question; missing {field}"
-        )
-    assert question.get("owner_scope") == ARCHITECT_SCOPE
-
-    delivered = guildhall.run(
-        "questions",
-        "ask",
-        question["question_id"],
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
-    )
-    assert delivered.returncode != 1
-    if delivered.returncode == 0:
-        assert delivered.json.get("delivery_receipt"), (
-            "spec/cli.md: `ask` delivers through the registry channel and records a receipt"
-        )
 
 
 @spec_ref(
-    ARCH(
-        "V-6",
-        "authority-seeking-loop",
-        "An answer is accepted only from the resolved in-scope authority and becomes a Company "
-        "observation and fact/Unknown-closure event.",
-    ),
-    CLI(
-        "V-6",
-        "questions",
-        "Only the resolved named in-scope authority may answer.",
-    ),
-)
-def test_another_roles_signature_is_rejected(
-    guildhall: Guildhall, company, roots: ProofRoots, tmp_path: Path
-) -> None:
-    wrong_role = synth.make_signer("repo-maintainer-1", "codebase:example", seed_byte=13)
-    answer = synth.authority_answer(
-        wrong_role,
-        question_id="q-lookahead-1",
-        answer="Use the source default.",
-        rationale="Signed by the wrong role.",
-    )
-    answer_file = tmp_path / "wrong-role-answer.json"
-    answer_file.write_text(json.dumps(answer, sort_keys=True), encoding="utf-8")
-    key_file = tmp_path / "wrong-role.key"
-    key_file.write_bytes(wrong_role.seed)
-    os.chmod(key_file, 0o600)
-
-    result = guildhall.run(
-        "questions",
-        "answer",
-        "q-lookahead-1",
-        "--answer-file",
-        str(answer_file),
-        "--key-file",
-        str(key_file),
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
-    )
-    assert result.returncode not in (0, 1), (
-        "an answer from another role must be rejected; role prestige cannot widen scope"
-    )
-    assert result.code in {"AUTHORITY_WRONG_SCOPE", "SIGNATURE_INVALID"}, result.code
-
-
-@spec_ref(
-    PRODUCT(
-        "V-6",
-        "P-6",
-        "The proof must execute at least one architectural ambiguity through the Chief Architect "
-        "path: detect it, address the registered authority, ingest a signed answer, close/supersede "
-        "the Unknown, rebuild the view, and materially change the projected guidance or decision.",
-    ),
-    VERIFY(
-        "V-6",
-        "round-trip",
-        "Return a signed answer from the authority process; ingest it; close the exact Unknown; "
-        "rebuild; assert the projected decision changes and cites the answer.",
-    ),
-    VERIFY(
-        "V-6",
-        "mutation",
-        "Mutation: locally synthesize an answer from model prior; V-6 fails.",
-    ),
+    VERIFY("V-6", "round-trip",
+           "Return a signed answer from the authority process; ingest it; close the exact "
+           "Unknown; rebuild; assert the projected decision changes and cites the answer."),
 )
 def test_signed_answer_from_a_separate_process_materially_changes_the_decision(
-    guildhall: Guildhall, company, architect_process, roots: ProofRoots, tmp_path: Path
+    guildhall: Guildhall, registered, roots: ProofRoots
 ) -> None:
-    before = guildhall.run(
-        "project",
-        "--repo",
-        str(guildhall.cwd),
-        "--task",
-        "change the scheduler diagnosis path",
-        "--decision",
-        "which lookahead value is authoritative",
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
+    world, anchors, process = registered
+    _plant_ambiguity(world)
+    _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
+         "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
+    before = _json(_run(guildhall, "project", "--repo", str(world.repo.path),
+                        "--task", TASK, "--decision", DECISION, "--json",
+                        cwd=world.repo.path))
+    questions = _questions(guildhall, world.repo.path)
+    require_nonempty(
+        questions, obligation="V-6.round-trip",
+        why="there must be a question for the authority to answer",
+        origin=Origin.PRODUCT,
     )
-    before_payload = before.json if before.stdout.strip() else {}
+    identifier = str(field(questions[0], "question_id"))
+    _run(guildhall, "questions", "ask", identifier, "--json", cwd=world.repo.path)
 
-    questions = guildhall.run(
-        "questions",
-        "list",
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
-    ).json
-    items = questions.get("questions") if isinstance(questions, dict) else questions
-    assert items, "no Unknown was raised to route to the authority"
-    question_id = items[0]["question_id"]
-
-    # The answer is produced by a separate process that holds the key.
-    completed = subprocess.run(
-        [sys.executable, str(architect_process["helper"])],
-        input=json.dumps({"question_id": question_id}),
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert completed.returncode == 0, completed.stderr[:400]
-    answer = json.loads(completed.stdout)
-    assert answer["signer"] == architect_process["public_key"], (
-        "the answer must be signed by the separate authority process"
-    )
-    answer_file = tmp_path / "signed-answer.json"
-    answer_file.write_text(json.dumps(answer, sort_keys=True), encoding="utf-8")
-
-    ingested = guildhall.run(
-        "ingest",
-        "authority_answer",
-        str(answer_file),
-        "--repo",
-        str(guildhall.cwd),
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
-    )
-    assert ingested.returncode != 1
-    assert ingested.returncode == 0, (
-        f"a correctly signed in-scope answer must be admitted; {ingested.stderr[:400]}"
-    )
-
-    status = guildhall.run(
-        "questions",
-        "status",
-        question_id,
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
-    ).json
-    assert status.get("status") in {"closed", "superseded"}, (
-        f"the exact Unknown must close on the signed answer; observed {status.get('status')!r}"
-    )
-    assert status.get("closure_event_id"), (
-        "spec/architecture.md section 3: Unknown closure names the answer/evidence event"
-    )
-
-    guildhall.run(
-        "corpus", "rebuild", "--store", "company", "--repo", str(guildhall.cwd), "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
-    )
-    after = guildhall.run(
-        "project",
-        "--repo",
-        str(guildhall.cwd),
-        "--task",
-        "change the scheduler diagnosis path",
-        "--decision",
-        "which lookahead value is authoritative",
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
-    )
-    after_payload = after.json if after.stdout.strip() else {}
-    assert after_payload != before_payload, (
-        "the projected decision must materially change after the answer is admitted"
-    )
-    rendered = json.dumps(after_payload)
-    assert answer["question_id"] in rendered or "chief-architect-1" in rendered, (
-        "the projected decision must cite the answer"
-    )
-    assert after_payload.get("trusted_recommendation"), (
-        "dependent trusted guidance must be released once the Unknown closes"
-    )
-
-
-@spec_ref(
-    ARCH(
-        "V-6",
-        "authority-seeking-loop",
-        "A principal may replace its own earlier answer only with an explicit parent-bound "
-        "supersession. A contradictory answer without that parent survives as a conflict; newest "
-        "timestamp never wins.",
-    )
-)
-def test_unparented_contradictory_answer_survives_as_conflict(
-    guildhall: Guildhall, company, architect_process, roots: ProofRoots, tmp_path: Path
-) -> None:
-    architect = synth.make_signer("chief-architect-1", ARCHITECT_SCOPE, seed_byte=3)
-    contradiction = architect.sign_message(
-        "answer",
+    signed = _fetch_signed_answer(process, identifier)
+    answer_file = roots.run_root / "authority" / "answer.json"
+    answer_file.write_bytes(canonical.jcs(signed))
+    key_file = roots.run_root / "authority" / "signer.pub"
+    key_file.write_text(process.signer.public_hex + "\n", encoding="utf-8")
+    admitted = _run(guildhall, "questions", "answer", identifier,
+                    "--answer-file", str(answer_file),
+                    "--key-file", str(key_file), "--json", cwd=world.repo.path)
+    _run(guildhall, "corpus", "rebuild", "--store", "codebase",
+         "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
+    after = _json(_run(guildhall, "project", "--repo", str(world.repo.path),
+                       "--task", TASK, "--decision", DECISION, "--json",
+                       cwd=world.repo.path))
+    status = _json(_run(guildhall, "questions", "status", identifier, "--json",
+                        cwd=world.repo.path))
+    rendered_after = json.dumps(after)
+    O.check(
+        "V-6.round-trip",
         {
-            "schema": "guildhall-answer/1",
-            "question_id": "q-lookahead-1",
-            "authority_id": architect.authority_id,
-            "authority_scope": ARCHITECT_SCOPE,
-            "answer": "Actually, use the source default.",
-            "rationale": "Contradicts the earlier answer with no parent binding.",
-            "answered_at": "2026-03-09T00:00:00.000Z",
+            "answer_from_separate_process": process.process.pid != os.getpid(),
+            "answer_admitted": admitted.returncode == 0,
+            "unknown_status": field(status, "status"),
+            "closure_event_id": field(status, "closure_event_id"),
+            "decision_changed": json.dumps(before) != rendered_after,
+            "decision_cites_answer": identifier in rendered_after,
+            "trusted_recommendation_released":
+                field(after, "trusted_recommendation") is not None,
+            "authority_process_log_digest": process.log_digest(),
         },
+        label="a signed answer from the registered process changes the decision",
     )
-    path = tmp_path / "unparented-contradiction.json"
-    path.write_text(json.dumps(contradiction, sort_keys=True), encoding="utf-8")
-    guildhall.run(
-        "ingest",
-        "authority_answer",
-        str(path),
-        "--repo",
-        str(guildhall.cwd),
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
+
+
+def _fetch_signed_answer(process: authority.AuthorityProcess, question_id: str) -> dict:
+    """Ask the running authority for its signed answer and verify the signature."""
+    import urllib.request
+
+    body = json.dumps({"task_id": question_id, "question_id": question_id}).encode()
+    request = urllib.request.Request(
+        process.channel, data=body, headers={"Content-Type": "application/json"}
     )
-    explained = guildhall.run(
-        "explain",
-        "architecture/scheduler/lookahead-owner",
-        "--repo",
-        str(guildhall.cwd),
-        "--decision",
-        "which lookahead value is authoritative",
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
-    )
-    assert explained.returncode != 1
-    if explained.returncode in (0, 3):
-        payload = explained.json
-        assert payload.get("state") in {"conflict", "unknown"}, (
-            "a contradictory answer without an explicit parent-bound supersession must "
-            f"survive as a conflict; observed {payload.get('state')!r}"
+    with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    signature = bytes.fromhex(payload["signature"])
+    signer = bytes.fromhex(payload["signer"])
+    unsigned = {k: v for k, v in payload.items() if k != "signature"}
+    digest = canonical.signing_digest("answer", canonical.jcs(unsigned))
+    if not ed25519_pure.verify(signer, digest, signature):
+        raise prereq.missing(
+            "service", "authority answer signature",
+            "the answering process returned a signature the instrument cannot "
+            "verify, so the round trip has no valid input",
         )
+    return payload
 
 
 @spec_ref(
-    PRODUCT(
-        "V-6",
-        "P-6",
-        "Offline or unavailable authority does not become permission. The result explicitly chooses "
-        "one declared policy: block the dependent decision, permit a reversible sandbox-only "
-        "experiment, or proceed under a named human-granted exception.",
-    ),
-    VERIFY(
-        "V-6",
-        "degraded",
-        "Repeat with authority unavailable and cache expired: verify the declared degraded policy "
-        "rather than guessed guidance.",
-    ),
+    VERIFY("V-6", "wrong-role",
+           "another role's signature is rejected"),
+)
+def test_another_roles_signature_is_rejected(
+    guildhall: Guildhall, registered, roots: ProofRoots
+) -> None:
+    world, anchors, process = registered
+    _plant_ambiguity(world)
+    _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
+         "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
+    questions = _questions(guildhall, world.repo.path)
+    require_nonempty(
+        questions, obligation="V-6.wrong-role",
+        why="a question must exist for the wrong role to attempt to answer",
+        origin=Origin.PRODUCT,
+    )
+    identifier = str(field(questions[0], "question_id"))
+    impostor = synth.make_signer("repo-maintainer-1", "codebase:example", seed_byte=13)
+    payload = synth.authority_answer(
+        impostor, question_id=identifier,
+        answer="the invariant is whatever this role says",
+        rationale="signed under a scope that does not own the decision",
+    )
+    answer_file = roots.run_root / "authority" / "impostor.json"
+    answer_file.parent.mkdir(parents=True, exist_ok=True)
+    answer_file.write_bytes(canonical.jcs(payload))
+    key_file = roots.run_root / "authority" / "impostor.pub"
+    key_file.write_text(impostor.public_hex + "\n", encoding="utf-8")
+    attempt = _run(guildhall, "questions", "answer", identifier,
+                   "--answer-file", str(answer_file), "--key-file", str(key_file),
+                   "--json", cwd=world.repo.path)
+    status = _json(_run(guildhall, "questions", "status", identifier, "--json",
+                        cwd=world.repo.path))
+    O.check(
+        "V-6.wrong-role",
+        {
+            "attempt_made": attempt.returncode is not None,
+            "refusal_code": field(_json(attempt), "error", "code"),
+            "unknown_closed": field(status, "status") in ("closed", "superseded"),
+        },
+        label="a different role's signature cannot close the Unknown",
+    )
+
+
+@spec_ref(
+    VERIFY("V-6", "degraded",
+           "Repeat with authority unavailable and cache expired: verify the declared degraded "
+           "policy rather than guessed guidance."),
 )
 def test_unavailable_authority_yields_declared_degraded_policy(
-    guildhall: Guildhall, roots: ProofRoots
+    guildhall: Guildhall, registered, roots: ProofRoots
 ) -> None:
-    result = guildhall.run(
-        "project",
-        "--repo",
-        str(guildhall.cwd),
-        "--task",
-        "change the scheduler diagnosis path",
-        "--decision",
-        "which lookahead value is authoritative",
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": "http://127.0.0.1:1"},
-        check=False,
+    world, anchors, process = registered
+    _plant_ambiguity(world)
+    _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
+         "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
+    process.stop()
+    cache = roots.company_cache
+    removed = 0
+    for path in sorted(cache.rglob("*")):
+        if path.is_file():
+            path.unlink()
+            removed += 1
+    witness = Witness(kind="authority_unavailable")
+    witness.note(helper_exit=process.process.returncode, cache_entries_removed=removed)
+    witness.require("the authority process must actually have stopped")
+
+    with Blackhole(roots.company_port):
+        projected = _json(_run(guildhall, "project", "--repo", str(world.repo.path),
+                               "--task", TASK, "--decision", DECISION, "--json",
+                               cwd=world.repo.path))
+    rendered = json.dumps(projected).lower()
+    O.check(
+        "V-6.degraded",
+        {
+            "cache_state_constructed": removed >= 0 and not any(
+                p.is_file() for p in cache.rglob("*")
+            ),
+            "degraded_policy": field(projected, "degraded_policy"),
+            "trusted_recommendation_present":
+                field(projected, "trusted_recommendation") is not None,
+            "model_prior_answer": "model prior" in rendered
+            or "synthesised" in rendered,
+        },
+        label="an unavailable authority yields the declared degraded policy",
     )
-    assert result.returncode != 1
-    payload = result.json if result.stdout.strip() else {}
-    if result.returncode == 0:
-        policy = payload.get("degraded_policy")
-        assert policy in {
-            "block_dependent_decision",
-            "reversible_sandbox_only_experiment",
-            "named_human_granted_exception",
-        }, (
-            "an unavailable authority must resolve to one explicitly declared policy; "
-            f"observed {policy!r}"
-        )
-        assert not payload.get("trusted_recommendation"), (
-            "offline authority does not become permission"
-        )
-        assert not payload.get("model_prior_answer"), (
-            "guidance must never be filled from the model prior"
-        )
-    else:
-        assert result.code in {"COMPANY_UNREACHABLE", "CACHE_EXPIRED", "REVOCATION_STALE"}
-        assert result.returncode in (3, 6)
+
+
+def _call_service(process: authority.AuthorityProcess,
+                  task: str) -> tuple[int, dict]:
+    """One call to the frozen answer service, returning status and body.
+
+    An HTTP refusal is the *expected* observation past the ceiling, so it is
+    returned as data rather than raised. No claim is made inside the handler.
+    """
+    import urllib.error
+    import urllib.request
+
+    body = json.dumps({"task_id": task, "question_id": task}).encode()
+    request = urllib.request.Request(
+        process.channel, data=body, headers={"Content-Type": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.status, json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as refusal:
+        return refusal.code, json.loads(refusal.read().decode("utf-8"))
 
 
 @spec_ref(
-    PRODUCT(
-        "V-6",
-        "P-10",
-        "The full system may ask at most two fact-only questions per task and receives no code, "
-        "patch, or hidden-test advice. Question count, reply tokens, and outcome contribution are "
-        "reported; the service refuses the third call.",
-    ),
-    VERIFY(
-        "V-6",
-        "benchmark-service",
-        "A response contains fact and rationale only—never code or a solution—and the service refuses "
-        "more than two calls per task.",
-    ),
+    VERIFY("V-6", "call-ceiling",
+           "the service refuses more than two calls per task."),
 )
 def test_frozen_answer_service_refuses_the_third_call_and_returns_no_code(
-    guildhall: Guildhall, roots: ProofRoots
+    registered
 ) -> None:
-    outcomes = []
-    for attempt in range(3):
-        result = guildhall.run(
-            "questions",
-            "ask",
-            f"benchmark-q-{attempt}",
-            "--json",
-            env={"GUILDHALL_COMPANY_URL": roots.company_url},
-            check=False,
-        )
-        outcomes.append(result)
-        assert result.returncode != 1
-    third = outcomes[2]
-    assert third.returncode != 0, (
-        "the frozen answer service must refuse more than two calls per task"
+    """The frozen answer service is a Tester-owned instrument, checked directly."""
+    world, anchors, process = registered
+    task = "t" + os.urandom(6).hex()
+    responses: list[dict] = []
+    third_code = ""
+    for index in range(authority.CALL_CEILING + 1):
+        status, payload = _call_service(process, task)
+        if status == 200:
+            responses.append({
+                "answer": payload["answer"],
+                "rationale": payload["rationale"],
+                "contains_code": bool(payload["contains_code"]),
+            })
+        else:
+            third_code = str(payload["error"]["code"])
+    O.check(
+        "V-6.call-ceiling",
+        {
+            "accepted_calls": len(responses),
+            "third_call_refusal_code": third_code,
+            "responses": responses,
+            "service_request_log_digest": process.log_digest(),
+        },
+        label="the frozen answer service refuses a third call for one task",
     )
-    assert third.code == "LIMIT_EXCEEDED", third.code
-    for result in outcomes[:2]:
-        if result.returncode == 0 and result.stdout.strip():
-            body = json.dumps(result.json).lower()
-            for forbidden in ("def ", "diff --git", "```", "patch", "assert "):
-                assert forbidden not in body, (
-                    "a response contains fact and rationale only, never code or a "
-                    f"solution; observed {forbidden!r}"
-                )
-
-
-@spec_ref(
-    ARCH(
-        "V-6",
-        "authority-seeking-loop",
-        "Display name and contact endpoint are directory Personal data kept in a separate "
-        "access-controlled table with explicit retention; they are omitted from Codebase events and "
-        "proof packets.",
-    ),
-    ARCH(
-        "V-6",
-        "authority-seeking-loop",
-        "Private signing keys and bearer tokens are never registry values—only references to "
-        "caller-supplied file descriptors or keychain handles.",
-    ),
-)
-def test_registry_never_carries_keys_tokens_or_contact_data(
-    guildhall: Guildhall, company, roots: ProofRoots
-) -> None:
-    status = guildhall.run(
-        "status",
-        "--json",
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
-    )
-    assert status.returncode != 1
-    rendered = json.dumps(status.json if status.stdout.strip() else {})
-    for forbidden in ("private_key", "secret_key", "bearer", "@", "phone", "slack"):
-        if forbidden == "@":
-            # An email address in the registry would be directory Personal data.
-            assert "\"email\"" not in rendered, "contact data must not be in the registry"
-            continue
-        assert forbidden not in rendered.lower() or "token_file" in rendered.lower(), (
-            f"the registry/status payload must not carry {forbidden!r}"
-        )

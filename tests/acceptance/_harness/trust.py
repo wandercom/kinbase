@@ -105,7 +105,7 @@ class AuthorityRegistry:
             "authority_cursor": cursor,
             "entries": [e.as_json() for e in self.entries],
         }
-        return self.steward.sign_message("authority-registry", body)
+        return self.steward.sign_message("authority-registry-entry", body)
 
     def entry_for(self, authority_id: str) -> RegisteredAuthority:
         for entry in self.entries:
