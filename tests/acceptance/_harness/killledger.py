@@ -39,6 +39,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
+from . import rawcontrols
 from .catalog import OBLIGATIONS, Obligation
 from .evidence_model import Evidence, Origin
 from .requirements import HarnessInvalid, ProductFailure
@@ -71,7 +72,9 @@ class KillRow:
     detector_result: str
     negative_result: str
     channel: str
-    detail: str = ""
+    detail: str
+    #: Executable pre-execution planters bound to this obligation's own nodes.
+    bound_product_mutations: tuple[str, ...] = ()
 
     @property
     def sound(self) -> bool:
@@ -91,6 +94,7 @@ class KillRow:
             "threshold": self.tag,
             "clause_kind": self.clause_kind,
             "fail_closed": self.fail_closed,
+            "bound_product_mutations": list(self.bound_product_mutations),
             "positive_control": self.positive_control,
             "negative_control": self.negative_control,
             "product_mutation": self.product_mutation,
@@ -128,9 +132,17 @@ def run_row(obligation: Obligation, tag: str) -> KillRow:
     channel = ""
     detail = ""
 
+    # Detector Reviewer finding 4: every control below is *frozen bytes* read
+    # from tests/fixtures/controls/controls.json, not a payload derived from the
+    # clause under test. A clause that is later loosened no longer rejects its
+    # own frozen negative, which is what makes the row sensitive at all.
+    frozen_positive = rawcontrols.positive(obligation.oid)
+    frozen_negative = rawcontrols.negative(obligation.oid, tag)
+    frozen_benign = rawcontrols.benign(obligation.oid, tag)
+
     # 1. Positive control: conforming evidence must be accepted.
     try:
-        clause_set.check(_evidence(obligation, f"pc:{tag}", clause_set.conforming()))
+        clause_set.check(_evidence(obligation, f"pc:{tag}", frozen_positive))
         positive = ACCEPTED
     except (ProductFailure, HarnessInvalid) as exc:
         positive = REJECTED
@@ -138,7 +150,7 @@ def run_row(obligation: Obligation, tag: str) -> KillRow:
 
     # 2. Product mutation: a violating clause must be caught, in the declared
     #    fail-closed channel.
-    violating = clause_set.violating(tag)
+    violating = frozen_negative
     try:
         clause_set.check(_evidence(obligation, f"pm:{tag}", violating))
         product = SURVIVED
@@ -166,7 +178,7 @@ def run_row(obligation: Obligation, tag: str) -> KillRow:
 
     # 4. Negative control: a permitted perturbation must stay clean.
     try:
-        clause_set.check(_evidence(obligation, f"nc:{tag}", clause_set.benign(tag)))
+        clause_set.check(_evidence(obligation, f"nc:{tag}", frozen_benign))
         negative = ACCEPTED
     except (ProductFailure, HarnessInvalid) as exc:
         negative = FALSE_POSITIVE
@@ -188,6 +200,7 @@ def run_row(obligation: Obligation, tag: str) -> KillRow:
         negative_result=negative,
         channel=channel,
         detail=detail,
+        bound_product_mutations=rawcontrols.product_mutations(obligation.oid),
     )
 
 

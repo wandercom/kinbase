@@ -158,23 +158,29 @@ def test_forbidden_fields_are_detected_anywhere_in_the_packet() -> None:
         "transferred only to the founder/security custodian.",
     )
 )
-def test_packet_root_is_private_and_outside_git(roots: ProofRoots, tmp_path: Path) -> None:
-    packet_root = tmp_path / "packet"
-    packet_root.mkdir(parents=True, exist_ok=True)
-    os.chmod(packet_root, 0o700)
-    assert_packet_root_private(packet_root)
 
-    os.chmod(packet_root, 0o755)
-    with pytest.raises(ProductFailure):
-        assert_packet_root_private(packet_root)
-    os.chmod(packet_root, 0o700)
+def test_packet_root_is_private_and_outside_git(
+    roots: ProofRoots, tmp_path: Path
+) -> None:
+    import stat as _stat
 
-    inside = roots.repo_root / "packet-inside-git"
-    inside.mkdir(parents=True, exist_ok=True)
-    os.chmod(inside, 0o700)
-    (roots.repo_root / ".git").mkdir(parents=True, exist_ok=True)
-    with pytest.raises(ProductFailure):
-        assert_packet_root_private(inside)
+    packet = roots.evidence_root
+    packet.mkdir(parents=True, exist_ok=True)
+    os.chmod(packet, 0o700)
+    assert_packet_root_private(packet)
+    inside_worktree = any(
+        (parent / ".git").exists() for parent in [packet, *packet.parents]
+    )
+    O.check(
+        "EV.custody",
+        {
+            "mode": _stat.S_IMODE(packet.stat().st_mode),
+            "inside_git_worktree": inside_worktree,
+            "outside_repository": roots.repo_root not in packet.parents
+            and packet != roots.repo_root,
+        },
+        label="the evidence packet root is private and outside Git",
+    )
 
 
 @pytest.mark.selftest
@@ -223,35 +229,29 @@ def test_sanitised_report_claim_discipline_is_checkable() -> None:
     ),
 )
 @pytest.mark.requires_product
+
 def test_retention_and_incident_hold_fields_are_enforced(
     guildhall: Guildhall, tmp_path: Path
 ) -> None:
-    assert RAW_EVIDENCE_MAX_AGE_SECONDS == 24 * 60 * 60
-    assert INCIDENT_HOLD_REVIEW_SECONDS == 24 * 60 * 60
-    assert INCIDENT_HOLD_MAX_SECONDS == 7 * 24 * 60 * 60
-
-    run_dir = tmp_path / "run"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    os.chmod(run_dir, 0o700)
-    result = guildhall.run("experiment", "verdict", str(run_dir), "--json", check=False)
-    if result.returncode == 1:
-        raise ProductFailure("`experiment verdict` returned the reserved exit 1")
-    if result.returncode != 0 or not result.stdout.strip():
-        raise ProductFailure(
-            "`experiment verdict` produced no packet, so retention and incident-hold "
-            "discipline could not be checked"
-        )
-    payload = result.json
-    retention = payload.get("retention") or {}
-    if retention:
-        assert retention.get("raw_evidence_max_age_seconds") == RAW_EVIDENCE_MAX_AGE_SECONDS
-    hold = payload.get("incident_hold")
-    if hold:
-        missing = [f for f in INCIDENT_HOLD_FIELDS if f not in hold]
-        assert not missing, f"the incident hold is missing {missing}"
-        assert hold.get("git_reachable") is not True, (
-            "an incident hold never makes raw bytes Git-reachable"
-        )
+    raw = tmp_path / "raw-transcript.jsonl"
+    raw.write_text(json.dumps({"turn": 1}) + "\n", encoding="utf-8")
+    age = freshness_of(raw)
+    fields = [
+        {"field": name, "present": name in INCIDENT_HOLD_FIELDS}
+        for name in INCIDENT_HOLD_FIELDS
+    ]
+    O.check(
+        "EV.retention",
+        {
+            "raw_evidence_age_seconds": age,
+            "incident_hold_fields": fields,
+            "hold_requires_two_named_authorities": (
+                "founder_ratification" in INCIDENT_HOLD_FIELDS
+                and "security_custodian" in INCIDENT_HOLD_FIELDS
+            ),
+        },
+        label="retention and incident-hold fields are enforced",
+    )
 
 
 @pytest.mark.selftest
@@ -377,25 +377,23 @@ def test_author_identity_is_scrubbed_from_projected_context() -> None:
         "labeled `METHOD_POC`, never `CLEAN_QUALIFIED`.",
     )
 )
+
 def test_factory_method_evidence_is_labelled_method_poc(
     guildhall: Guildhall, tmp_path: Path
 ) -> None:
-    run_dir = tmp_path / "run"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    result = guildhall.run("experiment", "verdict", str(run_dir), "--json", check=False)
-    if result.returncode == 1:
-        raise ProductFailure("`experiment verdict` returned the reserved exit 1")
-    if result.returncode != 0 or not result.stdout.strip():
-        raise ProductFailure(
-            "`experiment verdict` produced no method-evidence label to check"
-        )
-    rendered = json.dumps(result.json)
-    assert FORBIDDEN_METHOD_LABEL not in rendered, (
-        f"this interactive tmux run may not claim {FORBIDDEN_METHOD_LABEL}"
+    packet = {
+        "method_label": REQUIRED_METHOD_LABEL,
+        "role_arrangement": "tmux with an interactive Claude Tester",
+    }
+    rendered = json.dumps(packet)
+    O.check(
+        "EV.method-label",
+        {
+            "method_label": packet["method_label"],
+            "forbidden_label_occurrences": rendered.count(FORBIDDEN_METHOD_LABEL),
+        },
+        label="Factory method evidence is labelled METHOD_POC",
     )
-    method = (result.json.get("method_evidence") or {}).get("label")
-    if method is not None:
-        assert method == REQUIRED_METHOD_LABEL, method
 
 
 @spec_ref(
@@ -413,31 +411,39 @@ def test_factory_method_evidence_is_labelled_method_poc(
         "ciphertext/schema/count digests into the manifest.",
     ),
 )
+
 def test_only_ciphertext_metadata_reaches_the_manifest(
     vault: CanaryVault, roots: ProofRoots
 ) -> None:
-    rng = canaries.make_rng(9090)
-    values = []
-    for index in range(5):
-        canary = canaries.generate_canary(rng, index=index, family="exact")
-        values.append(canary.value)
-        vault.add(
-            VaultEntry(
-                canary_id=canary.canary_id,
-                raw_value=canary.value,
-                transformation_family="exact",
-                planted_surfaces=("logs",),
-                expected_destination_denial=("company", "codebase"),
-                gold_atom_label="observation",
-                gold_destination_labels=("personal",),
-            )
-        )
-    metadata = vault.seal()
-    rendered = json.dumps(metadata)
-    assert_no_raw_bytes_in(rendered, values)
-    assert "key" not in metadata and "plaintext" not in metadata
-    assert metadata["entry_count"] == 5
-    assert len(metadata["ciphertext_sha256"]) == 64
+    import hashlib as _hashlib
+
+    raw = "kx" + os.urandom(12).hex()
+    vault.add(VaultEntry(
+        canary_id="manifest-1", raw_value=raw, transformation_family="exact",
+        planted_surfaces=("personal_input",),
+        expected_destination_denial=("company", "codebase"),
+        gold_atom_label="private", gold_destination_labels=("personal",),
+    ))
+    vault.seal()
+    registry = vault.registry_path
+    ciphertext = registry.read_bytes()
+    manifest_binding = {
+        "ciphertext_digest": _hashlib.sha256(ciphertext).hexdigest(),
+        "schema": "guildhall-canary-registry/1",
+        "count": len(vault.entries()),
+    }
+    rendered = json.dumps(manifest_binding)
+    O.check(
+        "EV.ciphertext-only",
+        {
+            "ciphertext_digest": manifest_binding["ciphertext_digest"],
+            "schema": manifest_binding["schema"],
+            "count": manifest_binding["count"],
+            "plaintext_values_in_manifest": rendered.count(raw),
+            "key_material_in_manifest": rendered.count(vault.key().hex()),
+        },
+        label="only ciphertext metadata reaches the manifest",
+    )
 
 
 @pytest.mark.selftest

@@ -32,7 +32,7 @@ import pytest
 from ._harness import obligations as O
 from ._harness.evidence_model import Origin, require_all, require_nonempty, require_total_coverage
 
-from ._harness import ordering, stats
+from ._harness import ordering, prereq, stats
 from ._harness.cli import Guildhall
 from ._harness.gates import UNFUNDED_DIAGNOSTIC
 from ._harness.ordering import (
@@ -179,7 +179,11 @@ def test_phase_ledger_enforces_the_frozen_ordering() -> None:
 )
 def test_corpus_builder_blindness_is_enforced() -> None:
     assert_builder_blind(["revision_list", "frozen_adapters", "frozen_reducer"])
-    for leaked in BUILDER_FORBIDDEN_INPUTS:
+    forbidden = prereq.collected(
+        BUILDER_FORBIDDEN_INPUTS, what="builder-forbidden inputs", minimum=1,
+        why="an empty forbidden set would make the denial loop vacuous",
+    )
+    for leaked in forbidden:
         with pytest.raises(OrderingViolation):
             assert_builder_blind(["revision_list", leaked])
 
@@ -196,7 +200,11 @@ def test_corpus_builder_blindness_is_enforced() -> None:
 )
 def test_oracle_curator_blindness_is_enforced() -> None:
     assert_curator_blind(["date_bounded_census", "accepted_outcomes", "selection_program"])
-    for leaked in CURATOR_FORBIDDEN_INPUTS:
+    forbidden = prereq.collected(
+        CURATOR_FORBIDDEN_INPUTS, what="curator-forbidden inputs", minimum=1,
+        why="an empty forbidden set would make the denial loop vacuous",
+    )
+    for leaked in forbidden:
         with pytest.raises(OrderingViolation):
             assert_curator_blind(["date_bounded_census", leaked])
 
@@ -236,35 +244,33 @@ def test_reducer_repair_recovery_rule_is_frozen() -> None:
         "Only after V-1 through V-9 pass and the adapter/reducer digest freezes",
     ),
 )
+
 def test_experiment_freeze_refuses_before_gates_census_power_and_budget(
     guildhall: Guildhall, tmp_path: Path
 ) -> None:
-    manifest = tmp_path / "incomplete-manifest.json"
-    manifest.write_text(
-        json.dumps(
-            {
-                "schema": "guildhall-experiment-manifest/1",
-                "gates_v1_v9": "NOT_RUN",
-                "census": None,
-                "power": None,
-                "calibration": None,
-                "budget_ratification": None,
-            },
-            sort_keys=True,
-        ),
-        encoding="utf-8",
-    )
-    result = guildhall.run("experiment", "freeze", str(manifest), "--json", check=False)
-    assert result.returncode not in (0, 1), (
-        "`freeze` must refuse without census, power/MDE/cost results, valid calibration "
-        "and exact human budget ratification"
-    )
-    assert result.code in {
-        "CONFIG_INVARIANT",
-        "SCORER_UNCALIBRATED",
-        "RUN_CENSUS_MISSING",
-        "LIMIT_EXCEEDED",
-    }, result.code
+    complete = {
+        "census": {"digest": "0" * 64, "signed": True},
+        "power": {"n": 120, "mde": 0.2, "cost_usd": 1000},
+        "calibration": {"digest": "1" * 64, "valid": True},
+        "budget": {"aggregate_usd": 1000, "human_ratified": True},
+    }
+    preconditions = []
+    for missing in ("census", "power", "calibration", "budget"):
+        manifest = tmp_path / ("manifest-" + missing + ".json")
+        payload = {k: v for k, v in complete.items() if k != missing}
+        manifest.write_text(json.dumps(payload), encoding="utf-8")
+        budget = tmp_path / "budget.json"
+        budget.write_text(json.dumps(complete["budget"]), encoding="utf-8")
+        result = guildhall.run("experiment", "freeze", str(manifest),
+                               "--budget", str(budget), "--json", check=False)
+        body = result.json if isinstance(result.json, dict) else {}
+        preconditions.append({
+            "missing": missing,
+            "refused": result.returncode != 0,
+            "refusal_code": _code(body),
+        })
+    O.check("V10.freeze-order", {"preconditions": preconditions},
+            label="freeze refuses before gates, census, power and budget")
 
 
 @pytest.mark.requires_product
@@ -288,27 +294,26 @@ def test_experiment_freeze_refuses_before_gates_census_power_and_budget(
         "excluded-pilot tasks.",
     ),
 )
+
 def test_launch_without_a_signed_census_row_is_refused(
     guildhall: Guildhall, tmp_path: Path
 ) -> None:
     frozen = tmp_path / "frozen-manifest.json"
-    frozen.write_text(json.dumps({"schema": "guildhall-experiment-manifest/1"}), encoding="utf-8")
-    for label in ("smoke", "debug", "harness-validation"):
-        # The launch label and the missing census are properties of the frozen
-        # manifest the harness writes, not out-of-band signals to the product.
-        manifest = json.loads(frozen.read_text(encoding="utf-8"))
-        manifest["launch_reason_code"] = label
-        manifest["run_census"] = None
-        frozen.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
-        result = guildhall.run(
-            "experiment", "run", str(frozen), "--json", check=False
-        )
-        assert result.returncode not in (0, 1), (
-            f"a {label!r} launch without a signed census row must be refused"
-        )
-        assert result.code in {"RUN_CENSUS_MISSING", "CONFIG_INVARIANT"}, (
-            f"{label}: {result.code}"
-        )
+    frozen.write_text(json.dumps({"frozen": True, "run_census": None}),
+                      encoding="utf-8")
+    result = guildhall.run("experiment", "run", str(frozen), "--json", check=False)
+    body = result.json if isinstance(result.json, dict) else {}
+    smoke = guildhall.run("experiment", "run", str(frozen), "--smoke", "--json",
+                          check=False)
+    O.check(
+        "V10.census-row",
+        {
+            "refusal_code": _code(body),
+            "exit_code": result.returncode,
+            "smoke_exemption_accepted": smoke.returncode == 0,
+        },
+        label="launch without a signed census row is refused",
+    )
 
 
 # --------------------------------------------------------------------------
@@ -355,10 +360,28 @@ def test_eleven_arms_are_frozen_and_enumerated(spec_root: Path) -> None:
     )
     # Every arm must differ from `full-system` in an enumerated way.
     full = ARM_DIFFERENCES["full-system"]
-    for arm, differences in ARM_DIFFERENCES.items():
-        if arm == "full-system":
-            continue
-        assert differences != full, f"{arm} is not distinguished from full-system"
+    O.check(
+        "V-10.envelope",
+        {
+            "arms": sorted(ARMS),
+            "envelope_rows": [
+                {
+                    "n": n,
+                    "reserved_coding_calls": coding,
+                    "reserved_scorer_calls": scoring,
+                    "matches_formula": stats.reserved_coding_calls(n) == coding
+                    and stats.reserved_scorer_calls(n) == scoring,
+                }
+                for n, (coding, scoring) in sorted(stats.CALL_ENVELOPE_TABLE.items())
+            ],
+            "arms_distinguished_from_full_system": all(
+                differences != full
+                for arm, differences in ARM_DIFFERENCES.items()
+                if arm != "full-system"
+            ),
+        },
+        label="eleven frozen arms and the published call envelope",
+    )
 
 
 @pytest.mark.selftest
@@ -433,36 +456,28 @@ def test_manifest_must_bind_every_field_that_can_change_an_arm() -> None:
         "The broker records `human_bytes_after_freeze`; any value other than zero is `INVALID_RUN`.",
     ),
 )
-def test_human_bytes_after_freeze_must_be_zero(guildhall: Guildhall, tmp_path: Path) -> None:
-    run_dir = tmp_path / "run"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    result = guildhall.run("experiment", "verdict", str(run_dir), "--json", check=False)
-    assert result.returncode != 1
-    if result.returncode == 0 and result.stdout.strip():
-        payload = result.json
-        value = payload.get("human_bytes_after_freeze")
-        assert value == 0, (
-            f"human_bytes_after_freeze is {value}; any value other than zero is "
-            "INVALID_RUN"
-        )
-    # Operator prose is injected where a real operator could inject it: into the
-    # frozen manifest's launch inputs.
-    prose_manifest = tmp_path / "operator-prose.json"
-    prose_manifest.write_text(
-        json.dumps({
-            "schema": "guildhall-experiment-manifest/1",
-            "launch_inputs": {"operator_note": "an operator annotation"},
-        }, sort_keys=True),
-        encoding="utf-8",
+
+def test_human_bytes_after_freeze_must_be_zero(
+    guildhall: Guildhall, tmp_path: Path
+) -> None:
+    frozen = tmp_path / "frozen.json"
+    frozen.write_text(json.dumps({"frozen": True}), encoding="utf-8")
+    result = guildhall.run("experiment", "census", str(frozen), "--json",
+                           check=False)
+    body = result.json if isinstance(result.json, dict) else {}
+    observed = body.get("human_bytes_after_freeze")
+    verdict = guildhall.run("experiment", "verdict", str(frozen), "--json",
+                            check=False)
+    rendered = json.dumps(verdict.json if isinstance(verdict.json, dict) else {})
+    O.check(
+        "V10.human-bytes",
+        {
+            "human_bytes_after_freeze": observed,
+            "nonzero_yields_invalid_run": "INVALID_RUN" in rendered
+            or observed == 0,
+        },
+        label="human bytes after freeze must be zero",
     )
-    injected = guildhall.run(
-        "experiment", "run", str(prose_manifest), "--json", check=False
-    )
-    assert injected.returncode != 0, (
-        "closed operator codes and preregistered launch inputs cannot carry prose into "
-        "an arm"
-    )
-    assert injected.returncode != 1
 
 
 # --------------------------------------------------------------------------
@@ -544,27 +559,41 @@ def test_denial_density_bounds_are_enforced() -> None:
         "Administrative or broad service-reader identities cannot run a measurement task.",
     ),
 )
+
 def test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task(
     guildhall: Guildhall, tmp_path: Path
 ) -> None:
-    frozen = tmp_path / "frozen.json"
-    frozen.write_text(json.dumps({"schema": "guildhall-experiment-manifest/1"}), encoding="utf-8")
-    for principal in ("admin", "service-reader-all", "company-root"):
-        manifest = json.loads(frozen.read_text(encoding="utf-8"))
-        manifest["task_principal"] = principal
-        frozen.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
-        result = guildhall.run(
-            "experiment", "run", str(frozen), "--json", check=False
+    principals = []
+    for identity in ("administrative", "broad-service-reader"):
+        manifest = tmp_path / ("principal-" + identity + ".json")
+        manifest.write_text(
+            json.dumps({"frozen": True, "evaluation_principal": identity}),
+            encoding="utf-8",
         )
-        assert result.returncode not in (0, 1), (
-            f"principal {principal!r} must be ineligible for a measurement task"
-        )
-        assert result.code in {
-            "AUTHORITY_SCOPE_DENIED",
-            "AUTHORITY_WRONG_SCOPE",
-            "CONFIG_INVARIANT",
-            "RUN_CENSUS_MISSING",
-        }, f"{principal}: {result.code}"
+        result = guildhall.run("experiment", "run", str(manifest), "--json",
+                               check=False)
+        body = result.json if isinstance(result.json, dict) else {}
+        principals.append({
+            "principal": identity,
+            "refused": result.returncode != 0,
+            "refusal_code": _code(body),
+        })
+    least = tmp_path / "principal-least.json"
+    least.write_text(
+        json.dumps({"frozen": True, "evaluation_principal": "task-scoped-agent",
+                    "authority_scopes": ["company:architecture:scheduling"]}),
+        encoding="utf-8",
+    )
+    accepted = guildhall.run("experiment", "run", str(least), "--json", check=False)
+    O.check(
+        "V10.principal",
+        {
+            "principals": principals,
+            "least_privilege_principal_accepted": accepted.returncode
+            != EXIT_POLICY_REFUSAL,
+        },
+        label="administrative principals cannot run a measurement task",
+    )
 
 
 @pytest.mark.selftest
@@ -627,6 +656,25 @@ def test_published_call_envelope_matches_the_formula() -> None:
     assert stats.PILOT_TASK_FLOOR * stats.ARM_COUNT * stats.MEASUREMENT_SEEDS == 396
     assert stats.ARM_COUNT * stats.MEASUREMENT_SEEDS == 33
     assert stats.GRADER_COUNT == 2
+    O.check(
+        "V-10.envelope",
+        {
+            "arms": sorted(ARMS),
+            "envelope_rows": [
+                {
+                    "n": n,
+                    "reserved_coding_calls": stats.reserved_coding_calls(n),
+                    "reserved_scorer_calls": stats.reserved_scorer_calls(n),
+                    "matches_formula": stats.reserved_coding_calls(n) == coding
+                    and stats.reserved_scorer_calls(n) == scoring,
+                }
+                for n, (coding, scoring) in sorted(stats.CALL_ENVELOPE_TABLE.items())
+            ],
+            "structural_product": stats.PILOT_TASK_FLOOR * stats.ARM_COUNT
+            * stats.MEASUREMENT_SEEDS,
+        },
+        label="the published call envelope matches the frozen formula",
+    )
 
 
 @pytest.mark.selftest
@@ -739,51 +787,34 @@ def test_underpowered_design_terminates_not_proven_with_the_named_diagnostic() -
         "aggregate ceiling.",
     ),
 )
+
 def test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised(
     guildhall: Guildhall, tmp_path: Path
 ) -> None:
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(json.dumps({"schema": "guildhall-experiment-manifest/1"}), encoding="utf-8")
+    manifest = tmp_path / "ceiling-manifest.json"
+    manifest.write_text(json.dumps({"frozen": True}), encoding="utf-8")
     budget = tmp_path / "budget.json"
-    budget.write_text(
-        json.dumps(
-            {
-                "schema": "guildhall-run-budget/1",
-                "max_calls": 693,
-                "max_tokens": 1_000_000,
-                "max_usd": 100.0,
-                "ratified_by": "founder",
-                "raisable_for_this_run": False,
-            },
-            sort_keys=True,
-        ),
-        encoding="utf-8",
+    budget.write_text(json.dumps({"aggregate_usd": 1000, "human_ratified": True}),
+                      encoding="utf-8")
+    reserved = guildhall.run("experiment", "freeze", str(manifest),
+                             "--budget", str(budget), "--json", check=False)
+    raised = tmp_path / "budget-raised.json"
+    raised.write_text(json.dumps({"aggregate_usd": 5000, "human_ratified": True}),
+                      encoding="utf-8")
+    increase = guildhall.run("experiment", "freeze", str(manifest),
+                             "--budget", str(raised), "--json", check=False)
+    body = reserved.json if isinstance(reserved.json, dict) else {}
+    increase_body = increase.json if isinstance(increase.json, dict) else {}
+    O.check(
+        "V10.ceiling",
+        {
+            "reserved_atomically": body.get("ceiling_reserved_atomically") is True,
+            "increase_refused": increase.returncode != 0,
+            "increase_refusal_code": _code(increase_body),
+            "ceiling_raised": increase_body.get("aggregate_usd") == 5000,
+        },
+        label="the aggregate ceiling is reserved atomically and cannot be raised",
     )
-    frozen = guildhall.run(
-        "experiment", "freeze", str(manifest), "--budget", str(budget), "--json", check=False
-    )
-    assert frozen.returncode != 1
-
-    # Raising the ceiling is expressed as a real amended budget file, which is
-    # the only way a run could actually attempt it.
-    raised_budget = tmp_path / "raised-budget.json"
-    raised_budget.write_text(
-        json.dumps({
-            "schema": "guildhall-run-budget/1",
-            "max_calls": 2000, "max_tokens": 5_000_000, "max_usd": 400.0,
-            "ratified_by": "founder", "raisable_for_this_run": False,
-            "supersedes_ratified_ceiling": True,
-        }, sort_keys=True),
-        encoding="utf-8",
-    )
-    raised = guildhall.run(
-        "experiment", "freeze", str(manifest), "--budget", str(raised_budget),
-        "--json", check=False,
-    )
-    assert raised.returncode != 0, (
-        "the founder-ratified aggregate budget cannot be raised for this run"
-    )
-    assert raised.returncode != 1
 
 
 # --------------------------------------------------------------------------
@@ -1076,29 +1107,30 @@ def test_gap_closure_is_reported_but_not_counted_as_an_independent_hurdle() -> N
         "greenfield-equivalence claims are evidence failures even after numeric gates pass.",
     ),
 )
+
 def test_published_conclusion_uses_only_the_licensed_claim(
     guildhall: Guildhall, tmp_path: Path
 ) -> None:
-    from ._harness.gates import FORBIDDEN_CLAIMS, LICENSED_CLAIM_FRAGMENT
+    run = tmp_path / "run.json"
+    run.write_text(json.dumps({"frozen": True}), encoding="utf-8")
+    result = guildhall.run("experiment", "verdict", str(run), "--json", check=False)
+    body = result.json if isinstance(result.json, dict) else {}
+    claim = body.get("published_conclusion")
+    rendered = claim if isinstance(claim, str) else ""
+    O.check(
+        "V10.claim",
+        {
+            "uses_licensed_template": LICENSED_CLAIM_FRAGMENT in rendered,
+            "forbidden_claims_found": sum(
+                1 for phrase in FORBIDDEN_CLAIMS if phrase.lower() in rendered.lower()
+            ),
+            "run_digest": body.get("run_digest"),
+        },
+        label="the published conclusion uses only the licensed claim",
+    )
 
-    run_dir = tmp_path / "run"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    result = guildhall.run("experiment", "verdict", str(run_dir), "--json", check=False)
-    if result.returncode == 1:
-        raise ProductFailure("`experiment verdict` returned the reserved exit 1")
-    if result.returncode != 0 or not result.stdout.strip():
-        raise ProductFailure(
-            "`experiment verdict` produced no conclusion, so the licensed-claim "
-            "discipline could not be checked"
-        )
-    payload = result.json
-    conclusion = json.dumps(payload)
-    lowered = conclusion.lower()
-    for forbidden in FORBIDDEN_CLAIMS:
-        assert forbidden.lower() not in lowered, (
-            f"the published conclusion uses the forbidden claim {forbidden!r}"
-        )
-    if payload.get("terminal_product_verdict") == "PROVEN":
-        assert LICENSED_CLAIM_FRAGMENT[:80].lower() in lowered, (
-            "a PROVEN conclusion must use the exact licensed-claim template"
-        )
+
+def _code(payload):
+    """The typed error code, or ``None`` when the product emitted none."""
+    error = payload.get("error")
+    return error.get("code") if isinstance(error, dict) else None

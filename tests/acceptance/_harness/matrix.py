@@ -150,6 +150,8 @@ def _write_git_object(roots: SurfaceRoots, name: str, payload: str) -> Path:
     path.write_text("# packed note\n\n" + payload + "\n", encoding="utf-8")
     from .gitfix import GitRepo
 
+    if not (roots.repo / ".git").exists():
+        GitRepo.init(roots.repo)
     repo = GitRepo(path=roots.repo)
     repo.run("add", "-A")
     repo.commit("record a note for packing")

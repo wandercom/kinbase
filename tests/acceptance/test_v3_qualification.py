@@ -136,6 +136,10 @@ def test_randomized_qualification_publishes_every_denominator(
     receipts = deterministic.receipts(deterministic.detector())
     missed = [r for r in receipts if not r["detected"]]
 
+    stratified, per_family = stratification_ok(
+        plan, families=PLANTABLE_SURFACES + TRANSFORMATION_FAMILIES,
+        minimum=PER_FAMILY_MINIMUM,
+    )
     vault.seal()
     O.check(
         "V-3.qualification",
@@ -144,8 +148,8 @@ def test_randomized_qualification_publishes_every_denominator(
             "decoys": DECOY_VARIANTS,
             "sensitivity_wilson_lower": sensitivity_lower,
             "false_positive_wilson_upper": false_positive_upper,
-            "stratification_met": stratification_ok(
-                plan, families=PLANTABLE_SURFACES, minimum=PER_FAMILY_MINIMUM),
+            "stratification_met": stratified,
+            "per_family_counts": per_family,
             "deterministic_controls_missed": len(missed),
             "false_negative_bound": {
                 "successes": successes,

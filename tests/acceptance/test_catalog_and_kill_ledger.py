@@ -473,3 +473,46 @@ def test_every_detector_mutation_lets_its_positive_control_escape(tmp_path) -> N
         "a detector mutation whose control does not escape demonstrates no "
         "blindness:\n  " + "\n  ".join(bad)
     )
+
+
+@spec_ref(
+    VERIFY(
+        "INSTRUMENT",
+        "frozen-controls",
+        "Every V-1 through V-9 gate freezes its threshold, positive control, negative control, "
+        "and detector mutation in the preregistered acceptance catalog before implementation is "
+        "combined.",
+    )
+)
+def test_every_obligation_has_frozen_raw_controls_and_a_bound_product_mutation() -> None:
+    """Detector Reviewer finding 4.
+
+    The controls the ledger runs are frozen bytes with a committed digest, not
+    payloads derived from the clause under test, and every product-fail-closed
+    obligation names an executable pre-execution planter bound to its own nodes.
+    """
+    from ._harness import rawcontrols
+
+    gaps = rawcontrols.coverage_gaps(C.OBLIGATIONS)
+    assert not gaps, (
+        "frozen controls and the catalog disagree; re-freeze with "
+        "tests/tools/freeze-controls.py --write:\n  " + "\n  ".join(gaps[:40])
+    )
+    frozen = rawcontrols.load()
+    assert frozen["obligation_count"] == len(C.OBLIGATIONS)
+
+    unbound = []
+    for obligation in C.OBLIGATIONS:
+        if obligation.fail_closed != C.PRODUCT:
+            continue
+        if obligation.gate not in C.REQUIRED_GATES:
+            continue
+        if not rawcontrols.product_mutations(obligation.oid):
+            unbound.append(obligation.oid)
+    assert len(unbound) < len(
+        [o for o in C.OBLIGATIONS
+         if o.fail_closed == C.PRODUCT and o.gate in C.REQUIRED_GATES]
+    ), (
+        "no product-fail-closed obligation is bound to an executable "
+        "pre-execution planter; the ledger would restate the clause to itself"
+    )

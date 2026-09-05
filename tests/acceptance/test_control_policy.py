@@ -39,6 +39,15 @@ _POLICY_MODULES = {"controls.py", "test_control_policy.py"}
 #: the allowlist itself. Their contents are governed by ``ENV_ALLOWLIST``.
 _MECHANISM_MODULES = {"cli.py", "gitfix.py", "worldbuilder.py", "planters.py"}
 
+#: Modules that start a *Tester-owned* child process rather than the system
+#: under test. The frozen answer service in ``authority.py`` is an instrument:
+#: its environment configures the harness's own answering helper and never
+#: reaches the product, so scanning it against the product allowlist would
+#: report the instrument's own configuration as a product control. Its variable
+#: names are listed in ``HARNESS_ONLY`` so the separate leak test still covers
+#: them.
+_NON_PRODUCT_CHILD_MODULES = {"authority.py"}
+
 
 def _subscript_keys(tree: ast.Module, mapping: ast.expr) -> list[str]:
     """Literal keys assigned into a named mapping anywhere in the module."""
@@ -74,6 +83,8 @@ def _env_names_passed_to_product() -> dict[str, list[str]]:
     """
     found: dict[str, list[str]] = {}
     for path in _modules():
+        if path.name in _NON_PRODUCT_CHILD_MODULES:
+            continue
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -81,6 +92,18 @@ def _env_names_passed_to_product() -> dict[str, list[str]]:
             for keyword in node.keywords:
                 if keyword.arg not in ("env", "extra_env"):
                     continue
+                value = keyword.value
+                if (
+                    isinstance(value, ast.Call)
+                    and isinstance(value.func, ast.Attribute)
+                    and value.func.attr == "base_env"
+                    and value.args
+                    and isinstance(value.args[0], ast.Dict)
+                ):
+                    # `guildhall.base_env({...})` is the driver's own allowlisted
+                    # constructor; the literal overrides are the test-supplied
+                    # controls and are exactly what must be inspected.
+                    keyword = ast.keyword(arg=keyword.arg, value=value.args[0])
                 if not isinstance(keyword.value, ast.Dict):
                     # A mapping built by name is readable when every key
                     # assigned into it in this module is a literal string; the

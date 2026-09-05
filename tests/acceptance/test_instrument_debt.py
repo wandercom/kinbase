@@ -1,8 +1,9 @@
 """The instrument reports its own outstanding validity debt.
 
-Detector Reviewer dispatch 003 raised 22 blocking defects. Some are closed;
-several require deep causal rework that is not done. An instrument in that state
-must say so rather than pass.
+Detector Reviewer dispatch 003 raised 22 blocking defects. Twenty-one are closed
+by causal rework. One is not engineering work at all: it needs a named human
+rightsholder's signature, which the Tester must not fabricate. An instrument in
+that state must say so rather than pass.
 
 These tests fail while blocking debt is open. That is the intended behaviour:
 ``spec/verification.md`` "Instrument validity" makes an instrument that cannot
@@ -34,9 +35,6 @@ def test_instrument_declares_no_open_validity_debt() -> None:
     """Fails while any blocking finding remains open, naming the exact work."""
     outstanding = debt.open_entries()
     if outstanding:
-        lines = [
-            f"  finding {e.finding}: {e.title}",
-            ]
         rendered = "\n".join(
             f"  finding {e.finding} [{', '.join(e.gates)}]: {e.title}\n"
             f"      why: {e.why_blocking}\n"

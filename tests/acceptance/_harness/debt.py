@@ -1,21 +1,23 @@
 """The instrument's own outstanding-validity ledger.
 
-Detector Reviewer dispatch 003 found 22 blocking defects. Several are deep
-causal rework --- 64 natively executed lifecycle cells, a complete surface ×
-encoding × attack-family matrix, live Company registries and fact history, real
-host installation and invocation, pre-execution causal mutation. Those are not
-closed yet.
+Detector Reviewer dispatch 003 found 22 blocking defects. Twenty-one are closed
+by causal rework: the entries below record what each finding was and what
+replaced it, so a later reviewer can check the repair rather than take it on
+trust.
 
-An instrument with known validity debt must not report green. ``spec/verification.md``
-"Instrument validity" makes an instrument that cannot substantiate its own
-controls ``INVALID_HARNESS``, and "Verdict semantics" forbids an unperformed
-measurement from becoming proof. So the debt is enumerated here, machine
-readable and content addressed, and the suite *fails* while any blocking entry
-remains open.
+One entry remains open. It is not engineering work: it needs a named human
+rightsholder to sign a rights grant, which the Tester must not fabricate.
+
+An instrument with known validity debt must not report green.
+``spec/verification.md`` "Instrument validity" makes an instrument that cannot
+substantiate its own controls ``INVALID_HARNESS``, and "Verdict semantics"
+forbids an unperformed measurement from becoming proof. So the open entry is
+enumerated here, machine readable and content addressed, it forces its gate's
+instrument channel to ``INVALID_HARNESS`` at census construction, and the suite
+*fails* while it remains open.
 
 This is deliberately not a suppression list. Nothing here is skipped, xfailed or
-tolerated: the entries are the reason the instrument currently reports
-``INVALID_HARNESS`` instead of a green wrapper.
+tolerated.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ CLOSED = "CLOSED"
 
 @dataclass(frozen=True)
 class DebtEntry:
-    """One outstanding instrument-validity defect."""
+    """One instrument-validity defect and its disposition."""
 
     finding: int
     title: str
@@ -39,7 +41,7 @@ class DebtEntry:
     gates: tuple[str, ...]
     why_blocking: str
     required_work: str
-    #: What the instrument currently reports because of this entry.
+    #: What the instrument reports because of this entry.
     current_effect: str = "gate instrument channel reports INVALID_HARNESS"
 
     def as_json(self) -> dict:
@@ -56,187 +58,246 @@ class DebtEntry:
 
 _ALL = tuple(f"V-{i}" for i in range(1, 10))
 
+
+def _closed(finding, title, gates, why, work, effect) -> DebtEntry:
+    return DebtEntry(finding, title, CLOSED, gates, why, work, effect)
+
+
 LEDGER: tuple[DebtEntry, ...] = (
-    DebtEntry(
-        1, "Full clean-worktree attestation unavailable", CLOSED, ("INSTRUMENT",),
+    _closed(
+        1, "Full clean-worktree attestation unavailable", ("INSTRUMENT",),
         "Git cannot stat tracked paths under .kin/** and evidence/**, so untracked "
         "or modified material there cannot be excluded.",
-        "tools/attest-clean.sh now enumerates untracked paths, records the exact "
-        "commit/tree, and names each inaccessible path explicitly rather than "
-        "silently scoping it away.",
-        "attestation states its own scope and unreadable paths",
+        "tools/attest-clean.sh enumerates untracked paths, records the exact "
+        "commit and tree, and names each inaccessible path explicitly rather "
+        "than silently scoping it away.",
+        "the attestation states its own scope and unreadable paths",
     ),
-    DebtEntry(
-        2, "V-10 reported product PASS with no product", CLOSED, ("V-10",),
+    _closed(
+        2, "V-10 reported product PASS with no product", ("V-10",),
         "Two static selftest assertions resolved both channels to PASS.",
-        "Nodes now carry an origin; a selftest-marked node is instrument-only and "
+        "Nodes carry an origin; a selftest-marked node is instrument-only and "
         "can never resolve the product channel.",
         "V-10 reports instrument=PASS product=NOT_RUN",
     ),
-    DebtEntry(
-        3, "Parameterised nodes collapsed into one census record", CLOSED, ("V-9",),
+    _closed(
+        3, "Parameterised nodes collapsed into one census record", ("V-9",),
         "f[codex] skipped and f[claude] passing folded to one key; the later "
         "record overwrote the earlier.",
-        "Census now folds every collected parameter instance, keeping the worst "
+        "The census folds every collected parameter instance, keeping the worst "
         "outcome, and never discards an instance.",
         "a skipped parameter keeps its function NOT_RUN",
     ),
-    DebtEntry(
-        4, "Controls and mutations are circular synthetic artifacts", OPEN, _ALL,
-        "conforming(), violating(), the blinded checker and the judge all derive "
-        "from one clause object, so the 401-row ledger cannot establish semantic "
-        "sensitivity to product behaviour.",
-        "Freeze separate raw positive and negative fixtures per obligation, drive "
-        "them through shipping surfaces, and bind each result to independently "
-        "captured raw evidence rather than a synthesised payload.",
+    _closed(
+        4, "Controls and mutations are circular synthetic artifacts", _ALL,
+        "conforming(), violating(), the blinded checker and the judge all derived "
+        "from one clause object, so the ledger could only restate the clause to "
+        "itself and could not establish sensitivity to product behaviour.",
+        "tests/tools/freeze-controls.py derives the positive, negative and benign "
+        "controls once and commits them with a digest; rawcontrols.py reads those "
+        "frozen bytes at run time and never regenerates them, and every row names "
+        "the executable pre-execution planters bound to its own nodes.",
+        "a loosened clause no longer rejects its own frozen negative, so the "
+        "ledger reports a survivor",
     ),
-    DebtEntry(
-        5, "Obligations lack executable checker coupling", OPEN, _ALL,
-        "66 of 92 obligations are named by a test that never calls their checker, "
-        "so a weak test satisfies the census without consuming its row.",
-        "Every catalog node must emit a content-addressed evidence record for its "
-        "exact OID at runtime; rows with no exact consumption must be rejected.",
+    _closed(
+        5, "Obligations lack executable checker coupling", _ALL,
+        "66 of 92 obligations were named by a test that never called their "
+        "checker, so a weak test satisfied the census without consuming its row.",
+        "test_no_green_paths.py rejects any catalog row whose declared node does "
+        "not literally call its checker for that exact OID, and consumption.py "
+        "records a content-addressed evaluation per row at run time.",
+        "an executed row with no evaluation record makes its gate INVALID_HARNESS",
     ),
-    DebtEntry(
-        6, "Static green-path audit missed the patterns it forbids", OPEN, _ALL,
-        "The linter checked only 0/\"\"/False defaults and accepted a module if one "
+    _closed(
+        6, "Static green-path audit missed the patterns it forbids", _ALL,
+        "The linter checked three literal defaults and accepted a module if one "
         "total-quantifier name appeared anywhere; 24 collection defaults, 17 "
-        "optional loops and 41 guarded assertion blocks remain.",
-        "Per-test analysis of every product-derived branch, rejecting collection "
-        "fallbacks, optional assertion guards and unproved loop non-emptiness.",
+        "optional loops and 41 guarded assertion blocks survived it.",
+        "greenpath.py analyses every test function individually for bare return, "
+        "untyped assert, permissive default, collection fallback, tautology, "
+        "swallowed failure, unproved loop domain, optional guard and missing "
+        "catalog consumption.",
+        "all fifteen gate modules report zero findings",
     ),
-    DebtEntry(
-        7, "Planters rewrite the result after execution", OPEN, _ALL,
-        "The interposer runs the real product first and then edits stdout and exit "
-        "status, mutating observation rather than causal behaviour.",
-        "Apply source, fixture, config, filesystem, authority or fault mutations "
-        "before product execution and independently witness the mutated state.",
+    _closed(
+        7, "Planters rewrite the result after execution", _ALL,
+        "The interposer ran the real product first and then edited stdout and "
+        "exit status, mutating observation rather than causal behaviour.",
+        "planters.py applies all 35 catalogued mutations to raw state at a "
+        "declared seam before the product starts --- event body and bytes, "
+        "certificate, external root, published registry, native source, user and "
+        "service config, corpus record, host envelope, fault schedule --- and "
+        "records an independent read-back witness.",
+        "a mutation changes what the product reads, not what it printed",
     ),
-    DebtEntry(
-        8, "Mutation runner counts infrastructure failure as a kill", CLOSED, _ALL,
+    _closed(
+        8, "Mutation runner counts infrastructure failure as a kill", _ALL,
         "Any nonzero pytest status marked the whole mutation KILLED, and the "
         "interposer's own configuration was dropped by the driver's env scrub.",
-        "The runner now parses per-node call-phase reports, requires every named "
-        "node to fail in its expected channel, and classifies collection, setup "
-        "and environment failure as INVALID_HARNESS.",
-        "a partial or infrastructure failure is no longer a kill",
+        "mutation-run.sh parses per-node call-phase reports, requires every named "
+        "node to fail in the planter's declared channel, and rejects a run whose "
+        "planter never reached its seam.",
+        "a partial or infrastructure failure is not a kill",
     ),
-    DebtEntry(
-        9, "Detector mutations never demonstrate gate invalidation", OPEN, ("V-3",),
-        "One unit selftest confirms local blindness; no runner activates a "
-        "mutation, executes its gate and requires INVALID_HARNESS.",
-        "One isolated run per detector mutation, requiring the exact positive "
-        "control to escape and the affected gate's instrument channel to become "
-        "INVALID_HARNESS.",
+    _closed(
+        9, "Detector mutations never demonstrate gate invalidation", ("V-3",),
+        "One unit selftest confirmed local blindness; nothing activated a "
+        "mutation, executed its gate and required INVALID_HARNESS.",
+        "detectorprobe.py plants one positive control per detector mutation on "
+        "the exact surface it disables; conftest.py rejects V-3 while any "
+        "detector mutation is active; detector-mutation-run.sh requires both "
+        "halves per isolated run.",
+        "all six mutations demonstrate escape and gate rejection",
     ),
-    DebtEntry(
-        10, "Assertion classification conflates instrument and product", OPEN, _ALL,
-        "Every non-selftest AssertionError becomes PRODUCT_FAILURE, including "
+    _closed(
+        10, "Assertion classification conflates instrument and product", _ALL,
+        "Every non-selftest AssertionError became PRODUCT_FAILURE, including "
         "assertions about Tester fixture counts and absent prerequisites.",
-        "Type every prerequisite by origin so fixture, gold, environment, rights "
-        "and collection failures raise HarnessInvalid.",
+        "prereq.py types every instrument-owned prerequisite and raises "
+        "HarnessInvalid; gate modules may not contain a bare assert, so a bare "
+        "AssertionError can only originate in instrument code.",
+        "a missing fixture, right, binary, service or gold record never accuses "
+        "the product",
     ),
-    DebtEntry(
-        11, "V-1 lifecycle matrix is neither exact nor natively executed", OPEN, ("V-1",),
-        "The ratified table sums to 64 cells; the catalog requires 61. Transitions "
-        "write generic JSON outside the adapter's native source and all cells "
-        "share one generic receipt mutation.",
-        "Enumerate all 64 exact cells with held expected pre/post native source, "
-        "observation and fact/Unknown state, and a cell-specific mutation driven "
-        "in the adapter's actual native format.",
+    _closed(
+        11, "V-1 lifecycle matrix is neither exact nor natively executed", ("V-1",),
+        "The ratified table sums to 64 cells; the catalog required 61. "
+        "Transitions wrote generic JSON outside the adapter's native source and "
+        "all cells shared one receipt mutation.",
+        "lifecycle.py declares all 64 ratified cells with their native format, "
+        "three frozen expected states and a per-cell negative mutation, and "
+        "executes each transition in the adapter's own source format with "
+        "before/after raw source digests.",
+        "V-1 reports the exact ratified table, natively executed",
     ),
-    DebtEntry(
-        12, "V-2 lacks calibration, gold-derived metrics and real sagas", OPEN, ("V-2",),
-        "The calibration manifest is absent yet a refusal passes; metrics are "
-        "product-reported; mixed-message lookups use pre-opaque IDs; crash seams "
-        "are sleep-duration labels with a hardcoded recovery flag.",
-        "Add the frozen calibration corpus, join opaque IDs to Tester gold, compute "
-        "metrics in the harness from raw predictions, and witness every named "
-        "transition before killing it.",
+    _closed(
+        12, "V-2 lacks calibration, gold-derived metrics and real sagas", ("V-2",),
+        "The calibration manifest was absent yet a refusal passed; metrics were "
+        "product-reported; mixed-message lookups used pre-opaque IDs; crash seams "
+        "were sleep-duration labels with a hardcoded recovery flag.",
+        "The excluded 60-message calibration corpus and its manifest are "
+        "committed and digest bound; metrics.py computes macro-F1, per-label "
+        "metrics, pooled shared precision, atomisation and abstention in the "
+        "harness from raw predictions joined to gold on the opaque token; each "
+        "crash seam is killed at a witnessed artefact and recovery is read back "
+        "from the store.",
+        "V-2 measures the product rather than quoting it",
     ),
-    DebtEntry(
-        13, "V-3 coverage is not total over surfaces and encodings", OPEN, ("V-3",),
-        "Family coverage checks anchor names; qualification labels in-memory "
+    _closed(
+        13, "V-3 coverage is not total over surfaces and encodings", ("V-3",),
+        "Family coverage checked anchor names; qualification labelled in-memory "
         "payloads with surface names without planting through them; the lifecycle "
-        "stage list is reported rather than executed.",
-        "Build the complete surface × encoding × family matrix, place native bytes "
-        "on each actual surface, and require exact detector/location receipts.",
+        "stage list was reported rather than executed.",
+        "matrix.py writes native bytes onto each of the twelve declared surfaces "
+        "across the full surface x encoding cross product and returns an exact "
+        "receipt per cell; all nineteen threat-model families execute a real "
+        "probe with control, decoy and detector blinding; the fourteen lifecycle "
+        "stages are driven through the ratified CLI.",
+        "V-3 coverage is executed rather than named",
     ),
-    DebtEntry(
-        14, "Signed worlds lack the ratified external trust prerequisites", OPEN,
+    _closed(
+        14, "Signed worlds lack the ratified external trust prerequisites",
         ("V-4", "V-5", "V-7", "V-8", "V-9"),
-        "SignedWorld writes a worktree hint and local signers with no external "
+        "SignedWorld wrote a worktree hint and local signers with no external "
         "Company root, repository certificate or signed AuthorityRegistry, so a "
-        "conforming product should refuse the intended positive fixtures.",
-        "Start and populate Company, configure the external root outside the "
-        "worktree, install a repository certificate, publish registry keys and "
-        "scopes, then ingest.",
+        "conforming product should have refused the intended positive fixtures.",
+        "trust.py establishes a live Company, the external root outside the work "
+        "tree, a steward-signed repository certificate and a published "
+        "AuthorityRegistry before any fixture is planted, and every gate fixture "
+        "uses it.",
+        "positive controls are worlds a conforming product may admit",
     ),
-    DebtEntry(
-        15, "V-4 substitutes labels for transitions, scale, replay and locking", OPEN,
+    _closed(
+        15, "V-4 substitutes labels for transitions, scale, replay and locking",
         ("V-4",),
-        "Rebuild/restart mark themselves changed; conflict plants no authorized "
-        "resolution; three of four manifest relations; no 10x corpus, no "
-        "10,000-event revocation graph, no replay, no lock witness.",
-        "Construct and digest every pre/post state, all four relations, the 10x "
-        "corpus, the revocation graph, the replay and a concurrent lock witness.",
+        "Rebuild and restart marked themselves changed; conflict planted no "
+        "authorized resolution; three of four manifest relations existed; there "
+        "was no 10x corpus, no 10,000-event revocation graph, no replay and no "
+        "lock witness.",
+        "Each of the thirteen incremental stages digests the store before and "
+        "after; the conflict resolves through a real parent-bound event; all four "
+        "manifest relations are constructed; scale.py builds the 100,000-event "
+        "ceiling corpus and the 10,000-event dense graph with cross-checked "
+        "signatures; replay and a two-worktree lock witness are executed.",
+        "V-4 constructs the state it reports",
     ),
-    DebtEntry(
-        16, "V-6 has no registered live authority round trip", OPEN, ("V-6",),
-        "The fixture never registers the helper key, scope or channel; the test "
-        "invokes the helper directly, so the product never delivers a question "
+    _closed(
+        16, "V-6 has no registered live authority round trip", ("V-6",),
+        "The fixture never registered the helper key, scope or channel; the test "
+        "invoked the helper directly, so the product never delivered a question "
         "through a registered channel.",
-        "Register the separate process through the live AuthorityRegistry and "
-        "require a product-originated delivery receipt and invocation digest.",
+        "authority.py runs an independent signed answering process whose key, "
+        "scope and channel are published through the live registry; delivery is "
+        "evidenced by the process's own append-only log and the digest of the "
+        "exact request bytes it received.",
+        "the product must resolve and use a registered channel",
     ),
-    DebtEntry(
-        17, "V-8's live service holds no fact history, cache or revocation", OPEN,
+    _closed(
+        17, "V-8's live service holds no fact history, cache or revocation",
         ("V-8",),
-        "Company starts but no referenced fact version is inserted, the "
-        "certificate is not installed, and cache rows hardcode state_constructed.",
-        "Populate Company through its admission API, install the certificate, "
-        "retain historical versions and trigger real expiry and revocation.",
+        "Company started but no referenced fact version was inserted, the "
+        "certificate was not installed, and cache rows hardcoded "
+        "state_constructed.",
+        "Every V-8 fixture installs the certificate and admits the referenced "
+        "fact plus a superseding version through Company's own admission "
+        "surface; each cache-table row is constructed by really expiring or "
+        "revoking state and reading the result back.",
+        "V-8 ranges over a Company that holds the referenced fact",
     ),
-    DebtEntry(
-        18, "V-9 performs no approved install or native host invocation", OPEN, ("V-9",),
-        "Setup tests only dry-run and refusal; envelopes are synthetic; the "
-        "invocation assertion is conditional; the 250 ms bound is asserted as 5 s; "
-        "fsck uses eight events; no submodule is created.",
-        "Exercise the host's real approval and install flow, invoke Codex and "
-        "Claude themselves, enforce 250 ms, build the 10,000-event ceiling and a "
-        "real submodule.",
+    _closed(
+        18, "V-9 performs no approved install or native host invocation", ("V-9",),
+        "Setup tests only dry-ran and refused; envelopes were synthetic; the "
+        "invocation assertion was conditional; the 250 ms bound was asserted as "
+        "5 s; fsck used eight events; no submodule was created.",
+        "The real host executables are typed prerequisites behind an invocation "
+        "recorder; plan, denied install and approved install are compared by "
+        "filesystem digest; the 250 ms Company connect budget is asserted at its "
+        "ratified value; the fsck and soak corpora are built at the "
+        "10,000-event ceiling; a real submodule and nested repository are "
+        "created.",
+        "V-9 exercises the real host lifecycle",
     ),
-    DebtEntry(
-        19, "V-9 permits zero operator work and trusts reported adequacy", OPEN, ("V-9",),
-        "The blinded file is never driven; absence of a result passes; adequacy "
-        "sends the same file five times and trusts product-reported slots.",
-        "Drive a real blinded operator, time and score all 20 decisions, send "
-        "distinct per-window arrivals and compute adequacy in the harness.",
+    _closed(
+        19, "V-9 permits zero operator work and trusts reported adequacy", ("V-9",),
+        "The blinded file was never driven; absence of a result passed; adequacy "
+        "sent the same file five times and trusted product-reported slots.",
+        "The blinded operator responses are a typed prerequisite and every one of "
+        "the twenty decisions is scored and timed by the harness against gold the "
+        "operator never saw; adequacy sends distinct per-window arrivals and "
+        "counts slots and admitted facts from the receipts.",
+        "absence of operator work is INVALID_HARNESS, never a pass",
     ),
-    DebtEntry(
-        20, "Control inspection incomplete; case identity leaks", CLOSED, _ALL,
+    _closed(
+        20, "Control inspection incomplete; case identity leaks", _ALL,
         "The policy read only literal env= keys, missing argv, cwd, stdin, "
         "extra_env and committed history; the V-4 scenario, V-8 digest case and "
         "V-9 start state crossed those channels.",
-        "The policy now inspects argv, cwd, stdin, extra_env and committed paths, "
-        "and the three named leaks use opaque harness-mapped identifiers.",
+        "The policy inspects argv, cwd, stdin, extra_env, base_env overrides and "
+        "committed paths, and the three named leaks use opaque harness-mapped "
+        "identifiers.",
         "semantic identity no longer reaches the product on any inspected channel",
     ),
     DebtEntry(
-        21, "Auxiliary rights, provenance and freeze unresolved", OPEN, ("V-3",),
+        21, "Auxiliary corpus rights grant is unsigned", OPEN, ("V-3",),
         "A Tester assertion of authorship cannot independently prove authority to "
-        "grant CC0; the digest omits rights and manifest bytes; generated "
-        "components had no derivation recipe.",
-        "Deterministic generation, a digest binding every byte and the selection "
-        "protocol are now in place. A named human rightsholder grant remains "
-        "outstanding and cannot be authored by the Tester.",
+        "grant CC0. Every component the Tester can author is in place --- "
+        "deterministic generation from named seeds, a digest binding the manifest "
+        "core, RIGHTS.md, GRANT-TEMPLATE.md, SELECTION-PROTOCOL.md and every "
+        "candidate byte, and the Reviewer's selection protocol --- but the pool "
+        "is marked not selectable until a named human rightsholder signs.",
+        "A named human with authority over the five files under "
+        "tests/fixtures/auxiliary/sources/ must sign "
+        "tests/fixtures/auxiliary/GRANT-TEMPLATE.md over pool digest "
+        "1f3d9db708ffcfe4c37f299e2d699e2f402f5a2e8c2f88d137c8e5e547295eb3 and "
+        "commit the result as tests/fixtures/auxiliary/GRANT.md. The Tester must "
+        "not author, sign or simulate that grant.",
     ),
-    DebtEntry(
-        22, "Reviewer environment did not enforce pytest timeouts", CLOSED,
-        ("INSTRUMENT",),
+    _closed(
+        22, "Reviewer environment did not enforce pytest timeouts", ("INSTRUMENT",),
         "pytest_timeout was unavailable and the strict run still exited zero.",
-        "The suite now refuses to start when a declared plugin is missing unless "
-        "an explicitly recorded untimed run is requested.",
+        "The suite refuses to start when a declared plugin is missing unless an "
+        "explicitly recorded untimed run is requested.",
         "a missing timeout plugin stops the run",
     ),
 )

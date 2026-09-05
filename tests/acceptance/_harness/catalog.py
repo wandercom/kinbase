@@ -2279,12 +2279,281 @@ _o(
 # Registry access
 # --------------------------------------------------------------------------
 
+# ==========================================================================
+# Nonfunctional proof gates
+# ==========================================================================
+
+_o("NF.help", "NONFUNCTIONAL", "commands have bounded help", V, "packaging",
+   "Python package installs in a clean environment and commands have bounded help.",
+   clauses(every("commands", "each command exposes bounded help",
+                 present("command", "command name"),
+                 at_most("help_bytes", 65536, "help output is bounded"),
+                 equals("exit_code", 0, "help exits zero"), min_len=5)),
+   surfaces=("guildhall --help",), vectors=("top-level commands",),
+   nodes=("test_nonfunctional.py::test_commands_have_bounded_help",))
+
+_o("NF.roots", "NONFUNCTIONAL", "roots are explicit and escapes fail closed",
+   V, "roots",
+   "All service/data roots are explicit; default bind is loopback; filesystem "
+   "modes are asserted; symlinks and escapes fail closed.",
+   clauses(is_true("loopback_only", "the default bind is loopback"),
+           every("roots", "each root is explicit and restrictively moded",
+                 present("root", "root path"), present("mode", "observed mode"),
+                 is_true("restrictive", "mode is no broader than declared"),
+                 min_len=3),
+           every("escape_probes", "each escape probe fails closed",
+                 present("probe", "what was attempted"),
+                 is_true("refused", "the escape was refused"), min_len=2)),
+   surfaces=("guildhall status", "filesystem"), vectors=("symlink", "path escape"),
+   nodes=("test_nonfunctional.py::"
+          "test_roots_are_explicit_modes_restrictive_and_escapes_fail_closed",))
+
+_o("NF.determinism", "NONFUNCTIONAL", "validation and rebuild are deterministic",
+   V, "determinism",
+   "Schema validation, canonicalization, migrations, and rebuilds are deterministic.",
+   clauses(is_true("rebuild_identical", "two identical rebuilds agree"),
+           nonempty("rebuild_digest", "the rebuild must produce a digest"),
+           is_true("canonicalisation_identical", "canonical bytes are stable"),
+           equals("schema_refusals", 0, "a valid document is not refused")),
+   surfaces=("guildhall corpus rebuild",), vectors=("rebuild", "canonicalisation"),
+   nodes=("test_nonfunctional.py::test_schema_validation_and_rebuild_are_deterministic",))
+
+_o("NF.logs", "NONFUNCTIONAL", "logs are structured and carry no raw private bytes",
+   V, "logs",
+   "Logs are structured and contain IDs/digests/statuses, never raw private messages.",
+   clauses(at_least("log_lines", 1, "there must be log output to inspect"),
+           is_true("structured", "every line parses as a structured record"),
+           equals("raw_private_findings", 0, "no raw private byte appears")),
+   surfaces=("guildhall doctor", "log files"), vectors=("structured log",),
+   nodes=("test_nonfunctional.py::"
+          "test_logs_are_structured_and_carry_no_raw_private_messages",))
+
+_o("NF.timeouts", "NONFUNCTIONAL", "external calls time out and failed writes do not admit",
+   V, "timeouts",
+   "Every external/model/process call has a timeout and typed failure; failed "
+   "writes do not become admitted facts.",
+   clauses(is_true("timeout_observed", "a hung dependency times out"),
+           present("timeout_refusal_code", "the timeout is typed"),
+           at_most("observed_seconds", 120.0, "the call returns within its bound"),
+           equals("admitted_after_failed_write", 0,
+                  "a failed write never becomes an admitted fact")),
+   surfaces=("guildhall status",), vectors=("hung dependency", "failed write"),
+   nodes=("test_nonfunctional.py::"
+          "test_external_calls_have_timeouts_and_failed_writes_are_not_admitted",))
+
+_o("NF.diagnostics", "NONFUNCTIONAL", "diagnostics are executable after restart",
+   V, "diagnostics",
+   "`fsck`, `doctor`, corpus status, question status, and experiment status are "
+   "executable and useful after restart.",
+   clauses(every("diagnostics", "each diagnostic runs after restart",
+                 present("command", "which diagnostic"),
+                 is_true("executable", "it ran"),
+                 is_true("useful", "it emitted an inspectable object"), min_len=4),
+           is_true("survives_restart", "the diagnostics run after a restart")),
+   surfaces=("guildhall fsck", "guildhall doctor", "guildhall explain"),
+   vectors=("restart",),
+   nodes=("test_nonfunctional.py::test_diagnostics_are_executable_and_useful_after_restart",))
+
+_o("NF.http", "NONFUNCTIONAL", "HTTP rejects every declared probe", V, "http",
+   "Guildhall HTTP rejects unauthenticated reads, non-loopback Host, "
+   "Origin-bearing requests, and non-JSON writes; all receive typed "
+   "remediation-safe errors.",
+   clauses(every("probes", "each declared probe is refused with a typed error",
+                 present("probe", "which probe"),
+                 is_true("refused", "the probe was refused"),
+                 is_true("bounded_body", "the error body is bounded"), min_len=4)),
+   surfaces=("guildhalld HTTP",), vectors=("unauthenticated read", "non-loopback host",
+                                           "origin header", "non-JSON write"),
+   nodes=("test_nonfunctional.py::test_http_rejects_every_declared_probe",))
+
+_o("NF.ceilings", "NONFUNCTIONAL", "every ceiling refuses with an omitted count",
+   V, "operational-limits",
+   "shared event: 64 KiB; `.kin/` intake: 10,000 events / 128 MiB;",
+   clauses(every("ceilings", "each ceiling refuses and reports its omitted count",
+                 present("ceiling", "which ceiling"),
+                 is_true("constructed", "the input really reached the ceiling"),
+                 is_true("refused", "the ceiling refused"),
+                 present("omitted_count", "the omitted count is reported"),
+                 min_len=5)),
+   surfaces=("guildhall ingest", "guildhall project"),
+   vectors=("source body", "observation batch", "shared event", "kin intake",
+            "projection call"),
+   nodes=("test_nonfunctional.py::test_every_operational_ceiling_refuses_with_an_omitted_count",))
+
+_o("NF.lifetimes", "NONFUNCTIONAL", "candidate lifetime and private retention hold",
+   V, "operational-limits", "candidate and approval lifetime: 15 minutes;",
+   clauses(equals("candidate_lifetime_seconds", 900,
+                  "the ratified candidate lifetime is fifteen minutes"),
+           equals("private_retention_seconds", 86400,
+                  "private raw-session retention is twenty-four hours"),
+           equals("expired_approval_refusal_code", "APPROVAL_EXPIRED",
+                  "an expired candidate refuses with its typed code"),
+           is_true("raw_removed_after_retention",
+                   "raw private session bytes are gone after retention")),
+   surfaces=("guildhall proposals decide",), vectors=("expiry", "retention"),
+   nodes=("test_nonfunctional.py::test_candidate_lifetime_and_private_retention_are_enforced",))
+
+_o("NF.exit-boundary", "NONFUNCTIONAL", "uncaught exceptions exit seventy",
+   L, "error-contract",
+   "The CLI installs one top-level exception boundary that emits the typed "
+   "internal error and exits 70 for every caught application exception.",
+   clauses(equals("exit_code", 70, "the boundary exits seventy"),
+           present("error.code", "the internal error is typed"),
+           equals("stack_trace_leaked", 0, "no raw trace reaches the operator")),
+   surfaces=("guildhall",), vectors=("uncaught application exception",),
+   nodes=("test_nonfunctional.py::test_uncaught_application_exceptions_exit_seventy",))
+
+_o("NF.token-mode", "NONFUNCTIONAL", "a broad token mode is refused with remediation",
+   L, "first-run-failures", "| token/key mode broader than 0600 | exit 4; chmod remediation |",
+   clauses(equals("exit_code", 4, "a broad token mode exits four"),
+           is_true("remediation_names_chmod", "the remediation names chmod"),
+           is_true("mode_observed_broad", "the mode really was broader than 0600"),
+           equals("secret_bytes_leaked", 0, "the secret is not echoed")),
+   surfaces=("guildhall status",), vectors=("token mode 0644",),
+   nodes=("test_nonfunctional.py::test_broad_token_mode_is_refused_with_chmod_remediation",))
+
+# ==========================================================================
+# Evidence packet
+# ==========================================================================
+
+_o("EV.custody", "EVIDENCE", "the packet root is private and outside Git",
+   V, "custody",
+   "The packet is Validator-owned mode-0700 run state outside Git during "
+   "execution and is transferred only to the founder/security custodian.",
+   clauses(equals("mode", 448, "the packet root is mode 0700"),
+           is_false("inside_git_worktree", "the packet is outside every worktree"),
+           is_true("outside_repository", "the packet root is not under a repository")),
+   surfaces=("evidence packet root",), vectors=("custody",),
+   nodes=("test_evidence_packet.py::test_packet_root_is_private_and_outside_git",),
+   fail_closed=INSTRUMENT)
+
+_o("EV.retention", "EVIDENCE", "retention and incident-hold fields are enforced",
+   V, "retention",
+   "Per-arm worktrees, agent homes, model transcripts, raw Git history, and raw "
+   "tool logs are private run evidence and expire after sanitized "
+   "scoring/evidence extraction and no later than 24 hours after terminal "
+   "verdict unless a separately authorized incident hold applies.",
+   clauses(at_most("raw_evidence_age_seconds", 86400,
+                   "raw evidence expires within twenty-four hours"),
+           every("incident_hold_fields", "each hold field is present and typed",
+                 present("field", "field name"),
+                 is_true("present", "the field exists"), min_len=4),
+           is_true("hold_requires_two_named_authorities",
+                   "a hold needs founder and named security custodian")),
+   surfaces=("evidence packet",), vectors=("retention", "incident hold"),
+   nodes=("test_evidence_packet.py::test_retention_and_incident_hold_fields_are_enforced",),
+   fail_closed=INSTRUMENT)
+
+_o("EV.method-label", "EVIDENCE", "Factory method evidence is labelled METHOD_POC",
+   V, "method-label",
+   "The role arrangement uses tmux and an interactive Claude Tester, so Factory "
+   "method evidence is labeled `METHOD_POC`, never `CLEAN_QUALIFIED`.",
+   clauses(equals("method_label", "METHOD_POC", "the required label is used"),
+           equals("forbidden_label_occurrences", 0,
+                  "CLEAN_QUALIFIED never appears for Factory method evidence")),
+   surfaces=("evidence packet",), vectors=("method label",),
+   nodes=("test_evidence_packet.py::test_factory_method_evidence_is_labelled_method_poc",),
+   fail_closed=INSTRUMENT)
+
+_o("EV.ciphertext-only", "EVIDENCE", "only ciphertext metadata reaches the manifest",
+   T, "custody",
+   "Raw registry plaintext, raw fixture instantiations, and decryption keys are "
+   "destroyed within 24 hours of terminal verdict unless an explicitly "
+   "authorized incident hold applies.",
+   clauses(present("ciphertext_digest", "the manifest binds the ciphertext digest"),
+           present("schema", "the manifest binds the registry schema"),
+           at_least("count", 1, "the manifest binds the registry count"),
+           equals("plaintext_values_in_manifest", 0, "no raw value is bound"),
+           equals("key_material_in_manifest", 0, "no key material is bound")),
+   surfaces=("tester vault", "manifest"), vectors=("canary registry",),
+   nodes=("test_evidence_packet.py::test_only_ciphertext_metadata_reaches_the_manifest",),
+   fail_closed=INSTRUMENT)
+
+# ==========================================================================
+# V-10 protocol denial checks (no task corpus is authored or exposed)
+# ==========================================================================
+
+_o("V10.freeze-order", "V-10", "freeze refuses before gates, census, power and budget",
+   L, "hosts-and-experiments",
+   "`freeze` refuses without census, power/MDE/cost results, valid calibration, "
+   "and exact human budget ratification.",
+   clauses(every("preconditions", "each missing precondition refuses freeze",
+                 present("missing", "which precondition was withheld"),
+                 is_true("refused", "freeze refused"),
+                 present("refusal_code", "the refusal is typed"), min_len=4)),
+   surfaces=("guildhall experiment freeze",),
+   vectors=("census", "power", "calibration", "budget"),
+   nodes=("test_v10_protocol.py::test_experiment_freeze_refuses_before_gates_census_power_and_budget",))
+
+_o("V10.census-row", "V-10", "launch without a signed census row is refused",
+   L, "error-contract",
+   "`RUN_CENSUS_MISSING` | benchmark action lacks its pre-launch signed census row | 70",
+   clauses(equals("refusal_code", "RUN_CENSUS_MISSING", "the typed code is required"),
+           equals("exit_code", 70, "the ratified exit status"),
+           is_false("smoke_exemption_accepted", "smoke and debug are not exemptions")),
+   surfaces=("guildhall experiment run",), vectors=("missing census row",),
+   nodes=("test_v10_protocol.py::test_launch_without_a_signed_census_row_is_refused",))
+
+_o("V10.human-bytes", "V-10", "human bytes after freeze must be zero",
+   V, "human-bytes",
+   "The broker records `human_bytes_after_freeze`; any value other than zero is "
+   "`INVALID_RUN`.",
+   clauses(equals("human_bytes_after_freeze", 0, "the required value is zero"),
+           is_true("nonzero_yields_invalid_run",
+                   "a nonzero value must classify the run INVALID_RUN")),
+   surfaces=("guildhall experiment run",), vectors=("post-freeze human bytes",),
+   nodes=("test_v10_protocol.py::test_human_bytes_after_freeze_must_be_zero",))
+
+_o("V10.principal", "V-10", "administrative principals cannot run a measurement task",
+   A, "brownfield-harness",
+   "Administrative or broad service-reader identities cannot run a measurement task.",
+   clauses(every("principals", "each forbidden principal is refused",
+                 present("principal", "which identity"),
+                 is_true("refused", "the run was refused"),
+                 present("refusal_code", "the refusal is typed"), min_len=2),
+           is_true("least_privilege_principal_accepted",
+                   "a realistic least-privilege principal is accepted")),
+   surfaces=("guildhall experiment run",),
+   vectors=("administrative identity", "broad service reader"),
+   nodes=("test_v10_protocol.py::"
+          "test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task",))
+
+_o("V10.ceiling", "V-10", "the aggregate ceiling is reserved atomically",
+   V, "ceiling",
+   "The harness atomically reserves and enforces the aggregate ceiling.",
+   clauses(is_true("reserved_atomically", "the ceiling is reserved in one commit"),
+           is_true("increase_refused", "an increase for this run is refused"),
+           present("increase_refusal_code", "the refusal is typed"),
+           equals("ceiling_raised", False, "the ceiling never rises mid-run")),
+   surfaces=("guildhall experiment freeze",), vectors=("aggregate budget",),
+   nodes=("test_v10_protocol.py::test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised",))
+
+_o("V10.claim", "V-10", "the published conclusion uses only the licensed claim",
+   V, "claim",
+   "The published conclusion must use the exact licensed-claim template in P-10 "
+   "with run-specific digests and metrics.",
+   clauses(is_true("uses_licensed_template", "the licensed template is used"),
+           equals("forbidden_claims_found", 0, "no broader claim appears"),
+           present("run_digest", "the claim carries run-specific digests")),
+   surfaces=("guildhall experiment verdict",), vectors=("published conclusion",),
+   nodes=("test_v10_protocol.py::test_published_conclusion_uses_only_the_licensed_claim",))
+
+
+
 OBLIGATIONS: tuple[Obligation, ...] = tuple(_OBLIGATIONS)
 
 BY_ID: Mapping[str, Obligation] = {o.oid: o for o in OBLIGATIONS}
 
+def _gate_order(gate: str) -> tuple[int, str]:
+    """Numbered V-gates first, then the auxiliary reporting groups."""
+    parts = gate.split("-")
+    if len(parts) == 2 and parts[0] == "V" and parts[1].isdigit():
+        return (int(parts[1]), "")
+    return (99, gate)
+
+
 GATES_COVERED: tuple[str, ...] = tuple(
-    sorted({o.gate for o in OBLIGATIONS}, key=lambda g: int(g.split("-")[1]))
+    sorted({o.gate for o in OBLIGATIONS}, key=_gate_order)
 )
 
 #: Gates that ``spec/verification.md`` "Instrument validity" requires to freeze

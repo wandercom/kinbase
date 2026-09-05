@@ -168,7 +168,7 @@ CATALOG: dict[str, Mutation] = dict(
             "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
             "The destination receipt carries the raw transcript content digest.",
             "validator_source_patch",
-            ("test_v3_privacy.py::test_no_transcript_digest_or_path_on_any_shared_surface",),
+            ("test_v3_privacy.py::test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle",),
         ),
         _m(
             "v3.mount_personal_in_coding_query",
@@ -187,7 +187,7 @@ CATALOG: dict[str, Mutation] = dict(
             "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
             "A worktree `.kin/trust.json` is accepted as a trust root.",
             "fixture",
-            ("test_v3_attacks.py::test_worktree_cannot_mint_trust_root_or_certificate",),
+            ("test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",),
         ),
         _m(
             "v3.clear_taint_after_deidentification",
@@ -207,7 +207,7 @@ CATALOG: dict[str, Mutation] = dict(
             "The destination writer resolves and re-reads the candidate pathname "
             "instead of committing the inline approved buffer.",
             "validator_source_patch",
-            ("test_v3_attacks.py::test_approved_bytes_are_the_exact_buffer_rehashed_at_commit",),
+            ("test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",),
         ),
         _m(
             "v3.worktree_only_key_admission",
@@ -215,7 +215,7 @@ CATALOG: dict[str, Mutation] = dict(
             "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
             "An event signed by a key present only inside the worktree is admitted.",
             "fixture",
-            ("test_v3_attacks.py::test_unauthorized_and_worktree_only_signers_are_refused",),
+            ("test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",),
         ),
         _m(
             "v3.signature_reuse_across_message_types",
@@ -224,7 +224,7 @@ CATALOG: dict[str, Mutation] = dict(
             "Domain separation is dropped so one signature verifies under a "
             "different `message_type`.",
             "fixture",
-            ("test_v3_attacks.py::test_cross_message_type_signature_reuse_is_refused",),
+            ("test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",),
         ),
         _m(
             "v3.verify_one_parse_apply_another",
@@ -232,7 +232,7 @@ CATALOG: dict[str, Mutation] = dict(
             "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
             "Verification and semantic use read two different parses of the buffer.",
             "fixture",
-            ("test_v3_attacks.py::test_parser_differential_duplicate_and_reordered_keys_refuse",),
+            ("test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",),
         ),
         _m(
             "v3.wildcard_authority_scope",
@@ -242,8 +242,8 @@ CATALOG: dict[str, Mutation] = dict(
             "canonical exact byte equality.",
             "fixture",
             (
-                "test_v3_attacks.py::test_facts_token_scope_sets_require_exact_canonical_membership",
-                "test_v3_attacks.py::test_empty_scope_set_grants_nothing",
+                "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",
+                "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",
             ),
         ),
         _m(
@@ -252,7 +252,7 @@ CATALOG: dict[str, Mutation] = dict(
             "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
             "A scope or logical key is interpolated into SQL rather than bound.",
             "fixture",
-            ("test_v3_attacks.py::test_sql_like_glob_fts_and_nul_metacharacters_do_not_widen_matching",),
+            ("test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",),
         ),
         _m(
             "v3.personal_path_in_shared_argv_config",
@@ -269,8 +269,8 @@ CATALOG: dict[str, Mutation] = dict(
             "Capability-scope enforcement on service tokens is removed.",
             "validator_source_patch",
             (
-                "test_v3_attacks.py::test_stolen_base_facts_token_cannot_read_directory_or_admit_answers",
-                "test_v3_attacks.py::test_administrative_issuance_has_no_body_read_capability",
+                "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",
+                "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",
             ),
         ),
         _m(
@@ -279,7 +279,7 @@ CATALOG: dict[str, Mutation] = dict(
             "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
             "The unique `(destination, nonce)` constraint is dropped.",
             "validator_source_patch",
-            ("test_v3_attacks.py::test_approval_replay_and_retarget_are_refused",),
+            ("test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",),
         ),
         _m(
             "v3.race_concurrent_approvals",
@@ -287,7 +287,7 @@ CATALOG: dict[str, Mutation] = dict(
             "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
             "Concurrent approvals for one candidate are not serialised.",
             "fixture",
-            ("test_v3_attacks.py::test_concurrent_approvals_and_double_submission_produce_one_event",),
+            ("test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",),
         ),
         _m(
             "v3.raw_terminal_output",
@@ -296,7 +296,7 @@ CATALOG: dict[str, Mutation] = dict(
             "The approval preview emits raw terminal bytes instead of the frozen "
             "bijective escaped form.",
             "validator_source_patch",
-            ("test_v3_attacks.py::test_terminal_deception_payloads_are_rejected_or_bijectively_escaped",),
+            ("test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",),
         ),
         # ---- V-4 -------------------------------------------------------
         _m(
@@ -424,8 +424,8 @@ CATALOG: dict[str, Mutation] = dict(
             "SessionStart still returns a healthy payload.",
             "validator_source_patch",
             (
-                "test_v9_host_lifecycle.py::test_mid_session_capture_continues_across_native_events",
-                "test_v9_host_lifecycle.py::test_precompact_and_stop_flush_pending_proposals",
+                "test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal",
+                "test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal",
             ),
         ),
         _m(
