@@ -1,0 +1,61 @@
+{
+  "schema_version": "guildhall-factory-tester-remediation-binding/1",
+  "bound_at": "2026-09-05T19:56:57Z",
+  "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "tester_repository": "/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/tester",
+  "tester_branch": "factory/tester-ac8a13d1",
+  "tester_parent_commit": "244184e631695cc331d64667bd20cfae7f286526",
+  "tester_parent_tree": "893a6ba3bbc464762d479aa13305d3761adc07b4",
+  "initial_status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "tester_session_id": "7b88a154-cc04-48b3-854f-08902f264c66",
+  "tester_prompt": "evidence/factory-run/tester-remediation-002.md followed byte-for-byte by evidence/reviews/detector-reviewer-001.md on inherited stdin",
+  "tester_prompt_header_sha256": "c8a49974c3a006acd15154b73c92b04a9eaaece5fb1bf461387ba11c0d04acb4",
+  "detector_report_sha256": "9424a1fc23de1522d2c2f8172982b93340d1c686e906c0015265e9fd8ce3dd25",
+  "composite_stdin_sha256": "271f479992c66f115b3b6d375948dd065006440ed0958febe400357e2494c90d",
+  "launch_script_sha256": "fb1101b9d5cd8efb142208fa431038dda6c312b2afa5c9ee2047e1e3d48d273c",
+  "os_sandbox_profile_sha256": "d0fde128772e12c56c79b549846e0bc4bd2a0ab3dcc5987cd53da34b88f92e83",
+  "model": "claude-opus-5",
+  "effort": "max",
+  "maximum_authoring_spend_usd": 75,
+  "safe_mode": true,
+  "allowed_reads": [
+    "ratified spec/** in the Tester clone",
+    "Tester-owned tests/** and fixtures in the Tester clone",
+    "exact Detector report supplied only on inherited stdin",
+    "Git metadata needed to commit the tests-only delta",
+    "the prior implementation-blind Tester session history"
+  ],
+  "os_denied_reads": [
+    "Coder repository",
+    "Validator repository",
+    "Detector Reviewer repository",
+    "run-control directory",
+    "main Guildhall repository",
+    "Codex memories",
+    "Kindex configuration and data paths",
+    "contents of Tester-clone evidence/** and .kin/**"
+  ],
+  "os_denied_writes": [
+    "Tester-clone spec/**, evidence/**, .kin/**, root metadata, product/package paths",
+    "Coder, Validator, Detector Reviewer, control, and main Guildhall repositories",
+    "Codex memories and Kindex paths"
+  ],
+  "os_allowed_writes": [
+    "Tester-clone tests/**",
+    "Tester-clone Git metadata required for its commit",
+    "ordinary Claude client/session and temporary facilities"
+  ],
+  "sandbox_preflight": {
+    "tests_read_allowed": true,
+    "git_status_metadata_allowed": true,
+    "coder_read_denied": true,
+    "main_report_path_read_denied_inside_tester": true,
+    "spec_write_denied": true,
+    "tests_write_allowed": true
+  },
+  "delegation": "forbidden; same bound Tester identity only",
+  "authorized_execution": "collection and product-independent Tester instrument self-tests only",
+  "verdict_authority": "Validator only",
+  "product_snapshot_available": false
+}
