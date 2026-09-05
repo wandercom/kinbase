@@ -1,0 +1,53 @@
+{
+  "schema_version": "guildhall-factory-coder-failure/1",
+  "recorded_at": "2026-09-05T23:20:09Z",
+  "attempt": 7,
+  "role": "Coder",
+  "model": "glm-5.3:cloud",
+  "thread_id": "01a072d7-a9e2-7190-8b96-6f8abf42355b",
+  "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "continuation_prompt_sha256": "74de27546eea6ede00d7db66a122cc6cc545ac01fd9d5e5563db004b26e3e5e7",
+  "continuation_binding_sha256": "f7a3da7f727b4083b37c69894c983c8aa862f13bc7400f845f594ade1355203a",
+  "launcher_sha256": "6e12cd47c2434617a050b8409c715d57ba80ae2842aecbdde18e84a99098f2d7",
+  "process_exit": 1,
+  "terminal_error": "stream disconnected before completion: extra usage auto reload payment failed, update your payment method or add extra usage at https://ollama.com/settings (ref: 03aaf759-07d0-4c3f-93da-2d7c9421fc67)",
+  "reconnect_attempts": 5,
+  "event_log_sha256": "ee3759336e2fed4d82eff0368d3b6b54529006931f33b2e70bab5800ac11e72b",
+  "event_log_bytes": 12895645,
+  "event_log_lines": 2417,
+  "exit_file_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+  "terminal_message_file_present": false,
+  "terminal_coder_commit": null,
+  "worktree": {
+    "branch": "factory/coder-ac8a13d1",
+    "head": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+    "head_tree": "0a4cffe95304735ab68f6817f0fb97aeccb1ed77",
+    "status_sha256": "422b3e2a82f1fc739ed16b8b324123411d65a44531c48ede4612e14322bee6e7",
+    "untracked_product_paths": [
+      "guildhall/",
+      "pyproject.toml"
+    ],
+    "python_file_count": 29,
+    "product_python_bytes": 471463,
+    "flat_path_content_digest_sha256": "5b483e1f85a9a5f762ee85494b2081a92241f9f1204a06fda12fe333d2fe222e",
+    "flat_path_content_digest_method": "sha256 of sorted relative-path TAB sha256 rows for non-pycache guildhall files plus pyproject.toml",
+    "symlinks": false,
+    "executable_product_files": false
+  },
+  "trace_audit": {
+    "completed_command_count": 792,
+    "failed_command_count": 36,
+    "mcp_call_count": 1,
+    "web_or_collaboration_calls": 0,
+    "tester_or_reviewer_contents_read": false,
+    "tests_directory_access": "No test contents were read; one inventory command explicitly pruned ./tests.",
+    "other_factory_lane_absolute_paths_read": false,
+    "local_kindex_attempted": true,
+    "global_plugin_resource_metadata_listed": true
+  },
+  "last_uncompleted_intent": "Complete staged-file wiring, then exercise the shared sandbox directly after finding an unused unsafe source set in guildhall/cli.py.",
+  "admission": "NONE",
+  "disposition": "QUARANTINED_UNCOMMITTED_PRODUCT; preserve exact lane bytes, do not combine, and resume only after GLM provider capacity is restored under the founder's standing same-thread continuation authority.",
+  "product_or_proof_verdict": "none"
+}
