@@ -1,0 +1,42 @@
+{
+  "schema_version": "guildhall-factory-detector-reviewer-result/1",
+  "attempt": 3,
+  "thread_id": "01a07356-f0e9-73f3-a9f7-034dfd539884",
+  "binding_sha256": "731155d442dc50a3529d35842ec802453a5275e62bdfba299da4c1ab31887fe2",
+  "prompt_sha256": "b876900b63f711532eb1906069c4f347781a6ba370409294eecf69ed13fb3184",
+  "input_commit": "263d41d77ae11e4e62f2ce2716378a8e1ebdc7f2",
+  "input_tree": "61af5f8966f9a070e36eef31681d2c6c98a68c58",
+  "process_exit": 0,
+  "event_log_sha256": "54a69cc4e88da4e08b597ac5be352d765e0c1c0ce8dd8cca2546e83e7e3daa55",
+  "event_log_bytes": 2832180,
+  "event_log_lines": 297,
+  "exit_file_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+  "report_path": "evidence/reviews/detector-reviewer-003.md",
+  "report_sha256": "317925f3483ba4b4822ced230d61c5aac2ae0db188606a5a3e3bc1da658e777e",
+  "report_bytes": 45270,
+  "report_lines": 557,
+  "terminal_status": "DETECTOR_REVIEW_STATUS: BLOCKED 22",
+  "unresolved_blocking_findings": 22,
+  "usage": {
+    "input_tokens": 15795902,
+    "cached_input_tokens": 15131776,
+    "output_tokens": 70066,
+    "reasoning_output_tokens": 31691
+  },
+  "audit": {
+    "completed_command_count": 141,
+    "failed_command_count": 6,
+    "collaboration_calls": 0,
+    "command_inputs_naming_forbidden_absolute_paths": 0,
+    "os_denied_automatic_git_status_path_reads": 17,
+    "excluded_contents_read": false,
+    "post_run_commit": "263d41d77ae11e4e62f2ce2716378a8e1ebdc7f2",
+    "post_run_tree": "61af5f8966f9a070e36eef31681d2c6c98a68c58",
+    "post_run_clean": true,
+    "object_alternates": false,
+    "multiply_linked_regular_files": false
+  },
+  "admission": "BLOCKED",
+  "gate_effect": "Tester instrument remains inadmissible and must return to the same implementation-blind Tester identity for remediation before product combination.",
+  "product_or_proof_verdict": "none"
+}
