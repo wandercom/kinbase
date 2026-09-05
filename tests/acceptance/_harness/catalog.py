@@ -292,20 +292,40 @@ _o(
     "Every declared cell has an expected observation/current-fact/Unknown state and "
     "at least one negative mutation.",
     clauses(
-        every("cells", "each declared cell is executed with a real transition",
+        # Detector Reviewer finding 11: the ratified table sums to 64 cells and
+        # the catalog required 61, so three cells could silently disappear. The
+        # count is now exact and each cell must carry its own native format, its
+        # three expected states, the states actually observed, and its own
+        # negative mutation, so no two cells share one defect.
+        equals("declared_cell_count", 64,
+               "the ratified adapter lifecycle table sums to exactly 64 cells"),
+        covers("adapters_covered", ADAPTERS,
+               "every ratified adapter contributes its own cells"),
+        every("cells", "each declared cell is executed with a real native transition",
               present("adapter", "which adapter"),
               present("cell", "which lifecycle cell"),
-              member("observed_state", ("observation", "current-fact", "Unknown"),
-                     "closed expected-state set"),
-              is_true("transition_executed",
-                      "the transition ran; naming a cell is not executing it"),
-              present("negative_mutation", "at least one negative mutation per cell"),
+              present("native_format",
+                      "the adapter's own source format, not a generic JSON stand-in"),
+              present("expected_observation_state", "frozen expected observation state"),
+              present("expected_fact_state", "frozen expected current-fact state"),
+              present("expected_unknown_state", "frozen expected Unknown state"),
+              present("observed_observation_state", "observed observation state"),
+              present("observed_fact_state", "observed current-fact state"),
+              present("observed_unknown_state", "observed Unknown state"),
+              is_true("states_match",
+                      "the observed triple equals the frozen expected triple"),
+              is_true("transition_executed_natively",
+                      "the transition ran in the adapter's native format; naming a "
+                      "cell is not executing it"),
+              present("source_tree_before", "raw source digest before the transition"),
+              present("source_tree_after", "raw source digest after the transition"),
+              present("negative_mutation", "this cell's own negative mutation"),
               is_true("negative_mutation_killed",
                       "the declared negative mutation must actually be caught"),
-              min_len=61),
+              min_len=64),
     ),
     surfaces=("guildhall ingest", "guildhall status --json"),
-    vectors=("61 frozen adapter lifecycle cells",),
+    vectors=("64 frozen adapter lifecycle cells",),
     nodes=("test_v1_ingestion.py::test_lifecycle_matrix_executes_every_declared_cell",),
 )
 

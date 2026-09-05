@@ -322,3 +322,48 @@ def content_address(payload: Any) -> str:
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()
+
+
+def field(node: Any, *path: str) -> Any:
+    """Read a nested key with **no default**, returning ``None`` when absent.
+
+    This is not a permissive default. The result is handed to a catalogue clause
+    that requires the value to be present, of the right type, or non-empty, so
+    an absent field fails with a typed message naming the obligation. The point
+    is to keep the *absence* visible to the checker instead of substituting a
+    satisfying value at the read site, which is the defect Detector Reviewer
+    finding 6 named.
+    """
+    current = node
+    for key in path:
+        if not isinstance(current, Mapping):
+            return None
+        if key not in current:
+            return None
+        current = current[key]
+    return current
+
+
+def rows(node: Any, *path: str) -> list:
+    """Read a list-of-objects field, preserving emptiness for the checker.
+
+    An absent or malformed list becomes an empty list *for the checker*, which
+    refuses an empty domain. It is never used as a loop domain in a gate test:
+    ``test_no_green_paths.py`` rejects that pattern outright.
+    """
+    value = field(node, *path)
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
+
+
+def find_row(node: Any, *path: str, key: str, value: Any) -> dict:
+    """The first object in a list field whose ``key`` equals ``value``.
+
+    Returns an empty mapping when there is none, so the obligation's clauses
+    report the exact missing field rather than raising an untyped KeyError.
+    """
+    for item in rows(node, *path):
+        if item.get(key) == value:
+            return item
+    return {}

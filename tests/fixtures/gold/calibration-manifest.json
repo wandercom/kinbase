@@ -1,0 +1,17 @@
+{
+  "calibration_namespace": "cal*",
+  "corpus_path": "tests/fixtures/gold/calibration_corpus.json",
+  "corpus_sha256": "6cfe3b1462e89aa1cca09498baabb3438f791f6442f35b35ac7ec8235296226c",
+  "frozen_before": "any classifier run; spec/verification.md V-2 requires the calibration corpus to gate expensive measurement",
+  "generator": "tests/tools/freeze-calibration.py",
+  "held_out_namespace": "m*",
+  "message_count": 60,
+  "schema": "guildhall-v2-calibration-manifest/1",
+  "seed": 20260907,
+  "thresholds": {
+    "macro_f1_interval_method": "message_stratified_bootstrap",
+    "macro_f1_lower_bound": 0.9,
+    "shared_precision_interval_method": "wilson",
+    "shared_precision_lower_bound": 0.95
+  }
+}

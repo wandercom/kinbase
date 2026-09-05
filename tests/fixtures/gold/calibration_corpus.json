@@ -1,0 +1,1093 @@
+{
+  "generator": "tests/tools/freeze-calibration.py",
+  "message_count": 60,
+  "messages": [
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository cache warmup is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ],
+        [
+          "preference",
+          "my own note about cache warmup that belongs in the personal store",
+          [
+            "personal"
+          ]
+        ]
+      ],
+      "message_id": "cal000",
+      "mixed": true,
+      "stratum": "codebase_fact",
+      "subject": "cache warmup",
+      "template": "in this repository cache warmup is bounded by the checked-in default. my own note about cache warmup that belongs in the personal store."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed cache warmup for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal001",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "cache warmup",
+      "template": "the architecture board fixed cache warmup for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository replay window is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal002",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "replay window",
+      "template": "in this repository replay window is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed cache warmup for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal003",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "cache warmup",
+      "template": "the architecture board fixed cache warmup for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "someone mentioned leader lease in passing without deciding anything",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal004",
+      "mixed": false,
+      "stratum": "ambiguous_non_fact",
+      "subject": "leader lease",
+      "template": "someone mentioned leader lease in passing without deciding anything."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "for today only we are nudging cache warmup while the incident runs",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal005",
+      "mixed": false,
+      "stratum": "temporary_suggestion",
+      "subject": "cache warmup",
+      "template": "for today only we are nudging cache warmup while the incident runs."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository fanout budget is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal006",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "fanout budget",
+      "template": "in this repository fanout budget is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed shard rebalance for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal007",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "shard rebalance",
+      "template": "the architecture board fixed shard rebalance for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository index compaction is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal008",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "index compaction",
+      "template": "in this repository index compaction is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed retry ceiling for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal009",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "retry ceiling",
+      "template": "the architecture board fixed retry ceiling for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "someone mentioned cache warmup in passing without deciding anything",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal010",
+      "mixed": false,
+      "stratum": "ambiguous_non_fact",
+      "subject": "cache warmup",
+      "template": "someone mentioned cache warmup in passing without deciding anything."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "for today only we are nudging queue drain order while the incident runs",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal011",
+      "mixed": false,
+      "stratum": "temporary_suggestion",
+      "subject": "queue drain order",
+      "template": "for today only we are nudging queue drain order while the incident runs."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository backpressure threshold is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal012",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "backpressure threshold",
+      "template": "in this repository backpressure threshold is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed index compaction for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal013",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "index compaction",
+      "template": "the architecture board fixed index compaction for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository shard rebalance is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal014",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "shard rebalance",
+      "template": "in this repository shard rebalance is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed leader lease for every service",
+          [
+            "company"
+          ]
+        ],
+        [
+          "preference",
+          "my own note about leader lease that belongs in the personal store",
+          [
+            "personal"
+          ]
+        ]
+      ],
+      "message_id": "cal015",
+      "mixed": true,
+      "stratum": "company_architecture",
+      "subject": "leader lease",
+      "template": "the architecture board fixed leader lease for every service. my own note about leader lease that belongs in the personal store."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "someone mentioned backpressure threshold in passing without deciding anything",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal016",
+      "mixed": false,
+      "stratum": "ambiguous_non_fact",
+      "subject": "backpressure threshold",
+      "template": "someone mentioned backpressure threshold in passing without deciding anything."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "for today only we are nudging scheduler lookahead while the incident runs",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal017",
+      "mixed": false,
+      "stratum": "temporary_suggestion",
+      "subject": "scheduler lookahead",
+      "template": "for today only we are nudging scheduler lookahead while the incident runs."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository cache warmup is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal018",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "cache warmup",
+      "template": "in this repository cache warmup is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed backpressure threshold for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal019",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "backpressure threshold",
+      "template": "the architecture board fixed backpressure threshold for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository scheduler lookahead is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ],
+        [
+          "preference",
+          "my own note about scheduler lookahead that belongs in the personal store",
+          [
+            "personal"
+          ]
+        ]
+      ],
+      "message_id": "cal020",
+      "mixed": true,
+      "stratum": "codebase_fact",
+      "subject": "scheduler lookahead",
+      "template": "in this repository scheduler lookahead is bounded by the checked-in default. my own note about scheduler lookahead that belongs in the personal store."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed retry ceiling for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal021",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "retry ceiling",
+      "template": "the architecture board fixed retry ceiling for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "someone mentioned scheduler lookahead in passing without deciding anything",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal022",
+      "mixed": false,
+      "stratum": "ambiguous_non_fact",
+      "subject": "scheduler lookahead",
+      "template": "someone mentioned scheduler lookahead in passing without deciding anything."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "for today only we are nudging scheduler lookahead while the incident runs",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal023",
+      "mixed": false,
+      "stratum": "temporary_suggestion",
+      "subject": "scheduler lookahead",
+      "template": "for today only we are nudging scheduler lookahead while the incident runs."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository leader lease is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal024",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "leader lease",
+      "template": "in this repository leader lease is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed scheduler lookahead for every service",
+          [
+            "company"
+          ]
+        ],
+        [
+          "preference",
+          "my own note about scheduler lookahead that belongs in the personal store",
+          [
+            "personal"
+          ]
+        ]
+      ],
+      "message_id": "cal025",
+      "mixed": true,
+      "stratum": "company_architecture",
+      "subject": "scheduler lookahead",
+      "template": "the architecture board fixed scheduler lookahead for every service. my own note about scheduler lookahead that belongs in the personal store."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository queue drain order is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal026",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "queue drain order",
+      "template": "in this repository queue drain order is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed retry ceiling for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal027",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "retry ceiling",
+      "template": "the architecture board fixed retry ceiling for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "someone mentioned replay window in passing without deciding anything",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal028",
+      "mixed": false,
+      "stratum": "ambiguous_non_fact",
+      "subject": "replay window",
+      "template": "someone mentioned replay window in passing without deciding anything."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "for today only we are nudging replay window while the incident runs",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal029",
+      "mixed": false,
+      "stratum": "temporary_suggestion",
+      "subject": "replay window",
+      "template": "for today only we are nudging replay window while the incident runs."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository retry ceiling is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ],
+        [
+          "preference",
+          "my own note about retry ceiling that belongs in the personal store",
+          [
+            "personal"
+          ]
+        ]
+      ],
+      "message_id": "cal030",
+      "mixed": true,
+      "stratum": "codebase_fact",
+      "subject": "retry ceiling",
+      "template": "in this repository retry ceiling is bounded by the checked-in default. my own note about retry ceiling that belongs in the personal store."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed scheduler lookahead for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal031",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "scheduler lookahead",
+      "template": "the architecture board fixed scheduler lookahead for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository leader lease is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal032",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "leader lease",
+      "template": "in this repository leader lease is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed shard rebalance for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal033",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "shard rebalance",
+      "template": "the architecture board fixed shard rebalance for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "someone mentioned leader lease in passing without deciding anything",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal034",
+      "mixed": false,
+      "stratum": "ambiguous_non_fact",
+      "subject": "leader lease",
+      "template": "someone mentioned leader lease in passing without deciding anything."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "for today only we are nudging retry ceiling while the incident runs",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal035",
+      "mixed": false,
+      "stratum": "temporary_suggestion",
+      "subject": "retry ceiling",
+      "template": "for today only we are nudging retry ceiling while the incident runs."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository index compaction is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal036",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "index compaction",
+      "template": "in this repository index compaction is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed retry ceiling for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal037",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "retry ceiling",
+      "template": "the architecture board fixed retry ceiling for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository cache warmup is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal038",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "cache warmup",
+      "template": "in this repository cache warmup is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed backpressure threshold for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal039",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "backpressure threshold",
+      "template": "the architecture board fixed backpressure threshold for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "someone mentioned queue drain order in passing without deciding anything",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal040",
+      "mixed": false,
+      "stratum": "ambiguous_non_fact",
+      "subject": "queue drain order",
+      "template": "someone mentioned queue drain order in passing without deciding anything."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "for today only we are nudging cache warmup while the incident runs",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal041",
+      "mixed": false,
+      "stratum": "temporary_suggestion",
+      "subject": "cache warmup",
+      "template": "for today only we are nudging cache warmup while the incident runs."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository backpressure threshold is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal042",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "backpressure threshold",
+      "template": "in this repository backpressure threshold is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed scheduler lookahead for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal043",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "scheduler lookahead",
+      "template": "the architecture board fixed scheduler lookahead for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository index compaction is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal044",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "index compaction",
+      "template": "in this repository index compaction is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed fanout budget for every service",
+          [
+            "company"
+          ]
+        ],
+        [
+          "preference",
+          "my own note about fanout budget that belongs in the personal store",
+          [
+            "personal"
+          ]
+        ]
+      ],
+      "message_id": "cal045",
+      "mixed": true,
+      "stratum": "company_architecture",
+      "subject": "fanout budget",
+      "template": "the architecture board fixed fanout budget for every service. my own note about fanout budget that belongs in the personal store."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "someone mentioned shard rebalance in passing without deciding anything",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal046",
+      "mixed": false,
+      "stratum": "ambiguous_non_fact",
+      "subject": "shard rebalance",
+      "template": "someone mentioned shard rebalance in passing without deciding anything."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "for today only we are nudging retry ceiling while the incident runs",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal047",
+      "mixed": false,
+      "stratum": "temporary_suggestion",
+      "subject": "retry ceiling",
+      "template": "for today only we are nudging retry ceiling while the incident runs."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository shard rebalance is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal048",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "shard rebalance",
+      "template": "in this repository shard rebalance is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed fanout budget for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal049",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "fanout budget",
+      "template": "the architecture board fixed fanout budget for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository replay window is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ],
+        [
+          "preference",
+          "my own note about replay window that belongs in the personal store",
+          [
+            "personal"
+          ]
+        ]
+      ],
+      "message_id": "cal050",
+      "mixed": true,
+      "stratum": "codebase_fact",
+      "subject": "replay window",
+      "template": "in this repository replay window is bounded by the checked-in default. my own note about replay window that belongs in the personal store."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed queue drain order for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal051",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "queue drain order",
+      "template": "the architecture board fixed queue drain order for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "someone mentioned cache warmup in passing without deciding anything",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal052",
+      "mixed": false,
+      "stratum": "ambiguous_non_fact",
+      "subject": "cache warmup",
+      "template": "someone mentioned cache warmup in passing without deciding anything."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "for today only we are nudging cache warmup while the incident runs",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal053",
+      "mixed": false,
+      "stratum": "temporary_suggestion",
+      "subject": "cache warmup",
+      "template": "for today only we are nudging cache warmup while the incident runs."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository backpressure threshold is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal054",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "backpressure threshold",
+      "template": "in this repository backpressure threshold is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed scheduler lookahead for every service",
+          [
+            "company"
+          ]
+        ],
+        [
+          "preference",
+          "my own note about scheduler lookahead that belongs in the personal store",
+          [
+            "personal"
+          ]
+        ]
+      ],
+      "message_id": "cal055",
+      "mixed": true,
+      "stratum": "company_architecture",
+      "subject": "scheduler lookahead",
+      "template": "the architecture board fixed scheduler lookahead for every service. my own note about scheduler lookahead that belongs in the personal store."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "in this repository index compaction is bounded by the checked-in default",
+          [
+            "codebase"
+          ]
+        ]
+      ],
+      "message_id": "cal056",
+      "mixed": false,
+      "stratum": "codebase_fact",
+      "subject": "index compaction",
+      "template": "in this repository index compaction is bounded by the checked-in default."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "the architecture board fixed shard rebalance for every service",
+          [
+            "company"
+          ]
+        ]
+      ],
+      "message_id": "cal057",
+      "mixed": false,
+      "stratum": "company_architecture",
+      "subject": "shard rebalance",
+      "template": "the architecture board fixed shard rebalance for every service."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "someone mentioned index compaction in passing without deciding anything",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal058",
+      "mixed": false,
+      "stratum": "ambiguous_non_fact",
+      "subject": "index compaction",
+      "template": "someone mentioned index compaction in passing without deciding anything."
+    },
+    {
+      "canary_slots": [],
+      "gold_atoms": [
+        [
+          "constraint",
+          "for today only we are nudging backpressure threshold while the incident runs",
+          [
+            "none"
+          ]
+        ]
+      ],
+      "message_id": "cal059",
+      "mixed": false,
+      "stratum": "temporary_suggestion",
+      "subject": "backpressure threshold",
+      "template": "for today only we are nudging backpressure threshold while the incident runs."
+    }
+  ],
+  "pooled_trials_per_shared_label_across_five_runs": 100,
+  "provenance": "Deterministically generated by the Tester from the named seed above. Excluded from the held-out routing corpus by construction: its identifiers are the cal* namespace and share no id with the m* held-out namespace. Contains no real private conversation.",
+  "schema": "guildhall-v2-calibration-corpus/1",
+  "seed": 20260907,
+  "shared_destination_messages_per_label": 20,
+  "strata": [
+    "ambiguous_non_fact",
+    "codebase_fact",
+    "company_architecture",
+    "temporary_suggestion"
+  ]
+}

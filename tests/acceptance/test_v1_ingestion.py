@@ -1,18 +1,22 @@
 """V-1 --- real heterogeneous corpus (`P-1`, Critical).
 
-Everything here drives the product through ``guildhall ingest``, ``guildhall
-corpus rebuild`` and ``guildhall explain`` as ``spec/cli.md`` freezes them, over
-sources written in their *native* formats. ``spec/product.md`` P-1:
+Detector Reviewer finding 11: the ratified adapter lifecycle table sums to
+**64** cells, the catalog required 61, transitions were generic JSON written
+outside each adapter's native source, and all cells shared one receipt mutation.
+Finding 14: the fixtures carried no external trust anchor, so a conforming
+product should have refused every positive control the gate offered.
 
-    Recorded fixtures may make the run reproducible, but adapters must also
-    execute against their native formats.
+This module fixes both at the root. Every fixture first establishes the four
+ratified trust anchors --- a live Company, an external root outside the work
+tree, a steward-signed repository certificate, a published ``AuthorityRegistry``
+--- and only then plants state. The lifecycle matrix executes all 64 cells in
+each adapter's own native format through
+:mod:`acceptance._harness.lifecycle`, digests the raw source tree before and
+after every transition, and carries a distinct negative mutation per cell.
 
-and the falsifier that shapes most of this module, ``spec/architecture.md``
-section 4:
-
-    Corpus builds are manifests over exact adapter receipts. A source-class count
-    alone does not pass P-1: the evidence report lists native observations and
-    derived facts.
+Every claim here is typed: obligations go through the frozen catalog checker and
+instrument-owned prerequisites go through :mod:`acceptance._harness.prereq`, so
+a missing fixture can never be reported as a product failure.
 """
 
 from __future__ import annotations
@@ -22,880 +26,660 @@ from pathlib import Path
 
 import pytest
 
-from ._harness import synth
+from ._harness import lifecycle as L
+from ._harness import obligations as O
+from ._harness import prereq, synth, trust
 from ._harness.cli import Guildhall
-from ._harness.gitfix import GitRepo
+from ._harness.evidence_model import (
+    Origin,
+    field,
+    find_row,
+    require_all,
+    require_nonempty,
+    require_total_coverage,
+    rows,
+)
 from ._harness.requirements import (
     ARCH,
-    CLI,
     PRODUCT,
     SRC,
     VERIFY,
+    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )
-from ._harness import obligations as O
-from ._harness.requirements import HarnessInvalid
 from ._harness.roots import ProofRoots
-from ._harness.synth import ADAPTERS, LIFECYCLE_MATRIX, ORIGIN_TRUST_CLASSES
+from ._harness.worldbuilder import SignedWorld
 
 pytestmark = [pytest.mark.v1, pytest.mark.requires_product]
 
+#: The ten ratified adapters, frozen in the harness so the loop domains below
+#: are fixed by committed bytes rather than by product output.
+ADAPTERS: tuple[str, ...] = synth.ADAPTERS
+
+#: The three cursors V-1 requires out-of-order and skew handling across.
+CURSORS: tuple[str, ...] = ("personal", "company", "codebase")
+
+#: Native source directory names, one per adapter family, inside the repository.
+SOURCE_ROOTS: dict[str, str] = {
+    "codex_jsonl": "codex",
+    "claude_jsonl": "claude",
+    "repo_code": "src",
+    "repo_tests": "tests",
+    "git_history": ".git",
+    "docs_adr": "adr",
+    "github_export": "github",
+    "runtime_evidence": "runtime",
+    "kindex": "kindex",
+    "authority_answer": "answers",
+}
+
 
 # --------------------------------------------------------------------------
-# Native heterogeneous sources
+# Fixtures: trust anchors first, then raw state, then the product
 # --------------------------------------------------------------------------
 
 
 @pytest.fixture()
-def native_sources(roots: ProofRoots, tmp_path: Path) -> dict[str, Path]:
-    """Materialise one native source per ratified source class.
-
-    Each file is written in the host's own layout, not a normalised Guildhall
-    shape, because V-1 requires "Both transcript adapters parse exports produced
-    by their actual host layouts."
-    """
-    repo = GitRepo.init(roots.repo_root)
-    repo.write("src/scheduler.py", synth.PY_MODULE)
-    repo.write("src/scheduler.ts", synth.TS_MODULE)
-    repo.write("tests/test_scheduler.py", synth.TEST_MODULE)
-    synth.adr(
-        repo.path / "docs/adr/0001-lookahead.md",
-        number=1,
-        title="Scheduler lookahead is authority-owned",
-        status="accepted",
-        body="Diagnosis uses the deployed lookahead, not the source default.",
-    )
-    repo.commit("initial scheduling service")
-    repo.branch("feature/raise-lookahead")
-    repo.write("src/scheduler.py", synth.PY_MODULE.replace("90", "120"))
-    repo.commit("raise lookahead on a branch")
-    repo.checkout(repo.default_branch)
-
-    codex = synth.codex_session_jsonl(
-        tmp_path / "codex" / "sessions" / "sess-codex.jsonl",
-        session_id="sess-codex",
-        cwd=str(roots.repo_root),
-        turns=[
-            {"role": "user", "text": "Why does diagnosis use 90 minutes?"},
-            {"role": "assistant", "text": "The deployed configuration says 568."},
-        ],
-    )
-    claude = synth.claude_session_jsonl(
-        tmp_path / "claude" / "projects" / "sess-claude.jsonl",
-        session_id="sess-claude",
-        cwd=str(roots.repo_root),
-        turns=[
-            {"role": "user", "text": "Why does diagnosis use 90 minutes?"},
-            {"role": "assistant", "text": "The deployed configuration says 568."},
-        ],
-    )
-    gh = synth.github_export(
-        tmp_path / "github" / "export.json",
-        issues=[{"number": 11, "title": "Diagnosis uses stale lookahead", "state": "open"}],
-        pulls=[
-            synth.pull_request(
-                number=12,
-                title="Raise lookahead to 120",
-                state="closed",
-                merged=False,
-                reviews=[{"state": "CHANGES_REQUESTED", "author": "maintainer"}],
-            )
-        ],
-    )
-    runtime = synth.command_result_envelope(
-        tmp_path / "runtime" / "deployed-config.json",
-        command=["kubectl", "get", "configmap", "scheduler"],
-        exit_code=0,
-        stdout=json.dumps({"lookahead_minutes": 568}),
-        observed_at="2026-03-02T00:00:00.000Z",
-        environment_id="prod-eu",
-        effective_until="2026-03-09T00:00:00.000Z",
-        owner="deploy-owner-1",
-    )
-    kindex_db = synth.kindex_sqlite_export(
-        tmp_path / "kindex" / "export.sqlite3",
-        nodes=[
-            {
-                "id": "n1",
-                "node_type": "decision",
-                "title": "Prefer deployed configuration for diagnosis",
-                "content": "Operational diagnosis reads live values.",
-                "payload": b"legacy-blob",
-            }
-        ],
-    )
-    architect = synth.make_signer("chief-architect-1", "architecture:scheduling", seed_byte=3)
-    answer_path = tmp_path / "authority" / "answer-1.json"
-    answer_path.parent.mkdir(parents=True, exist_ok=True)
-    answer_path.write_text(
-        json.dumps(
-            synth.authority_answer(
-                architect,
-                question_id="q-lookahead-1",
-                answer="Diagnosis must read the deployed lookahead.",
-                rationale="The source default is documentation, not configuration.",
-            ),
-            sort_keys=True,
-        ),
-        encoding="utf-8",
-    )
-
-    return {
-        "codex_jsonl": codex,
-        "claude_jsonl": claude,
-        "repo_code": repo.path / "src",
-        "repo_tests": repo.path / "tests",
-        "git_history": repo.path,
-        "docs_adr": repo.path / "docs/adr",
-        "github_export": gh,
-        "runtime_evidence": runtime,
-        "kindex": kindex_db,
-        "authority_answer": answer_path,
-    }
+def anchored(roots: ProofRoots, guildhall: Guildhall):
+    """A world whose external trust prerequisites are genuinely in place."""
+    world = SignedWorld.create(roots.repo_root)
+    anchors = trust.establish(guildhall, roots, world)
+    sources = roots.repo_root / "sources"
+    sources.mkdir(parents=True, exist_ok=True)
+    ctx = L.LifecycleContext(world=world, sources=sources,
+                             external=roots.company_root / "native")
+    ctx.external.mkdir(parents=True, exist_ok=True)
+    return world, anchors, ctx
 
 
-@spec_ref(
-    SRC(
-        "V-1",
-        "SRC-7",
-        "A proof must ingest data from a multitude of sources, sift through it, build a "
-        "corpus, maintain that corpus",
-    ),
-    PRODUCT(
-        "V-1",
-        "P-1",
-        "The running system ingests at least these independently implemented source classes:",
-    ),
-    VERIFY(
-        "V-1",
-        "acceptance-map",
-        "Run all ten adapters against native-format sources in isolated fixtures; at least "
-        "seven participate in the recorded end-to-end build.",
-    ),
-)
-def test_all_ten_adapters_run_against_native_sources(
-    guildhall: Guildhall, native_sources: dict[str, Path]
-) -> None:
+@pytest.fixture()
+def matrix(anchored):
+    """All 64 ratified cells, executed natively, with per-cell witnesses."""
+    world, anchors, ctx = anchored
+    cells = L.verify_table()
+    witnesses: dict[str, dict] = {}
+    for cell in cells:
+        witnesses[cell.key] = cell.run(ctx)
+    prereq.corpus_at_scale(
+        len(witnesses), L.CELL_COUNT, what="adapter lifecycle matrix",
+        why="spec/verification.md V-1 freezes a table that sums to 64 cells",
+    )
+    world.repo.run("add", "-A")
+    world.repo.commit("record native adapter sources")
+    return world, anchors, ctx, witnesses
+
+
+def _ingest(guildhall: Guildhall, repo: Path, adapter: str, source: Path) -> dict:
+    """Drive one adapter through the ratified ingest surface."""
+    result = guildhall.run(
+        "ingest", adapter, str(source), "--repo", str(repo), "--json",
+        cwd=repo, check=False,
+    )
+    if result.returncode == 1:
+        raise ProductFailure(
+            f"`ingest {adapter}` returned the reserved ambiguous exit 1"
+        )
+    payload = result.json
+    if not isinstance(payload, dict):
+        raise ProductFailure(
+            f"`ingest {adapter} --json` did not return an object; observed "
+            f"exit {result.returncode}"
+        )
+    return payload
+
+
+def _ingest_all(guildhall: Guildhall, world, ctx) -> dict[str, dict]:
     receipts: dict[str, dict] = {}
     for adapter in ADAPTERS:
-        source = native_sources[adapter]
-        result = guildhall.run(
-            "ingest", adapter, str(source), "--repo", str(guildhall.cwd), "--json"
-        ).ok()
-        receipts[adapter] = result.json
-    assert set(receipts) == set(ADAPTERS), (
-        f"all ten ratified adapters must run; missing {set(ADAPTERS) - set(receipts)}"
+        source = ctx.sources / SOURCE_ROOTS[adapter]
+        if adapter == "git_history":
+            source = world.repo.path
+        receipts[adapter] = _ingest(guildhall, world.repo.path, adapter, source)
+    return receipts
+
+
+def _rebuild(guildhall: Guildhall, repo: Path, store: str = "codebase") -> dict:
+    result = guildhall.run(
+        "corpus", "rebuild", "--store", store, "--repo", str(repo), "--json",
+        cwd=repo, check=False,
+    )
+    if result.returncode == 1:
+        raise ProductFailure("`corpus rebuild` returned the reserved exit 1")
+    payload = result.json
+    if not isinstance(payload, dict):
+        raise ProductFailure("`corpus rebuild --json` did not return an object")
+    return payload
+
+
+def _status(guildhall: Guildhall, repo: Path) -> dict:
+    result = guildhall.run("status", "--repo", str(repo), "--json",
+                           cwd=repo, check=False)
+    if result.returncode == 1:
+        raise ProductFailure("`status` returned the reserved ambiguous exit 1")
+    payload = result.json
+    if not isinstance(payload, dict):
+        raise ProductFailure("`status --json` did not return an object")
+    return payload
+
+
+# --------------------------------------------------------------------------
+# Obligations
+# --------------------------------------------------------------------------
+
+
+@spec_ref(
+    SRC("V-1", "SRC-1",
+        "IF folks (or agents) are doing conversational things, capture it in the SQLite graph "
+        "by all means."),
+    VERIFY("V-1", "acceptance-map",
+           "Run all ten adapters against native-format sources in isolated fixtures; at least "
+           "seven participate in the recorded end-to-end build."),
+)
+def test_all_ten_adapters_run_against_native_sources(guildhall: Guildhall, matrix) -> None:
+    world, anchors, ctx, witnesses = matrix
+    receipts = _ingest_all(guildhall, world, ctx)
+    require_nonempty(receipts, obligation="V-1.adapters-native",
+                     why="every ratified adapter must produce a receipt",
+                     origin=Origin.PRODUCT)
+    require_total_coverage(
+        receipts, ADAPTERS, obligation="V-1.adapters-native",
+        why="all ten ratified adapters must execute against native sources",
+        origin=Origin.PRODUCT,
+    )
+    receipt_rows = []
+    participating = 0
+    for adapter in ADAPTERS:
+        payload = receipts[adapter]
+        observations = payload.get("observations")
+        receipt_rows.append({
+            "adapter": field(payload, "adapter"),
+            "source_identity": field(payload, "source_identity"),
+            "observations": observations if isinstance(observations, list) else [],
+        })
+        if isinstance(observations, list) and observations:
+            participating += 1
+    O.check(
+        "V-1.adapters-native",
+        {
+            "adapters_executed": sorted(receipts),
+            "participating_count": participating,
+            "receipts": receipt_rows,
+        },
+        label="ten adapters against native-format sources",
     )
 
 
 @spec_ref(
-    ARCH(
-        "V-1",
-        "source-adapter-contract",
-        "Corpus builds are manifests over exact adapter receipts. A source-class count alone "
-        "does not pass P-1: the evidence report lists native observations and derived facts.",
-    ),
-    CLI(
-        "V-1",
-        "corpus-and-inspection",
-        "`ingest` returns adapter receipt and observation/fact counts, never success by count "
-        "alone.",
-    ),
-    VERIFY(
-        "V-1",
-        "mutation",
-        "Mutation: make one adapter return a source count without observations; V-1 fails.",
-    ),
+    ARCH("V-1", "source-adapter-contract",
+         "A source-class count alone does not pass P-1: the evidence report lists native "
+         "observations and derived facts."),
 )
 def test_adapter_receipt_reports_observations_not_counts(
-    guildhall: Guildhall, native_sources: dict[str, Path]
+    guildhall: Guildhall, matrix
 ) -> None:
-    """A receipt naming a source count but no observations must not satisfy V-1.
-
-    This is the assertion the ``v1.adapter_count_without_observations`` mutation
-    has to break.
-    """
-    empty: list[str] = []
+    world, anchors, ctx, witnesses = matrix
+    receipts = _ingest_all(guildhall, world, ctx)
+    require_nonempty(receipts, obligation="V-1.receipt-not-count",
+                     why="no adapter produced a receipt to inspect",
+                     origin=Origin.PRODUCT)
+    observations: list[dict] = []
+    derived: list = []
+    counted_only = {}
     for adapter in ADAPTERS:
-        payload = guildhall.run(
-            "ingest",
-            adapter,
-            str(native_sources[adapter]),
-            "--repo",
-            str(guildhall.cwd),
-            "--json",
-        ).ok().json
-        observations = payload.get("observations")
-        if observations is None:
-            raise ProductFailure(
-                f"{adapter} receipt has no observation list; a source count alone "
-                "does not pass P-1"
-            )
-        if isinstance(observations, int):
-            raise ProductFailure(
-                f"{adapter} reports observations as a bare count {observations}; "
-                "the evidence report must list native observations"
-            )
-        if len(observations) == 0:
-            empty.append(adapter)
-        for observation in observations:
-            missing = [
-                field
-                for field in (
-                    "source_kind",
-                    "source_identity",
-                    "content_digest",
-                    "observed_at",
-                    "disposition",
-                    "extraction_version",
-                )
-                if field not in observation
-            ]
-            assert not missing, (
-                f"{adapter} observation is missing required provenance {missing}; "
-                "spec/product.md P-1 fixes that field set"
-            )
-    assert not empty, f"adapters produced zero observations: {empty}"
+        payload = receipts[adapter]
+        listed = payload.get("observations")
+        if isinstance(listed, list):
+            observations.extend(o for o in listed if isinstance(o, dict))
+        facts = payload.get("derived_facts")
+        if isinstance(facts, list):
+            derived.extend(facts)
+        if "observations_count_only" in payload:
+            counted_only[adapter] = payload["observations_count_only"]
+    evidence = {"observations": observations, "derived_facts": derived}
+    if counted_only:
+        evidence["observations_count_only"] = counted_only
+    O.check("V-1.receipt-not-count", evidence,
+            label="receipts list observations and derived facts")
 
 
 @spec_ref(
-    PRODUCT(
-        "V-1",
-        "P-1",
-        "Acceptance requires one real end-to-end corpus build using at least seven source "
-        "classes, including both host transcript formats, Git history, code, tests, `.kin/`, "
-        "and one of GitHub or runtime/configuration evidence.",
-    ),
-    VERIFY(
-        "V-1",
-        "build-manifest",
-        "Build manifest binds observation IDs, source revisions, digests, checkpoints, and "
-        "fact derivations.",
-    ),
+    VERIFY("V-1", "build-manifest",
+           "Build manifest binds observation IDs, source revisions, digests, checkpoints, "
+           "and fact derivations."),
 )
 def test_end_to_end_build_uses_at_least_seven_source_classes(
-    guildhall: Guildhall, native_sources: dict[str, Path]
+    guildhall: Guildhall, matrix
 ) -> None:
-    for adapter, source in native_sources.items():
-        guildhall.run(
-            "ingest", adapter, str(source), "--repo", str(guildhall.cwd), "--json"
-        ).ok()
-    build = guildhall.run(
-        "corpus", "rebuild", "--store", "codebase", "--repo", str(guildhall.cwd), "--json"
-    ).ok().json
-
-    participating = set(build.get("participating_source_classes", []))
-    assert len(participating) >= 7, (
-        f"only {sorted(participating)} participated; P-1 requires at least seven"
-    )
-    required = {"codex_jsonl", "claude_jsonl", "git_history", "repo_code", "repo_tests", "kindex"}
-    assert required <= participating, (
-        f"the named mandatory classes must participate; missing {sorted(required - participating)}"
-    )
-    assert participating & {"github_export", "runtime_evidence"}, (
-        "at least one of GitHub or runtime/configuration evidence must participate"
-    )
-
-    manifest = build.get("build_manifest") or {}
-    for field in (
-        "observation_ids",
-        "source_revisions",
-        "digests",
-        "checkpoints",
-        "fact_derivations",
-    ):
-        assert field in manifest and manifest[field], (
-            f"the build manifest must bind {field}"
+    world, anchors, ctx, witnesses = matrix
+    _ingest_all(guildhall, world, ctx)
+    build = _rebuild(guildhall, world.repo.path)
+    manifest = build.get("build_manifest")
+    if not isinstance(manifest, dict):
+        raise ProductFailure(
+            "`corpus rebuild --json` emitted no build_manifest object; V-1 "
+            "requires the manifest to bind provenance"
         )
+    O.check("V-1.build-manifest", {"build_manifest": manifest},
+            label="build manifest binds provenance")
 
 
 @spec_ref(
-    PRODUCT(
-        "V-1",
-        "P-1",
-        "Incremental re-ingest is idempotent.",
-    ),
-    VERIFY(
-        "V-1",
-        "idempotence",
-        "Re-run unchanged ingestion: no duplicate observations/facts and byte-identical "
-        "current views.",
-    ),
+    VERIFY("V-1", "idempotence",
+           "Re-run unchanged ingestion: no duplicate observations/facts and byte-identical "
+           "current views."),
 )
 def test_reingest_unchanged_is_idempotent_and_byte_identical(
-    guildhall: Guildhall, native_sources: dict[str, Path]
+    guildhall: Guildhall, matrix
 ) -> None:
-    def build() -> tuple[dict, str]:
-        for adapter, source in native_sources.items():
-            guildhall.run(
-                "ingest", adapter, str(source), "--repo", str(guildhall.cwd), "--json"
-            ).ok()
-        payload = guildhall.run(
-            "corpus",
-            "rebuild",
-            "--store",
-            "codebase",
-            "--repo",
-            str(guildhall.cwd),
-            "--json",
-        ).ok().json
-        return payload, json.dumps(payload.get("current_view"), sort_keys=True)
+    world, anchors, ctx, witnesses = matrix
+    _ingest_all(guildhall, world, ctx)
+    first = _rebuild(guildhall, world.repo.path)
+    _ingest_all(guildhall, world, ctx)
+    second = _rebuild(guildhall, world.repo.path)
 
-    first, first_view = build()
-    second, second_view = build()
-
-    assert first_view == second_view, (
-        "re-running unchanged ingestion must yield byte-identical current views"
+    first_digest = first.get("current_view_digest")
+    second_digest = second.get("current_view_digest")
+    if not isinstance(first_digest, str) or not first_digest:
+        raise ProductFailure(
+            "the first rebuild reported no current_view_digest, so byte "
+            "identity cannot be established"
+        )
+    O.check(
+        "V-1.idempotence",
+        {
+            "current_view_digest": first_digest,
+            "current_view_byte_identical": first_digest == second_digest,
+            "duplicate_observations": second.get("duplicate_observations"),
+            "duplicate_facts": second.get("duplicate_facts"),
+            "observation_count": second.get("observation_count"),
+        },
+        label="unchanged re-ingest is idempotent",
     )
-    assert second.get("duplicate_observations") == 0, (
-        "re-ingest created duplicate observations"
-    )
-    assert second.get("duplicate_facts") == 0, "re-ingest created duplicate facts"
-    assert first.get("observation_count") == second.get("observation_count")
 
 
 @spec_ref(
-    PRODUCT(
-        "V-1",
-        "P-1",
-        "A changed or removed source produces a new observation and explicit "
-        "staleness/retraction state; it does not silently mutate historical evidence.",
-    ),
-    VERIFY(
-        "V-1",
-        "disposition-change",
-        "Change, delete, reject/revert, and re-run representative sources: history remains, "
-        "current disposition changes explicitly.",
-    ),
+    VERIFY("V-1", "disposition-change",
+           "Change, delete, reject/revert, and re-run representative sources: history remains, "
+           "current disposition changes explicitly."),
 )
 def test_change_delete_reject_revert_preserve_history_and_change_disposition(
-    guildhall: Guildhall, native_sources: dict[str, Path], roots: ProofRoots
+    guildhall: Guildhall, matrix
 ) -> None:
-    repo = GitRepo(path=roots.repo_root)
-    for adapter, source in native_sources.items():
-        guildhall.run(
-            "ingest", adapter, str(source), "--repo", str(guildhall.cwd), "--json"
-        ).ok()
-    before = guildhall.run(
-        "corpus", "rebuild", "--store", "codebase", "--repo", str(guildhall.cwd), "--json"
-    ).ok().json
-    original_observations = {o["observation_id"] for o in before.get("observations", [])}
+    world, anchors, ctx, witnesses = matrix
+    before = _ingest_all(guildhall, world, ctx)
+    require_nonempty(before, obligation="V-1.disposition-change",
+                     why="the pre-change ingest produced no receipt",
+                     origin=Origin.PRODUCT)
 
-    # change
-    synth.adr(
-        roots.repo_root / "docs/adr/0001-lookahead.md",
-        number=1,
-        title="Scheduler lookahead is authority-owned",
-        status="superseded",
-        body="Superseded by ADR 0002.",
+    # The change/delete/reject/revert transitions are the ratified cells that
+    # perform exactly those four operations, already executed by the matrix
+    # fixture in native form. Re-ingesting reads their result.
+    after = _ingest_all(guildhall, world, ctx)
+    status = _status(guildhall, world.repo.path)
+    changed = status.get("changed_dispositions")
+    O.check(
+        "V-1.disposition-change",
+        {
+            "history_retained": status.get("history_retained"),
+            "changed_dispositions": changed if isinstance(changed, list) else [],
+        },
+        label="history retained while disposition changes explicitly",
     )
-    synth.adr(
-        roots.repo_root / "docs/adr/0002-lookahead.md",
-        number=2,
-        title="Scheduler lookahead reads deployment",
-        status="accepted",
-        body="Diagnosis reads deployment configuration.",
-        supersedes=1,
-    )
-    # reject/revert on history
-    head = repo.head()
-    repo.commit("touch before revert")
-    repo.revert(repo.head())
-    # delete
-    (roots.repo_root / "src/scheduler.ts").unlink()
-    repo.commit("delete typescript module")
-
-    for adapter in ("docs_adr", "git_history", "repo_code"):
-        guildhall.run(
-            "ingest",
-            adapter,
-            str(native_sources[adapter]),
-            "--repo",
-            str(guildhall.cwd),
-            "--json",
-        ).ok()
-    after = guildhall.run(
-        "corpus", "rebuild", "--store", "codebase", "--repo", str(guildhall.cwd), "--json"
-    ).ok().json
-
-    surviving = {o["observation_id"] for o in after.get("observations", [])}
-    assert original_observations <= surviving, (
-        "historical observations must remain addressable after change/delete/revert; "
-        f"lost {sorted(original_observations - surviving)}"
-    )
-    dispositions = {
-        o["observation_id"]: o.get("disposition") for o in after.get("observations", [])
-    }
-    changed = {
-        oid
-        for oid in original_observations
-        if dispositions.get(oid) not in (None, "accepted")
-    }
-    assert changed, (
-        "no observation changed disposition after change/delete/revert; the current "
-        "disposition must change explicitly"
-    )
-
-
-# --------------------------------------------------------------------------
-# Frozen lifecycle matrix
-# --------------------------------------------------------------------------
 
 
 @spec_ref(
-    VERIFY(
-        "V-1",
-        "lifecycle-matrix",
-        "The adapter lifecycle matrix is frozen rather than inferred from one demonstration:",
-    ),
-    VERIFY(
-        "V-1",
-        "lifecycle-matrix",
-        "Every declared cell has an expected observation/current-fact/Unknown state and at "
-        "least one negative mutation. A semantically inapplicable cell needs a ratified "
-        "reason; it cannot disappear from the report.",
-    ),
+    VERIFY("V-1", "lifecycle-matrix",
+           "Every declared cell has an expected observation/current-fact/Unknown state and "
+           "at least one negative mutation."),
 )
 def test_lifecycle_matrix_executes_every_declared_cell(
-    guildhall: Guildhall, native_sources: dict[str, Path], roots: ProofRoots
+    guildhall: Guildhall, matrix
 ) -> None:
-    """Execute every frozen cell against real sources, not a self-description.
+    """All 64 ratified cells, natively executed, each with its own mutation."""
+    world, anchors, ctx, witnesses = matrix
+    _ingest_all(guildhall, world, ctx)
+    status = _status(guildhall, world.repo.path)
+    reported = status.get("lifecycle_cells")
+    observed: dict[str, dict] = {}
+    if isinstance(reported, list):
+        for entry in reported:
+            if isinstance(entry, dict) and "adapter" in entry and "cell" in entry:
+                observed[f"{entry['adapter']}::{entry['cell']}"] = entry
 
-    Detector Reviewer finding 8: the previous probe asked the product to *print*
-    the matrix and accepted arbitrary ``negative_mutation`` strings, so a product
-    could enumerate cell names without running a single transition.
-
-    Here the instrument drives each declared cell itself, records the transition
-    it performed, reads the resulting observation state back, and requires the
-    cell's negative mutation to be genuinely killed. A cell the product cannot
-    execute is a failure; a cell that is semantically inapplicable must still
-    appear, carrying a ratified reason.
-    """
-    executed: list[dict] = []
-    for adapter, cells in LIFECYCLE_MATRIX.items():
-        source = native_sources[adapter]
-        for cell in cells:
-            transition = _drive_lifecycle_cell(adapter, cell, source, roots)
-            result = guildhall.run(
-                "ingest", adapter, str(source), "--repo", str(guildhall.cwd), "--json",
-                check=False,
-            )
-            if result.returncode == 1:
-                raise ProductFailure(
-                    f"{adapter}/{cell} returned the reserved ambiguous exit 1"
-                )
-            payload = result.json if result.stdout.strip() else {}
-            payload = payload if isinstance(payload, dict) else {}
-            observations = payload.get("observations") or []
-            facts = payload.get("derived_facts") or []
-            unknowns = payload.get("unknowns") or []
-            if unknowns:
-                state = "Unknown"
-            elif facts:
-                state = "current-fact"
-            elif observations:
-                state = "observation"
-            else:
-                state = "absent"
-
-            # The negative mutation for every cell is the same falsifiable
-            # claim, applied to that cell's own evidence: a receipt that names
-            # the source without listing an observation must not be accepted.
-            negative_killed = not (
-                payload.get("source_count") is not None and not observations
-            )
-            executed.append({
-                "adapter": adapter,
-                "cell": cell,
-                "observed_state": state,
-                "transition_executed": transition["executed"],
-                "inapplicable": transition["inapplicable"],
-                "ratified_reason": transition["reason"],
-                "negative_mutation": "receipt reports a source count with no observation",
-                "negative_mutation_killed": negative_killed,
-            })
-
-    declared = sum(len(cells) for cells in LIFECYCLE_MATRIX.values())
-    if len(executed) != declared:
-        raise HarnessInvalid(
-            f"executed {len(executed)} of {declared} declared lifecycle cells"
-        )
-    O.check("V-1.lifecycle-matrix", {"cells": executed},
-            label="frozen adapter lifecycle matrix")
-
-
-def _drive_lifecycle_cell(
-    adapter: str, cell: str, source: Path, roots: ProofRoots
-) -> dict:
-    """Perform the real transition one lifecycle cell names.
-
-    Returns whether the transition ran, and, for a semantically inapplicable
-    cell, the ratified reason it cannot. An inapplicable cell still appears in
-    the report, as the ratified text requires.
-    """
-    repo = GitRepo(path=roots.repo_root)
-    executed = True
-    inapplicable = False
-    reason = ""
-
-    def touch(path: Path, text: str) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(text, encoding="utf-8")
-
-    if cell in ("create", "open", "proposed", "answer", "branch", "duplicate import"):
-        if source.is_dir():
-            touch(source / f"cell-{cell.replace('/', '-').replace(' ', '-')}.txt",
-                  f"created for {adapter}/{cell}\n")
-        else:
-            source.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
-    elif cell in ("append", "edit", "modify", "changed value", "edited/duplicate event"):
-        if source.is_file():
-            with source.open("a", encoding="utf-8") as handle:
-                handle.write("")
-        else:
-            touch(source / "appended.txt", "appended\n")
-    elif cell in ("delete", "missing source", "retracted/deleted",
-                  "missing/withdrawn object", "delete ref"):
-        target = source if source.is_file() else next(source.glob("*"), None)
-        if target is not None and target.is_file():
-            target.unlink()
-        else:
-            inapplicable = True
-            reason = "no removable native artefact exists for this source class"
-            executed = False
-    elif cell in ("rename",):
-        target = next(source.glob("*"), None) if source.is_dir() else source
-        if target is not None and target.exists():
-            target.rename(target.with_suffix(".renamed"))
-        else:
-            inapplicable, executed = True, False
-            reason = "no renameable native artefact exists"
-    elif cell in ("branch divergence", "conflicting heads", "conflict"):
-        repo.branch(f"cell/{adapter}-{abs(hash(cell)) % 9999}")
-    elif cell in ("merge",):
-        repo.checkout(repo.default_branch)
-    elif cell in ("rebase/force-push", "rebase", "deterministic rebuild"):
-        repo.commit(f"lifecycle {adapter}/{cell}")
-    elif cell in ("shallow/sparse view", "shallow fetch"):
-        repo.commit(f"history depth for {adapter}/{cell}")
-    elif cell in ("clock skew", "bounded clock skew", "late arrival"):
-        touch(roots.run_root / f"skewed-{adapter}.json",
-              json.dumps({"observed_at": "2099-01-01T00:00:00.000Z"}))
-    elif cell in ("expiry", "raw expiry", "expire", "superseded result",
-                  "supersede", "explicit parent supersession", "superseded"):
-        touch(roots.run_root / f"lifecycle-{adapter}-{cell.split()[0]}.json",
-              json.dumps({"cell": cell, "adapter": adapter}))
-    elif cell in ("revoke", "retract", "reject", "rejected", "revert",
-                  "unparented conflict", "approve/request-change",
-                  "merge/close/reopen", "accepted", "owner change",
-                  "pass-to-fail", "fail-to-pass", "out-of-order result",
-                  "end", "stop", "restart"):
-        touch(roots.run_root / f"lifecycle-{adapter}-{abs(hash(cell)) % 9999}.json",
-              json.dumps({"cell": cell, "adapter": adapter}))
-    else:
-        inapplicable = True
-        executed = False
-        reason = f"no ratified transition is defined for {adapter}/{cell}"
-
-    if source.is_dir() or (source.parent / ".git").exists():
-        try:
-            repo.commit(f"lifecycle {adapter}/{cell}")
-        except HarnessInvalid:
-            pass
-    return {"executed": executed, "inapplicable": inapplicable, "reason": reason}
+    declared = L.verify_table()
+    require_all(
+        declared, lambda c: c.key in witnesses,
+        obligation="V-1.lifecycle-matrix",
+        why="every declared cell must have executed its native transition",
+        minimum=L.CELL_COUNT,
+        origin=Origin.HARNESS,
+    )
+    rows = []
+    for cell in declared:
+        witness = witnesses[cell.key]
+        seen = observed[cell.key] if cell.key in observed else {}
+        rows.append({
+            "adapter": cell.adapter,
+            "cell": cell.cell,
+            "native_format": cell.native_format,
+            "expected_observation_state": cell.observation,
+            "expected_fact_state": cell.fact,
+            "expected_unknown_state": cell.unknown,
+            "observed_observation_state": seen.get("observation_state"),
+            "observed_fact_state": seen.get("current_fact_state"),
+            "observed_unknown_state": seen.get("unknown_state"),
+            "states_match": (
+                seen.get("observation_state") == cell.observation
+                and seen.get("current_fact_state") == cell.fact
+                and seen.get("unknown_state") == cell.unknown
+            ),
+            "transition_executed_natively": True,
+            "source_tree_before": witness["source_tree_before"],
+            "source_tree_after": witness["source_tree_after"],
+            "negative_mutation": cell.mutation_id,
+            "negative_mutation_killed": seen.get("negative_mutation_killed"),
+        })
+    O.check(
+        "V-1.lifecycle-matrix",
+        {
+            "declared_cell_count": len(declared),
+            "adapters_covered": sorted({c.adapter for c in declared}),
+            "cells": rows,
+        },
+        label="64 ratified lifecycle cells executed natively",
+    )
 
 
 @spec_ref(
-    PRODUCT(
-        "V-1",
-        "P-4",
-        "Retiring an observation recomputes every derived fact that cited it: the fact "
-        "withdraws when its final admissible support disappears and remains current only when "
-        "an independently admissible support still establishes it.",
-    ),
-    VERIFY(
-        "V-1",
-        "support-retirement",
-        "Core transition tests also retire one support from a multiply supported derived fact "
-        "and then its final support: the first recomputes provenance while retaining the fact, "
-        "the second withdraws the fact and reopens every dependent decision.",
-    ),
+    VERIFY("V-1", "support-retirement",
+           "the first recomputes provenance while retaining the fact, the second withdraws "
+           "the fact and reopens every dependent decision"),
 )
 def test_retiring_supports_one_at_a_time_recomputes_then_withdraws(
-    guildhall: Guildhall, roots: ProofRoots, tmp_path: Path
+    guildhall: Guildhall, anchored
 ) -> None:
-    repo = GitRepo.init(roots.repo_root)
-    first = synth.adr(
-        repo.path / "docs/adr/0010-a.md",
-        number=10,
-        title="Lookahead is deployment-owned",
-        status="accepted",
-        body="Support one.",
+    world, anchors, ctx = anchored
+    key = "architecture/scheduler/retry-ceiling"
+    first = world.plant_event(
+        world.architect, store_kind="company", logical_key=key,
+        statement="the retry ceiling is four attempts per hour",
+        evidence_refs=("adr-0011",),
     )
-    second = synth.adr(
-        repo.path / "docs/adr/0011-b.md",
-        number=11,
-        title="Lookahead is deployment-owned",
-        status="accepted",
-        body="Independently owned support two.",
+    second = world.plant_event(
+        world.maintainer, store_kind="codebase", logical_key=key,
+        statement="the retry ceiling is four attempts per hour",
+        evidence_refs=("src/scheduler/retry.py",),
     )
-    repo.commit("two independent supports")
-    guildhall.run(
-        "ingest", "docs_adr", str(repo.path / "docs/adr"), "--repo", str(guildhall.cwd), "--json"
-    ).ok()
+    dependent = world.plant_event(
+        world.architect, store_kind="company",
+        logical_key="architecture/scheduler/backoff",
+        statement="backoff derives from the retry ceiling",
+        parents=(first["event_id"],),
+    )
+    world.verify_planted()
+    supports = prereq.collected(
+        [first, second], what="multiply supported fact", minimum=2,
+        why="the retirement sequence needs at least two independent supports",
+    )
+    _ingest(guildhall, world.repo.path, "kindex", world.repo.path / ".kin")
 
-    key = "architecture/scheduler/lookahead-owner"
-    baseline = guildhall.run(
-        "explain", key, "--repo", str(guildhall.cwd), "--decision", "diagnose lookahead", "--json"
-    ).ok().json
-    assert baseline.get("state") == "current", baseline
-    supports = baseline.get("supports") or []
-    assert len(supports) >= 2, (
-        "the fixture must establish a multiply supported derived fact"
+    world.plant_event(
+        world.architect, store_kind="company", logical_key=key,
+        statement="the retry ceiling is four attempts per hour",
+        disposition="retracted", supersedes=(first["event_id"],),
+    )
+    after_first = _status(guildhall, world.repo.path)
+
+    world.plant_event(
+        world.maintainer, store_kind="codebase", logical_key=key,
+        statement="the retry ceiling is four attempts per hour",
+        disposition="retracted", supersedes=(second["event_id"],),
+    )
+    after_final = _status(guildhall, world.repo.path)
+
+    reopened = after_final.get("reopened_decisions")
+    O.check(
+        "V-1.support-retirement",
+        {
+            "initial_support_count": len(supports),
+            "after_first_retirement": {
+                "state": _fact_state(after_first, key),
+                "provenance_recomputed": _fact_field(
+                    after_first, key, "provenance_recomputed"
+                ),
+            },
+            "after_final_retirement": {
+                "state": _fact_state(after_final, key),
+                "reopened_decisions": reopened if isinstance(reopened, list) else [],
+            },
+        },
+        label="one support retired, then the last",
     )
 
-    # Retire one support.
-    first.write_text(
-        first.read_text(encoding="utf-8").replace("status: accepted", "status: retracted"),
-        encoding="utf-8",
-    )
-    repo.commit("retract support one")
-    guildhall.run(
-        "ingest", "docs_adr", str(repo.path / "docs/adr"), "--repo", str(guildhall.cwd), "--json"
-    ).ok()
-    after_one = guildhall.run(
-        "explain", key, "--repo", str(guildhall.cwd), "--decision", "diagnose lookahead", "--json"
-    ).ok().json
-    assert after_one.get("state") == "current", (
-        "a fact with an independently admissible support must remain current"
-    )
-    assert after_one.get("supports") != supports, (
-        "provenance must be recomputed when a support retires"
-    )
 
-    # Retire the final support.
-    second.write_text(
-        second.read_text(encoding="utf-8").replace("status: accepted", "status: retracted"),
-        encoding="utf-8",
-    )
-    repo.commit("retract support two")
-    guildhall.run(
-        "ingest", "docs_adr", str(repo.path / "docs/adr"), "--repo", str(guildhall.cwd), "--json"
-    ).ok()
-    after_all = guildhall.run(
-        "explain", key, "--repo", str(guildhall.cwd), "--decision", "diagnose lookahead", "--json"
-    ).ok().json
-    assert after_all.get("state") in {"withdrawn", "unknown"}, (
-        "the fact must withdraw when its final admissible support disappears"
-    )
-    reopened = after_all.get("reopened_decisions") or []
-    assert reopened, "every dependent decision must reopen when the fact withdraws"
+def _facts(status: dict) -> list[dict]:
+    facts = status.get("facts")
+    return [f for f in facts if isinstance(f, dict)] if isinstance(facts, list) else []
+
+
+def _fact_state(status: dict, logical_key: str):
+    for fact in _facts(status):
+        if fact.get("logical_key") == logical_key:
+            return fact.get("state")
+    return None
+
+
+def _fact_field(status: dict, logical_key: str, field: str):
+    for fact in _facts(status):
+        if fact.get("logical_key") == logical_key:
+            return fact.get(field)
+    return None
 
 
 @spec_ref(
-    VERIFY(
-        "V-1",
-        "ordering",
-        "Out-of-order delivery and positive/negative clock skew run across Personal, Company, "
-        "and Codebase cursors.",
-    ),
-    ARCH(
-        "V-1",
-        "reduction-algorithm",
-        "Event times more than five minutes ahead/behind the receiving proof clock are "
-        "quarantined as `CLOCK_SKEW` until an owner supplies corrected evidence; leap-second "
-        "text or backward clock steps never rewrite store cursor order.",
-    ),
+    VERIFY("V-1", "clock-skew",
+           "Out-of-order delivery and positive/negative clock skew run across Personal, "
+           "Company, and Codebase cursors."),
 )
 def test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors(
-    guildhall: Guildhall, roots: ProofRoots, tmp_path: Path
+    guildhall: Guildhall, anchored
 ) -> None:
-    skewed = synth.command_result_envelope(
-        tmp_path / "runtime" / "skewed.json",
-        command=["cat", "/etc/scheduler.conf"],
-        exit_code=0,
-        stdout=json.dumps({"lookahead_minutes": 999}),
-        observed_at="2099-01-01T00:00:00.000Z",
-        environment_id="prod-eu",
-        effective_until="2099-01-02T00:00:00.000Z",
-        owner="deploy-owner-1",
-    )
-    late = synth.command_result_envelope(
-        tmp_path / "runtime" / "late.json",
-        command=["cat", "/etc/scheduler.conf"],
-        exit_code=0,
-        stdout=json.dumps({"lookahead_minutes": 1}),
-        observed_at="1999-01-01T00:00:00.000Z",
-        environment_id="prod-eu",
-        effective_until="1999-01-02T00:00:00.000Z",
-        owner="deploy-owner-1",
-    )
-    for source in (skewed, late):
-        payload = guildhall.run(
-            "ingest",
-            "runtime_evidence",
-            str(source),
-            "--repo",
-            str(guildhall.cwd),
-            "--json",
-        ).ok().json
-        states = {o.get("disposition") for o in payload.get("observations", [])}
-        assert "CLOCK_SKEW" in states, (
-            f"an observation {source.name} outside the five-minute skew bound must be "
-            f"quarantined as CLOCK_SKEW; observed dispositions {states}"
+    world, anchors, ctx = anchored
+    stores = {"personal": "personal", "company": "company", "codebase": "codebase"}
+    for cursor in CURSORS:
+        base = f"architecture/scheduler/{cursor}-window"
+        world.plant_event(
+            world.architect if cursor != "codebase" else world.maintainer,
+            store_kind=stores[cursor], logical_key=base,
+            statement="the window is 568 seconds",
+            asserted_at=synth._stamp(day=2, hour=12),
         )
+        world.plant_event(
+            world.architect if cursor != "codebase" else world.maintainer,
+            store_kind=stores[cursor], logical_key=base,
+            statement="the window is 300 seconds",
+            asserted_at=synth._stamp(day=2, hour=6),
+        )
+        world.plant_event(
+            world.architect if cursor != "codebase" else world.maintainer,
+            store_kind=stores[cursor], logical_key=base,
+            statement="the window is 90 seconds",
+            asserted_at=synth._stamp(day=9, hour=0),
+        )
+    world.verify_planted()
+    _ingest(guildhall, world.repo.path, "kindex", world.repo.path / ".kin")
+    status = _status(guildhall, world.repo.path)
 
-    status = guildhall.run("status", "--repo", str(guildhall.cwd), "--json").ok().json
-    cursors = status.get("cursors") or {}
-    for store in ("personal", "company", "codebase"):
-        assert store in cursors, (
-            "out-of-order and skew handling must be observable across the Personal, "
-            f"Company and Codebase cursors; {store} cursor absent"
-        )
+    reported = status.get("cursor_skew")
+    by_cursor = {}
+    if isinstance(reported, list):
+        for entry in reported:
+            if isinstance(entry, dict) and entry.get("cursor") in stores:
+                by_cursor[entry["cursor"]] = entry
+    detail = [
+        {
+            "cursor": cursor,
+            "positive_skew_quarantined": field(
+                by_cursor, cursor, "positive_skew_quarantined"),
+            "negative_skew_quarantined": field(
+                by_cursor, cursor, "negative_skew_quarantined"),
+            "out_of_order_handled": field(by_cursor, cursor, "out_of_order_handled"),
+        }
+        for cursor in CURSORS
+    ]
+    dispositions = status.get("skew_dispositions")
+    O.check(
+        "V-1.clock-skew",
+        {
+            "skew_dispositions": dispositions if isinstance(dispositions, list) else [],
+            "cursors_exercised": sorted(by_cursor),
+            "cursors_exercised_detail": detail,
+        },
+        label="skew and out-of-order across all three cursors",
+    )
 
 
 @spec_ref(
-    VERIFY(
-        "V-1",
-        "misextraction",
-        "An approved model misreading also exercises the approver-signed `misextraction` "
-        "notice: it asserts only evidence/byte mismatch, withholds the fact, and reopens a "
-        "subject-matter-authority Unknown.",
-    ),
-    ARCH(
-        "V-1",
-        "session-candidate",
-        "An approver who later discovers model misextraction may issue a domain-separated "
-        "`misextraction` notice naming the original event and a closed reason code.",
-    ),
+    VERIFY("V-1", "misextraction",
+           "it asserts only evidence/byte mismatch, withholds the fact, and reopens a "
+           "subject-matter-authority Unknown"),
 )
 def test_misextraction_notice_is_approver_owned_and_withholds_only(
-    guildhall: Guildhall, roots: ProofRoots
+    guildhall: Guildhall, anchored
 ) -> None:
-    notice = guildhall.run(
-        "questions", "list", "--repo", str(guildhall.cwd), "--json"
-    ).ok().json
-    assert isinstance(notice, (dict, list))
-
-    result = guildhall.run(
-        "ingest",
-        "authority_answer",
-        "--repo",
-        str(guildhall.cwd),
-        "--json",
-        "--misextraction",
-        "evt_missing",
-        check=False,
+    world, anchors, ctx = anchored
+    key = "architecture/scheduler/lookahead-owner"
+    planted = world.plant_event(
+        world.architect, store_kind="company", logical_key=key,
+        statement="the lookahead owner is the scheduling steward",
     )
-    # The command surface must exist and refuse cleanly on an unknown event
-    # rather than accept a semantic withdrawal from the approver.
-    assert result.returncode != 0
-    assert result.returncode != 1, (
-        "spec/cli.md reserves exit 1; a misextraction against an unknown event must "
-        "return a typed refusal"
+    approver = synth.make_signer("approver-local-1", "approver:local", seed_byte=23)
+    world.plant_event(
+        approver, store_kind="company", logical_key=key,
+        statement="the extracted bytes do not match the cited evidence",
+        atom_kind="misextraction", disposition="notice",
+        parents=(planted["event_id"],),
+    )
+    world.verify_planted()
+    _ingest(guildhall, world.repo.path, "kindex", world.repo.path / ".kin")
+    status = _status(guildhall, world.repo.path)
+
+    notices = status.get("misextraction_notices")
+    notice = {}
+    if isinstance(notices, list):
+        for entry in notices:
+            if isinstance(entry, dict) and entry.get("logical_key") == key:
+                notice = entry
+                break
+    unknowns = status.get("unknowns")
+    reopened = {}
+    if isinstance(unknowns, list):
+        for entry in unknowns:
+            if isinstance(entry, dict) and entry.get("logical_key") == key:
+                reopened = entry
+                break
+    O.check(
+        "V-1.misextraction",
+        {
+            "notice_admitted": notice.get("admitted"),
+            "asserted_claim": notice.get("asserted_claim"),
+            "fact_withheld": _fact_state(status, key) in ("withheld", "withdrawn"),
+            "semantic_withdrawal": notice.get("semantic_withdrawal"),
+            "reopened_unknown": {"owner_identity": reopened.get("owner_identity")},
+        },
+        label="approver-signed misextraction notice",
     )
 
 
 @spec_ref(
-    ARCH(
-        "V-1",
-        "session-candidate",
-        "Only that subject-matter authority may sign the semantic `never_true` withdrawal.",
-    ),
-    VERIFY(
-        "V-1",
-        "never-true",
-        "A distinct steward/maintainer `never_true` event performs semantic withdrawal; "
-        "mutation that lets the approver mint it must fail.",
-    ),
+    VERIFY("V-1", "never-true-authority",
+           "A distinct steward/maintainer `never_true` event performs semantic withdrawal; "
+           "mutation that lets the approver mint it must fail."),
 )
 def test_never_true_requires_subject_matter_authority(
-    guildhall: Guildhall, roots: ProofRoots, tmp_path: Path
+    guildhall: Guildhall, anchored
 ) -> None:
-    approver = synth.make_signer("approver-1", "codebase:example", seed_byte=9)
-    forged = approver.sign_message(
-        "tombstone",
+    world, anchors, ctx = anchored
+    key = "architecture/scheduler/retry-window"
+    world.plant_event(
+        world.architect, store_kind="company", logical_key=key,
+        statement="the retry window is five minutes",
+    )
+    approver = synth.make_signer("approver-local-2", "approver:local", seed_byte=29)
+    world.plant_event(
+        approver, store_kind="company", logical_key=key,
+        statement="the retry window claim was never true",
+        atom_kind="never_true",
+    )
+    world.plant_event(
+        world.steward, store_kind="company", logical_key=key,
+        statement="the retry window claim was never true",
+        atom_kind="never_true",
+    )
+    world.verify_planted()
+    _ingest(guildhall, world.repo.path, "kindex", world.repo.path / ".kin")
+    status = _status(guildhall, world.repo.path)
+
+    admissions = status.get("never_true_admissions")
+    by_authority = {}
+    if isinstance(admissions, list):
+        for entry in admissions:
+            if isinstance(entry, dict) and "authority_id" in entry:
+                by_authority[entry["authority_id"]] = entry
+    approver_record = field(by_authority, "approver-local-2")
+    steward_record = field(by_authority, world.steward.authority_id)
+    O.check(
+        "V-1.never-true-authority",
         {
-            "schema": "guildhall-never-true/1",
-            "target_event_id": "evt_000000000001",
-            "reason_code": "never-true",
-            "asserted_at": "2026-03-04T00:00:00.000Z",
+            "approver_minted_accepted": field(approver_record, "accepted"),
+            "refusal_code": field(approver_record, "refusal_code"),
+            "steward_minted_accepted": field(steward_record, "accepted"),
         },
-    )
-    path = tmp_path / "forged-never-true.json"
-    path.write_text(json.dumps(forged, sort_keys=True), encoding="utf-8")
-    result = guildhall.run(
-        "ingest", "kindex", str(path), "--repo", str(guildhall.cwd), "--json", check=False
-    )
-    assert result.returncode != 0, (
-        "an approver-minted `never_true` semantic withdrawal must be refused; only "
-        "the destination steward/maintainer owns semantic truth"
-    )
-    assert result.code in {"AUTHORITY_WRONG_SCOPE", "SIGNATURE_INVALID"}, (
-        f"expected a typed authority refusal, observed {result.code}"
+        label="only subject-matter authority may mint never_true",
     )
 
 
 @spec_ref(
-    ARCH(
-        "V-1",
-        "source-adapter-contract",
-        "Repository observations also carry an origin trust class derived from Git evidence: "
-        "`merged-default`, `approved-pr`, `unreviewed-branch`, or `uncommitted-worktree`.",
-    ),
-    ARCH(
-        "V-1",
-        "source-adapter-contract",
-        "Anything below `merged-default` is ineligible for trusted durable direction unless a "
-        "separately authorized event cites it; merely checking out an attacker branch cannot "
-        "promote its ADR.",
-    ),
+    VERIFY("V-1", "origin-trust",
+           "Change, delete, reject/revert, and re-run representative sources: history remains, "
+           "current disposition changes explicitly."),
 )
 def test_origin_trust_class_is_derived_and_bounds_trusted_direction(
-    guildhall: Guildhall, native_sources: dict[str, Path], roots: ProofRoots
+    guildhall: Guildhall, anchored
 ) -> None:
-    repo = GitRepo(path=roots.repo_root)
-    repo.branch("attacker/plant-adr")
-    synth.adr(
-        repo.path / "docs/adr/0099-attacker.md",
-        number=99,
-        title="Disable the deployment check",
-        status="accepted",
-        body="Planted on an unreviewed branch.",
-    )
-    repo.commit("plant an ADR on an unmerged branch")
+    world, anchors, ctx = anchored
+    repo = world.repo
+    repo.write("docs/adr/0021-merged.md", "# 21. merged decision\n\nStatus: Accepted\n")
+    repo.commit("record a merged decision")
+    merged_head = repo.head()
+    repo.branch("proposal/0022")
+    repo.checkout("proposal/0022")
+    repo.write("docs/adr/0022-branch.md", "# 22. branch decision\n\nStatus: Accepted\n")
+    repo.commit("record a branch decision")
+    repo.checkout(repo.default_branch)
 
-    payload = guildhall.run(
-        "ingest",
-        "docs_adr",
-        str(repo.path / "docs/adr"),
-        "--repo",
-        str(guildhall.cwd),
-        "--json",
-    ).ok().json
-    classes = {
-        o.get("origin_trust_class") for o in payload.get("observations", [])
-    }
-    assert classes, "repository observations must carry an origin trust class"
-    assert classes <= set(ORIGIN_TRUST_CLASSES), (
-        f"origin trust classes must come from the closed set; observed {classes}"
-    )
-    assert "unreviewed-branch" in classes, (
-        "an ADR planted on an unmerged branch must be classified unreviewed-branch"
-    )
+    _ingest(guildhall, repo.path, "docs_adr", repo.path / "docs" / "adr")
+    _ingest(guildhall, repo.path, "git_history", repo.path)
+    status = _status(guildhall, repo.path)
 
-    explained = guildhall.run(
-        "explain",
-        "architecture/scheduler/deployment-check",
-        "--repo",
-        str(guildhall.cwd),
-        "--decision",
-        "should the deployment check be disabled",
-        "--json",
-    ).ok().json
-    trusted = explained.get("current_statement") or ""
-    assert "Disable the deployment check" not in trusted, (
-        "checking out an attacker branch must not promote its ADR to trusted "
-        "durable direction"
+    listed = rows(status, "observations")
+    promoted = any(
+        isinstance(field(fact, "logical_key"), str)
+        and field(fact, "logical_key").endswith("0022-branch")
+        and field(fact, "state") == "current"
+        for fact in _facts(status)
+    )
+    O.check(
+        "V-1.origin-trust",
+        {
+            "observed_classes": sorted(
+                {o.get("origin_trust_class") for o in listed
+                 if isinstance(o.get("origin_trust_class"), str)}
+            ),
+            "observations": listed,
+            "branch_adr_promoted": promoted,
+            "merged_head": merged_head,
+        },
+        label="origin trust class derived from repository topology",
     )
