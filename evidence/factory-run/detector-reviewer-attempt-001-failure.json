@@ -1,0 +1,25 @@
+{
+  "schema_version": "guildhall-factory-detector-reviewer-failure/1",
+  "attempt": 1,
+  "started_at": "2026-09-05T19:16:55Z",
+  "stopped_at": "2026-09-05T19:19:12Z",
+  "thread_id": "01a07300-f925-76d2-a89c-e3b53b95dc4a",
+  "binding_commit": "d16f595fa075b6df4a2fffe1af329d936a4e1357",
+  "input_commit": "244184e631695cc331d64667bd20cfae7f286526",
+  "input_tree": "893a6ba3bbc464762d479aa13305d3761adc07b4",
+  "process_exit": 1,
+  "event_log_sha256": "f2c9b11d6e3b9401fe641eed1e561807ddf411192d2b79a6917e8c4511e71603",
+  "failure_class": "INVALID_HARNESS",
+  "cause": "The outer macOS Seatbelt path-denial profile prevented Codex from applying its nested read-only Seatbelt profile; macOS returned sandbox_apply: Operation not permitted before any reviewer shell command executed.",
+  "independent_reproduction": {
+    "command_shape": "sandbox-exec outer-profile sandbox-exec allow-default /bin/pwd",
+    "exit": 71,
+    "stderr": "sandbox-exec: sandbox_apply: Operation not permitted"
+  },
+  "completed_project_tool_calls": 0,
+  "reviewer_output_admitted": false,
+  "post_attempt_commit": "244184e631695cc331d64667bd20cfae7f286526",
+  "post_attempt_tree": "893a6ba3bbc464762d479aa13305d3761adc07b4",
+  "post_attempt_clean": true,
+  "remediation": "Use one outer Seatbelt profile that denies both disallowed reads and all run/repository writes, and disable the incompatible inner Codex sandbox. Preserve ignored user config/rules and ephemeral execution."
+}
