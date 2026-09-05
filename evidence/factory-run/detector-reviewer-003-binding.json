@@ -1,0 +1,58 @@
+{
+  "schema_version": "guildhall-factory-detector-reviewer-binding/1",
+  "attempt": 3,
+  "bound_at": "2026-09-05T20:49:18Z",
+  "fresh_reviewer_after_tester_remediation": true,
+  "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "reviewer_repository": "/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2",
+  "reviewer_checkout": "detached",
+  "tester_commit": "263d41d77ae11e4e62f2ce2716378a8e1ebdc7f2",
+  "tester_tree": "61af5f8966f9a070e36eef31681d2c6c98a68c58",
+  "initial_status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "clone_mode": "git clone --no-local --no-hardlinks; no object alternates",
+  "product_paths_present": false,
+  "reviewer_prompt": "evidence/factory-run/detector-reviewer-dispatch-003.md on inherited stdin",
+  "reviewer_prompt_sha256": "b876900b63f711532eb1906069c4f347781a6ba370409294eecf69ed13fb3184",
+  "launch_script_sha256": "36eddca9b761ad6db14b4d6f7ee88f9d53c4b0b8f26d689057329cb848edb44a",
+  "os_sandbox_profile_sha256": "7ea4c3740044b991287bec8c28ba47f982a55e16f1e6f7cb29b26f0f3f671885",
+  "model": "gpt-5.6-sol",
+  "reasoning_effort": "ultra",
+  "session_persistence": "ephemeral",
+  "sandbox_topology": "single outer macOS Seatbelt profile; inner Codex sandbox disabled",
+  "user_config": "ignored",
+  "user_rules": "ignored",
+  "delegation": "forbidden; one fresh Reviewer identity only",
+  "allowed_inputs": [
+    "spec/**",
+    "tests/**",
+    "reviewer Git metadata for exact binding and clean-state checks"
+  ],
+  "os_denied_reads": [
+    "Coder repository",
+    "Tester source repository",
+    "Validator repository",
+    "prior Detector Reviewer repository",
+    "Validator audit and run-control directory",
+    "main Guildhall repository and all evidence",
+    "reviewer-clone evidence/** and .kin/**",
+    "Codex memories, Claude state, and Kindex paths"
+  ],
+  "os_denied_writes": [
+    "both Reviewer repositories and every Factory/main/control repository",
+    "Codex memories, Claude state, and Kindex paths"
+  ],
+  "sandbox_preflight": {
+    "allowed_git_binding_read": true,
+    "allowed_spec_read": true,
+    "allowed_tests_read": true,
+    "coder_read_denied": true,
+    "reviewer_evidence_read_denied": true,
+    "reviewer_repository_write_denied": true,
+    "write_probe_created_file": false
+  },
+  "authorized_execution": "read-only static inspection, collection, and product-independent detector selftests",
+  "write_authority": "none on every Factory/repository surface",
+  "product_or_proof_verdict_authority": "none; Validator only",
+  "same_user_confidentiality_claim": "not claimed beyond enumerated OS path denials and audited trace"
+}
