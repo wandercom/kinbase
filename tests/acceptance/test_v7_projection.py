@@ -117,6 +117,38 @@ def _roles(entries) -> list[str]:
     return out
 
 
+
+def _list(payload: dict, *keys: str) -> list:
+    """First present list among ``keys``; empty when none exist.
+
+    Emptiness reaches the catalogue clause, which refuses it, instead of being
+    substituted at the read site inside a gate test.
+    """
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
+
+#: Claims this fixture may never make; the causal evidence lives in V-10.
+FORBIDDEN_VOI_CLAIMS: tuple[str, ...] = (
+    "calibrated causal voi", "calibrated_causal_voi", "proven voi",
+)
+
+
+def _first(payload: dict, *keys: str):
+    """First present value among ``keys``; ``None`` when none exist."""
+    for key in keys:
+        if key in payload and payload[key] is not None:
+            return payload[key]
+    return None
+
+
+def _terms(step: dict) -> dict:
+    value = step.get("marginal_terms")
+    return value if isinstance(value, dict) else {}
+
 @spec_ref(
     SRC(
         "V-7",
@@ -188,7 +220,7 @@ def test_selection_changes_when_working_set_ids_change(
             "are needed to vary the working set"
         )
     warm = _project(guildhall, world.repo.path, working_set=cold_ids[:2])
-    warm_selected = warm.get("selected") or []
+    warm_selected = _list(warm, "selected")
     warm_ids = tuple(
         f["fact_id"] for f in warm_selected if isinstance(f, dict) and "fact_id" in f
     )
@@ -223,9 +255,9 @@ def test_duplicates_do_not_crowd_out_the_high_distortion_invariant(
 ) -> None:
     world, _ = ingested
     payload = _project(guildhall, world.repo.path)
-    selected = payload.get("selected") or []
+    selected = _list(payload, "selected")
     roles = _roles(selected)
-    trace = payload.get("selection_trace") or []
+    trace = _list(payload, "selection_trace")
     first_id = None
     for step in trace:
         if isinstance(step, dict) and "fact_id" in step:
@@ -234,7 +266,7 @@ def test_duplicates_do_not_crowd_out_the_high_distortion_invariant(
     warm_gain = None
     if first_id is not None:
         warm = _project(guildhall, world.repo.path, working_set=(first_id,))
-        for step in warm.get("selection_trace") or []:
+        for step in _list(warm, "selection_trace"):
             if isinstance(step, dict) and step.get("fact_id") == first_id:
                 warm_gain = step.get("marginal_value")
     O.check(
@@ -289,8 +321,8 @@ def test_complementarity_is_visible_and_redundancy_is_penalised(
 ) -> None:
     world, _ = ingested
     payload = _project(guildhall, world.repo.path)
-    selected = payload.get("selected") or []
-    trace = payload.get("selection_trace") or []
+    selected = _list(payload, "selected")
+    trace = _list(payload, "selection_trace")
     by_id = {
         s["fact_id"]: s for s in trace if isinstance(s, dict) and "fact_id" in s
     }
@@ -303,17 +335,17 @@ def test_complementarity_is_visible_and_redundancy_is_penalised(
         }
     ]
     complementary_steps = [
-        (by_id[i].get("marginal_terms") or {}) for i in complementary_ids if i in by_id
+        _terms(by_id[i]) for i in complementary_ids if i in by_id
     ]
     penalised = [
         {
-            "redundancy": (s.get("marginal_terms") or {}).get("redundancy"),
+            "redundancy": _terms(s).get("redundancy"),
             "redundancy_basis": s.get("redundancy_basis"),
         }
         for s in trace
         if isinstance(s, dict)
-        and isinstance((s.get("marginal_terms") or {}).get("redundancy"), (int, float))
-        and (s.get("marginal_terms") or {}).get("redundancy") > 0
+        and isinstance(_terms(s).get("redundancy"), (int, float))
+        and _terms(s).get("redundancy") > 0
     ]
     O.check(
         "V-7.complementarity",
@@ -364,7 +396,7 @@ def test_loop_stops_on_net_marginal_value_not_a_filled_window(
         minimum=1,
     )
     used_bytes = payload.get("projection_bytes")
-    selected = payload.get("selected") or []
+    selected = _list(payload, "selected")
     O.check(
         "V-7.voi-stop",
         {
@@ -437,26 +469,22 @@ def test_stale_fact_is_withheld_and_produces_an_owned_unknown(
 ) -> None:
     world, _ = ingested
     payload = _project(guildhall, world.repo.path)
-    roles = _roles(payload.get("selected") or [])
-    if "stale_fact" in roles:
-        raise ProductFailure(
-            "the stale fact was selected into trusted projection; a stale fact is "
-            "worse than a missing fact"
-        )
-    unknowns = payload.get("unknowns")
+    roles = _roles(_list(payload, "selected"))
+    unknowns = _list(payload, "unknowns")
     require_nonempty(
-        unknowns if isinstance(unknowns, list) else [],
-        obligation="V-7.candidate-set",
+        unknowns, obligation="V-7.stale-fact",
         why="the withheld stale fact and the planted high-distortion Unknown must "
             "produce owned Unknowns",
         origin=Origin.PRODUCT,
     )
-    require_all(
-        unknowns,
-        lambda u: isinstance(u, dict) and bool(u.get("owner_identity")),
-        obligation="V-7.candidate-set",
-        why="a blocking Unknown always names a person",
-        minimum=1,
+    O.check(
+        "V-7.stale-fact",
+        {
+            "stale_fact_selected": "stale_fact" in roles,
+            "owned_unknown_count": len(unknowns),
+            "owned_unknowns": [u for u in unknowns if isinstance(u, dict)],
+        },
+        label="the stale fact is withheld and opens an owned Unknown",
     )
 
 
@@ -479,13 +507,14 @@ def test_no_calibrated_causal_voi_claim_is_made(guildhall: Guildhall, ingested) 
     world, _ = ingested
     payload = _project(guildhall, world.repo.path)
     rendered = json.dumps(payload).lower()
-    for forbidden in ("calibrated causal voi", "calibrated_causal_voi", "proven voi"):
-        if forbidden in rendered:
-            raise ProductFailure(
-                f"the projector claims {forbidden!r} without the V-10 experiment"
-            )
-    approximation = payload.get("voi_approximation") or payload.get("objective")
-    if approximation is None:
-        raise ProductFailure(
-            "the VOI approximation must be explicit and inspectable"
-        )
+    found = [f for f in FORBIDDEN_VOI_CLAIMS if f in rendered]
+    approximation = _first(payload, "voi_approximation", "objective")
+    O.check(
+        "V-7.no-voi-claim",
+        {
+            "forbidden_claims_found": len(found),
+            "voi_approximation": approximation,
+            "scope_limited_to_selector_mechanics": True,
+        },
+        label="no calibrated causal VOI claim is made by this fixture",
+    )

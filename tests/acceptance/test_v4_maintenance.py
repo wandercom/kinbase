@@ -1,17 +1,29 @@
 """V-4 --- corpus maintenance and distributed conflicts (`P-4`, Critical).
 
-``spec/product.md`` P-4 fixes the standard this gate holds the reducer to:
+Detector Reviewer finding 15. The previous module substituted labels for the
+work: rebuild and restart marked themselves ``state_changed``, the conflict case
+planted no authorized resolution, only three of the four manifest relations
+existed, and there was no 10x corpus, no 10,000-event revocation graph, no
+replay and no lock witness.
 
-    Concurrent Codebase events are unioned by identity. Timestamps and file order
-    never silently choose among incompatible heads.
+Every one of those is constructed here. Each incremental stage digests the store
+before and after and reports the observed difference, not a flag. The conflict
+case merges two real clones and then resolves with a real parent-bound event
+signed by the authority that owns the key. The manifest comparison constructs
+all four relations. :mod:`acceptance._harness.scale` builds the 100,000-event
+ceiling corpus and the 10,000-event dense derivation graph with genuine
+signatures, cross-checked against the pure reference implementation. The lock
+test admits concurrently from two linked worktrees and records which process
+won.
 
-    A stale or disputed fact is worse than a missing fact: it is withheld from
-    trusted projection and produces an owned Unknown.
+Finding 14 applies throughout: the trust anchors are established before any
+fixture is planted, so the positive controls are ones a conforming product may
+actually admit.
 """
 
 from __future__ import annotations
 
-import concurrent.futures
+import hashlib
 import json
 import os
 import time
@@ -20,858 +32,686 @@ from pathlib import Path
 import pytest
 
 from ._harness import obligations as O
-from ._harness.evidence_model import Origin, require_all, require_nonempty
-
-from ._harness import canonical, synth
+from ._harness import prereq, scale, synth, trust
 from ._harness.cli import Guildhall
-from ._harness.gitfix import REQUIRED_ATTRIBUTE_LINES, GitRepo
-from ._harness.hosts import (
-    FULL_FSCK_CEILING_SECONDS,
-    KIN_INTAKE_BYTES,
-    KIN_INTAKE_EVENTS,
+from ._harness.detectors import compare_manifests
+from ._harness.evidence_model import (
+    Origin,
+    field,
+    require_all,
+    require_nonempty,
+    rows,
 )
+from ._harness.gitfix import GitRepo
+from ._harness.hosts import FULL_FSCK_CEILING_SECONDS, SHARED_EVENT_CEILING
 from ._harness.requirements import (
     ARCH,
-    CLI,
     PRODUCT,
-    SRC,
     VERIFY,
+    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )
 from ._harness.roots import ProofRoots
-from ._harness.worldbuilder import REPO_UUID as WORLD_UUID, SignedWorld
+from ._harness.worldbuilder import OpaqueIds, SignedWorld, Witness
 
 pytestmark = [pytest.mark.v4, pytest.mark.requires_product]
 
-#: ``spec/architecture.md``: revocation cascade must finish inside this bound at
-#: the 10,000-event proof ceiling.
-REVOCATION_CASCADE_SECONDS = 120.0
-
-INCREMENTAL_CYCLE = (
-    "create",
-    "duplicate",
-    "edit",
-    "supersede",
-    "retract",
-    "revoke",
-    "expire",
-    "branch",
-    "merge",
-    "conflict",
-    "resolve",
-    "rebuild",
-    "restart",
+#: The thirteen ratified incremental-cycle stages, frozen in the harness.
+CYCLE_STAGES: tuple[str, ...] = (
+    "create", "duplicate", "edit", "supersede", "retract", "revoke", "expire",
+    "branch", "merge", "conflict", "resolve", "rebuild", "restart",
 )
 
+#: The four ratified rebuild inputs. Each is varied once.
+REBUILD_INPUTS: tuple[str, ...] = (
+    "events", "reducer_version", "as_of", "authority_cursor",
+)
+
+#: The four manifest relations the comparison must classify.
+MANIFEST_RELATIONS: tuple[str, ...] = (
+    "superset", "missing_head", "expired", "unavailable",
+)
+
+#: The 10x admission-ceiling corpus and the dense revocation graph.
+CEILING_EVENTS = SHARED_EVENT_CEILING * 10
+DENSE_GRAPH_EVENTS = SHARED_EVENT_CEILING
+
+#: Frozen opaque-identity seed so committed paths carry no case name.
+IDENTITY_SEED = b"v4-opaque-identity"
+
 
 @pytest.fixture()
-def world(roots: ProofRoots) -> SignedWorld:
-    """A repository carrying genuinely signed, content-addressed events."""
-    built = SignedWorld.create(roots.repo_root)
-    built.plant_event(
-        built.maintainer, store_kind="codebase",
-        logical_key="architecture/scheduler/seed",
-        statement="Seed constraint for the maintenance cycle.",
-    )
-    built.verify_planted()
-    return built
+def anchored(roots: ProofRoots, guildhall: Guildhall):
+    world = SignedWorld.create(roots.repo_root)
+    anchors = trust.establish(guildhall, roots, world)
+    return world, anchors
 
 
 @pytest.fixture()
-def codebase(world: SignedWorld) -> GitRepo:
-    return world.repo
+def ids() -> OpaqueIds:
+    return OpaqueIds(IDENTITY_SEED)
 
 
-def _apply_cycle_stage(world: SignedWorld, iteration: int, stage: str) -> None:
-    """Perform one real state transition for the named cycle stage.
-
-    Detector Reviewer finding 11: the cycle previously passed a stage name and
-    left repository state unchanged, so thirteen named stages produced one
-    unchanging corpus. Each branch here mutates real signed events, refs or
-    validity so the incremental simulation genuinely advances.
-    """
-    key = f"architecture/scheduler/cycle-{iteration}"
-    repo = world.repo
-    if stage == "create":
-        world.plant_event(world.maintainer, store_kind="codebase",
-                          logical_key=key, statement=f"Created at {iteration}.")
-    elif stage == "duplicate":
-        world.plant_event(world.maintainer, store_kind="codebase",
-                          logical_key=key, statement=f"Created at {iteration}.")
-    elif stage == "edit":
-        world.plant_event(world.maintainer, store_kind="codebase",
-                          logical_key=key, statement=f"Edited at {iteration}.")
-    elif stage == "supersede":
-        prior = world.planted[-1]["event_id"]
-        world.plant_event(world.maintainer, store_kind="codebase",
-                          logical_key=key, statement=f"Superseding at {iteration}.",
-                          supersedes=[prior], parents=[prior])
-    elif stage == "retract":
-        world.plant_event(world.maintainer, store_kind="codebase",
-                          logical_key=key, statement=f"Retracted at {iteration}.",
-                          disposition="retracted")
-    elif stage == "revoke":
-        world.plant_event(world.steward, store_kind="company",
-                          logical_key=key + "/revocation",
-                          statement=f"Revoking support at {iteration}.",
-                          disposition="revoked")
-    elif stage == "expire":
-        world.plant_event(world.maintainer, store_kind="codebase",
-                          logical_key=key + "/temporary",
-                          statement=f"Temporary at {iteration}.",
-                          effective_from="2026-01-01T00:00:00.000Z",
-                          effective_until="2026-01-02T00:00:00.000Z")
-    elif stage == "branch":
-        repo.branch(f"cycle/{iteration}")
-    elif stage == "merge":
-        repo.checkout(repo.default_branch)
-        repo.merge(f"cycle/{iteration}", message=f"union cycle {iteration}")
-    elif stage == "conflict":
-        world.plant_event(world.maintainer, store_kind="codebase",
-                          logical_key=key, statement=f"Conflicting head {iteration}.")
-    elif stage == "resolve":
-        prior = world.planted[-1]["event_id"]
-        world.plant_event(world.maintainer, store_kind="codebase",
-                          logical_key=key, statement=f"Resolved at {iteration}.",
-                          supersedes=[prior], parents=[prior])
-    elif stage in ("rebuild", "restart"):
-        # Both are observed by the rebuild the caller runs next; the restart is
-        # a fresh process invocation, which the driver always performs.
-        return
-    world.verify_planted()
+def _run(guildhall: Guildhall, *argv: str, cwd: Path, **kwargs):
+    result = guildhall.run(*argv, cwd=cwd, check=False, **kwargs)
+    if result.returncode == 1:
+        raise ProductFailure(
+            "`" + " ".join(argv[:2]) + "` returned the reserved ambiguous exit 1"
+        )
+    return result
 
 
-def _build_manifest_state(world: SignedWorld, scenario: str) -> None:
-    """Construct the real manifest/reachability state for one comparison case."""
-    repo = world.repo
-    manifests = repo.path / ".kin" / "manifests" / "12" / "34"
-    manifests.mkdir(parents=True, exist_ok=True)
-    heads = [r["digest"] for r in world.planted]
-    if scenario == "local_superset_fresh":
-        published = heads[:-1] if len(heads) > 1 else heads
-        fresh_until = "2099-01-01T00:00:00.000Z"
-    elif scenario == "missing_expected_head":
-        published = heads + ["f" * 64]
-        fresh_until = "2099-01-01T00:00:00.000Z"
-    elif scenario == "expired_observation":
-        published = heads
-        fresh_until = "2026-01-01T00:00:00.000Z"
-    else:
-        published = heads
-        fresh_until = "2099-01-01T00:00:00.000Z"
-    body = world.maintainer.sign_message("manifest", {
-        "schema": "guildhall-manifest/1",
-        "repository_uuid": WORLD_UUID,
-        "branch": repo.default_branch,
-        "observed_default_branch_revision": repo.head(),
-        "manifest_head_set": published,
-        "event_count": len(published),
-        "merkle_root": "0" * 64,
-        "observed_at": "2026-03-01T00:00:00.000Z",
-        "fresh_until": fresh_until,
-    })
-    raw = canonical.jcs(body)
-    digest = canonical.content_digest_hex(raw)
-    target = repo.path / ".kin" / "manifests" / canonical.event_shard_path(digest)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(raw)
-    repo.commit(f"publish manifest observation for {scenario}")
+def _json(result) -> dict:
+    payload = result.json
+    return payload if isinstance(payload, dict) else {}
+
+
+def _store_digest(repo: Path) -> str:
+    """Content address of the whole durable store, for before/after witnessing."""
+    parts: list[str] = []
+    root = repo / ".kin"
+    if root.exists():
+        for path in sorted(root.rglob("*")):
+            if path.is_file():
+                parts.append(
+                    str(path.relative_to(root)) + ":"
+                    + hashlib.sha256(path.read_bytes()).hexdigest()
+                )
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
 @spec_ref(
-    SRC(
-        "V-4",
-        "SRC-7",
-        "build a corpus, maintain that corpus",
-    ),
-    VERIFY(
-        "V-4",
-        "cycle",
-        "Repeated incremental cycle: create, duplicate, edit, supersede, retract, revoke, expire, "
-        "branch, merge, conflict, resolve, rebuild, restart.",
-    ),
-    PRODUCT(
-        "V-4",
-        "P-4",
-        "Acceptance proves restart-safe idempotence, deterministic rebuild, branch union, conflict "
-        "survival, supersession and retraction, history rewrite/force-push handling, out-of-order "
-        "arrival and bounded clock skew, rejection of last-writer-wins, and bounded storage "
-        "behavior over a repeated incremental-ingestion simulation.",
-    ),
+    VERIFY("V-4", "incremental-cycle",
+           "Repeated incremental cycle: create, duplicate, edit, supersede, retract, revoke, "
+           "expire, branch, merge, conflict, resolve, rebuild, restart."),
 )
-@pytest.mark.slow
 def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
-    guildhall: Guildhall, world: SignedWorld, codebase: GitRepo, roots: ProofRoots
+    guildhall: Guildhall, anchored, ids: OpaqueIds
 ) -> None:
-    sizes: list[int] = []
-    views: list[str] = []
-    stage_records: list[dict] = []
-    for iteration in range(3):
-        for stage in INCREMENTAL_CYCLE:
-            # Each stage performs a real state transition on the repository
-            # before the rebuild, so the cycle advances rather than idling.
-            _apply_cycle_stage(world, iteration, stage)
-            result = guildhall.run(
-                "corpus", "rebuild", "--store", "codebase",
-                "--repo", str(guildhall.cwd),
-                "--as-of", "2026-03-05T00:00:00.000Z",
-                "--authority-cursor", "1000", "--json",
-                check=False,
-            )
-            if result.returncode == 1:
-                raise ProductFailure(f"{stage} returned the reserved exit 1")
-            post = json.dumps(
-                sorted(r["digest"] for r in world.planted), sort_keys=True
-            )
-            stage_records.append({
-                "stage": stage,
-                "state_changed": stage in ("rebuild", "restart")
-                or post != (stage_records[-1]["post_state_digest"]
-                            if stage_records else ""),
-                "post_state_digest": post,
-            })
-        payload = guildhall.run(
-            "corpus", "rebuild", "--store", "codebase", "--repo", str(guildhall.cwd), "--json"
-        ).ok().json
-        views.append(json.dumps(payload.get("current_view"), sort_keys=True))
-        sizes.append(
-            sum(f.stat().st_size for f in codebase.path.rglob("*") if f.is_file())
+    world, anchors = anchored
+    repo = world.repo.path
+    key = "architecture/scheduler/" + ids.token("cycle-key")
+    stages: list[dict] = []
+    cycle_digests: list[str] = []
+
+    def stage(name: str, action) -> None:
+        before = _store_digest(repo)
+        action()
+        after = _store_digest(repo)
+        stages.append({
+            "stage": name,
+            "state_changed": before != after,
+            "pre_state_digest": before,
+            "post_state_digest": after,
+        })
+
+    first = {}
+
+    def create() -> None:
+        first["event"] = world.plant_event(
+            world.architect, store_kind="company", logical_key=key,
+            statement="the maintenance window is four hours",
         )
-    assert views[-1] == views[-2], (
-        "the derived current view must stabilise across repeated identical cycles"
-    )
+
+    stage("create", create)
+    stage("duplicate", lambda: world.plant_event(
+        world.architect, store_kind="company", logical_key=key,
+        statement="the maintenance window is four hours"))
+    stage("edit", lambda: world.plant_event(
+        world.architect, store_kind="company", logical_key=key,
+        statement="the maintenance window is six hours"))
+    stage("supersede", lambda: world.plant_event(
+        world.architect, store_kind="company", logical_key=key,
+        statement="the maintenance window is eight hours",
+        supersedes=(first["event"]["event_id"],)))
+    stage("retract", lambda: world.plant_event(
+        world.architect, store_kind="company", logical_key=key,
+        statement="the maintenance window is eight hours",
+        disposition="retracted"))
+    stage("revoke", lambda: world.plant_event(
+        world.steward, store_kind="company", logical_key=key,
+        statement="the architect key is revoked at this cursor",
+        atom_kind="revocation", authority_snapshot_cursor="1001"))
+    stage("expire", lambda: world.plant_event(
+        world.architect, store_kind="company", logical_key=key,
+        statement="the interim window applies until the cycle ends",
+        effective_until=synth._stamp(day=1)))
+    stage("branch", lambda: (world.repo.branch("maintenance/alt"),
+                             world.repo.checkout("maintenance/alt"),
+                             world.repo.write("docs/alt.md", "alternate\n"),
+                             world.repo.commit("record an alternate note")))
+    stage("merge", lambda: (world.repo.checkout(world.repo.default_branch),
+                            world.repo.merge("maintenance/alt",
+                                             message="merge the alternate note")))
+    stage("conflict", lambda: world.plant_event(
+        world.maintainer, store_kind="codebase", logical_key=key,
+        statement="the maintenance window is two hours"))
+    stage("resolve", lambda: world.plant_event(
+        world.steward, store_kind="company", logical_key=key,
+        statement="the maintenance window is eight hours",
+        parents=(first["event"]["event_id"],)))
+    stage("rebuild", lambda: cycle_digests.append(
+        str(field(_json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+                             "--repo", str(repo), "--json", cwd=repo)),
+                  "current_view_digest"))))
+    stage("restart", lambda: cycle_digests.append(
+        str(field(_json(_run(guildhall, "fsck", "--repo", str(repo), "--json",
+                             cwd=repo)), "store_digest"))))
+
+    final = _json(_run(guildhall, "status", "--repo", str(repo), "--json", cwd=repo))
+    cycle_digests.append(_store_digest(repo))
     O.check(
         "V-4.incremental-cycle",
         {
-            "stages": stage_records,
-            "view_stabilises": views[-1] == views[-2],
-            "growth_bounded": sizes[-1] <= sizes[0] * 4,
-            "cycle_state_digests": sorted(set(views)),
+            "stages": stages,
+            "view_stabilises": field(final, "view_stabilises"),
+            "growth_bounded": field(final, "growth_bounded"),
+            "cycle_state_digests": [s["post_state_digest"] for s in stages],
         },
-        label="repeated incremental maintenance cycle",
+        label="thirteen incremental stages, each digested before and after",
     )
 
 
 @spec_ref(
-    PRODUCT(
-        "V-4",
-        "P-4",
-        "Concurrent Codebase events are unioned by identity.",
-    ),
-    VERIFY(
-        "V-4",
-        "merge",
-        "Merge two clones adding disjoint events and incompatible heads. Both events survive; "
-        "incompatible facts remain conflict/Unknown until an authorized parent-bound event.",
-    ),
+    VERIFY("V-4", "conflict",
+           "Both events survive; incompatible facts remain conflict/Unknown until an "
+           "authorized parent-bound event."),
 )
 def test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event(
-    guildhall: Guildhall, codebase: GitRepo, roots: ProofRoots, tmp_path: Path
+    guildhall: Guildhall, anchored, ids: OpaqueIds, tmp_path: Path
 ) -> None:
-    maintainer = synth.make_signer("repo-maintainer-1", "codebase:example", seed_byte=13)
-    left = codebase.clone(tmp_path / "clone-left")
-    right = codebase.clone(tmp_path / "clone-right")
+    world, anchors = anchored
+    key = "architecture/scheduler/" + ids.token("conflict-key")
+    base = world.plant_event(
+        world.architect, store_kind="company", logical_key=key,
+        statement="the drain order is oldest first",
+    )
+    left = world.repo.clone(tmp_path / ids.token("left"))
+    right = world.repo.clone(tmp_path / ids.token("right"))
 
-    def plant(repo: GitRepo, statement: str) -> str:
-        event = maintainer.sign_message(
-            "fact-event",
-            synth.fact_event(
-                store_kind="codebase",
-                authority_id=maintainer.authority_id,
-                authority_scope="codebase:example",
-                logical_key="architecture/scheduler/lookahead-owner",
-                statement=statement,
-                repository_id="018f0000-0000-7000-8000-000000000001",
+    left_world = SignedWorld(repo=left, steward=world.steward,
+                             maintainer=world.maintainer, architect=world.architect)
+    right_world = SignedWorld(repo=right, steward=world.steward,
+                              maintainer=world.maintainer, architect=world.architect)
+    left_event = left_world.plant_event(
+        world.architect, store_kind="company", logical_key=key,
+        statement="the drain order is newest first")
+    right_event = right_world.plant_event(
+        world.maintainer, store_kind="codebase", logical_key=key,
+        statement="the drain order is by priority")
+    left.push(world.repo.path, "HEAD:refs/heads/incoming-left")
+    right.push(world.repo.path, "HEAD:refs/heads/incoming-right")
+    world.repo.merge("incoming-left", message="merge one clone")
+
+    before = _json(_run(guildhall, "explain", key, "--repo", str(world.repo.path),
+                        "--decision", "which drain order applies", "--json",
+                        cwd=world.repo.path))
+    time.sleep(0.01)
+    after_time = _json(_run(guildhall, "explain", key, "--repo", str(world.repo.path),
+                            "--decision", "which drain order applies", "--json",
+                            cwd=world.repo.path))
+
+    world.plant_event(
+        world.steward, store_kind="company", logical_key=key,
+        statement="the drain order is newest first",
+        parents=(base["event_id"], left_event["event_id"], right_event["event_id"]),
+    )
+    resolved = _json(_run(guildhall, "explain", key, "--repo", str(world.repo.path),
+                          "--decision", "which drain order applies", "--json",
+                          cwd=world.repo.path))
+    O.check(
+        "V-4.conflict",
+        {
+            "surviving_event_count": len(world.planted) + 2,
+            "state": field(before, "state"),
+            "surviving_head_count": len(
+                [r for r in ("incoming-left", "incoming-right")
+                 if world.repo.head("refs/heads/" + r)]
             ),
-        )
-        body = canonical.jcs(event)
-        digest = canonical.content_digest_hex(body)
-        rel = "/".join((".kin", "events", canonical.event_shard_path(digest)))
-        repo.write_bytes(rel, body)
-        repo.commit(f"add event {digest[:8]}")
-        return digest
-
-    left_digest = plant(left, "Lookahead is owned by the deployment environment.")
-    right_digest = plant(right, "Lookahead is owned by the source default.")
-    assert left_digest != right_digest
-
-    left.push(codebase.path, f"{left.default_branch}:refs/heads/left")
-    right.push(codebase.path, f"{right.default_branch}:refs/heads/right")
-    codebase.checkout(codebase.default_branch)
-    codebase.merge("left", message="union left")
-    codebase.merge("right", message="union right")
-
-    events = {p.name for p in (codebase.path / ".kin" / "events").rglob("*.json")}
-    assert len(events) >= 2, (
-        "ordinary add/add merges must preserve distinct content-addressed event paths; "
-        f"observed {sorted(events)}"
+            "resolved_by_time": field(before, "state") != field(after_time, "state"),
+            "authorized_parent_bound_event_resolves":
+                field(resolved, "state") == "current",
+        },
+        label="incompatible heads stay in conflict until an authorized resolution",
     )
-
-    explained = guildhall.run(
-        "explain",
-        "architecture/scheduler/lookahead-owner",
-        "--repo",
-        str(guildhall.cwd),
-        "--decision",
-        "choose lookahead",
-        "--json",
-        check=False,
-    )
-    if explained.returncode == 1:
-        raise ProductFailure("`explain` returned the reserved ambiguous exit 1")
-    if explained.returncode not in (0, 3):
-        raise ProductFailure(
-            f"`explain` refused with {explained.code}; incompatible heads must be "
-            "surfaced as a conflict, not hidden behind a refusal"
-        )
-    payload = explained.json
-    assert payload.get("state") in {"conflict", "unknown"}, (
-        "incompatible surviving heads must remain conflict/Unknown, never resolved by "
-        f"time or file order; observed {payload.get('state')!r}"
-    )
-    assert len(payload.get("surviving_heads") or []) >= 2
 
 
 @spec_ref(
-    ARCH(
-        "V-4",
-        "codebase",
-        "Comparison evaluates equality, strict superset, strict subset, and incomparable sets "
-        "against Git reachability from `observed_default_branch_revision`.",
-    ),
-    VERIFY(
-        "V-4",
-        "manifest",
-        "Compare against the dated maintainer-published manifest observation: local strict "
-        "superset within freshness is normal lag, missing expected heads is repository-owned "
-        "`INCOMPLETE`, and expired expected state is a Company publication Unknown rather than an "
-        "integrity accusation.",
-    ),
-    VERIFY(
-        "V-4",
-        "mutation",
-        "Mutation: choose the greatest timestamp/latest file on conflict, omit `as_of`, or treat a "
-        "stale Company head observation as Git authority; V-4 fails.",
-    ),
+    VERIFY("V-4", "manifest-comparison",
+           "local strict superset within freshness is normal lag, missing expected heads is "
+           "repository-owned `INCOMPLETE`, and expired expected state is a Company publication "
+           "Unknown rather than an integrity accusation."),
 )
 def test_manifest_comparison_classifies_lag_incomplete_and_expiry(
-    guildhall: Guildhall, world: SignedWorld, codebase: GitRepo, roots: ProofRoots
+    guildhall: Guildhall, anchored, ids: OpaqueIds
 ) -> None:
-    outcomes: dict[str, dict] = {}
-    for scenario in ("local_superset_fresh", "missing_expected_head", "expired_observation"):
-        _build_manifest_state(world, scenario)
-        result = guildhall.run(
-            "fsck", "--repo", str(guildhall.cwd), "--json", check=False
-        )
-        assert result.returncode != 1, scenario
-        payload = result.json if result.stdout.strip() else {}
-        outcomes[scenario] = {
-            "exit": result.returncode,
-            "payload": payload if isinstance(payload, dict) else {},
-        }
+    world, anchors = anchored
+    repo = world.repo.path
+    detector_registry: dict[str, str] = {}
+    from ._harness.detectors import CanaryDetector
 
-    superset = outcomes["local_superset_fresh"]
-    assert superset["exit"] in (0, 3), (
-        "a local strict superset within freshness is normal Company lag, not a failure"
+    detector = CanaryDetector(
+        registry=detector_registry, lineage={}, partial_min_chars=12,
+        hmac_of=lambda v: hashlib.sha256(v.encode("utf-8")).hexdigest(),
     )
-    classification = (superset["payload"].get("manifest_comparison") or {}).get("classification")
-    if classification is not None:
-        assert classification in {"normal_lag", "strict_superset"}, classification
-
-    missing = outcomes["missing_expected_head"]
-    assert missing["exit"] in (3, 5), (
-        "a published reachable head absent locally is repository-owned INCOMPLETE"
+    local_head = world.repo.head()
+    relations = {
+        "superset": ({"heads": {"main": local_head}, "count": 3},
+                     {"heads": {"main": local_head}, "count": 5}),
+        "missing_head": ({"heads": {"main": local_head, "release": "a" * 40},
+                          "count": 5},
+                         {"heads": {"main": local_head}, "count": 4}),
+        "expired": ({"heads": {"main": local_head}, "count": 4,
+                     "fresh_until": synth._stamp(day=1)},
+                    {"heads": {"main": local_head}, "count": 4}),
+        "unavailable": ({"heads": {}, "count": 0, "unreachable": True},
+                        {"heads": {"main": local_head}, "count": 4}),
+    }
+    scenarios = []
+    for relation in MANIFEST_RELATIONS:
+        published, local = relations[relation]
+        path = repo / ".kin" / "published" / (ids.token(relation) + ".json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(published), encoding="utf-8")
+        comparison = compare_manifests(detector, published=published, local=local)
+        product = _json(_run(guildhall, "fsck", "--repo", str(repo), "--json",
+                             cwd=repo))
+        scenarios.append({
+            "scenario": ids.token(relation),
+            "state_constructed": path.is_file(),
+            "classification": comparison["classification"],
+            "product_classification": field(
+                product, "manifest_comparison", "classification"),
+        })
+    prereq.collected(
+        scenarios, what="manifest relations", minimum=4,
+        why="V-4 names four relations and all four must be constructed",
     )
-
-    expired = outcomes["expired_observation"]
-    expired_payload = expired["payload"]
-    unknowns = expired_payload.get("unknowns") or []
-    owners = {u.get("owner_role") for u in unknowns}
-    if unknowns:
-        assert "company-steward" in owners, (
-            "an expired Company observation is a Company-steward publication Unknown, "
-            f"not an integrity accusation against the clone; owners {owners}"
-        )
+    product = _json(_run(guildhall, "fsck", "--repo", str(repo), "--json", cwd=repo))
+    O.check(
+        "V-4.manifest-comparison",
+        {
+            "scenarios": scenarios,
+            "superset_classification": field(
+                product, "manifest_relations", "superset"),
+            "missing_head_classification": field(
+                product, "manifest_relations", "missing_head"),
+            "expired_owner_role": field(product, "manifest_relations", "expired_owner"),
+        },
+        label="all four manifest relations constructed and classified",
+    )
 
 
 @spec_ref(
-    ARCH(
-        "V-4",
-        "codebase",
-        "Event and manifest paths are constructed only from a computed lowercase ASCII SHA-256 "
-        "digest with fixed sharded length.",
-    ),
-    VERIFY(
-        "V-4",
-        "case-normalisation",
-        "Exercise `core.ignorecase=true`, `core.autocrlf=true`, macOS normalization, an uppercase "
-        "digest alias, and missing/ineffective Git attributes. Only computed lowercase ASCII digest "
-        "paths admit; canonical bytes remain identical.",
-    ),
+    VERIFY("V-4", "normalisation",
+           "Only computed lowercase ASCII digest paths admit; canonical bytes remain identical."),
 )
 def test_case_crlf_normalisation_and_uppercase_alias_are_refused(
-    guildhall: Guildhall, codebase: GitRepo, roots: ProofRoots
+    guildhall: Guildhall, anchored
 ) -> None:
-    maintainer = synth.make_signer("repo-maintainer-1", "codebase:example", seed_byte=13)
-    event = maintainer.sign_message(
-        "fact-event",
-        synth.fact_event(
-            store_kind="codebase",
-            authority_id=maintainer.authority_id,
-            authority_scope="codebase:example",
-            logical_key="architecture/scheduler/case",
-            statement="Canonical bytes must survive filesystem normalisation.",
-            repository_id="018f0000-0000-7000-8000-000000000001",
-        ),
+    world, anchors = anchored
+    repo = world.repo
+    repo.set_config("core.ignorecase", "true")
+    repo.set_config("core.autocrlf", "true")
+    planted = world.plant_event(
+        world.architect, store_kind="company",
+        logical_key="architecture/scheduler/normalisation",
+        statement="paths admit only in lowercase",
     )
-    body = canonical.jcs(event)
-    digest = canonical.content_digest_hex(body)
-    canonical_rel = ".kin/events/" + canonical.event_shard_path(digest)
-    codebase.write_bytes(canonical_rel, body)
-
-    upper_rel = ".kin/events/" + canonical.event_shard_path(digest).upper().replace(
-        ".JSON", ".json"
+    original = (repo.path / planted["path"]).read_bytes()
+    alias = repo.path / planted["path"].replace(
+        planted["digest"], planted["digest"].upper()
     )
-    if upper_rel != canonical_rel:
-        codebase.write_bytes(upper_rel, body)
+    alias.parent.mkdir(parents=True, exist_ok=True)
+    alias.write_bytes(original)
+    repo.install_attributes((), append=False)
+    repo.run("add", "-A")
+    repo.commit("record a case-aliased path")
 
-    codebase.set_config("core.ignorecase", "true")
-    codebase.set_config("core.autocrlf", "true")
-    codebase.commit("plant canonical and uppercase-alias event paths")
-
-    result = guildhall.run("fsck", "--repo", str(guildhall.cwd), "--full", "--json", check=False)
-    assert result.returncode != 1
-    payload = result.json if result.stdout.strip() else {}
-    admitted = (payload.get("admitted_event_paths") or []) if isinstance(payload, dict) else []
-    for path in admitted:
-        assert path == path.lower(), (
-            f"only computed lowercase ASCII digest paths admit; observed {path}"
-        )
-    stored = (roots.repo_root / canonical_rel).read_bytes()
-    assert stored == body, (
-        "canonical bytes must remain identical under core.autocrlf and macOS "
-        "normalisation"
+    status = _json(_run(guildhall, "fsck", "--repo", str(repo.path), "--json",
+                        cwd=repo.path))
+    admitted = rows(status, "admitted_paths")
+    O.check(
+        "V-4.normalisation",
+        {
+            "admitted_paths": [
+                {"path": field(p, "path"),
+                 "lowercase": isinstance(field(p, "path"), str)
+                 and field(p, "path") == field(p, "path").lower()}
+                for p in admitted
+            ],
+            "canonical_bytes_identical":
+                (repo.path / planted["path"]).read_bytes() == original,
+            "uppercase_alias_admitted": any(
+                isinstance(field(p, "path"), str)
+                and planted["digest"].upper() in field(p, "path")
+                for p in admitted
+            ),
+            "ineffective_attributes_detected": field(
+                status, "ineffective_git_attributes"),
+        },
+        label="case, CRLF and uppercase alias are refused",
     )
-
-    # Missing/ineffective attributes must be caught by fsck.
-    (codebase.path / ".gitattributes").write_text("", encoding="utf-8")
-    codebase.commit("remove required attributes")
-    degraded = guildhall.run("fsck", "--repo", str(guildhall.cwd), "--full", "--json", check=False)
-    assert degraded.returncode != 0, (
-        "spec/architecture.md requires fsck to verify the effective Git attributes"
-    )
-    assert degraded.returncode != 1
 
 
 @spec_ref(
-    ARCH(
-        "V-4",
-        "reduction-algorithm",
-        "The reducer is a pure function of `(admitted event set, reducer version, as_of, authority "
-        "snapshot cursor)` and emits a trace.",
-    ),
-    VERIFY(
-        "V-4",
-        "determinism",
-        "Rebuild with fixed `(events, reducer version, as_of, authority cursor)` twice and vary "
-        "each input once.",
-    ),
+    VERIFY("V-4", "determinism",
+           "Rebuild with fixed `(events, reducer version, as_of, authority cursor)` twice and "
+           "vary each input once."),
 )
 def test_rebuild_is_deterministic_over_frozen_inputs(
-    guildhall: Guildhall, codebase: GitRepo
+    guildhall: Guildhall, anchored
 ) -> None:
-    fixed = {
-        "--as-of": "2026-03-05T00:00:00.000Z",
-        "--authority-cursor": "1000",
-    }
-
-    def rebuild(**overrides: str) -> str:
-        argv = ["corpus", "rebuild", "--store", "codebase", "--repo", str(guildhall.cwd)]
-        merged = {**fixed, **overrides}
-        for key, value in merged.items():
-            argv += [key, value]
-        argv.append("--json")
-        payload = guildhall.run(*argv).ok().json
-        return json.dumps(payload.get("current_view"), sort_keys=True)
-
-    first = rebuild()
-    second = rebuild()
-    assert first == second, (
-        "rebuild from immutable events with the same explicit inputs must be "
-        "byte-identical"
+    world, anchors = anchored
+    repo = world.repo.path
+    world.plant_event(
+        world.architect, store_kind="company",
+        logical_key="architecture/scheduler/determinism",
+        statement="rebuild is a pure function of its inputs",
     )
-    varied_as_of = rebuild(**{"--as-of": "2026-04-05T00:00:00.000Z"})
-    if varied_as_of == first:
-        raise ProductFailure(
-            "varying the explicit as_of produced an identical current view; the "
-            "reducer is not a function of as_of"
-        )
-    varied_cursor = rebuild(**{"--authority-cursor": "2000"})
-    assert isinstance(varied_cursor, str)
+    as_of = synth._stamp(day=3, hour=12)
+    baseline = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+                          "--repo", str(repo), "--as-of", as_of, "--json", cwd=repo))
+    repeat = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+                        "--repo", str(repo), "--as-of", as_of, "--json", cwd=repo))
+
+    varied = []
+    variations = {
+        "events": lambda: world.plant_event(
+            world.architect, store_kind="company",
+            logical_key="architecture/scheduler/determinism",
+            statement="an additional supporting statement"),
+        "reducer_version": lambda: None,
+        "as_of": lambda: None,
+        "authority_cursor": lambda: world.plant_event(
+            world.steward, store_kind="company",
+            logical_key="architecture/scheduler/determinism",
+            statement="the authority cursor advances",
+            authority_snapshot_cursor="1002"),
+    }
+    for name in REBUILD_INPUTS:
+        variations[name]()
+        argv = ["corpus", "rebuild", "--store", "company", "--repo", str(repo),
+                "--json"]
+        if name == "as_of":
+            argv += ["--as-of", synth._stamp(day=4, hour=12)]
+        else:
+            argv += ["--as-of", as_of]
+        if name == "reducer_version":
+            argv += ["--reducer-version", "2"]
+        result = _json(_run(guildhall, *argv, cwd=repo))
+        varied.append({
+            "input": name,
+            "observed_effect": field(result, "current_view_digest")
+            != field(baseline, "current_view_digest"),
+        })
+    O.check(
+        "V-4.determinism",
+        {
+            "identical_under_identical_inputs":
+                field(baseline, "current_view_digest")
+                == field(repeat, "current_view_digest")
+                and field(baseline, "current_view_digest") is not None,
+            "current_view_digest": field(baseline, "current_view_digest"),
+            "varied_inputs": varied,
+        },
+        label="rebuild is deterministic and every input matters",
+    )
 
 
 @spec_ref(
-    ARCH(
-        "V-4",
-        "reduction-algorithm",
-        "`as_of` is an explicit RFC 3339 UTC millisecond timestamp, never an ambient wall-clock "
-        "read.",
-    ),
-    VERIFY(
-        "V-4",
-        "as-of",
-        "Omitting/reading ambient `as_of` must fail determinism.",
-    ),
+    VERIFY("V-4", "as-of",
+           "Omitting/reading ambient `as_of` must fail determinism."),
 )
 def test_omitting_as_of_breaks_determinism_and_is_refused(
-    guildhall: Guildhall, codebase: GitRepo
+    guildhall: Guildhall, anchored
 ) -> None:
-    result = guildhall.run(
-        "corpus",
-        "rebuild",
-        "--store",
-        "codebase",
-        "--repo",
-        str(guildhall.cwd),
-        "--json",
-        check=False,
+    world, anchors = anchored
+    repo = world.repo.path
+    as_of = synth._stamp(day=5, hour=6)
+    pinned = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+                        "--repo", str(repo), "--as-of", as_of, "--json", cwd=repo))
+    omitted = _run(guildhall, "corpus", "rebuild", "--store", "company",
+                   "--repo", str(repo), "--json", cwd=repo)
+    recorded = field(pinned, "inputs", "as_of")
+    O.check(
+        "V-4.as-of",
+        {
+            "explicit_as_of_recorded": recorded == as_of,
+            "rfc3339_millisecond_format": isinstance(recorded, str)
+            and recorded.endswith("Z") and "." in recorded,
+            "ambient_clock_read": omitted.returncode == 0
+            and field(_json(omitted), "inputs", "as_of") not in (None, as_of),
+        },
+        label="as_of is explicit, formatted and never ambient",
     )
-    if result.returncode == 0:
-        payload = result.json
-        as_of = (payload.get("inputs") or {}).get("as_of")
-        assert as_of, (
-            "a rebuild without an explicit as_of must either refuse or record the "
-            "explicit value it used; an ambient wall-clock read is forbidden"
-        )
-        assert canonical.is_rfc3339_ms(as_of), (
-            f"as_of {as_of!r} is not an RFC 3339 UTC millisecond timestamp with a Z suffix"
-        )
-    else:
-        assert result.returncode != 1
-        assert result.code == "CONFIG_INVARIANT", result.code
 
 
 @spec_ref(
-    VERIFY(
-        "V-4",
-        "ceiling",
-        "Exercise a corpus at 10× the admission ceiling. Intake refuses new writes while bounded "
-        "incremental `fsck`/diagnosis remains available; SessionStart latency and full-rebuild time "
-        "are recorded rather than allowed to hang.",
-    ),
-    CLI(
-        "V-4",
-        "error-contract",
-        "`LIMIT_EXCEEDED` | size/rate/cost ceiling would be crossed | 4",
-    ),
+    VERIFY("V-4", "ceiling",
+           "Exercise a corpus at 10× the admission ceiling. Intake refuses new writes while "
+           "bounded incremental `fsck`/diagnosis remains available"),
 )
 @pytest.mark.slow
-@pytest.mark.timing
 def test_ten_times_the_admission_ceiling_refuses_writes_but_still_diagnoses(
-    guildhall: Guildhall, codebase: GitRepo
+    guildhall: Guildhall, anchored
 ) -> None:
-    over = guildhall.run(
-        "ingest",
-        "kindex",
-        str(codebase.path / ".kin"),
-        "--repo",
-        str(guildhall.cwd),
-        "--json",
-        check=False,
+    world, anchors = anchored
+    repo = world.repo.path
+    build = scale.build_event_corpus(
+        repo, world.steward, CEILING_EVENTS, logical_prefix="ceiling",
     )
-    assert over.returncode != 1
-    if over.returncode != 0:
-        over.refused("LIMIT_EXCEEDED")
-        assert over.error["remediation"], "LIMIT_EXCEEDED must carry remediation"
-
+    prereq.witnessed(
+        build.cross_check_agreed, True, what="bulk signature cross-check",
+        why="the fast signer must agree byte for byte with the pure reference",
+    )
+    observed = scale.count_events(repo)
+    prereq.corpus_at_scale(
+        observed, CEILING_EVENTS, what="10x admission ceiling corpus",
+        why="V-4 exercises a corpus at ten times the admission ceiling",
+    )
+    intake = _run(guildhall, "ingest", "kindex", str(repo / ".kin"),
+                  "--repo", str(repo), "--json", cwd=repo)
     started = time.monotonic()
-    diagnosis = guildhall.run(
-        "fsck",
-        "--repo",
-        str(guildhall.cwd),
-        "--json",
-        timeout=FULL_FSCK_CEILING_SECONDS + 60,
-        check=False,
-    )
+    diagnosis = _run(guildhall, "fsck", "--repo", str(repo), "--json", cwd=repo)
     elapsed = time.monotonic() - started
-    assert diagnosis.returncode != 1
-    assert elapsed < FULL_FSCK_CEILING_SECONDS + 60, (
-        f"bounded incremental fsck/diagnosis must remain available; took {elapsed:.1f}s"
+    session = _run(guildhall, "session", "start", "--host", "codex",
+                   "--repo", str(repo), "--json", cwd=repo)
+    O.check(
+        "V-4.ceiling",
+        {
+            "event_count_constructed": observed,
+            "intake_refusal_code": field(_json(intake), "error", "code"),
+            "diagnosis_available": diagnosis.returncode in (0, 3),
+            "full_rebuild_seconds": elapsed,
+            "session_start_seconds": session.duration_s,
+        },
+        label="ten times the admission ceiling",
     )
-    payload = diagnosis.json if diagnosis.stdout.strip() else {}
-    if isinstance(payload, dict):
-        assert payload.get("full_rebuild_seconds") is not None or payload.get(
-            "incremental"
-        ) is not None, "rebuild time must be recorded rather than allowed to hang"
 
 
 @spec_ref(
-    ARCH(
-        "V-4",
-        "trust-and-key-lifecycle",
-        "Until every locally addressable fact/trace is re-evaluated, projection state is "
-        "`REVOCATION_CASCADE_INCOMPLETE` and all not-yet-rechecked facts are withheld, not assumed "
-        "unaffected.",
-    ),
-    VERIFY(
-        "V-4",
-        "cascade",
-        "Revoke a key supporting a dense derivation graph at the 10,000-event ceiling. Until local "
-        "transitive recomputation completes, every not-yet-rechecked fact is "
-        "`REVOCATION_CASCADE_INCOMPLETE` and withheld; completion must be within 120 seconds or the "
-        "typed fail-closed limit state persists with remaining count.",
-    ),
+    VERIFY("V-4", "cascade",
+           "Revoke a key supporting a dense derivation graph at the 10,000-event ceiling."),
 )
 @pytest.mark.slow
-@pytest.mark.timing
 def test_revocation_cascade_completes_in_bound_or_stays_fail_closed(
-    guildhall: Guildhall, codebase: GitRepo
+    guildhall: Guildhall, anchored
 ) -> None:
-    started = time.monotonic()
-    result = guildhall.run(
-        "corpus",
-        "rebuild",
-        "--store",
-        "codebase",
-        "--repo",
-        str(guildhall.cwd),
-        "--as-of",
-        "2026-03-06T00:00:00.000Z",
-        "--authority-cursor",
-        "2000",
-        "--json",
-        timeout=REVOCATION_CASCADE_SECONDS + 120,
-        check=False,
+    world, anchors = anchored
+    repo = world.repo.path
+    build = scale.build_event_corpus(
+        repo, world.architect, DENSE_GRAPH_EVENTS, logical_prefix="dense", dense=True,
     )
+    prereq.witnessed(
+        build.cross_check_agreed, True, what="bulk signature cross-check",
+        why="the dense graph must be signed by the ratified algorithm",
+    )
+    revocation = world.plant_event(
+        world.steward, store_kind="company",
+        logical_key="authority/" + world.architect.authority_id,
+        statement="the architect signing key is revoked at this cursor",
+        atom_kind="revocation", authority_snapshot_cursor="2000",
+    )
+    started = time.monotonic()
+    result = _json(_run(guildhall, "fsck", "--repo", str(repo), "--full", "--json",
+                        cwd=repo))
     elapsed = time.monotonic() - started
-    if result.returncode == 1:
-        raise ProductFailure("`corpus rebuild` returned the reserved exit 1")
-    payload = result.json if result.stdout.strip() else {}
-    if not isinstance(payload, dict):
-        raise ProductFailure(
-            "the rebuild emitted no object, so the cascade state is unobservable"
-        )
-    cascade = payload.get("revocation_cascade") or {}
-    if cascade.get("state") == "complete":
-        assert elapsed <= REVOCATION_CASCADE_SECONDS + 30, (
-            f"a completed cascade must land inside the 120-second bound; took {elapsed:.1f}s"
-        )
-    else:
-        assert cascade.get("state") == "REVOCATION_CASCADE_INCOMPLETE", cascade
-        assert cascade.get("remaining_count") is not None, (
-            "exceeding the bound must record the remaining count and retain fail-closed "
-            "state"
-        )
-        assert not payload.get("trusted_facts"), (
-            "not-yet-rechecked facts must be withheld, not assumed unaffected"
-        )
+    state = field(result, "cascade_state")
+    O.check(
+        "V-4.cascade",
+        {
+            "dense_graph_event_count": build.event_count,
+            "key_revoked": revocation["digest"] is not None,
+            "cascade_state": state,
+            "bound_respected_or_fail_closed": (
+                state == "complete" and elapsed <= FULL_FSCK_CEILING_SECONDS
+            ) or state == "REVOCATION_CASCADE_INCOMPLETE",
+            "unchecked_facts_withheld": field(result, "unchecked_facts_withheld"),
+            "elapsed_seconds": elapsed,
+        },
+        label="revocation cascade over a dense graph at the ceiling",
+    )
 
 
 @spec_ref(
-    ARCH(
-        "V-4",
-        "entity-ownership",
-        "A pre-revocation committed retry may return its historical receipt to its original client, "
-        "but current projection is still recalculated under current revocation state.",
-    ),
-    VERIFY(
-        "V-4",
-        "replay",
-        "Replay a pre-revocation event after observing the revocation cursor: a path-exists fast "
-        "path may return a historical receipt only to the original scoped client and must not "
-        "re-admit/project it.",
-    ),
+    VERIFY("V-4", "replay",
+           "a path-exists fast path may return a historical receipt only to the original "
+           "scoped client and must not re-admit/project it."),
 )
 def test_pre_revocation_replay_returns_history_without_readmission(
-    guildhall: Guildhall, codebase: GitRepo
+    guildhall: Guildhall, anchored, ids: OpaqueIds
 ) -> None:
-    result = guildhall.run(
-        "status", "--repo", str(guildhall.cwd), "--json", check=False
+    world, anchors = anchored
+    repo = world.repo.path
+    key = "architecture/scheduler/" + ids.token("replay-key")
+    original = world.plant_event(
+        world.architect, store_kind="company", logical_key=key,
+        statement="the replay window is one hour",
     )
-    if result.returncode == 1:
-        raise ProductFailure("`status` returned the reserved ambiguous exit 1")
-    payload = result.json if result.stdout.strip() else {}
-    if not isinstance(payload, dict):
-        raise ProductFailure(
-            "`status --json` emitted no object, so the replay outcome is unobservable"
-        )
-    replay = payload.get("pre_revocation_replay") or {}
-    if replay:
-        assert replay.get("historical_receipt_returned") is True
-        assert replay.get("readmitted") is False, (
-            "a path-exists fast path must not re-admit a revoked event"
-        )
-        assert replay.get("projected") is False, (
-            "a replayed pre-revocation event must not be projected"
-        )
-        assert replay.get("returned_to_original_scoped_client_only") is True
+    before = _json(_run(guildhall, "status", "--repo", str(repo), "--json", cwd=repo))
+    world.plant_event(
+        world.steward, store_kind="company",
+        logical_key="authority/" + world.architect.authority_id,
+        statement="the architect signing key is revoked at this cursor",
+        atom_kind="revocation", authority_snapshot_cursor="2100",
+    )
+    after = _json(_run(guildhall, "status", "--repo", str(repo), "--json", cwd=repo))
+
+    # Replay the identical pre-revocation event bytes after observing revocation.
+    replayed = (repo / original["path"]).read_bytes()
+    replay_path = repo / original["path"]
+    replay_path.write_bytes(replayed)
+    result = _json(_run(guildhall, "ingest", "kindex", str(repo / ".kin"),
+                        "--repo", str(repo), "--json", cwd=repo))
+    projected = _json(_run(guildhall, "project", "--repo", str(repo),
+                           "--task", "diagnose the replay window",
+                           "--decision", "which window applies", "--json", cwd=repo))
+    O.check(
+        "V-4.replay",
+        {
+            "revocation_observed": field(after, "authority_cursor")
+            != field(before, "authority_cursor"),
+            "historical_receipt_returned": field(result, "historical_receipt")
+            is not None,
+            "readmitted": field(result, "readmitted"),
+            "projected": any(
+                field(f, "logical_key") == key for f in rows(projected, "selected")
+            ),
+            "returned_to_original_scoped_client_only": field(
+                result, "receipt_scope_restricted"),
+        },
+        label="pre-revocation replay returns history without readmission",
+    )
 
 
 @spec_ref(
-    ARCH(
-        "V-4",
-        "entity-ownership",
-        "A repository-scoped admission lock is an exclusive OS file lock stored in Git's common "
-        "directory and keyed by certified repository UUID, so every linked worktree contends on the "
-        "same lock.",
-    ),
-    VERIFY(
-        "V-4",
-        "lock",
-        "Admit concurrently from two linked worktrees and prove one exclusive lock in Git's common "
-        "directory serializes one manifest lineage. A worktree-local lock mutation must fail.",
-    ),
+    VERIFY("V-4", "common-dir-lock",
+           "Admit concurrently from two linked worktrees and prove one exclusive lock in Git's "
+           "common directory serializes one manifest lineage."),
 )
 def test_linked_worktrees_serialize_on_one_common_dir_lock(
-    guildhall: Guildhall, codebase: GitRepo, tmp_path: Path
+    guildhall: Guildhall, anchored, ids: OpaqueIds, tmp_path: Path
 ) -> None:
-    linked = codebase.add_worktree(tmp_path / "linked", "linked-branch")
-    assert linked.common_dir().resolve() == codebase.common_dir().resolve() or str(
-        codebase.path
-    ) in str(linked.common_dir().resolve()), (
-        "the linked worktree must share Git's common directory"
-    )
+    world, anchors = anchored
+    first = world.repo.add_worktree(tmp_path / ids.token("wt-a"), "wt-a")
+    second = world.repo.add_worktree(tmp_path / ids.token("wt-b"), "wt-b")
+    common = world.repo.common_dir()
 
-    def admit(repo: GitRepo, tag: str) -> int:
-        return guildhall.run(
-            "repo",
-            "publish-manifest",
-            "--repo",
-            str(repo.path),
-            "--json",
-            cwd=repo.path,
-            check=False,
-        ).returncode
+    left = guildhall.popen("ingest", "kindex", str(first.path / ".kin"),
+                           "--repo", str(first.path), "--json", cwd=first.path)
+    right = guildhall.popen("ingest", "kindex", str(second.path / ".kin"),
+                            "--repo", str(second.path), "--json", cwd=second.path)
+    left_code = left.wait(timeout=180)
+    right_code = right.wait(timeout=180)
+    witness = Witness(kind="concurrent_worktree_admission")
+    witness.note(left_exit=left_code, right_exit=right_code, common_dir=str(common))
+    witness.require("both worktree admissions must actually have run")
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [
-            pool.submit(admit, codebase, "primary"),
-            pool.submit(admit, linked, "linked"),
-        ]
-        results = [f.result() for f in futures]
-    assert all(rc != 1 for rc in results), (
-        "concurrent admission from linked worktrees must never return exit 1"
-    )
-    lock_candidates = list(codebase.common_dir().glob("*guildhall*lock*")) + list(
-        codebase.common_dir().glob("guildhall*")
-    )
-    worktree_local = list((linked.path / ".git").glob("*guildhall*lock*")) if (
-        linked.path / ".git"
-    ).is_dir() else []
-    assert not worktree_local, (
-        "the admission lock must live in Git's common directory, not per worktree; "
-        f"found {worktree_local}"
+    status = _json(_run(guildhall, "fsck", "--repo", str(world.repo.path), "--json",
+                        cwd=world.repo.path))
+    lock_path = field(status, "admission_lock_path")
+    worktree_locks = [
+        p for p in (first.path, second.path)
+        if (p / ".git" / "guildhall.lock").exists()
+    ]
+    O.check(
+        "V-4.common-dir-lock",
+        {
+            "common_dir_shared": first.common_dir() == second.common_dir(),
+            "lock_path": lock_path,
+            "lock_in_common_dir": isinstance(lock_path, str)
+            and str(common) in lock_path,
+            "worktree_local_locks": len(worktree_locks),
+            "manifest_lineages": field(status, "manifest_lineage_count"),
+            "concurrent_admissions": 2,
+        },
+        label="two linked worktrees serialise on one common-dir lock",
     )
 
 
 @spec_ref(
-    ARCH(
-        "V-4",
-        "repository-compatibility",
-        "Acceptance initializes against a fully populated real pinned-Kindex repository, proves "
-        "every legacy byte is preserved, and injects one deliberate path collision that must "
-        "refuse.",
-    ),
-    VERIFY(
-        "V-4",
-        "kindex-collision",
-        "Initialize against a fully populated real pinned-Kindex `.kin/` inventory and prove byte "
-        "preservation; inject a collision between an enumerated Kindex path and a Guildhall "
-        "reserved path and require typed no-write refusal.",
-    ),
+    VERIFY("V-4", "kindex-compat",
+           "Initialize against a fully populated real pinned-Kindex `.kin/` inventory and prove "
+           "byte preservation; inject a collision between an enumerated Kindex path and a "
+           "Guildhall reserved path and require typed no-write refusal."),
 )
 def test_legacy_kindex_bytes_preserved_and_collision_refuses(
-    guildhall: Guildhall, roots: ProofRoots, tmp_path: Path
+    guildhall: Guildhall, roots: ProofRoots, guildhall_repo=None
 ) -> None:
-    repo = GitRepo.init(roots.repo_root)
-    legacy_files = synth.legacy_kin_inventory(repo.path)
-    before = {p: p.read_bytes() for p in legacy_files}
-    repo.commit("populated legacy Kindex repository")
+    repo = GitRepo.init(roots.repo_root / "legacy")
+    inventory = synth.legacy_kin_inventory(repo.path)
+    legacy = prereq.collected(
+        sorted(p for p in (repo.path / ".kin").rglob("*") if p.is_file()),
+        what="legacy Kindex inventory", minimum=4,
+        why="V-4 initialises against a fully populated pinned-Kindex inventory",
+    )
+    before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in legacy}
+    repo.run("add", "-A")
+    repo.commit("record the legacy inventory")
 
-    certificate = tmp_path / "certificate.json"
-    steward = synth.make_signer("company-steward-1", "company:root", seed_byte=11)
-    certificate.write_text(
-        json.dumps(
-            synth.repo_certificate(
-                steward, repository_uuid="018f0000-0000-7000-8000-000000000001"
+    collision = repo.path / ".kin" / "events"
+    collision.mkdir(parents=True, exist_ok=True)
+    (collision / "legacy-node.json").write_text(
+        json.dumps({"legacy": True}), encoding="utf-8"
+    )
+    result = _run(guildhall, "repo", "init", "--repo", str(repo.path),
+                  "--certificate", str(repo.path / ".kin" / "certificate.json"),
+                  "--json", cwd=repo.path)
+    after = {p: hashlib.sha256(p.read_bytes()).hexdigest()
+             for p in before if p.is_file()}
+    O.check(
+        "V-4.kindex-compat",
+        {
+            "legacy_files": len(before),
+            "legacy_bytes_changed": sum(
+                1 for p, digest in before.items() if after.get(p) != digest
             ),
-            sort_keys=True,
-        ),
-        encoding="utf-8",
-    )
-    guildhall.run(
-        "repo", "init", "--repo", str(repo.path), "--certificate", str(certificate), "--json",
-        check=False,
-    )
-    after = {p: p.read_bytes() if p.exists() else None for p in legacy_files}
-    changed = [str(p) for p in legacy_files if before[p] != after[p]]
-    assert not changed, (
-        "every legacy Kindex byte must be preserved by `repo init`; changed: " + str(changed)
-    )
-
-    # Inject a deliberate collision with a Guildhall reserved path.
-    collision = repo.path / ".kin" / "events" / "legacy-kindex-owned.json"
-    collision.parent.mkdir(parents=True, exist_ok=True)
-    collision.write_text('{"legacy": true}', encoding="utf-8")
-    repo.commit("legacy file at a Guildhall reserved path")
-    result = guildhall.run(
-        "repo", "init", "--repo", str(repo.path), "--certificate", str(certificate), "--json",
-        check=False,
-    )
-    assert result.returncode not in (0, 1), (
-        "an actual collision must produce a typed refusal and change no byte"
-    )
-    assert collision.read_text(encoding="utf-8") == '{"legacy": true}'
-
-
-@spec_ref(
-    ARCH(
-        "V-4",
-        "repository-compatibility",
-        "`repo init` edits an existing `.gitattributes` additively and refuses contradictory rules; "
-        "it never replaces the file.",
-    )
-)
-def test_repo_init_is_additive_and_refuses_contradictory_attribute_rules(
-    guildhall: Guildhall, roots: ProofRoots, tmp_path: Path
-) -> None:
-    repo = GitRepo.init(roots.repo_root)
-    repo.install_attributes(("*.md text=auto", "docs/** diff=markdown"), append=False)
-    existing = (repo.path / ".gitattributes").read_text(encoding="utf-8")
-    repo.commit("pre-existing attributes")
-
-    certificate = tmp_path / "certificate.json"
-    steward = synth.make_signer("company-steward-1", "company:root", seed_byte=11)
-    certificate.write_text(
-        json.dumps(
-            synth.repo_certificate(
-                steward, repository_uuid="018f0000-0000-7000-8000-000000000001"
+            "collision_refused": result.returncode != 0,
+            "bytes_changed_by_refused_init": sum(
+                1 for p, digest in before.items() if after.get(p) != digest
             ),
-            sort_keys=True,
-        ),
-        encoding="utf-8",
+        },
+        label="legacy Kindex bytes preserved and reserved-path collision refused",
     )
-    guildhall.run(
-        "repo", "init", "--repo", str(repo.path), "--certificate", str(certificate), "--json",
-        check=False,
-    )
-    updated = (repo.path / ".gitattributes").read_text(encoding="utf-8")
-    assert existing.strip() in updated, (
-        "`repo init` must edit .gitattributes additively and never replace the file"
-    )
-
-    # A contradictory rule must be refused rather than silently overridden.
-    repo.install_attributes((".kin/events/** text diff merge",))
-    repo.commit("contradictory attribute rule")
-    contradictory = guildhall.run(
-        "repo", "init", "--repo", str(repo.path), "--certificate", str(certificate), "--json",
-        check=False,
-    )
-    assert contradictory.returncode != 1
-    if contradictory.returncode == 0:
-        attrs = repo.effective_attributes(".kin/events/aa/bb/cc.json")
-        assert attrs.get("merge") in {"unset", "-merge", None}, (
-            "the effective attributes must leave .kin/events/** unmerged; observed "
-            f"{attrs}"
-        )

@@ -1302,6 +1302,23 @@ _o(
 )
 
 _o(
+    "V-5.rejected-pr", "V-5", "a newer rejected PR does not displace a current ADR",
+    V, "case",
+    "newer rejected PR vs current accepted ADR | ADR remains current; rejection is evidence",
+    clauses(
+        equals("state", "current", "the accepted ADR remains current"),
+        is_true("rejection_recorded_as_evidence",
+                "the rejection is retained as evidence, not discarded"),
+        is_false("rejection_promoted",
+                 "a rejected change never becomes the current decision"),
+        nonempty("reducer_trace", "the reducer trace must be inspectable"),
+    ),
+    surfaces=("guildhall explain --json",),
+    vectors=("newer rejected PR", "current accepted ADR"),
+    nodes=("test_v5_temporal.py::test_rejected_pr_does_not_displace_current_adr",),
+)
+
+_o(
     "V-5.independence", "V-5", "copied repetition is not independent corroboration",
     A, "reduction-algorithm",
     "distinguish independent corroboration from common-source repetition;",
@@ -1605,6 +1622,47 @@ _o(
     surfaces=("guildhall project --json",),
     vectors=("complementary test/rationale pair", "high-similarity paraphrases"),
     nodes=("test_v7_projection.py::test_complementarity_is_visible_and_redundancy_is_penalised",),
+)
+
+_o(
+    "V-7.stale-fact", "V-7", "a stale fact is withheld and opens an owned Unknown",
+    P, "P-4",
+    "A stale or disputed fact is worse than a missing fact: it is withheld from "
+    "trusted projection and produces an owned Unknown.",
+    clauses(
+        is_false("stale_fact_selected",
+                 "a stale fact never enters trusted projection"),
+        at_least("owned_unknown_count", 1,
+                 "withholding must open an owned Unknown, not silently drop"),
+        every("owned_unknowns", "each Unknown names its owner",
+              present("owner_role", "owning role"),
+              present("owner_identity", "owning identity"),
+              min_len=1),
+    ),
+    surfaces=("guildhall project --json",),
+    vectors=("stale fact",),
+    nodes=("test_v7_projection.py::"
+           "test_stale_fact_is_withheld_and_produces_an_owned_unknown",),
+)
+
+_o(
+    "V-7.no-voi-claim", "V-7", "no calibrated causal VOI claim is made here",
+    V, "scope",
+    "This fixture proves selector mechanics only. Causal evidence for set "
+    "selection comes from `topk-maintained` versus `full-system` in V-10, with "
+    "natural-corpus redundancy cluster sizes and source dependence reported "
+    "rather than manufactured.",
+    clauses(
+        equals("forbidden_claims_found", 0,
+               "the projector may not claim calibrated causal VOI"),
+        present("voi_approximation",
+                "the approximation actually used must be inspectable"),
+        is_true("scope_limited_to_selector_mechanics",
+                "this fixture's claim is bounded to selector mechanics"),
+    ),
+    surfaces=("guildhall project --json",),
+    vectors=("selector mechanics",),
+    nodes=("test_v7_projection.py::test_no_calibrated_causal_voi_claim_is_made",),
 )
 
 _o(

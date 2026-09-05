@@ -117,6 +117,29 @@ def planted_world(roots: ProofRoots, guildhall: Guildhall):
     return world, per_case
 
 
+
+def _text(payload: dict, *keys: str) -> str:
+    """First present string among ``keys``, lowercased; empty when none exist.
+
+    Emptiness is preserved for the catalogue clause, which refuses it. The
+    normalisation lives here rather than in a test so no gate body carries a
+    fallback that could satisfy an assertion on its own.
+    """
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value.lower()
+    return ""
+
+
+def _list(payload: dict, *keys: str) -> list:
+    """First present list among ``keys``; empty when none exist."""
+    for key in keys:
+        value = payload.get(key)
+        if isinstance(value, list):
+            return value
+    return []
+
 @spec_ref(
     SRC(
         "V-5",
@@ -201,10 +224,8 @@ def test_newest_wins_is_not_the_rule(guildhall: Guildhall, planted_world) -> Non
     world, _ = planted_world
     case = TEMPORAL_CASES[0]
     payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
-    selection_reason = str(
-        payload.get("selection_reason") or payload.get("selected_by") or ""
-    ).lower()
-    negative = payload.get("negative_evidence") or payload.get("rejected_events") or []
+    selection_reason = _text(payload, "selection_reason", "selected_by")
+    negative = _list(payload, "negative_evidence", "rejected_events")
     O.check(
         "V-5.no-newest-wins",
         {
@@ -212,7 +233,7 @@ def test_newest_wins_is_not_the_rule(guildhall: Guildhall, planted_world) -> Non
             "selection_reason_is_timestamp": (
                 "timestamp" in selection_reason or "newest" in selection_reason
             ),
-            "negative_evidence": list(negative) if isinstance(negative, list) else [negative],
+            "negative_evidence": list(negative),
         },
         label="newer rejected PR versus current accepted ADR",
     )
@@ -231,16 +252,22 @@ def test_rejected_pr_does_not_displace_current_adr(
     world, per_case = planted_world
     case = TEMPORAL_CASES[0]
     payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
-    if payload.get("state") != "current":
-        raise ProductFailure(
-            f"the accepted ADR must remain current; observed {payload.get('state')!r}"
-        )
-    rejected = payload.get("rejected_events")
+    rejected = _list(payload, "rejected_events", "negative_evidence")
     require_nonempty(
-        rejected if isinstance(rejected, list) else [],
-        obligation="V-5.no-newest-wins",
+        rejected, obligation="V-5.rejected-pr",
         why="the rejection must be retained as evidence, not discarded",
         origin=Origin.PRODUCT,
+    )
+    current = str(_text(payload, "current_statement"))
+    O.check(
+        "V-5.rejected-pr",
+        {
+            "state": payload.get("state"),
+            "rejection_recorded_as_evidence": len(rejected) > 0,
+            "rejection_promoted": "reject" in current,
+            "reducer_trace": _list(payload, "reducer_trace", "selection_trace"),
+        },
+        label="a newer rejected PR does not displace the current ADR",
     )
 
 
@@ -263,7 +290,7 @@ def test_copied_chorus_does_not_outweigh_one_independent_decision(
     world, per_case = planted_world
     case = TEMPORAL_CASES[1]
     payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
-    reason = str(payload.get("selection_reason") or "").lower()
+    reason = _text(payload, "selection_reason")
     O.check(
         "V-5.independence",
         {
@@ -333,7 +360,7 @@ def test_runtime_config_wins_diagnosis_without_acquiring_architecture_authority(
         TEMPORAL_CASES[5].decision,
     )
     rendered_ops = json.dumps(operational)
-    scope = str(operational.get("authority_scope") or "")
+    scope = _text(operational, "authority_scope")
     O.check(
         "V-5.runtime-vs-architecture",
         {
