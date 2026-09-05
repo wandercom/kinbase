@@ -44,7 +44,7 @@ nested sandboxes with one outer macOS Seatbelt profile:
 - Attempt-2 prompt SHA-256:
   `0c898e73e4cfa194fb65c71379afbe00f9d38c036e860119d6c0e5357fdd641c`
 - Attempt-2 launcher SHA-256:
-  `5637130dc87293c828448433461b7017346ae726e49b43f1b64353f29e38413a`
+  `0c6a173d542791800dd2de3e59e435a90b9ae772d146bbea7c81491b82d71d80`
 - Attempt-2 OS profile SHA-256:
   `64fb1f05cd246aff562759d082967771c76aca3d2d213e7bf617fffe4f45b323`
 
