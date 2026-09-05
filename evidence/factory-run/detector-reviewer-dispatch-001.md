@@ -41,6 +41,11 @@ implementation, or issue a product/proof verdict. You may run read-only static
 inspection, collection, and product-independent detector self-tests. The
 Validator alone executes the combined suite and renders verdicts.
 
+Perform this review yourself as the single bound Reviewer identity. Do not spawn,
+delegate to, message, or wait for another agent, subagent, reviewer, or
+collaboration channel. Parallel delegation would create unbound identities and
+inputs outside this review's information-boundary attestation.
+
 ## Governing review criterion
 
 Apply `spec/verification.md`'s Instrument validity and Detector Reviewer

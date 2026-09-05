@@ -13,7 +13,7 @@
   "tester_tree": "893a6ba3bbc464762d479aa13305d3761adc07b4",
   "initial_status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "reviewer_prompt": "evidence/factory-run/detector-reviewer-dispatch-001.md",
-  "reviewer_prompt_sha256": "15bc88f360cf428d4eaa16cd89cfa15494431d6b4e682b07bd33f8c86072b70a",
+  "reviewer_prompt_sha256": "0c898e73e4cfa194fb65c71379afbe00f9d38c036e860119d6c0e5357fdd641c",
   "launch_script_sha256": "5637130dc87293c828448433461b7017346ae726e49b43f1b64353f29e38413a",
   "os_sandbox_profile_sha256": "64fb1f05cd246aff562759d082967771c76aca3d2d213e7bf617fffe4f45b323",
   "model": "gpt-5.6-sol",
@@ -25,6 +25,7 @@
   "user_config": "ignored",
   "user_rules": "ignored",
   "hooks_and_mcp": "not loaded through ignored user config",
+  "delegation": "forbidden; one bound Reviewer identity only",
   "allowed_inputs": [
     "spec/**",
     "tests/**",
