@@ -1,0 +1,45 @@
+{
+  "schema_version": "guildhall-factory-coder-continuation-binding/1",
+  "attempt": 6,
+  "bound_at": "2026-09-05T20:40:01Z",
+  "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "ratified_baseline_tree": "0a4cffe95304735ab68f6817f0fb97aeccb1ed77",
+  "prior_failure_receipt": "evidence/factory-run/coder-attempt-005-failure.json",
+  "prior_event_stream_sha256": "8052ea06ccc2f9167f3257f2609b18d87f3d9cb9dbff760b5f4152b70e92c349",
+  "coder_repository": "/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/coder",
+  "coder_branch": "factory/coder-ac8a13d1",
+  "coder_thread_id": "01a072d7-a9e2-7190-8b96-6f8abf42355b",
+  "pre_resume_status_sha256": "422b3e2a82f1fc739ed16b8b324123411d65a44531c48ede4612e14322bee6e7",
+  "pre_resume_tracked_head": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "pre_resume_untracked_product_paths": [
+    "guildhall/",
+    "pyproject.toml"
+  ],
+  "continuation_prompt": "evidence/factory-run/coder-continuation-006.md",
+  "continuation_prompt_sha256": "f9f85f778b2817845e89d26753afc419991760562c2dab09ef52afcdabcd8801",
+  "launch_script_sha256": "3fb2408a79f8dc81393bb7882a8e2023a9495f48fda23375175e906853ccf534",
+  "model": "glm-5.3:cloud",
+  "provider": "ollama",
+  "resume_reason": "One bounded provider recheck after the founder-stated reset window was reached; successful admission is the only capacity confirmation.",
+  "retry_policy": "If the provider returns the same capacity/payment failure, freeze the receipt and do not hammer further without a new external-state change.",
+  "authority_change": false,
+  "model_substitution": false,
+  "allowed_paths": [
+    "implementation, packaging, migrations, hook installers, operational docs, and implementation-owned diagnostics"
+  ],
+  "forbidden_inputs": [
+    "tests/**",
+    "Tester artifacts",
+    "other Factory lanes",
+    "Validator admitted artifacts",
+    "shared Kindex or coordination state"
+  ],
+  "forbidden_writes": [
+    "spec/**",
+    "evidence/**",
+    "tests/**",
+    "ratification receipts"
+  ],
+  "verdict_authority": "Validator only"
+}
