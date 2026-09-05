@@ -1,0 +1,43 @@
+{
+  "schema_version": "guildhall-factory-tester-remediation-result/1",
+  "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "session_id": "7b88a154-cc04-48b3-854f-08902f264c66",
+  "model": "claude-opus-5",
+  "previous_tester_commit": "f8d9cba2cdd3de05663de9d9fffa9d0176f9d747",
+  "tester_commit": "244184e631695cc331d64667bd20cfae7f286526",
+  "tester_tree": "893a6ba3bbc464762d479aa13305d3761adc07b4",
+  "validator_cherry_pick": "b644a8c84b667f1df3764ede15cd4570de63415a",
+  "prompt_sha256": "c9be646bb72944d46da9925efb61525c8b49b62e6cd9b02ae08ec9c74eb362d2",
+  "launch_script_sha256": "2f6da85e26d2831bbe923b459fc9c6c160c4a9ee654535ffd8966d8477e72d4f",
+  "event_log_sha256": "c9b15e5d9d282e0d0f83f6d5392479d99694fd7b30a7e0938eb6740c6644a844",
+  "exit_file_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+  "process_exit": 1,
+  "terminal_status": "FACTORY_STATUS: DONE 244184e631695cc331d64667bd20cfae7f286526",
+  "terminal_anomaly": "Claude emitted DONE after commit, then the wrapper returned budget_exhausted",
+  "reported_spend_usd": 10.279061250000003,
+  "path_audit": {
+    "changed_only_tests": true,
+    "tree_clean": true,
+    "standalone_repository": true,
+    "git_object_alternates": false,
+    "forbidden_tool_inputs": 0
+  },
+  "validator_observations": {
+    "selftest": "84 passed, 184 deselected, 0 failed in 2.90s",
+    "selftest_gate_vector_sha256": "705fe20bde17fbd8754bff670a2fda90e823a7743727e0c42a6aa0c589c9aef1",
+    "detector_mutation": "disable_normalization_decoding",
+    "mutation_result": "4 failed, 80 passed, 184 deselected; V-3 and INSTRUMENT INVALID_HARNESS",
+    "mutation_gate_vector_sha256": "e3315e59e79798961b98b428fae6f2b627eaccc4723ce7fba9252985958c913b",
+    "collected_tests": 268,
+    "backreference_integrity": "6 passed"
+  },
+  "disposition": "frozen_for_detector_review_only",
+  "not_admitted_because": [
+    "Advocate no-vacuity findings remain unresolved",
+    "subset and collection-only vectors mark unexecuted gates PASS",
+    "40 acceptance-only controls remain unclassified",
+    "product-facing tests remain unexecuted"
+  ],
+  "orchestrator_cursor": 19,
+  "orchestrator_decision": "no-op"
+}
