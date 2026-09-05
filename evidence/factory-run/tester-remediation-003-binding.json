@@ -1,0 +1,33 @@
+{
+  "schema_version": "guildhall-factory-tester-remediation-continuation-binding/1",
+  "bound_at": "2026-09-05T20:06:18Z",
+  "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "failed_attempt_receipt": "evidence/factory-run/tester-remediation-002-failure.json",
+  "failed_attempt_receipt_sha256": "8555e24765df0d49623194847f306da289d6561be8d5bf4b1b70e71c09955047",
+  "tester_repository": "/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/tester",
+  "tester_branch": "factory/tester-ac8a13d1",
+  "tester_parent_commit": "244184e631695cc331d64667bd20cfae7f286526",
+  "tester_parent_tree": "893a6ba3bbc464762d479aa13305d3761adc07b4",
+  "prelaunch_status_sha256": "af8bbec6fee0b6b8656ed2ba11d1ac5435acceba004b7e6b5430e1b70becd41d",
+  "preserved_partial_test_paths": {
+    "tests/acceptance/_harness/evidence_model.py": "c513a059e9eaacdec4a1ca541352d2f40494e9faa9dc0ed30727394ab7447b46",
+    "tests/acceptance/_harness/clauses.py": "0dd66e9042b7876c535422c5c77a50f591fd3bb265e36a9764603e71fe7294a5"
+  },
+  "tester_session_id": "7b88a154-cc04-48b3-854f-08902f264c66",
+  "continuation_prompt": "evidence/factory-run/tester-remediation-continuation-003.md supplied on inherited stdin",
+  "continuation_prompt_sha256": "98dbbda2f879c6fc642f08870a05d4a97a4bb002cd4c2fd0fdb835473598050d",
+  "launch_script_sha256": "cceb00ef83feb28c4d0500f9d44df083dbb27ad377d467f508efe3a4a3cd51db",
+  "os_sandbox_profile_sha256": "d0fde128772e12c56c79b549846e0bc4bd2a0ab3dcc5987cd53da34b88f92e83",
+  "model": "claude-opus-5",
+  "effort": "max",
+  "safe_mode": true,
+  "original_combined_authoring_ceiling_usd": 75,
+  "spent_before_continuation_usd": 5.5163125,
+  "continuation_launcher_ceiling_usd": 69.48,
+  "delegation": "forbidden; same bound Tester identity only",
+  "authorized_execution": "collection and product-independent Tester instrument self-tests only",
+  "allowed_writes": "Tester tests/** and Tester Git metadata only",
+  "product_snapshot_available": false,
+  "verdict_authority": "Validator only",
+  "gate_effect_before_terminal_audit": "NONE"
+}

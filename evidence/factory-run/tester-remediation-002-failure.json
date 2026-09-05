@@ -1,0 +1,50 @@
+{
+  "schema_version": "guildhall-factory-tester-remediation-attempt/1",
+  "role": "Tester",
+  "attempt": "remediation-002",
+  "ratification_manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "tester_session_id": "7b88a154-cc04-48b3-854f-08902f264c66",
+  "reported_model": "claude-opus-5",
+  "parent_commit": "244184e631695cc331d64667bd20cfae7f286526",
+  "parent_tree": "893a6ba3bbc464762d479aa13305d3761adc07b4",
+  "event_stream_sha256": "a09ae57495d936cea489aed0e08af27893191a1b0c3c228a4a476fb361444476",
+  "event_stream_bytes": 122915,
+  "exit_file_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+  "exit_code": 1,
+  "terminal_reason": "api_error",
+  "terminal_result": "API Error: Connection lost mid-response. The response above may be incomplete.",
+  "provider_duration_api_ms": 381249,
+  "provider_num_turns": 5,
+  "provider_cost_usd": 5.5163125,
+  "provider_usage": {
+    "input_tokens": 8,
+    "cache_creation_input_tokens": 615860,
+    "cache_read_input_tokens": 1810390,
+    "output_tokens": 17945,
+    "thinking_tokens": 6990,
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+  },
+  "tool_trace": {
+    "Bash": 2,
+    "Write": 2,
+    "forbidden_delegation_or_web_calls": 0
+  },
+  "git_state": {
+    "head": "244184e631695cc331d64667bd20cfae7f286526",
+    "tree": "893a6ba3bbc464762d479aa13305d3761adc07b4",
+    "commits_authored": 0,
+    "status_sha256": "af8bbec6fee0b6b8656ed2ba11d1ac5435acceba004b7e6b5430e1b70becd41d",
+    "untracked_test_paths": {
+      "tests/acceptance/_harness/evidence_model.py": "c513a059e9eaacdec4a1ca541352d2f40494e9faa9dc0ed30727394ab7447b46",
+      "tests/acceptance/_harness/clauses.py": "0dd66e9042b7876c535422c5c77a50f591fd3bb265e36a9764603e71fe7294a5"
+    },
+    "changed_paths_outside_assignment": [],
+    "product_touched": false,
+    "spec_touched": false,
+    "evidence_touched": false
+  },
+  "disposition": "BLOCKED_BY_EXTERNAL_MODEL_TRANSPORT",
+  "gate_effect": "NONE",
+  "admitted_artifact": false
+}
