@@ -5,11 +5,12 @@ resolved `@spec_ref` backreferences, not test counts; a single test may carry
 several exact citations.
 
 The machine-readable catalog is `tests/fixtures/catalog/obligations.json`
-(digest `672bd2ac44ffcc36`): 92 obligations and
-401 thresholds, each freezing a
+(digest `ff52499a2c0c5f8f`): 117 obligations and
+479 thresholds, each freezing a
 threshold, positive control, negative control, product mutation and detector
 mutation. `tests/fixtures/catalog/planters.json` records the 35
-executable planters. 266 node ids collect; none is unbackreferenced.
+executable pre-execution planters and `tests/fixtures/controls/controls.json` the frozen raw positive and
+negative controls. 239 node ids collect; none is unbackreferenced.
 
 Authority precedence (`spec/ratification-manifest.json`):
 `source-request.md > product.md > architecture.md > threat-model.md >
@@ -17,20 +18,20 @@ verification.md > cli.md`.
 
 | gate | modules (resolved backreferences) |
 |---|---|
-| `V-1` | `test_v1_ingestion.py` (24) |
-| `V-2` | `test_v2_classification.py` (26) |
-| `V-3` | `test_v3_attacks.py` (47), `test_v3_privacy.py` (30), `test_v3_qualification.py` (19) |
-| `V-4` | `test_v4_maintenance.py` (25) |
-| `V-5` | `test_v5_temporal.py` (16) |
-| `V-6` | `test_v6_authority.py` (17) |
-| `V-7` | `test_v7_projection.py` (20) |
-| `V-8` | `test_v8_company_refs.py` (29) |
-| `V-9` | `test_v9_fatigue.py` (17), `test_v9_host_lifecycle.py` (21) |
+| `V-1` | `test_v1_ingestion.py` (12) |
+| `V-2` | `test_v2_classification.py` (15) |
+| `V-3` | `test_v3_attacks.py` (2), `test_v3_privacy.py` (11), `test_v3_qualification.py` (2) |
+| `V-4` | `test_v4_maintenance.py` (11) |
+| `V-5` | `test_v5_temporal.py` (15) |
+| `V-6` | `test_v6_authority.py` (6) |
+| `V-7` | `test_v7_projection.py` (18) |
+| `V-8` | `test_v8_company_refs.py` (12) |
+| `V-9` | `test_v9_fatigue.py` (6), `test_v9_host_lifecycle.py` (7) |
 | `V-10` | `test_v10_protocol.py` (47) |
 | `NONFUNCTIONAL` | `test_nonfunctional.py` (24) |
 | `EVIDENCE` | `test_evidence_packet.py` (20) |
 | `VERDICT` | `test_verdict_composition.py` (18) |
-| `INSTRUMENT` | `test_backreference_integrity.py` (6), `test_harness_selftest.py` (27) |
+| `INSTRUMENT` | `test_backreference_integrity.py` (6), `test_harness_selftest.py` (28) |
 
 ## Instruments
 

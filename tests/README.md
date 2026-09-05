@@ -23,7 +23,7 @@ closed; the mechanisms are below and each is executable without the product.
 | 3 unexecuted work is `PASS` | every gate starts `NOT_RUN`; deselect/skip/uncollected/empty-parameter all stay non-green |
 | 4 product failure hides an invalid detector | two independent channels; dominance only with an independently content-addressed product observation |
 | 5 catalog lacks the four frozen elements | 92 obligations, 401 thresholds, all four derived per threshold |
-| 6 mutations declarative, not executable | product-independent kill ledger over every threshold + 35 executable planters + `tests/mutation-run.sh` |
+| 6 mutations declarative, not executable | kill ledger over frozen raw controls + 35 pre-execution planters + `tests/mutation-run.sh` + `tests/detector-mutation-run.sh` |
 | 7 expected answers reach the product | all 40 selectors removed; policy enforced statically by `test_control_policy.py` |
 | 8–16 per-gate vacuity | real state construction, typed evidence, total quantifiers; every bare return, permissive default and tautology removed |
 | 17 no auxiliary corpus | `tests/fixtures/auxiliary/` — CC0 sources, dictionaries, correlations, decoys, digests, rights basis |
@@ -100,21 +100,28 @@ Every assertion cites an exact ratified requirement:
 
 | quantity | value |
 |---|---:|
-| collected by pytest | 266 |
-| catalogued obligations | 92 |
-| catalogued thresholds | 401 |
-| kill-ledger rows (product-independent) | 401 |
-| executable product planters | 35 |
-| product-independent self-tests | 108 |
+| collected by pytest | 239 |
+| catalogued obligations | 117 |
+| catalogued thresholds | 479 |
+| kill-ledger rows over frozen controls | 479 |
+| executable pre-execution planters | 35 |
+| detector mutations with a demonstrated escape | 6 |
+| product-independent self-tests | 119 |
 | unbackreferenced tests | 0 |
 
-Catalog digest `672bd2ac44ffcc36`; kill-ledger digest `4303638206a038ba`.
+Catalog digest `ff52499a2c0c5f8f`; kill-ledger digest `9ffdbce2580053ff`;
+instrument-debt digest `99d8a395782c8760`.
 
-The two numbers differ because `@pytest.mark.parametrize` expands one authored
-function into several collected node ids. The 27 extra nodes are: the nine frozen
-V-5 temporal rows driven through two functions (+16), the V-8 digest-attribution
-truth table (+3), the V-8 cache truth table (+5), and three V-9 functions run per
-host (+3). Verify with `tests/run-acceptance.sh --collect-only -q`.
+Collected node ids exceed authored functions because `@pytest.mark.parametrize`
+expands one function into several, most visibly the nine frozen V-5 temporal rows
+and the per-host V-9 functions. Verify with
+`tests/run-acceptance.sh --collect-only -q`.
+
+One test fails on purpose. `test_instrument_debt.py` fails while any entry in
+`tests/fixtures/catalog/debt.json` is open; finding 21 needs a named human
+rightsholder's signature, which the Tester must not fabricate, so V-3 and the
+instrument channel report `INVALID_HARNESS` and no gate reports a green product
+channel.
 
 ## Instrument validity comes first
 
