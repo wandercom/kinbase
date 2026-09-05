@@ -1,0 +1,47 @@
+{
+  "schema_version": "guildhall-factory-author-attempt/1",
+  "role": "Coder",
+  "attempt": 5,
+  "failed_at": "2026-09-05T20:08:52Z",
+  "ratification_manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "thread_id": "01a072d7-a9e2-7190-8b96-6f8abf42355b",
+  "reported_model": "glm-5.3:cloud",
+  "event_stream_sha256": "8052ea06ccc2f9167f3257f2609b18d87f3d9cb9dbff760b5f4152b70e92c349",
+  "event_stream_bytes": 6239451,
+  "event_stream_lines": 1265,
+  "exit_file_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+  "exit_code": 1,
+  "terminal_event": "turn.failed",
+  "terminal_reason": "stream disconnected before completion: extra usage auto reload payment failed, update your payment method or add extra usage at https://ollama.com/settings (ref: 77e264cd-95cf-4209-b561-465b60ed9a8e)",
+  "provider_usage_receipt": "not emitted on turn.failed",
+  "git_state": {
+    "head": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+    "tracked_tree": "0a4cffe95304735ab68f6817f0fb97aeccb1ed77",
+    "commits_authored": 0,
+    "status_sha256": "422b3e2a82f1fc739ed16b8b324123411d65a44531c48ede4612e14322bee6e7",
+    "untracked_product_paths": [
+      "guildhall/",
+      "pyproject.toml"
+    ],
+    "changed_paths_outside_assignment": [],
+    "tests_touched": false,
+    "spec_touched": false,
+    "evidence_touched": false
+  },
+  "static_state": {
+    "python_files": 29,
+    "syntax_errors": [],
+    "python_file_manifest_sha256": "2fb4b054350704c82197faf589cfdebb68ac1eef4cae5e898fc1468281c6e966",
+    "pyproject_sha256": "e0ae28c7f9a2c251d8a5016e0f8060561090ed1194cbb502ce822ec3cbe760ab"
+  },
+  "boundary_audit": {
+    "command_inputs_naming_tester_validator_or_detector_lane": 0,
+    "command_inputs_naming_tests": 0,
+    "command_inputs_naming_main_product_paths": 0
+  },
+  "last_substantive_state": "Codebase publication had been made deterministic per approval, but the corresponding store journal and orphan changes had not yet been applied.",
+  "disposition": "BLOCKED_BY_EXTERNAL_MODEL_CAPACITY_AND_PAYMENT_RELOAD",
+  "gate_effect": "NONE",
+  "admitted_artifact": false
+}
