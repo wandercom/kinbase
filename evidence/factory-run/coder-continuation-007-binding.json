@@ -1,0 +1,46 @@
+{
+  "schema_version": "guildhall-factory-coder-continuation-binding/1",
+  "attempt": 7,
+  "bound_at": "2026-09-05T22:02:38Z",
+  "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "ratified_baseline_tree": "0a4cffe95304735ab68f6817f0fb97aeccb1ed77",
+  "founder_authorization": "evidence/factory-run/founder-continuation-authorization-001.md",
+  "founder_authorization_sha256": "53a682e386be5190c92fdbcf332618bc7af7fce3de7d319359276611eb084bab",
+  "prior_failure_receipt": "evidence/factory-run/coder-attempt-006-failure.json",
+  "prior_event_stream_sha256": "6fe8a9eb6afc56ad884285a73827f6a28d50901877b9ba4477f00edf5b11f687",
+  "coder_repository": "/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/coder",
+  "coder_branch": "factory/coder-ac8a13d1",
+  "coder_thread_id": "01a072d7-a9e2-7190-8b96-6f8abf42355b",
+  "pre_resume_status_sha256": "422b3e2a82f1fc739ed16b8b324123411d65a44531c48ede4612e14322bee6e7",
+  "pre_resume_tracked_head": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "pre_resume_untracked_product_paths": [
+    "guildhall/",
+    "pyproject.toml"
+  ],
+  "pre_resume_product_source_bytes": 415213,
+  "pre_resume_flat_path_content_digest_sha256": "b54b89e486ea7bcb8552a85ebce0a901fec379359bb2e4a53b194b678243e3b2",
+  "continuation_prompt": "evidence/factory-run/coder-continuation-007.md",
+  "continuation_prompt_sha256": "74de27546eea6ede00d7db66a122cc6cc545ac01fd9d5e5563db004b26e3e5e7",
+  "launch_script_sha256": "6e12cd47c2434617a050b8409c715d57ba80ae2842aecbdde18e84a99098f2d7",
+  "model": "glm-5.3:cloud",
+  "provider": "ollama",
+  "resume_reason": "The founder stated I added more cash after attempt 006 exhausted the earlier buffer, creating a new provider-capacity state.",
+  "retry_policy": "One bound immediate resume. If the provider returns the same capacity/payment failure, freeze exact evidence and tell the founder more is needed.",
+  "authority_change": false,
+  "model_substitution": false,
+  "forbidden_inputs": [
+    "tests/**",
+    "Tester artifacts or findings",
+    "other Factory lanes",
+    "Validator admitted artifacts",
+    "shared Kindex or coordination state"
+  ],
+  "forbidden_writes": [
+    "spec/**",
+    "evidence/**",
+    "tests/**",
+    "ratification receipts"
+  ],
+  "verdict_authority": "Validator only"
+}
