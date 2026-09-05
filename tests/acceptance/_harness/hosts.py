@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from . import planters
 from .requirements import HarnessInvalid, ProductFailure
 
 HOSTS: tuple[str, ...] = ("codex", "claude")
@@ -160,7 +161,8 @@ def envelope_for(host: str, event: str, *, session_id: str, cwd: str, **extra: A
         raise HarnessInvalid(f"unknown host {host!r}")
     if event not in HOST_EVENTS:
         raise HarnessInvalid(f"unknown host event {event!r}")
-    return ENVELOPE_BUILDERS[host](event, session_id=session_id, cwd=cwd, **extra)
+    envelope = ENVELOPE_BUILDERS[host](event, session_id=session_id, cwd=cwd, **extra)
+    return planters.mutate("host.envelope", envelope, host=host, event=event)
 
 
 # --------------------------------------------------------------------------

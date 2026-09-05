@@ -296,8 +296,6 @@ class Guildhall:
         # dropped these, so the wrapper aborted before invoking the product and
         # the resulting nonzero status was still counted as a kill. They
         # configure the wrapper only and are never read by the real product.
-        "GUILDHALL_PLANTER_SPEC",
-        "GUILDHALL_PLANTER_REAL",
         "PATH",
         "LANG",
         "LC_ALL",

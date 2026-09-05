@@ -1,182 +1,231 @@
-"""No assertion may pass without evidence.
+"""No assertion may pass without evidence, analysed per test.
 
-Detector Reviewer section 8, the green-path and fail-closed audit. Every pattern
-below was found in the previous instrument and each turned "the product produced
-nothing" into "the obligation is satisfied":
+Detector Reviewer finding 6. The previous version of this module checked three
+literal defaults and then accepted an entire gate module if any one
+total-quantifier name appeared anywhere in it. That is a module-level heuristic,
+not an audit: the Reviewer subsequently found 24 collection defaults, 17 optional
+loops and 41 guarded assertion blocks inside modules this file had passed.
 
-* bare ``return`` inside a test, so a refusal ends the test green;
-* ``payload.get(k, 0)`` / ``.get(k, [])``, so a missing counter or list satisfies
-  a bound or a loop;
-* ``... or True``, which asserts nothing;
-* ``for x in payload.get(k, []):`` with the assertion inside, vacuously true on
-  an empty domain;
-* ``if result.returncode == 0:`` guarding the only assertion in a test.
+The analysis now lives in :mod:`acceptance._harness.greenpath` and runs over
+every test function individually. This module is the assertion surface for it,
+one test per rule so a failure names the exact defect class, plus the static half
+of the obligation-coupling rule from finding 5.
 
-This module forbids them by static inspection over the gate modules, so the class
-cannot return. Where a genuinely optional branch is unavoidable, the test must
-raise a typed failure instead of returning, and quantified claims must go through
-``require_all`` / ``require_nonempty``, which refuse an empty domain.
+Nothing here is exemptable and nothing is sampled. Every gate module is analysed
+on every run.
 """
 
 from __future__ import annotations
 
-import ast
+import collections
 from pathlib import Path
 
 import pytest
 
+from ._harness import greenpath
+from ._harness.catalog import OBLIGATIONS
 from ._harness.requirements import VERIFY, spec_ref
 
 pytestmark = pytest.mark.selftest
 
 _SUITE = Path(__file__).resolve().parent
 
-#: Modules that assert against the product. The instrument's own self-tests are
-#: exempt from the bare-return rule because they legitimately branch on optional
-#: platform capability, but they are still covered by every other rule.
-_GATE_MODULES = tuple(
-    f"test_v{n}{suffix}.py"
-    for n, suffix in (
-        (1, "_ingestion"), (2, "_classification"), (3, "_privacy"),
-        (3, "_attacks"), (3, "_qualification"), (4, "_maintenance"),
-        (5, "_temporal"), (6, "_authority"), (7, "_projection"),
-        (8, "_company_refs"), (9, "_fatigue"), (9, "_host_lifecycle"),
-        (10, "_protocol"),
-    )
-) + ("test_nonfunctional.py", "test_evidence_packet.py")
+#: Every module that asserts against the product. Selftest modules are the
+#: instrument's own unit tests and are governed by the catalog rules instead.
+_GATE_MODULES: tuple[str, ...] = (
+    "test_v1_ingestion.py",
+    "test_v2_classification.py",
+    "test_v3_privacy.py",
+    "test_v3_attacks.py",
+    "test_v3_qualification.py",
+    "test_v4_maintenance.py",
+    "test_v5_temporal.py",
+    "test_v6_authority.py",
+    "test_v7_projection.py",
+    "test_v8_company_refs.py",
+    "test_v9_fatigue.py",
+    "test_v9_host_lifecycle.py",
+    "test_v10_protocol.py",
+    "test_nonfunctional.py",
+    "test_evidence_packet.py",
+)
+
+_FAIL_CLOSED = VERIFY(
+    "INSTRUMENT",
+    "fail-closed",
+    "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS.",
+)
 
 
-def _gate_sources() -> list[tuple[Path, ast.Module]]:
-    out: list[tuple[Path, ast.Module]] = []
+def _findings() -> list[greenpath.Finding]:
+    out: list[greenpath.Finding] = []
     for name in _GATE_MODULES:
         path = _SUITE / name
-        if path.is_file():
-            out.append((path, ast.parse(path.read_text(encoding="utf-8"), str(path))))
+        if not path.is_file():
+            out.append(
+                greenpath.Finding(name, 0, "<module>", "missing-module",
+                                  "a declared gate module is absent from the lane")
+            )
+            continue
+        out.extend(greenpath.analyse_module(path))
     return out
 
 
-def _tests(tree: ast.Module):
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_"):
-            yield node
+def _by_rule(rule: str) -> list[greenpath.Finding]:
+    return [f for f in _findings() if f.rule == rule]
 
 
-@spec_ref(
-    VERIFY(
-        "INSTRUMENT",
-        "fail-closed",
-        "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS.",
+def _report(rule: str, explanation: str) -> None:
+    hits = _by_rule(rule)
+    assert not hits, (
+        f"{len(hits)} occurrence(s) of [{rule}]. {explanation}\n  "
+        + "\n  ".join(f.render() for f in hits[:60])
+        + ("\n  ..." if len(hits) > 60 else "")
     )
-)
+
+
+@spec_ref(_FAIL_CLOSED)
 def test_no_bare_return_ends_a_gate_test_green() -> None:
-    offenders: list[str] = []
-    for path, tree in _gate_sources():
-        for func in _tests(tree):
-            for node in ast.walk(func):
-                if isinstance(node, ast.Return) and node.value is None:
-                    offenders.append(f"{path.name}:{node.lineno} in {func.name}")
-    assert not offenders, (
-        "a bare return ends a gate test green without evidence; raise a typed "
-        "failure instead:\n  " + "\n  ".join(offenders)
-    )
+    _report("bare-return",
+            "A bare return ends the test green with no claim evaluated.")
 
 
-@spec_ref(
-    VERIFY(
-        "INSTRUMENT",
-        "fail-closed",
-        "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS.",
-    )
-)
+@spec_ref(_FAIL_CLOSED)
+def test_no_untyped_assertion_in_a_gate_module() -> None:
+    """A gate claim must declare whose failure it is.
+
+    Detector Reviewer finding 10: a bare ``AssertionError`` was classified as a
+    ``PRODUCT_FAILURE`` even when it asserted a Tester fixture count or an
+    absent prerequisite. Removing bare ``assert`` from the gate modules is what
+    makes the classifier's fail-closed rule sound.
+    """
+    _report("bare-assert",
+            "Route the claim through O.check, require_*, forbid, or a typed "
+            "prerequisite from acceptance._harness.prereq.")
+
+
+@spec_ref(_FAIL_CLOSED)
 def test_no_permissive_default_satisfies_an_assertion() -> None:
-    """``.get(key, default)`` on product evidence is forbidden.
-
-    A default turns absent evidence into satisfied evidence. Product reads go
-    through the typed accessors in ``evidence_model``, which have no default.
-    """
-    offenders: list[str] = []
-    for path, tree in _gate_sources():
-        for func in _tests(tree):
-            for node in ast.walk(func):
-                if (
-                    isinstance(node, ast.Call)
-                    and isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "get"
-                    and len(node.args) == 2
-                ):
-                    default = node.args[1]
-                    # `or []` style normalisation immediately followed by a
-                    # require_* call is handled separately; a literal default
-                    # inside .get() is always a permissive read.
-                    if isinstance(default, ast.Constant) and default.value in (
-                        0, "", False,
-                    ):
-                        offenders.append(
-                            f"{path.name}:{node.lineno} in {func.name}"
-                        )
-    assert not offenders, (
-        "a literal default turns missing product evidence into a satisfied "
-        "assertion; use the typed accessors instead:\n  " + "\n  ".join(offenders)
-    )
+    _report("permissive-default",
+            "`.get(key, default)` turns absent product evidence into satisfied "
+            "evidence.")
 
 
-@spec_ref(
-    VERIFY(
-        "INSTRUMENT",
-        "fail-closed",
-        "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS.",
-    )
-)
+@spec_ref(_FAIL_CLOSED)
+def test_no_collection_fallback_substitutes_an_empty_domain() -> None:
+    _report("collection-fallback",
+            "`payload.get(k) or []` makes a missing list a satisfied loop.")
+
+
+@spec_ref(_FAIL_CLOSED)
 def test_no_tautological_assertion() -> None:
-    """``assert X or True`` and ``assert True`` assert nothing."""
-    offenders: list[str] = []
-    for path, tree in _gate_sources():
-        for func in _tests(tree):
-            for node in ast.walk(func):
-                if not isinstance(node, ast.Assert):
-                    continue
-                test = node.test
-                if isinstance(test, ast.Constant) and bool(test.value):
-                    offenders.append(f"{path.name}:{node.lineno} assert <constant>")
-                if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.Or):
-                    for value in test.values:
-                        if isinstance(value, ast.Constant) and bool(value.value):
-                            offenders.append(
-                                f"{path.name}:{node.lineno} assert ... or <truthy>"
-                            )
-    assert not offenders, (
-        "these assertions are tautological:\n  " + "\n  ".join(offenders)
+    _report("tautology", "The assertion is true regardless of the product.")
+
+
+@spec_ref(_FAIL_CLOSED)
+def test_no_except_handler_swallows_a_typed_failure() -> None:
+    _report("swallowed-failure",
+            "An except handler that does not re-raise converts a typed failure "
+            "into a green path.")
+
+
+@spec_ref(_FAIL_CLOSED)
+def test_every_loop_carrying_a_claim_proves_its_domain() -> None:
+    _report("unproved-loop",
+            "`for x in xs: check(...)` is vacuously satisfied when xs is empty; "
+            "prove the domain with require_nonempty/require_all first.")
+
+
+@spec_ref(_FAIL_CLOSED)
+def test_every_gate_test_has_an_unconditional_claim() -> None:
+    _report("optional-guard",
+            "Every claim in the test is nested inside a guard on product output, "
+            "so a product that produces nothing takes a path with no claim.")
+
+
+@spec_ref(
+    VERIFY(
+        "INSTRUMENT",
+        "catalog-coupling",
+        "Every V-1 through V-9 gate freezes its threshold, positive control, negative control, "
+        "and detector mutation in the preregistered acceptance catalog before implementation is "
+        "combined.",
+    )
+)
+def test_every_gate_test_evaluates_a_catalogued_obligation() -> None:
+    _report("no-catalog-consumption",
+            "The test asserts something the frozen catalog does not declare, so "
+            "the census would credit a row this node never checked.")
+
+
+@spec_ref(
+    VERIFY(
+        "INSTRUMENT",
+        "catalog-coupling",
+        "Every V-1 through V-9 gate freezes its threshold, positive control, negative control, "
+        "and detector mutation in the preregistered acceptance catalog before implementation is "
+        "combined.",
+    )
+)
+def test_every_catalog_row_is_consumed_by_the_node_that_declares_it() -> None:
+    """Static half of Detector Reviewer finding 5.
+
+    An obligation names the nodes that must check it. Unless the body of that
+    exact function contains ``O.check("<oid>", ...)`` for that exact OID, the
+    row is uncoupled: the node can pass while asserting something else entirely.
+    The runtime half lives in :mod:`acceptance._harness.consumption`.
+    """
+    consumed: dict[str, set[str]] = {}
+    for name in _GATE_MODULES:
+        path = _SUITE / name
+        if not path.is_file():
+            continue
+        for func, oids in greenpath.consumed_oids(path).items():
+            consumed.setdefault(f"{name}::{func}", set()).update(oids)
+
+    uncoupled: list[str] = []
+    for obligation in OBLIGATIONS:
+        for node in obligation.nodes:
+            key = node.split("[", 1)[0]
+            if obligation.oid not in consumed.get(key, set()):
+                uncoupled.append(f"{obligation.oid} declares {key}")
+
+    assert not uncoupled, (
+        f"{len(uncoupled)} catalog row(s) name a node that never calls their "
+        "checker; the census would count the row as covered while the node "
+        "asserted something unrelated:\n  "
+        + "\n  ".join(sorted(uncoupled)[:60])
+        + ("\n  ..." if len(uncoupled) > 60 else "")
     )
 
 
 @spec_ref(
     VERIFY(
         "INSTRUMENT",
-        "fail-closed",
-        "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS.",
+        "catalog-coupling",
+        "Every V-1 through V-9 gate freezes its threshold, positive control, negative control, "
+        "and detector mutation in the preregistered acceptance catalog before implementation is "
+        "combined.",
     )
 )
-def test_every_gate_module_uses_total_quantifiers() -> None:
-    """A gate module that loops over product output must refuse an empty domain.
+def test_no_node_evaluates_an_obligation_the_catalog_gives_to_another_node() -> None:
+    declared: dict[str, set[str]] = collections.defaultdict(set)
+    for obligation in OBLIGATIONS:
+        for node in obligation.nodes:
+            declared[node.split("[", 1)[0]].add(obligation.oid)
 
-    ``for x in payload["items"]: assert p(x)`` is vacuously true when the list is
-    empty, which is precisely how a product that produced nothing passed. Every
-    gate module must import at least one of the total quantifiers, or route its
-    obligation through the catalog checker, which refuses empty domains itself.
-    """
-    missing: list[str] = []
-    for path, _ in _gate_sources():
-        source = path.read_text(encoding="utf-8")
-        uses_total = any(
-            marker in source
-            for marker in (
-                "require_all", "require_nonempty", "require_exactly",
-                "require_total_coverage", "O.check", "obligations as O",
-            )
-        )
-        if not uses_total:
-            missing.append(path.name)
-    assert not missing, (
-        "these gate modules quantify over product output without a total "
-        f"quantifier or catalog checker: {missing}"
+    trespass: list[str] = []
+    for name in _GATE_MODULES:
+        path = _SUITE / name
+        if not path.is_file():
+            continue
+        for func, oids in greenpath.consumed_oids(path).items():
+            key = f"{name}::{func}"
+            for oid in sorted(oids - declared.get(key, set())):
+                trespass.append(f"{key} evaluates {oid}")
+
+    assert not trespass, (
+        "these nodes evaluate an obligation the catalog assigns elsewhere, so "
+        "one node's work would green another node's row:\n  "
+        + "\n  ".join(sorted(trespass)[:40])
     )

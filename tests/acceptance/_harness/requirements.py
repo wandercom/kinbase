@@ -221,7 +221,20 @@ def verify_manifest(reviewer_mode: bool = False) -> ManifestVerification:
     import base64
 
     b64_path = root / review["advocate_final_path"]
-    decoded = base64.b64decode(b"".join(b64_path.read_bytes().split()))
+    try:
+        container = b64_path.read_bytes()
+    except OSError as exc:
+        # An unreadable authority path is an *environment* prerequisite, not a
+        # product observation and not a crash. Detector Reviewer finding 10:
+        # the instrument must classify its own missing prerequisites.
+        raise HarnessInvalid(
+            f"cannot read ratification evidence {b64_path}: {exc}. This is an "
+            "instrument environment prerequisite. An implementation-blind "
+            "reviewer whose lane excludes evidence/** must set "
+            "GUILDHALL_REVIEWER_MODE=1, which verifies the six ratified "
+            "authority artifacts only."
+        ) from exc
+    decoded = base64.b64decode(b"".join(container.split()))
     decoded_digest = hashlib.sha256(decoded).hexdigest()
     if decoded_digest != review["advocate_final_sha256"]:
         raise HarnessInvalid(
@@ -232,9 +245,16 @@ def verify_manifest(reviewer_mode: bool = False) -> ManifestVerification:
     receipts: dict[str, str] = {}
     for rel in RECEIPTS:
         path = root / rel
-        if not path.is_file():
-            raise HarnessInvalid(f"missing ratification receipt {rel}")
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        try:
+            if not path.is_file():
+                raise HarnessInvalid(f"missing ratification receipt {rel}")
+            raw = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HarnessInvalid(
+                f"cannot read ratification receipt {rel}: {exc}; set "
+                "GUILDHALL_REVIEWER_MODE=1 for an implementation-blind lane"
+            ) from exc
+        payload = json.loads(raw)
         if payload.get("manifest_sha256") != RATIFICATION_MANIFEST_SHA256:
             raise HarnessInvalid(
                 f"receipt {rel} does not bind manifest "

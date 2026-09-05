@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from . import canonical, ed25519_pure, synth
+from . import canonical, ed25519_pure, planters, synth
 from .gitfix import REQUIRED_ATTRIBUTE_LINES, GitRepo
 from .requirements import HarnessInvalid, ProductFailure
 from .roots import ProofRoots
@@ -167,11 +167,20 @@ class SignedWorld:
             authority_snapshot_cursor=authority_snapshot_cursor,
             confidence=confidence,
         )
+        # Detector Reviewer finding 7: a mutation must change the state the
+        # product reads, before it reads it. Both seams are pre-execution: the
+        # claim before it is signed, and the canonical bytes before they land at
+        # their content path.
+        body = planters.mutate(
+            "world.event_body", body, logical_key=logical_key, store_kind=store_kind
+        )
         signed = signer.sign_message("fact-event", body)
         raw = canonical.jcs(signed)
+        raw = planters.mutate("world.event_bytes", raw, logical_key=logical_key)
         digest = canonical.content_digest_hex(raw)
         rel = ".kin/events/" + canonical.event_shard_path(digest)
         self.repo.write_bytes(rel, raw)
+        planters.witness_path(self.repo.path / rel)
         record = {
             "event_id": signed["event_id"],
             "digest": digest,
@@ -188,7 +197,17 @@ class SignedWorld:
         return record
 
     def verify_planted(self) -> None:
-        """The instrument's own events must verify before the product sees them."""
+        """The instrument's own events must verify before the product sees them.
+
+        Under an active ``world.*`` planter the world is *deliberately* defective,
+        so this check is skipped for that seam only and the planter's independent
+        witness stands in its place. Every other run must hand the product a
+        world the instrument itself can verify.
+        """
+        planter = planters.active()
+        if planter is not None and planter.point.startswith("world."):
+            planters.require_applied()
+            return
         for record in self.planted:
             path = self.repo.path / record["path"]
             if not path.is_file():

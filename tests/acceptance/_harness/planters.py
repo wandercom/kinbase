@@ -1,76 +1,94 @@
-"""Executable, Validator-applied mutation planters.
+"""Causal, pre-execution mutation planters with independent witnesses.
 
-Detector Reviewer finding 6, second half. The frozen catalog declared 35 product
-mutations as prose with no way to apply them: selecting one changed nothing and
-checked nothing.
+Detector Reviewer finding 7. The previous planters were an interposer: a wrapper
+that ran the real product to completion and then rewrote its stdout and exit
+status. That mutates the *observation*, not the behaviour. A gate could pass its
+mutation run while the product was never wrong, and the mutation proved only
+that the assertion reads the field the wrapper edited.
 
-The Tester is implementation-blind, so a planter cannot be a source patch --- the
-Tester has never read the source it would patch. It can, however, be an
-**interposer**: a wrapper installed ahead of the product entry point that applies
-the declared defect to the *observable contract* the acceptance suite reads. That
-is executable, deterministic, requires no implementation knowledge, and tests
-exactly what a mutation must test: whether the obligation notices the defect.
+Every planter here changes **raw state the product will later read**, before the
+product is started:
 
-Each planter declares:
+* ``world.*`` --- the bytes of a signed event, its claim, or its signature;
+* ``trust.*`` --- the repository certificate, the external trust root, or the
+  published ``AuthorityRegistry`` scope;
+* ``native.*`` --- an adapter's own native source file;
+* ``config.*`` --- the user or service configuration the product loads;
+* ``corpus.*`` --- a product-bound corpus record;
+* ``fault.*`` --- an ordering or crash schedule applied at a real seam.
 
-* the catalog entry it realises;
-* the exact observable transformation it performs;
-* the pytest nodes that must fail while it is installed.
+The harness calls :func:`mutate` at each seam as it constructs state. When a
+planter is active and its point is reached, the value is transformed and an
+**independent witness** is recorded: for a path, the bytes are re-read from disk
+after the write; for a document, the canonical form is re-digested. A mutation
+run in which the seam was never reached is ``INVALID_HARNESS`` --- the planter
+did not apply, so nothing was tested --- which :func:`require_applied` enforces.
 
-``tests/mutation-run.sh`` installs one planter, runs the named nodes, and
-requires every one of them to fail. A planter under which the nodes still pass is
-a surviving mutant, which ``spec/verification.md`` makes ``INVALID_HARNESS``, not
-a pass.
-
-The Validator may additionally apply real source patches; these interposers are
-the floor, not a substitute, and the ledger records which kind produced each kill.
+Nothing here reads or edits product output. If the product behaves correctly in
+a world that is genuinely defective, the gate's obligation is genuinely unmet
+and the named node fails in its declared channel. That is the kill.
 """
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
-import os
-import shlex
-import stat
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
-from .mutations import CATALOG, Mutation
+from .mutations import CATALOG, Mutation, active_mutation
 from .requirements import HarnessInvalid
 
-#: Transformations an interposer may apply to the product's JSON output. Each is
-#: a pure function over the parsed payload, so a planter is inspectable.
-TRANSFORMS: dict[str, str] = {
-    "drop_field": "remove a required field from every emitted object",
-    "zero_counter": "force a named counter to zero",
-    "collapse_list": "replace a named list with a single element",
-    "empty_list": "replace a named list with an empty list",
-    "flip_bool": "invert a named boolean",
-    "constant_value": "replace a named field with a fixed value",
-    "echo_success": "replace a typed refusal with exit 0 and an empty object",
+#: Every seam at which raw state passes from the instrument to the product.
+POINTS: dict[str, str] = {
+    "world.event_body": "the claim inside a fact event, before it is signed",
+    "world.event_bytes": "the signed event's canonical bytes, before they are written",
+    "world.unknown": "an Unknown record, before it is written",
+    "trust.certificate": "the steward-signed repository certificate",
+    "trust.root_key": "the external Company root public key and its location",
+    "trust.registry": "the published AuthorityRegistry document",
+    "native.source": "a native adapter source file produced by a lifecycle cell",
+    "config.user": "the user configuration the shared processes load",
+    "config.service": "the Company service configuration",
+    "corpus.record": "one product-bound corpus record, before it is emitted",
+    "fault.schedule": "an ordering, interleave or crash schedule at a real seam",
+    "host.envelope": "a native host lifecycle payload, before it is delivered",
 }
+
+WORLD_DEFECT = "world_defect"
+TRUST_DEFECT = "trust_defect"
+CONFIG_DEFECT = "config_defect"
+CORPUS_DEFECT = "corpus_defect"
+FAULT_SCHEDULE = "fault_schedule"
+
+PRODUCT_CHANNEL = "PRODUCT_FAILURE"
+INSTRUMENT_CHANNEL = "INVALID_HARNESS"
 
 
 @dataclass(frozen=True)
 class Planter:
-    """One executable realisation of a catalogued product mutation."""
+    """One executable, pre-execution realisation of a catalogued mutation."""
 
     mutation_id: str
-    transform: str
-    target: str
-    value: object = None
-    #: Commands whose output the interposer rewrites. Empty means all.
-    commands: tuple[str, ...] = ()
+    point: str
+    kind: str
+    description: str
+    transform: Callable[[Any, Mapping[str, Any]], Any]
+    expected_channel: str = PRODUCT_CHANNEL
 
     def __post_init__(self) -> None:
         if self.mutation_id not in CATALOG:
             raise HarnessInvalid(
-                f"planter names {self.mutation_id!r}, which the frozen catalog does "
-                "not declare"
+                f"planter names {self.mutation_id!r}, which the frozen catalog "
+                "does not declare"
             )
-        if self.transform not in TRANSFORMS:
-            raise HarnessInvalid(f"unknown planter transform {self.transform!r}")
+        if self.point not in POINTS:
+            raise HarnessInvalid(f"unknown mutation point {self.point!r}")
+        if self.kind not in (WORLD_DEFECT, TRUST_DEFECT, CONFIG_DEFECT,
+                             CORPUS_DEFECT, FAULT_SCHEDULE):
+            raise HarnessInvalid(f"unknown planter kind {self.kind!r}")
 
     @property
     def mutation(self) -> Mutation:
@@ -84,235 +102,509 @@ class Planter:
         return {
             "mutation_id": self.mutation_id,
             "gate": self.mutation.gate,
-            "method": self.mutation.method,
-            "transform": self.transform,
-            "transform_meaning": TRANSFORMS[self.transform],
-            "target": self.target,
-            "value": self.value,
-            "commands": list(self.commands),
+            "point": self.point,
+            "point_meaning": POINTS[self.point],
+            "kind": self.kind,
+            "description": self.description,
+            "expected_channel": self.expected_channel,
             "semantics": self.mutation.semantics,
             "requirement": self.mutation.requirement_quote,
             "must_fail_nodes": list(self.must_fail_nodes),
+            "applies_before_product_execution": True,
         }
 
 
-def _p(mutation_id: str, transform: str, target: str, value: object = None,
-       commands: Sequence[str] = ()) -> Planter:
-    return Planter(mutation_id, transform, target, value, tuple(commands))
+# --------------------------------------------------------------------------
+# Transforms. Each takes the raw value about to be handed to the product.
+# --------------------------------------------------------------------------
 
 
-#: One executable planter per catalogued product mutation.
+def _set(body: Any, path: str, value: Any) -> Any:
+    out = copy.deepcopy(body)
+    node = out
+    parts = path.split(".")
+    for part in parts[:-1]:
+        node = node.setdefault(part, {})
+    node[parts[-1]] = value
+    return out
+
+
+def _drop(body: Any, path: str) -> Any:
+    out = copy.deepcopy(body)
+    node = out
+    parts = path.split(".")
+    for part in parts[:-1]:
+        node = node.get(part)
+        if not isinstance(node, dict):
+            return out
+    node.pop(parts[-1], None)
+    return out
+
+
+def _observations_to_count(body, ctx):
+    """V-1: an adapter reports a source count and no observations."""
+    out = _set(body, "observations", [])
+    return _set(out, "observations_count_only", 1)
+
+
+def _approver_mints_never_true(body, ctx):
+    """V-1: the approver, not the steward/maintainer, signs semantic withdrawal."""
+    out = _set(body, "atom_kind", "never_true")
+    return _set(out, "authority_scope", "approver:local")
+
+
+def _single_label(record, ctx):
+    """V-2: one label for the whole message instead of per-atom destinations."""
+    out = copy.deepcopy(record)
+    out["atoms"] = [{"text": out.get("text", ""), "destination": "company"}]
+    return out
+
+
+def _shared_by_default(record, ctx):
+    out = copy.deepcopy(record)
+    out["confidence"] = "low"
+    out["destination_default"] = "company"
+    return out
+
+
+def _common_transaction(document, ctx):
+    """V-2: one transaction spanning both destinations."""
+    return _set(document, "fanout_transaction", "common")
+
+
+def _nonce_retention_zero(document, ctx):
+    """V-2/V-3: nonce retention shorter than candidate lifetime plus skew."""
+    return _set(document, "nonce_retention_seconds", 0)
+
+
+def _transcript_digest_into_event(body, ctx):
+    """V-3: bind the raw transcript digest into a shared record."""
+    return _set(body, "transcript_digest",
+                hashlib.sha256(b"raw-transcript").hexdigest())
+
+
+def _personal_root_into_user_config(document, ctx):
+    """V-3: the Personal path becomes readable from shared configuration."""
+    personal = str(ctx.get("personal_root", "/personal"))
+    out = _set(document, "personal_data_root", personal)
+    return _set(out, "classifier_args", ["--json", "--extra-root=" + personal])
+
+
+def _mount_personal_in_query(document, ctx):
+    return _set(document, "projection_roots",
+                [str(ctx.get("personal_root", "/personal"))])
+
+
+def _trust_kin_trust_json(document, ctx):
+    """V-3: a worktree-local trust file becomes the trust root."""
+    return _set(document, "trust_root_path", ".kin/trust.json")
+
+
+def _clear_taint(record, ctx):
+    out = copy.deepcopy(record)
+    out["taint"] = []
+    out["deidentified"] = True
+    return out
+
+
+def _candidate_path_swap(record, ctx):
+    """V-3: the approved bytes and the committed path diverge."""
+    out = copy.deepcopy(record)
+    out["candidate_path"] = str(ctx.get("swap_path", "candidate.swapped"))
+    return out
+
+
+def _worktree_only_key(body, ctx):
+    """V-3: the signing authority is absent from the published registry."""
+    return _set(body, "authority_id", "worktree-only-key-1")
+
+
+def _signature_reuse(raw: bytes, ctx) -> bytes:
+    """V-3: a signature valid for one message type is presented for another."""
+    payload = json.loads(raw.decode("utf-8"))
+    payload["message_type"] = "authority-answer"
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _verify_one_apply_another(raw: bytes, ctx) -> bytes:
+    """V-3: the verified bytes and the parsed bytes differ."""
+    payload = json.loads(raw.decode("utf-8"))
+    payload["statement"] = str(payload.get("statement", "")) + " shadow"
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _wildcard_scope(document, ctx):
+    out = copy.deepcopy(document)
+    for entry in out.get("entries", []):
+        entry["scope"] = "*"
+    return out
+
+
+def _sql_interpolation(record, ctx):
+    out = copy.deepcopy(record)
+    out["logical_key"] = "architecture/'; DROP TABLE facts; --"
+    return out
+
+
+def _remove_scoped_token_enforcement(document, ctx):
+    return _set(document, "facts_token_scopes", ["*"])
+
+
+def _race_concurrent_approvals(schedule, ctx):
+    out = dict(schedule)
+    out["interleave"] = "both_approvals_between_check_and_commit"
+    out["barrier"] = "release_simultaneously"
+    return out
+
+
+def _raw_terminal_output(record, ctx):
+    """V-3: request raw rendering of a carriage-return/ANSI preview payload."""
+    out = copy.deepcopy(record)
+    out["preview_escaping"] = "raw"
+    out["statement"] = "approved" + chr(13) + "DENIED" + chr(27) + "[2K"
+    return out
+
+
+def _greatest_timestamp_wins(document, ctx):
+    return _set(document, "conflict_resolution", "greatest_timestamp")
+
+
+def _omit_as_of(document, ctx):
+    """V-4: the rebuild takes ``as_of`` from the ambient clock instead of the
+    pinned input, which is exactly the omission the requirement forbids."""
+    out = _drop(document, "as_of")
+    return _set(out, "rebuild_as_of", "ambient")
+
+
+def _stale_head_as_authority(document, ctx):
+    return _set(document, "manifest_authority", "company_head_observation")
+
+
+def _worktree_local_lock(document, ctx):
+    return _set(document, "lock_path", ".git/worktrees/local/guildhall.lock")
+
+
+def _content_path_before_revocation(document, ctx):
+    return _set(document, "admission_order", ["content_path", "authority", "revocation"])
+
+
+def _newest_wins(document, ctx):
+    return _set(document, "reducer_policy", "newest_wins")
+
+
+def _highest_authority_wins(document, ctx):
+    return _set(document, "reducer_policy", "highest_authority_always_wins")
+
+
+def _repetition_as_independence(record, ctx):
+    """V-5: ten copies of one statement, each presented as a separate source."""
+    out = copy.deepcopy(record)
+    out["independent_source_id"] = "copy-" + str(ctx.get("index", 0))
+    out["copied_from"] = None
+    return out
+
+
+def _synthesize_answer(document, ctx):
+    return _set(document, "authority_channel", "local_model_prior")
+
+
+def _independent_scalar_topk(document, ctx):
+    return _set(document, "selection_policy", "independent_scalar_topk")
+
+
+def _codebase_authorizes_exception(body, ctx):
+    out = _set(body, "atom_kind", "exception_to")
+    return _set(out, "store_kind", "codebase")
+
+
+def _disable_mid_session_capture(envelope, ctx):
+    out = copy.deepcopy(envelope)
+    out["capture"] = {"session_start": True, "mid_session": False}
+    return out
+
+
+def _reservation_after_render(schedule, ctx):
+    out = dict(schedule)
+    out["reservation_order"] = "render_then_reserve"
+    return out
+
+
+def _check_outside_transaction(schedule, ctx):
+    out = dict(schedule)
+    out["transaction_scope"] = "reissue_check_outside_begin_immediate"
+    return out
+
+
+# --------------------------------------------------------------------------
+# The frozen planter set: one per catalogued product mutation.
+# --------------------------------------------------------------------------
+
+
+def _p(mutation_id, point, kind, description, transform) -> Planter:
+    return Planter(mutation_id, point, kind, description, transform)
+
+
 PLANTERS: tuple[Planter, ...] = (
     # V-1
-    _p("v1.adapter_count_without_observations", "empty_list", "observations",
-       commands=("ingest",)),
-    _p("v1.approver_mints_never_true", "echo_success", "", commands=("ingest",)),
+    _p("v1.adapter_count_without_observations", "world.event_body", WORLD_DEFECT,
+       "the adapter receipt carries a source count and an empty observation list",
+       _observations_to_count),
+    _p("v1.approver_mints_never_true", "world.event_body", WORLD_DEFECT,
+       "the semantic withdrawal is signed under an approver scope rather than "
+       "the steward/maintainer scope the requirement names",
+       _approver_mints_never_true),
     # V-2
-    _p("v2.whole_message_single_label", "collapse_list", "atoms",
-       commands=("session",)),
-    _p("v2.shared_by_default_low_confidence", "constant_value",
-       "atoms.*.destination", "company", commands=("session",)),
-    _p("v2.common_fanout_transaction", "constant_value",
-       "fanout_receipts.codebase.state", "refused", commands=("status",)),
-    _p("v2.remove_nonce_uniqueness_recovery", "constant_value",
-       "duplicate_events", 2, commands=("fsck", "status")),
+    _p("v2.whole_message_single_label", "corpus.record", CORPUS_DEFECT,
+       "the message arrives pre-collapsed to one label, so per-atom destinations "
+       "cannot be recovered from the raw record", _single_label),
+    _p("v2.shared_by_default_low_confidence", "corpus.record", CORPUS_DEFECT,
+       "the record declares a shared default at low confidence", _shared_by_default),
+    _p("v2.common_fanout_transaction", "config.service", CONFIG_DEFECT,
+       "the service is configured with one fan-out transaction across "
+       "destinations", _common_transaction),
+    _p("v2.remove_nonce_uniqueness_recovery", "config.service", CONFIG_DEFECT,
+       "nonce retention is shorter than candidate lifetime plus clock skew",
+       _nonce_retention_zero),
     # V-3
-    _p("v3.transcript_digest_in_receipt", "constant_value",
-       "receipt.transcript_digest", "planted", commands=("status",)),
-    _p("v3.mount_personal_in_coding_query", "flip_bool",
-       "processes.projector.holds_personal_capability", commands=("doctor",)),
-    _p("v3.trust_kin_trust_json", "echo_success", "", commands=("status",)),
-    _p("v3.clear_taint_after_deidentification", "flip_bool",
-       "candidates.*.taint_cleared", commands=("proposals",)),
-    _p("v3.reread_candidate_path_after_approval", "constant_value",
-       "committed_digest", "0" * 64, commands=("proposals",)),
-    _p("v3.worktree_only_key_admission", "echo_success", "", commands=("ingest",)),
-    _p("v3.signature_reuse_across_message_types", "echo_success", "",
-       commands=("ingest",)),
-    _p("v3.verify_one_parse_apply_another", "echo_success", "", commands=("ingest",)),
-    _p("v3.wildcard_authority_scope", "echo_success", "", commands=("status",)),
-    _p("v3.sql_interpolation", "echo_success", "", commands=("explain",)),
-    _p("v3.personal_path_in_shared_argv_config", "constant_value",
-       "processes.projector.personal_root_in_serialized_config", True,
-       commands=("doctor",)),
-    _p("v3.remove_scoped_token_enforcement", "echo_success", "", commands=("status",)),
-    _p("v3.remove_nonce_uniqueness", "echo_success", "", commands=("proposals",)),
-    _p("v3.race_concurrent_approvals", "echo_success", "", commands=("proposals",)),
-    _p("v3.raw_terminal_output", "constant_value", "canonical_utf8",
-       "approved\rDENIED", commands=("proposals",)),
+    _p("v3.transcript_digest_in_receipt", "world.event_body", WORLD_DEFECT,
+       "a raw transcript digest is bound into a durable shared record",
+       _transcript_digest_into_event),
+    _p("v3.mount_personal_in_coding_query", "config.user", CONFIG_DEFECT,
+       "the shared projection root list includes the Personal root",
+       _mount_personal_in_query),
+    _p("v3.trust_kin_trust_json", "config.user", CONFIG_DEFECT,
+       "the trust root is redirected to a worktree-local file",
+       _trust_kin_trust_json),
+    _p("v3.clear_taint_after_deidentification", "corpus.record", CORPUS_DEFECT,
+       "the record arrives with its taint list cleared and a de-identification "
+       "flag set", _clear_taint),
+    _p("v3.reread_candidate_path_after_approval", "corpus.record", CORPUS_DEFECT,
+       "the candidate path names different bytes than the approved buffer",
+       _candidate_path_swap),
+    _p("v3.worktree_only_key_admission", "world.event_body", WORLD_DEFECT,
+       "the event is signed by an authority the published registry does not "
+       "contain", _worktree_only_key),
+    _p("v3.signature_reuse_across_message_types", "world.event_bytes", WORLD_DEFECT,
+       "the message type is rewritten after signing, so one signature is "
+       "presented for a different type", _signature_reuse),
+    _p("v3.verify_one_parse_apply_another", "world.event_bytes", WORLD_DEFECT,
+       "the canonical bytes carry a shadow statement after the signed digest",
+       _verify_one_apply_another),
+    _p("v3.wildcard_authority_scope", "trust.registry", TRUST_DEFECT,
+       "every published authority scope becomes a wildcard", _wildcard_scope),
+    _p("v3.sql_interpolation", "corpus.record", CORPUS_DEFECT,
+       "a logical key carries a statement-terminating SQL fragment",
+       _sql_interpolation),
+    _p("v3.personal_path_in_shared_argv_config", "config.user", CONFIG_DEFECT,
+       "the Personal root is written into the shared configuration and the "
+       "classifier argument vector", _personal_root_into_user_config),
+    _p("v3.remove_scoped_token_enforcement", "config.service", CONFIG_DEFECT,
+       "the facts token is issued with a wildcard scope set",
+       _remove_scoped_token_enforcement),
+    _p("v3.remove_nonce_uniqueness", "config.service", CONFIG_DEFECT,
+       "nonce retention is set to zero", _nonce_retention_zero),
+    _p("v3.race_concurrent_approvals", "fault.schedule", FAULT_SCHEDULE,
+       "two approvals are released simultaneously between the slot check and "
+       "the commit", _race_concurrent_approvals),
+    _p("v3.raw_terminal_output", "corpus.record", CORPUS_DEFECT,
+       "the preview record requests raw terminal rendering of a control payload",
+       _raw_terminal_output),
     # V-4
-    _p("v4.greatest_timestamp_wins", "constant_value", "state", "current",
-       commands=("explain",)),
-    _p("v4.omit_as_of", "drop_field", "inputs.as_of", commands=("corpus",)),
-    _p("v4.stale_company_head_as_git_authority", "constant_value",
-       "manifest_comparison.classification", "normal_lag", commands=("fsck",)),
-    _p("v4.worktree_local_lock", "flip_bool", "lock_in_common_dir",
-       commands=("repo", "status")),
-    _p("v4.content_path_before_revocation", "flip_bool",
-       "pre_revocation_replay.readmitted", commands=("status",)),
+    _p("v4.greatest_timestamp_wins", "config.user", CONFIG_DEFECT,
+       "conflict resolution is configured to take the greatest timestamp",
+       _greatest_timestamp_wins),
+    _p("v4.omit_as_of", "config.user", CONFIG_DEFECT,
+       "the rebuild inputs omit as_of entirely", _omit_as_of),
+    _p("v4.stale_company_head_as_git_authority", "config.user", CONFIG_DEFECT,
+       "a stale Company head observation is configured as the manifest "
+       "authority", _stale_head_as_authority),
+    _p("v4.worktree_local_lock", "config.user", CONFIG_DEFECT,
+       "the admission lock is placed in a worktree-local directory rather than "
+       "Git's common directory", _worktree_local_lock),
+    _p("v4.content_path_before_revocation", "config.user", CONFIG_DEFECT,
+       "admission checks the content path before authority and revocation",
+       _content_path_before_revocation),
     # V-5
-    _p("v5.newest_wins", "constant_value", "selection_reason",
-       "newest timestamp wins", commands=("explain",)),
-    _p("v5.highest_authority_always_wins", "constant_value", "state", "current",
-       commands=("explain",)),
-    _p("v5.repetition_as_independence", "constant_value",
-       "independent_corroboration_count", 10, commands=("explain",)),
+    _p("v5.newest_wins", "config.user", CONFIG_DEFECT,
+       "the reducer policy is newest-wins", _newest_wins),
+    _p("v5.highest_authority_always_wins", "config.user", CONFIG_DEFECT,
+       "the reducer policy is highest-authority-always-wins",
+       _highest_authority_wins),
+    _p("v5.repetition_as_independence", "corpus.record", CORPUS_DEFECT,
+       "each copied comment is relabelled as an independent source",
+       _repetition_as_independence),
     # V-6
-    _p("v6.synthesize_answer_from_model_prior", "constant_value",
-       "trusted_recommendation", "synthesised from the model prior",
-       commands=("project",)),
+    _p("v6.synthesize_answer_from_model_prior", "config.user", CONFIG_DEFECT,
+       "the authority channel is redirected to a local model prior",
+       _synthesize_answer),
     # V-7
-    _p("v7.independent_scalar_topk", "constant_value", "stopping_reason",
-       "token_window_full", commands=("project",)),
+    _p("v7.independent_scalar_topk", "config.user", CONFIG_DEFECT,
+       "the selection policy becomes an independent scalar top-k",
+       _independent_scalar_topk),
     # V-8
-    _p("v8.codebase_authorizes_exception_to", "echo_success", "",
-       commands=("ingest",)),
+    _p("v8.codebase_authorizes_exception_to", "world.event_body", WORLD_DEFECT,
+       "the exception_to relation is asserted by a Codebase-scoped event",
+       _codebase_authorizes_exception),
     # V-9
-    _p("v9.disable_mid_session_capture", "zero_counter", "observation_count",
-       commands=("status",)),
-    _p("v9.reservation_after_render", "constant_value", "prompt_rendered", True,
-       commands=("proposals",)),
-    _p("v9.check_outside_transaction", "constant_value", "payload_digest",
-       "f" * 64, commands=("proposals",)),
+    _p("v9.disable_mid_session_capture", "host.envelope", CONFIG_DEFECT,
+       "the delivered host payload disables mid-session capture while leaving "
+       "SessionStart enabled", _disable_mid_session_capture),
+    _p("v9.reservation_after_render", "fault.schedule", FAULT_SCHEDULE,
+       "the reservation increment is scheduled after the render",
+       _reservation_after_render),
+    _p("v9.check_outside_transaction", "fault.schedule", FAULT_SCHEDULE,
+       "the reissue eligibility check is scheduled outside BEGIN IMMEDIATE",
+       _check_outside_transaction),
 )
 
-BY_MUTATION: Mapping[str, Planter] = {p.mutation_id: p for p in PLANTERS}
-
-
-def product_mutations() -> tuple[Mutation, ...]:
-    return tuple(m for m in CATALOG.values() if m.method != "detector")
-
-
-def coverage_gaps() -> list[str]:
-    """Catalogued product mutations with no executable planter."""
-    return sorted(
-        m.mutation_id for m in product_mutations() if m.mutation_id not in BY_MUTATION
-    )
+BY_ID: dict[str, Planter] = {p.mutation_id: p for p in PLANTERS}
 
 
 # --------------------------------------------------------------------------
-# Interposer generation
+# Application and independent witnessing
 # --------------------------------------------------------------------------
 
-_INTERPOSER = r'''#!/usr/bin/env python3
-"""Generated mutation interposer. Do not edit; regenerate from planters.py."""
-import json, os, subprocess, sys
 
-SPEC = json.loads(os.environ["GUILDHALL_PLANTER_SPEC"])
-REAL = json.loads(os.environ["GUILDHALL_PLANTER_REAL"])
+@dataclass
+class Application:
+    """An independently witnessed application of a planter."""
 
+    mutation_id: str
+    point: str
+    before_digest: str
+    after_digest: str
+    context: dict[str, Any] = field(default_factory=dict)
+    readback_digest: str = ""
 
-def _walk_set(node, path, value):
-    parts = path.split(".")
-    if not parts or parts == [""]:
-        return
-    head, rest = parts[0], parts[1:]
-    if head == "*":
-        if isinstance(node, list):
-            for item in node:
-                _walk_set(item, ".".join(rest), value)
-        return
-    if not isinstance(node, dict):
-        return
-    if not rest:
-        node[head] = value
-        return
-    child = node.get(head)
-    if child is None:
-        child = {}
-        node[head] = child
-    _walk_set(child, ".".join(rest), value)
+    @property
+    def effective(self) -> bool:
+        return self.before_digest != self.after_digest
 
-
-def _walk_drop(node, path):
-    parts = path.split(".")
-    if not isinstance(node, dict) or not parts:
-        return
-    if len(parts) == 1:
-        node.pop(parts[0], None)
-        return
-    _walk_drop(node.get(parts[0]), ".".join(parts[1:]))
+    def as_json(self) -> dict:
+        return {
+            "mutation_id": self.mutation_id,
+            "point": self.point,
+            "before_digest": self.before_digest,
+            "after_digest": self.after_digest,
+            "readback_digest": self.readback_digest,
+            "independently_readback": bool(self.readback_digest),
+            "effective": self.effective,
+            "context": {k: str(v)[:200] for k, v in self.context.items()},
+        }
 
 
-def mutate(payload):
-    t, target, value = SPEC["transform"], SPEC["target"], SPEC.get("value")
-    if t == "drop_field":
-        _walk_drop(payload, target)
-    elif t == "zero_counter":
-        _walk_set(payload, target, 0)
-    elif t == "zero_constant_events":
-        _walk_set(payload, target, value)
-    elif t == "collapse_list":
-        cur = payload.get(target)
-        if isinstance(cur, list) and cur:
-            payload[target] = cur[:1]
-    elif t == "empty_list":
-        if target in payload:
-            payload[target] = []
-    elif t == "flip_bool":
-        _walk_set(payload, target, True)
-    elif t == "constant_value":
-        _walk_set(payload, target, value)
-    return payload
+_APPLICATIONS: list[Application] = []
 
 
-def main() -> int:
-    argv = REAL + sys.argv[1:]
-    commands = SPEC.get("commands") or []
-    applies = (not commands) or any(a in commands for a in sys.argv[1:2])
-    proc = subprocess.run(argv, capture_output=True)
-    out, err, code = proc.stdout, proc.stderr, proc.returncode
-    if applies:
-        if SPEC["transform"] == "echo_success":
-            sys.stdout.write("{}")
-            return 0
-        try:
-            payload = json.loads(out.decode("utf-8"))
-        except Exception:
-            payload = None
-        if isinstance(payload, dict):
-            out = json.dumps(mutate(payload), sort_keys=True).encode("utf-8")
-    sys.stdout.buffer.write(out)
-    sys.stderr.buffer.write(err)
-    return code
+def reset() -> None:
+    _APPLICATIONS.clear()
 
 
-raise SystemExit(main())
-'''
+def active() -> Planter | None:
+    mutation_id = active_mutation()
+    if mutation_id is None:
+        return None
+    if mutation_id.startswith("detector."):
+        return None
+    try:
+        return BY_ID[mutation_id]
+    except KeyError as exc:
+        raise HarnessInvalid(
+            "mutation " + repr(mutation_id) + " has no executable pre-execution "
+            "planter; a catalogued mutation with no planter cannot be run"
+        ) from exc
 
 
-def install(planter: Planter, bin_dir: Path, real_entrypoint: Sequence[str]) -> Path:
-    """Write an executable interposer for one planter and return its path."""
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    target = bin_dir / "guildhall"
-    target.write_text(_INTERPOSER, encoding="utf-8")
-    target.chmod(target.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
-    (bin_dir / "planter-spec.json").write_text(
-        json.dumps(planter.as_json(), indent=1, sort_keys=True), encoding="utf-8"
+def _digest(value: Any) -> str:
+    if isinstance(value, bytes):
+        return hashlib.sha256(value).hexdigest()
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
+
+
+def mutate(point: str, value: Any, **context: Any) -> Any:
+    """Apply the active planter at this seam, before the product sees ``value``.
+
+    Returns ``value`` unchanged when no planter is active or the active planter
+    belongs to a different seam.
+    """
+    if point not in POINTS:
+        raise HarnessInvalid("unknown mutation point " + repr(point))
+    planter = active()
+    if planter is None or planter.point != point:
+        return value
+    before = _digest(value)
+    mutated = planter.transform(value, context)
+    after = _digest(mutated)
+    _APPLICATIONS.append(
+        Application(
+            mutation_id=planter.mutation_id,
+            point=point,
+            before_digest=before,
+            after_digest=after,
+            context=dict(context),
+        )
     )
-    (bin_dir / "planter-env.sh").write_text(
-        "export GUILDHALL_PLANTER_SPEC="
-        + shlex.quote(json.dumps({
-            "transform": planter.transform,
-            "target": planter.target,
-            "value": planter.value,
-            "commands": list(planter.commands),
-        }))
-        + "\nexport GUILDHALL_PLANTER_REAL="
-        + shlex.quote(json.dumps(list(real_entrypoint)))
-        + f"\nexport GUILDHALL_BIN={shlex.quote(str(target))}\n",
-        encoding="utf-8",
-    )
-    return target
+    return mutated
 
 
-def manifest() -> dict:
-    """The full planter manifest, for the Validator's kill ledger."""
+def witness_path(path: Path) -> None:
+    """Independently re-read a written path to confirm the mutation landed."""
+    if not _APPLICATIONS:
+        return
+    application = _APPLICATIONS[-1]
+    if path.is_file():
+        application.readback_digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        application.context["readback_path"] = str(path)
+
+
+def applications() -> tuple[Application, ...]:
+    return tuple(_APPLICATIONS)
+
+
+def require_applied() -> Application:
+    """A mutation run whose seam was never reached tested nothing."""
+    planter = active()
+    if planter is None:
+        raise HarnessInvalid("no product mutation is active")
+    matching = [a for a in _APPLICATIONS if a.mutation_id == planter.mutation_id]
+    if not matching:
+        raise HarnessInvalid(
+            "mutation " + planter.mutation_id + " never reached its seam "
+            + repr(planter.point) + ", so the run exercised no defect at all; a "
+            "node failing here would be an infrastructure failure, not a kill"
+        )
+    ineffective = [a for a in matching if not a.effective]
+    if len(ineffective) == len(matching):
+        raise HarnessInvalid(
+            "mutation " + planter.mutation_id + " produced no byte change at "
+            + repr(planter.point) + "; an inert planter cannot kill anything"
+        )
+    return matching[0]
+
+
+def as_json() -> dict:
     return {
-        "schema": "guildhall-acceptance-planter-manifest/1",
-        "planter_count": len(PLANTERS),
-        "product_mutation_count": len(product_mutations()),
-        "coverage_gaps": coverage_gaps(),
-        "transforms": TRANSFORMS,
+        "schema": "guildhall-preexecution-planters/1",
+        "points": dict(POINTS),
         "planters": [p.as_json() for p in PLANTERS],
+        "applications": [a.as_json() for a in _APPLICATIONS],
     }
+
+
+def digest() -> str:
+    return hashlib.sha256(
+        json.dumps(
+            {"planters": [p.as_json() for p in PLANTERS], "points": POINTS},
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def coverage() -> tuple[str, ...]:
+    """Catalogued product mutations with no executable planter."""
+    return tuple(sorted(
+        mid for mid, mutation in CATALOG.items()
+        if mutation.method != "detector" and mid not in BY_ID
+    ))

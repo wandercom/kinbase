@@ -23,6 +23,9 @@ runner sets. A mutated detector must (a) miss its planted positive control and
 
 from __future__ import annotations
 
+import hashlib
+import json
+
 import base64
 import binascii
 import json
@@ -30,7 +33,7 @@ import os
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from .requirements import HarnessInvalid
 
@@ -412,3 +415,60 @@ def stratification_ok(
         if encoding in counts:
             counts[encoding] += 1
     return all(v >= minimum for v in counts.values()), counts
+
+
+def _now_utc() -> str:
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def compare_manifests(
+    detector: "CanaryDetector",
+    *,
+    published: "Mapping[str, object]",
+    local: "Mapping[str, object]",
+) -> dict:
+    """Compare a maintainer-published manifest observation with the local one.
+
+    ``spec/verification.md`` V-4 requires the comparison itself, and "Instrument
+    validity" names *disable manifest comparison* as a detector mutation. The
+    mutation is only meaningful if something consumes it, so this is that
+    consumer: under ``disable_manifest_comparison`` the comparison returns no
+    differences and scans no canary, which is exactly the blindness the mutation
+    asserts.
+    """
+    if not detector.manifest_comparison_enabled:
+        return {
+            "compared": False,
+            "differences": [],
+            "canary_findings": [],
+            "classification": "not_compared",
+        }
+    differences = [
+        key for key in sorted(set(published) | set(local))
+        if published.get(key) != local.get(key)
+    ]
+    findings = detector.scan_bytes(
+        json.dumps(dict(published), sort_keys=True).encode("utf-8"),
+        surface_family="manifest",
+        location_digest=hashlib.sha256(b"published-manifest").hexdigest(),
+        observed_at=_now_utc(),
+    )
+    published_count = published.get("count")
+    local_count = local.get("count")
+    if isinstance(published_count, int) and isinstance(local_count, int):
+        if local_count > published_count:
+            classification = "local_strict_superset"
+        elif local_count < published_count:
+            classification = "missing_expected_heads"
+        else:
+            classification = "aligned"
+    else:
+        classification = "uncomparable"
+    return {
+        "compared": True,
+        "differences": differences,
+        "canary_findings": [f.sanitised() for f in findings],
+        "classification": classification,
+    }

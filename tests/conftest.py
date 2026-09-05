@@ -32,7 +32,9 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from acceptance._harness import catalog as catalog_module  # noqa: E402
+from acceptance._harness import consumption as consumption_audit  # noqa: E402
 from acceptance._harness import mutations as mutation_catalog  # noqa: E402
+from acceptance._harness import planters as planter_catalog  # noqa: E402
 from acceptance._harness.census import (  # noqa: E402
     GROUPS,
     INSTRUMENT_ONLY,
@@ -103,6 +105,8 @@ def pytest_configure(config: pytest.Config) -> None:
         raise pytest.UsageError(f"INVALID_HARNESS: {exc}") from exc
     config.stash[MANIFEST_KEY] = verification
 
+    consumption_audit.reset()
+    planter_catalog.reset()
     census = Census.build()
     census.catalog_digest = catalog_module.catalog_digest()
     census.mutation = mutation_catalog.active_mutation() or ""
@@ -181,8 +185,26 @@ def _classify(item: pytest.Item, call: pytest.CallInfo) -> tuple[Outcome, str]:
     if isinstance(exc, ProductFailure):
         return Outcome.PRODUCT_FAILURE, "ProductFailure"
     if isinstance(exc, AssertionError):
-        return Outcome.PRODUCT_FAILURE, "assertion"
+        # Detector Reviewer finding 10. A bare AssertionError does not say whose
+        # fault it is: the previous classifier called a failed Tester fixture
+        # count, an absent gold record and an unmet environment prerequisite a
+        # PRODUCT_FAILURE. `test_no_green_paths.py` forbids bare `assert` in
+        # every gate module, so a bare AssertionError now can only originate in
+        # instrument code, and instrument code cannot accuse the product.
+        return (
+            Outcome.INVALID_HARNESS,
+            "untyped assertion: a gate claim must declare its channel through "
+            "O.check, require_*, forbid or a typed prerequisite",
+        )
     return Outcome.INVALID_HARNESS, f"unexpected {type(exc).__name__}"
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_protocol(item: pytest.Item, nextitem) -> Iterator[None]:  # noqa: ANN001
+    """Attribute every catalog evaluation to the node that produced it."""
+    consumption_audit.set_node(item.nodeid)
+    yield
+    consumption_audit.set_node("")
 
 
 @pytest.hookimpl(hookwrapper=True)
@@ -237,6 +259,65 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # no
     if census is None:
         return
     census.resolve()
+
+    # Detector Reviewer finding 5: a catalog row whose node executed but never
+    # evaluated the row was previously counted as covered. It is now an
+    # instrument condition on the owning gate.
+    executed = [
+        r.node for r in census.records.values() if r.outcome is not Outcome.NOT_RUN
+    ]
+    census.consumption = consumption_audit.as_json(executed)
+    for gate, reasons in consumption_audit.gates_with_unconsumed(executed).items():
+        census.invalidate(
+            gate,
+            f"{len(reasons)} catalogued obligation(s) executed without being "
+            f"evaluated: {reasons[0]}",
+        )
+    for oid, node in consumption_audit.undeclared():
+        census.invalidate(
+            "INSTRUMENT", f"{node} evaluated {oid}, which the catalog assigns "
+            "to another node",
+        )
+    for digest, nodes in consumption_audit.duplicate_digests():
+        census.invalidate(
+            "INSTRUMENT",
+            f"evaluation digest {digest[:12]} is claimed by {len(nodes)} nodes "
+            f"({', '.join(nodes[:3])}); a shared payload is not independent "
+            "evidence",
+        )
+
+    # Detector Reviewer finding 7: a mutation run in which the planter never
+    # reached its seam tested nothing, so no node failure under it is a kill.
+    census.planter_applications = [a.as_json() for a in planter_catalog.applications()]
+
+    # Detector Reviewer finding 9: spec/verification.md "Instrument validity"
+    # requires a detector mutation to cause "the gate to reject the instrument".
+    # A detector the Tester has deliberately blinded cannot substantiate its own
+    # positive control, so every gate that relies on it is INVALID_HARNESS for
+    # the duration of the mutation run. This is the census half of the
+    # demonstration; the escape half is tests/detector-mutation-run.sh.
+    if census.detector_mutation:
+        census.invalidate(
+            "V-3",
+            f"detector mutation {census.detector_mutation} is active: the "
+            "deterministic scanners cannot substantiate their positive controls, "
+            "so V-3 rejects the instrument rather than reporting a clean sweep",
+        )
+        census.invalidate(
+            "INSTRUMENT",
+            f"detector mutation {census.detector_mutation} is active",
+        )
+    active_planter = None
+    try:
+        active_planter = planter_catalog.active()
+    except HarnessInvalid as exc:
+        census.invalidate("INSTRUMENT", str(exc))
+    if active_planter is not None:
+        try:
+            planter_catalog.require_applied()
+        except HarnessInvalid as exc:
+            census.invalidate(active_planter.mutation.gate, str(exc))
+            census.invalidate("INSTRUMENT", str(exc))
 
     terminalreporter.write_sep("=", "guildhall gate vector (observation, not a verdict)")
     vector = census.gate_vector()

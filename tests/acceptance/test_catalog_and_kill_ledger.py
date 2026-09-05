@@ -325,7 +325,7 @@ def test_blinding_an_unknown_clause_is_an_instrument_error() -> None:
 
 
 # --------------------------------------------------------------------------
-# Validator-applied planters (finding 6, second half)
+# Pre-execution planters (findings 6 and 7) and detector probes (finding 9)
 # --------------------------------------------------------------------------
 
 
@@ -336,18 +336,20 @@ def test_blinding_an_unknown_clause_is_an_instrument_error() -> None:
         "Mutations target detectors as well as product code",
     )
 )
-def test_every_product_mutation_has_an_executable_planter() -> None:
-    from ._harness.planters import PLANTERS, coverage_gaps, product_mutations
+def test_every_product_mutation_has_an_executable_pre_execution_planter() -> None:
+    from ._harness.planters import PLANTERS, POINTS, coverage
 
-    gaps = coverage_gaps()
+    gaps = coverage()
     assert not gaps, (
         "these catalogued product mutations have no executable planter, so "
         f"selecting them would apply nothing: {gaps}"
     )
-    assert len(PLANTERS) == len(product_mutations())
     for planter in PLANTERS:
         assert planter.must_fail_nodes, (
             f"{planter.mutation_id} names no node that must fail under it"
+        )
+        assert planter.point in POINTS, (
+            f"{planter.mutation_id} names an undeclared seam {planter.point}"
         )
 
 
@@ -359,43 +361,115 @@ def test_every_product_mutation_has_an_executable_planter() -> None:
         "to reject the instrument",
     )
 )
-def test_planter_interposer_applies_its_declared_transform() -> None:
-    """The generated interposer must really change the observable payload."""
-    import json as _json
+def test_every_planter_mutates_raw_state_before_the_product_runs() -> None:
+    """A planter must change the bytes the product will read, not its output.
+
+    Detector Reviewer finding 7. Each planter is applied to a representative
+    value at its own seam and must produce a different content address. A
+    planter that leaves the value untouched certifies a sensitivity that does
+    not exist.
+    """
     import os as _os
-    import subprocess as _sub
-    import sys as _sys
-    import tempfile as _tmp
 
-    from ._harness.planters import BY_MUTATION, install
+    from ._harness import planters as P
 
-    planter = BY_MUTATION["v1.adapter_count_without_observations"]
-    with _tmp.TemporaryDirectory() as tmp:
-        bin_dir = Path(tmp) / "bin"
-        fake = Path(tmp) / "fake-product"
-        fake.write_text(
-            "#!/usr/bin/env python3\n"
-            "import json,sys\n"
-            "print(json.dumps({'observations':[{'a':1},{'b':2}],'source_count':2}))\n",
-            encoding="utf-8",
-        )
-        fake.chmod(0o755)
-        interposer = install(planter, bin_dir, [_sys.executable, str(fake)])
-        env = dict(_os.environ)
-        env["GUILDHALL_PLANTER_SPEC"] = _json.dumps({
-            "transform": planter.transform, "target": planter.target,
-            "value": planter.value, "commands": list(planter.commands),
-        })
-        env["GUILDHALL_PLANTER_REAL"] = _json.dumps([_sys.executable, str(fake)])
-        clean = _sub.run([_sys.executable, str(fake)], capture_output=True, text=True)
-        mutated = _sub.run(
-            [_sys.executable, str(interposer), "ingest"],
-            capture_output=True, text=True, env=env,
-        )
-        before = _json.loads(clean.stdout)
-        after = _json.loads(mutated.stdout)
-        assert before["observations"], "the reference payload must be non-empty"
-        assert after["observations"] == [], (
-            "the planter did not apply its declared transform; a mutation that "
-            f"changes nothing certifies nothing. observed {after}"
-        )
+    seed_values = {
+        "world.event_body": {"observations": [{"a": 1}], "atom_kind": "constraint",
+                             "authority_id": "repo-maintainer-1",
+                             "authority_scope": "codebase:x", "store_kind": "company",
+                             "statement": "s", "logical_key": "k"},
+        "world.event_bytes": json.dumps(
+            {"message_type": "fact-event", "statement": "s"}, sort_keys=True
+        ).encode("utf-8"),
+        "world.unknown": {"status": "open"},
+        "trust.certificate": {"repository_uuid": "u", "signer": "steward"},
+        "trust.root_key": {"public_key": "ab" * 32},
+        "trust.registry": {"entries": [{"scope": "company:root"}]},
+        "native.source": b'{"line": 1}',
+        "config.user": {"personal_data_root": "/p", "classifier_args": ["--json"]},
+        "config.service": {"nonce_retention_seconds": 604800,
+                           "facts_token_scopes": ["company:root"]},
+        "corpus.record": {"text": "t", "atoms": [{"text": "t"}], "taint": ["c"],
+                          "confidence": "high", "logical_key": "k",
+                          "candidate_path": "a", "statement": "s"},
+        "fault.schedule": {"interleave": "none"},
+        "host.envelope": {"capture": {"session_start": True, "mid_session": True}},
+    }
+    inert: list[str] = []
+    previous = _os.environ.get("GUILDHALL_ACCEPT_MUTATION", "")
+    try:
+        for planter in P.PLANTERS:
+            _os.environ["GUILDHALL_ACCEPT_MUTATION"] = planter.mutation_id
+            P.reset()
+            seed = seed_values[planter.point]
+            result = P.mutate(planter.point, seed, personal_root="/personal",
+                              index=1, path="p")
+            applications = P.applications()
+            if not applications or not applications[0].effective or result == seed:
+                inert.append(f"{planter.mutation_id} at {planter.point}")
+    finally:
+        if previous:
+            _os.environ["GUILDHALL_ACCEPT_MUTATION"] = previous
+        else:
+            _os.environ.pop("GUILDHALL_ACCEPT_MUTATION", None)
+        P.reset()
+
+    assert not inert, (
+        "these planters changed no byte at their declared seam, so they mutate "
+        f"nothing the product could read:\n  " + "\n  ".join(inert)
+    )
+
+
+@spec_ref(
+    VERIFY(
+        "INSTRUMENT",
+        "planters",
+        "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS.",
+    )
+)
+def test_a_planter_that_never_reaches_its_seam_is_invalid_not_a_kill() -> None:
+    import os as _os
+
+    from ._harness import planters as P
+
+    previous = _os.environ.get("GUILDHALL_ACCEPT_MUTATION", "")
+    _os.environ["GUILDHALL_ACCEPT_MUTATION"] = "v5.newest_wins"
+    P.reset()
+    try:
+        with pytest.raises(HarnessInvalid, match="never reached its seam"):
+            P.require_applied()
+    finally:
+        if previous:
+            _os.environ["GUILDHALL_ACCEPT_MUTATION"] = previous
+        else:
+            _os.environ.pop("GUILDHALL_ACCEPT_MUTATION", None)
+        P.reset()
+
+
+@spec_ref(
+    VERIFY(
+        "INSTRUMENT",
+        "detector-mutation",
+        "require the planted defect to escape the detector's own self-test while causing the gate "
+        "to reject the instrument",
+    )
+)
+def test_every_detector_mutation_lets_its_positive_control_escape(tmp_path) -> None:
+    """Detector Reviewer finding 9, escape half.
+
+    The census half --- V-3 rejecting the instrument while a detector mutation
+    is active --- is exercised by ``tests/detector-mutation-run.sh``, which runs
+    one isolated process per mutation and reads the emitted census.
+    """
+    from ._harness.detectorprobe import run_all, unsound
+    from ._harness.detectors import DETECTOR_MUTATIONS
+
+    results = run_all(tmp_path)
+    assert len(results) == len(DETECTOR_MUTATIONS), (
+        "every catalogued detector mutation must have a probe"
+    )
+    bad = unsound(results)
+    assert not bad, (
+        "a detector mutation whose control does not escape demonstrates no "
+        "blindness:\n  " + "\n  ".join(bad)
+    )

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from . import consumption
 from .catalog import BY_ID, Obligation
 from .evidence_model import Evidence, Origin
 from .requirements import HarnessInvalid
@@ -50,6 +51,10 @@ def check(oid: str, payload: Mapping[str, Any], *, label: str = "") -> Evidence:
         label=label or oid,
         payload=dict(payload),
     )
+    # Detector Reviewer finding 5: record the content-addressed evaluation
+    # *before* the clauses run, so a row is credited only to the node that
+    # actually consumed it and a failing evaluation still leaves a trace.
+    consumption.record(oid, ev.label, ev.origin.value, ev.payload)
     ob.clause_set.check(ev)
     return ev
 

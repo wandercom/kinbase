@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from . import planters
 from .requirements import HarnessInvalid
 from .worldbuilder import OpaqueIds
 
@@ -77,11 +78,16 @@ def _emit(records: Sequence[Mapping[str, Any]], path: Path) -> frozenset[str]:
     path.parent.mkdir(parents=True, exist_ok=True)
     keys: set[str] = set()
     lines: list[str] = []
-    for record in records:
+    for index, record in enumerate(records):
         bound = {k: v for k, v in record.items() if k in PRODUCT_VISIBLE_KEYS}
+        # Detector Reviewer finding 7: the corpus the product ingests is raw
+        # pre-execution state; a corpus planter defects it here, after gold is
+        # stripped and before a single byte is written.
+        bound = planters.mutate("corpus.record", bound, index=index, path=str(path))
         keys.update(bound)
         lines.append(json.dumps(bound, sort_keys=True))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    planters.witness_path(path)
     return frozenset(keys)
 
 

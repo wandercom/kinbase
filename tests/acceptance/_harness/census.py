@@ -210,6 +210,10 @@ class Census:
     collection_errors: list[str] = field(default_factory=list)
     debt_digest: str = ""
     open_debt: int = 0
+    #: Runtime obligation-consumption audit (Detector Reviewer finding 5).
+    consumption: dict = field(default_factory=dict)
+    #: Independently witnessed pre-execution planter applications (finding 7).
+    planter_applications: list = field(default_factory=list)
     _folded: dict = field(default_factory=dict)
 
     @classmethod
@@ -241,6 +245,19 @@ class Census:
         built.debt_digest = _debt.digest()
         built.open_debt = len(_debt.open_entries())
         return built
+
+    def invalidate(self, gate: str, reason: str) -> None:
+        """Force one gate's instrument channel invalid with a stated reason.
+
+        Used for conditions the instrument discovers about *itself* after the
+        run: an unconsumed catalog row, a planter that never applied, an
+        unresolved validity debt entry. None of these is a product observation.
+        """
+        state = self.gates.get(gate)
+        if state is None:
+            return
+        state.instrument = Outcome.INVALID_HARNESS
+        state.instrument_reasons.append(reason)
 
     # -- recording --------------------------------------------------------
 
@@ -325,6 +342,8 @@ class Census:
             "mutation": self.mutation,
             "detector_mutation": self.detector_mutation,
             "collection_errors": list(self.collection_errors),
+            "obligation_consumption": dict(self.consumption),
+            "planter_applications": list(self.planter_applications),
             "gate_vector": {
                 g: self.gates[g].combined.value for g in GROUPS
             },

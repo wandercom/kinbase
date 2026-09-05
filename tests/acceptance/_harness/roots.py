@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
 
+from . import planters
 from .requirements import HarnessInvalid, ProductFailure
 
 
@@ -148,9 +149,28 @@ class ProofRoots:
         """Write the launcher-only user config exactly as ``spec/cli.md`` frames it."""
         path = self.user_config_path
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Detector Reviewer finding 7: the configuration a shared process loads
+        # is raw pre-execution state. A config planter changes it here, before
+        # the file is written and long before any product reads it.
+        table = planters.mutate(
+            "config.user",
+            {
+                "personal_data_root": str(personal_data_root or self.personal_root),
+                "classifier_args": list(classifier_args),
+            },
+            personal_root=str(self.personal_root),
+        )
+        extra_lines = {
+            k: v for k, v in table.items()
+            if k not in ("personal_data_root", "classifier_args")
+        }
+        classifier_args = table["classifier_args"]
         body = 'schema_version = "1"\n\n'
+        if extra_lines:
+            body += render_toml(extra_lines, section="policy")
+            body += "\n"
         body += render_toml(
-            {"data_root": str(personal_data_root or self.personal_root)},
+            {"data_root": str(table["personal_data_root"])},
             section="personal",
         )
         body += "\n"
@@ -180,6 +200,7 @@ class ProofRoots:
         )
         path.write_text(body, encoding="utf-8")
         os.chmod(path, 0o600)
+        planters.witness_path(path)
         return path
 
     def write_service_config(
@@ -214,8 +235,10 @@ class ProofRoots:
             "clock_skew_seconds": clock_skew_seconds,
             "nonce_retention_seconds": nonce_retention_seconds,
         }
+        table = planters.mutate("config.service", table, port=self.company_port)
         path.write_text(render_toml(table), encoding="utf-8")
         os.chmod(path, 0o600)
+        planters.witness_path(path)
         return path
 
     # -- helpers ----------------------------------------------------------
