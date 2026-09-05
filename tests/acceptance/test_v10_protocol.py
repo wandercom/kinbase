@@ -29,6 +29,9 @@ from pathlib import Path
 
 import pytest
 
+from ._harness import obligations as O
+from ._harness.evidence_model import Origin, require_all, require_nonempty, require_total_coverage
+
 from ._harness import ordering, stats
 from ._harness.cli import Guildhall
 from ._harness.gates import UNFUNDED_DIAGNOSTIC
@@ -291,11 +294,14 @@ def test_launch_without_a_signed_census_row_is_refused(
     frozen = tmp_path / "frozen-manifest.json"
     frozen.write_text(json.dumps({"schema": "guildhall-experiment-manifest/1"}), encoding="utf-8")
     for label in ("smoke", "debug", "harness-validation"):
+        # The launch label and the missing census are properties of the frozen
+        # manifest the harness writes, not out-of-band signals to the product.
+        manifest = json.loads(frozen.read_text(encoding="utf-8"))
+        manifest["launch_reason_code"] = label
+        manifest["run_census"] = None
+        frozen.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
         result = guildhall.run(
-            "experiment", "run", str(frozen), "--json",
-            env={"GUILDHALL_ACCEPTANCE_LAUNCH_LABEL": label,
-                 "GUILDHALL_ACCEPTANCE_SKIP_CENSUS": "1"},
-            check=False,
+            "experiment", "run", str(frozen), "--json", check=False
         )
         assert result.returncode not in (0, 1), (
             f"a {label!r} launch without a signed census row must be refused"
@@ -332,7 +338,21 @@ def test_eleven_arms_are_frozen_and_enumerated(spec_root: Path) -> None:
     product = (spec_root / "spec" / "product.md").read_text(encoding="utf-8")
     for arm in ARMS:
         assert f"`{arm}`" in product, f"arm {arm} is not named in spec/product.md P-10"
-    assert set(ARM_DIFFERENCES) == set(ARMS)
+    require_total_coverage(
+        ARM_DIFFERENCES,
+        ARMS,
+        obligation="V-10.envelope",
+        why="every one of the eleven ratified arms must have an enumerated difference",
+        origin=Origin.HARNESS,
+    )
+    require_all(
+        ARMS,
+        lambda a: bool(ARM_DIFFERENCES[a]),
+        obligation="V-10.envelope",
+        why="an arm with no enumerated difference is an unbound difference",
+        minimum=11,
+        origin=Origin.HARNESS,
+    )
     # Every arm must differ from `full-system` in an enumerated way.
     full = ARM_DIFFERENCES["full-system"]
     for arm, differences in ARM_DIFFERENCES.items():
@@ -425,10 +445,18 @@ def test_human_bytes_after_freeze_must_be_zero(guildhall: Guildhall, tmp_path: P
             f"human_bytes_after_freeze is {value}; any value other than zero is "
             "INVALID_RUN"
         )
+    # Operator prose is injected where a real operator could inject it: into the
+    # frozen manifest's launch inputs.
+    prose_manifest = tmp_path / "operator-prose.json"
+    prose_manifest.write_text(
+        json.dumps({
+            "schema": "guildhall-experiment-manifest/1",
+            "launch_inputs": {"operator_note": "an operator annotation"},
+        }, sort_keys=True),
+        encoding="utf-8",
+    )
     injected = guildhall.run(
-        "experiment", "run", str(tmp_path / "frozen.json"), "--json",
-        env={"GUILDHALL_ACCEPTANCE_INJECT_OPERATOR_PROSE": "an operator annotation"},
-        check=False,
+        "experiment", "run", str(prose_manifest), "--json", check=False
     )
     assert injected.returncode != 0, (
         "closed operator codes and preregistered launch inputs cannot carry prose into "
@@ -522,10 +550,11 @@ def test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task
     frozen = tmp_path / "frozen.json"
     frozen.write_text(json.dumps({"schema": "guildhall-experiment-manifest/1"}), encoding="utf-8")
     for principal in ("admin", "service-reader-all", "company-root"):
+        manifest = json.loads(frozen.read_text(encoding="utf-8"))
+        manifest["task_principal"] = principal
+        frozen.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
         result = guildhall.run(
-            "experiment", "run", str(frozen), "--json",
-            env={"GUILDHALL_ACCEPTANCE_TASK_PRINCIPAL": principal},
-            check=False,
+            "experiment", "run", str(frozen), "--json", check=False
         )
         assert result.returncode not in (0, 1), (
             f"principal {principal!r} must be ineligible for a measurement task"
@@ -735,10 +764,21 @@ def test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised(
     )
     assert frozen.returncode != 1
 
+    # Raising the ceiling is expressed as a real amended budget file, which is
+    # the only way a run could actually attempt it.
+    raised_budget = tmp_path / "raised-budget.json"
+    raised_budget.write_text(
+        json.dumps({
+            "schema": "guildhall-run-budget/1",
+            "max_calls": 2000, "max_tokens": 5_000_000, "max_usd": 400.0,
+            "ratified_by": "founder", "raisable_for_this_run": False,
+            "supersedes_ratified_ceiling": True,
+        }, sort_keys=True),
+        encoding="utf-8",
+    )
     raised = guildhall.run(
-        "experiment", "freeze", str(manifest), "--budget", str(budget), "--json",
-        env={"GUILDHALL_ACCEPTANCE_RAISE_BUDGET": "2000"},
-        check=False,
+        "experiment", "freeze", str(manifest), "--budget", str(raised_budget),
+        "--json", check=False,
     )
     assert raised.returncode != 0, (
         "the founder-ratified aggregate budget cannot be raised for this run"
@@ -1044,9 +1084,13 @@ def test_published_conclusion_uses_only_the_licensed_claim(
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True, exist_ok=True)
     result = guildhall.run("experiment", "verdict", str(run_dir), "--json", check=False)
-    assert result.returncode != 1
+    if result.returncode == 1:
+        raise ProductFailure("`experiment verdict` returned the reserved exit 1")
     if result.returncode != 0 or not result.stdout.strip():
-        return
+        raise ProductFailure(
+            "`experiment verdict` produced no conclusion, so the licensed-claim "
+            "discipline could not be checked"
+        )
     payload = result.json
     conclusion = json.dumps(payload)
     lowered = conclusion.lower()

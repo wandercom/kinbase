@@ -356,6 +356,7 @@ class Guildhall:
         stdin: str | bytes | None = None,
         timeout: float | None = None,
         check: bool = False,
+        pass_fds: tuple[int, ...] = (),
     ) -> Result:
         argv = tuple(self.entrypoint) + tuple(str(a) for a in args)
         run_cwd = Path(cwd or self.cwd)
@@ -376,6 +377,9 @@ class Guildhall:
                 input=payload,
                 capture_output=True,
                 timeout=timeout or self.default_timeout,
+                # Genuinely inherit the named descriptors. The V-3 descriptor
+                # probe is meaningless unless the child really receives them.
+                pass_fds=pass_fds,
             )
             rc = completed.returncode
             out = completed.stdout.decode("utf-8", "surrogateescape")

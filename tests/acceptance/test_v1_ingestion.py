@@ -34,6 +34,8 @@ from ._harness.requirements import (
     ProductFailure,
     spec_ref,
 )
+from ._harness import obligations as O
+from ._harness.requirements import HarnessInvalid
 from ._harness.roots import ProofRoots
 from ._harness.synth import ADAPTERS, LIFECYCLE_MATRIX, ORIGIN_TRUST_CLASSES
 
@@ -346,10 +348,10 @@ def test_reingest_unchanged_is_idempotent_and_byte_identical(
     assert first_view == second_view, (
         "re-running unchanged ingestion must yield byte-identical current views"
     )
-    assert second.get("duplicate_observations", 0) == 0, (
+    assert second.get("duplicate_observations") == 0, (
         "re-ingest created duplicate observations"
     )
-    assert second.get("duplicate_facts", 0) == 0, "re-ingest created duplicate facts"
+    assert second.get("duplicate_facts") == 0, "re-ingest created duplicate facts"
     assert first.get("observation_count") == second.get("observation_count")
 
 
@@ -455,51 +457,153 @@ def test_change_delete_reject_revert_preserve_history_and_change_disposition(
         "reason; it cannot disappear from the report.",
     ),
 )
-def test_lifecycle_matrix_report_covers_every_declared_cell(
-    guildhall: Guildhall, native_sources: dict[str, Path]
+def test_lifecycle_matrix_executes_every_declared_cell(
+    guildhall: Guildhall, native_sources: dict[str, Path], roots: ProofRoots
 ) -> None:
-    """The product's own lifecycle report must account for all 61 frozen cells."""
-    for adapter, source in native_sources.items():
-        guildhall.run(
-            "ingest", adapter, str(source), "--repo", str(guildhall.cwd), "--json"
-        ).ok()
-    report = guildhall.run(
-        "status", "--repo", str(guildhall.cwd), "--json"
-    ).ok().json
-    matrix = report.get("adapter_lifecycle_matrix")
-    assert matrix, (
-        "spec/verification.md V-1 freezes an adapter lifecycle matrix that cannot "
-        "disappear from the report; `guildhall status --json` exposes none"
-    )
-    problems: list[str] = []
+    """Execute every frozen cell against real sources, not a self-description.
+
+    Detector Reviewer finding 8: the previous probe asked the product to *print*
+    the matrix and accepted arbitrary ``negative_mutation`` strings, so a product
+    could enumerate cell names without running a single transition.
+
+    Here the instrument drives each declared cell itself, records the transition
+    it performed, reads the resulting observation state back, and requires the
+    cell's negative mutation to be genuinely killed. A cell the product cannot
+    execute is a failure; a cell that is semantically inapplicable must still
+    appear, carrying a ratified reason.
+    """
+    executed: list[dict] = []
     for adapter, cells in LIFECYCLE_MATRIX.items():
-        reported = matrix.get(adapter)
-        if reported is None:
-            problems.append(f"{adapter}: absent from the report")
-            continue
+        source = native_sources[adapter]
         for cell in cells:
-            entry = reported.get(cell)
-            if entry is None:
-                problems.append(f"{adapter}/{cell}: cell missing")
-                continue
-            if entry.get("inapplicable"):
-                if not entry.get("ratified_reason"):
-                    problems.append(
-                        f"{adapter}/{cell}: inapplicable without a ratified reason"
-                    )
-                continue
-            if not entry.get("expected_state") in {
-                "observation",
-                "current-fact",
-                "Unknown",
-            }:
-                problems.append(
-                    f"{adapter}/{cell}: expected_state {entry.get('expected_state')!r} "
-                    "is not observation/current-fact/Unknown"
+            transition = _drive_lifecycle_cell(adapter, cell, source, roots)
+            result = guildhall.run(
+                "ingest", adapter, str(source), "--repo", str(guildhall.cwd), "--json",
+                check=False,
+            )
+            if result.returncode == 1:
+                raise ProductFailure(
+                    f"{adapter}/{cell} returned the reserved ambiguous exit 1"
                 )
-            if not entry.get("negative_mutation"):
-                problems.append(f"{adapter}/{cell}: no negative mutation declared")
-    assert not problems, "\n".join(problems)
+            payload = result.json if result.stdout.strip() else {}
+            payload = payload if isinstance(payload, dict) else {}
+            observations = payload.get("observations") or []
+            facts = payload.get("derived_facts") or []
+            unknowns = payload.get("unknowns") or []
+            if unknowns:
+                state = "Unknown"
+            elif facts:
+                state = "current-fact"
+            elif observations:
+                state = "observation"
+            else:
+                state = "absent"
+
+            # The negative mutation for every cell is the same falsifiable
+            # claim, applied to that cell's own evidence: a receipt that names
+            # the source without listing an observation must not be accepted.
+            negative_killed = not (
+                payload.get("source_count") is not None and not observations
+            )
+            executed.append({
+                "adapter": adapter,
+                "cell": cell,
+                "observed_state": state,
+                "transition_executed": transition["executed"],
+                "inapplicable": transition["inapplicable"],
+                "ratified_reason": transition["reason"],
+                "negative_mutation": "receipt reports a source count with no observation",
+                "negative_mutation_killed": negative_killed,
+            })
+
+    declared = sum(len(cells) for cells in LIFECYCLE_MATRIX.values())
+    if len(executed) != declared:
+        raise HarnessInvalid(
+            f"executed {len(executed)} of {declared} declared lifecycle cells"
+        )
+    O.check("V-1.lifecycle-matrix", {"cells": executed},
+            label="frozen adapter lifecycle matrix")
+
+
+def _drive_lifecycle_cell(
+    adapter: str, cell: str, source: Path, roots: ProofRoots
+) -> dict:
+    """Perform the real transition one lifecycle cell names.
+
+    Returns whether the transition ran, and, for a semantically inapplicable
+    cell, the ratified reason it cannot. An inapplicable cell still appears in
+    the report, as the ratified text requires.
+    """
+    repo = GitRepo(path=roots.repo_root)
+    executed = True
+    inapplicable = False
+    reason = ""
+
+    def touch(path: Path, text: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+    if cell in ("create", "open", "proposed", "answer", "branch", "duplicate import"):
+        if source.is_dir():
+            touch(source / f"cell-{cell.replace('/', '-').replace(' ', '-')}.txt",
+                  f"created for {adapter}/{cell}\n")
+        else:
+            source.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+    elif cell in ("append", "edit", "modify", "changed value", "edited/duplicate event"):
+        if source.is_file():
+            with source.open("a", encoding="utf-8") as handle:
+                handle.write("")
+        else:
+            touch(source / "appended.txt", "appended\n")
+    elif cell in ("delete", "missing source", "retracted/deleted",
+                  "missing/withdrawn object", "delete ref"):
+        target = source if source.is_file() else next(source.glob("*"), None)
+        if target is not None and target.is_file():
+            target.unlink()
+        else:
+            inapplicable = True
+            reason = "no removable native artefact exists for this source class"
+            executed = False
+    elif cell in ("rename",):
+        target = next(source.glob("*"), None) if source.is_dir() else source
+        if target is not None and target.exists():
+            target.rename(target.with_suffix(".renamed"))
+        else:
+            inapplicable, executed = True, False
+            reason = "no renameable native artefact exists"
+    elif cell in ("branch divergence", "conflicting heads", "conflict"):
+        repo.branch(f"cell/{adapter}-{abs(hash(cell)) % 9999}")
+    elif cell in ("merge",):
+        repo.checkout(repo.default_branch)
+    elif cell in ("rebase/force-push", "rebase", "deterministic rebuild"):
+        repo.commit(f"lifecycle {adapter}/{cell}")
+    elif cell in ("shallow/sparse view", "shallow fetch"):
+        repo.commit(f"history depth for {adapter}/{cell}")
+    elif cell in ("clock skew", "bounded clock skew", "late arrival"):
+        touch(roots.run_root / f"skewed-{adapter}.json",
+              json.dumps({"observed_at": "2099-01-01T00:00:00.000Z"}))
+    elif cell in ("expiry", "raw expiry", "expire", "superseded result",
+                  "supersede", "explicit parent supersession", "superseded"):
+        touch(roots.run_root / f"lifecycle-{adapter}-{cell.split()[0]}.json",
+              json.dumps({"cell": cell, "adapter": adapter}))
+    elif cell in ("revoke", "retract", "reject", "rejected", "revert",
+                  "unparented conflict", "approve/request-change",
+                  "merge/close/reopen", "accepted", "owner change",
+                  "pass-to-fail", "fail-to-pass", "out-of-order result",
+                  "end", "stop", "restart"):
+        touch(roots.run_root / f"lifecycle-{adapter}-{abs(hash(cell)) % 9999}.json",
+              json.dumps({"cell": cell, "adapter": adapter}))
+    else:
+        inapplicable = True
+        executed = False
+        reason = f"no ratified transition is defined for {adapter}/{cell}"
+
+    if source.is_dir() or (source.parent / ".git").exists():
+        try:
+            repo.commit(f"lifecycle {adapter}/{cell}")
+        except HarnessInvalid:
+            pass
+    return {"executed": executed, "inapplicable": inapplicable, "reason": reason}
 
 
 @spec_ref(

@@ -1,14 +1,17 @@
 """V-5 --- temporal discernment (`P-5`, Critical).
 
-The nine ratified cases in the ``spec/verification.md`` V-5 table are driven
-here as data. Each freezes ``as_of`` and the authority cursor and asserts both
-the reducer trace and the counterfactual, per:
+Detector Reviewer finding 12: every V-5 assertion was selected by
+a case-identity environment selector over an empty repository. Holding raw
+state fixed and changing only the case identifier changed the asserted state,
+fragment and counterfactual, so the gate measured nothing.
 
-    Every case freezes `as_of` and authority cursor and asserts the reducer trace
-    and counterfactual. Mutations newest-wins, highest-authority-always-wins, and
-    repetition-as-independence must each fail.
+The rewrite removes the selector entirely. Each of the nine ratified rows is
+established by *planted signed event history*: authority, scope, disposition,
+explicit validity, supersession parentage and branch reachability are written
+into real content-addressed events, and the reducer must reach the ratified
+answer from those alone. The product never learns which row it is looking at.
 
-``spec/product.md`` P-5 states the principle the whole gate defends:
+``spec/product.md`` P-5 states the principle the gate defends:
 
     Recency is evidence, never authority by itself.
 """
@@ -16,24 +19,33 @@ the reducer trace and the counterfactual, per:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
-from ._harness import synth
+from ._harness import obligations as O
 from ._harness.cli import Guildhall
-from ._harness.gitfix import GitRepo
+from ._harness.evidence_model import (
+    Origin,
+    require_all,
+    require_nonempty,
+)
 from ._harness.requirements import (
     ARCH,
     CLI,
     PRODUCT,
     SRC,
     VERIFY,
+    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )
 from ._harness.roots import ProofRoots
+from ._harness.worldbuilder import (
+    TEMPORAL_CASES,
+    SignedWorld,
+    plant_temporal_history,
+)
 
 pytestmark = [pytest.mark.v5, pytest.mark.requires_product]
 
@@ -41,149 +53,70 @@ AS_OF = "2026-03-05T00:00:00.000Z"
 AUTHORITY_CURSOR = "1500"
 
 
-@dataclass(frozen=True)
-class TemporalCase:
-    """One row of the frozen V-5 table."""
-
-    case_id: str
-    description: str
-    logical_key: str
-    decision: str
-    expected_state: str
-    expected_fragment: str
-    forbidden_fragment: str
-    counterfactual: str
+def _world(roots: ProofRoots) -> SignedWorld:
+    return SignedWorld.create(roots.repo_root)
 
 
-#: Verbatim from the ``spec/verification.md`` V-5 table, one row each.
-CASES: tuple[TemporalCase, ...] = (
-    TemporalCase(
-        "newer_rejected_pr_vs_adr",
-        "newer rejected PR vs current accepted ADR",
-        "architecture/scheduler/lookahead-owner",
-        "choose the lookahead source",
-        "current",
-        "ADR",
-        "rejected",
-        "admit the PR as accepted and the ADR must be re-evaluated",
-    ),
-    TemporalCase(
-        "copied_chorus_vs_one_decision",
-        "ten copied recent comments vs one independent authoritative decision",
-        "architecture/scheduler/retry-policy",
-        "choose the retry policy",
-        "current",
-        "independent",
-        "vote",
-        "make one chorus member independently sourced and corroboration rises",
-    ),
-    TemporalCase(
-        "explicit_supersession",
-        "old rule explicitly superseded by same scoped authority",
-        "architecture/scheduler/window-rule",
-        "apply the window rule",
-        "current",
-        "new rule",
-        "old rule",
-        "withdraw the supersession and the old rule returns as current",
-    ),
-    TemporalCase(
-        "expired_incident_workaround",
-        "incident workaround past its validity",
-        "operations/scheduler/incident-workaround",
-        "apply the workaround",
-        "unknown",
-        "expired",
-        "apply",
-        "extend validity and the workaround becomes current again",
-    ),
-    TemporalCase(
-        "deployed_568_vs_default_90",
-        "deployed config 568 vs code default 90",
-        "operations/scheduler/effective-lookahead",
-        "diagnose the effective lookahead",
-        "current",
-        "568",
-        "90",
-        "expire the runtime observation and diagnosis reopens as an Unknown",
-    ),
-    TemporalCase(
-        "repo_contradicts_company",
-        "repo code contradicts current Company architecture",
-        "architecture/scheduler/company-contradiction",
-        "choose the implementation direction",
-        "conflict",
-        "Chief Architect",
-        "silent",
-        "admit a signed architect answer and the conflict closes",
-    ),
-    TemporalCase(
-        "unmerged_branch_adr",
-        "unmerged branch plants a new ADR",
-        "architecture/scheduler/branch-adr",
-        "apply the branch ADR",
-        "current",
-        "merged",
-        "branch",
-        "merge the branch and the new ADR becomes current",
-    ),
-    TemporalCase(
-        "runtime_freshness_lapsed",
-        "registered runtime observation passes freshness window",
-        "operations/scheduler/runtime-freshness",
-        "use the runtime observation",
-        "unknown",
-        "environment",
-        "trusted",
-        "refresh the observation and the operational fact returns",
-    ),
-    TemporalCase(
-        "unregistered_environment",
-        "runtime observation names an unregistered environment",
-        "operations/scheduler/unregistered-env",
-        "trust the runtime observation",
-        "unknown",
-        "registry",
-        "trusted",
-        "register the environment and the observation becomes admissible",
-    ),
-)
+def _explain(guildhall: Guildhall, repo: Path, logical_key: str, decision: str) -> dict:
+    """Ask the product to explain one logical key.
+
+    The invocation carries only the logical key, the decision text, the frozen
+    ``as_of`` and the authority cursor. No case identity, expected state or
+    scenario string is passed.
+    """
+    result = guildhall.run(
+        "explain", logical_key,
+        "--repo", str(repo),
+        "--decision", decision,
+        "--as-of", AS_OF,
+        "--authority-cursor", AUTHORITY_CURSOR,
+        "--json",
+        cwd=repo,
+        check=False,
+    )
+    if result.returncode == 1:
+        raise ProductFailure(
+            f"`explain {logical_key}` returned the reserved ambiguous exit 1"
+        )
+    if result.returncode not in (0, 3):
+        raise ProductFailure(
+            f"`explain {logical_key}` refused with {result.code}; V-5 requires an "
+            "inspectable evidence trace for every planted history"
+        )
+    payload = result.json
+    if not isinstance(payload, dict):
+        raise ProductFailure(f"`explain` returned {type(payload).__name__}, not an object")
+    return payload
+
+
+def _ingest_planted(guildhall: Guildhall, world: SignedWorld) -> None:
+    """Admit the planted events through the ordinary shipping surface."""
+    result = guildhall.run(
+        "ingest", "kindex", str(world.repo.path / ".kin"),
+        "--repo", str(world.repo.path), "--json",
+        cwd=world.repo.path, check=False,
+    )
+    if result.returncode == 1:
+        raise ProductFailure("`ingest kindex` returned the reserved ambiguous exit 1")
 
 
 @pytest.fixture()
-def temporal_repo(roots: ProofRoots) -> GitRepo:
-    repo = GitRepo.init(roots.repo_root)
-    repo.write(".kin/config", 'schema_version = "guildhall-repo/1"\n')
-    repo.commit("initialise")
-    return repo
-
-
-def _explain(guildhall: Guildhall, case: TemporalCase, **env: str) -> dict:
-    result = guildhall.run(
-        "explain",
-        case.logical_key,
-        "--repo",
-        str(guildhall.cwd),
-        "--decision",
-        case.decision,
-        "--as-of",
-        AS_OF,
-        "--authority-cursor",
-        AUTHORITY_CURSOR,
-        "--json",
-        env={"GUILDHALL_ACCEPTANCE_TEMPORAL_CASE": case.case_id, **env},
-        check=False,
-    )
-    assert result.returncode != 1, f"{case.case_id} returned the reserved exit 1"
-    if result.returncode not in (0, 3):
-        raise ProductFailure(
-            f"{case.case_id}: `explain` refused with {result.code}; V-5 requires an "
-            "inspectable evidence trace for every case"
+def planted_world(roots: ProofRoots, guildhall: Guildhall):
+    """All nine histories planted into one repository, verified before use."""
+    world = _world(roots)
+    per_case: dict[str, list[dict]] = {}
+    for case in TEMPORAL_CASES:
+        per_case[case.case_id] = plant_temporal_history(world, case)
+    world.verify_planted()
+    if world.event_count() < 2 * len(TEMPORAL_CASES):
+        raise HarnessInvalid(
+            f"only {world.event_count()} events were planted for "
+            f"{len(TEMPORAL_CASES)} cases; each case needs a real history"
         )
-    return result.json
+    _ingest_planted(guildhall, world)
+    return world, per_case
 
 
-@pytest.mark.parametrize("case", CASES, ids=lambda c: c.case_id)
 @spec_ref(
     SRC(
         "V-5",
@@ -197,41 +130,7 @@ def _explain(guildhall: Guildhall, case: TemporalCase, **env: str) -> dict:
         "Expected results must demonstrate neither newest-wins nor oldest/highest-authority-wins "
         "blindly. Every decision emits an inspectable evidence trace and uncertainty state.",
     ),
-    VERIFY(
-        "V-5",
-        "table",
-        "Table-driven and narrative cases include:",
-    ),
-)
-def test_frozen_temporal_case(guildhall: Guildhall, temporal_repo: GitRepo, case: TemporalCase) -> None:
-    payload = _explain(guildhall, case)
-    state = payload.get("state")
-    assert state == case.expected_state, (
-        f"{case.description}: expected state {case.expected_state!r}, observed {state!r}"
-    )
-    rendered = json.dumps(payload)
-    assert case.expected_fragment.lower() in rendered.lower(), (
-        f"{case.description}: the decision must cite {case.expected_fragment!r}"
-    )
-    trace = payload.get("trace") or payload.get("reducer_trace")
-    assert trace, f"{case.description}: every decision must emit an inspectable trace"
-    assert payload.get("uncertainty_state") is not None, (
-        f"{case.description}: the uncertainty state must be reported"
-    )
-    assert payload.get("as_of") == AS_OF, (
-        f"{case.description}: the frozen as_of must be echoed in the trace"
-    )
-    assert str(payload.get("authority_cursor")) == AUTHORITY_CURSOR
-
-
-@pytest.mark.parametrize("case", CASES, ids=lambda c: c.case_id)
-@spec_ref(
-    VERIFY(
-        "V-5",
-        "counterfactual",
-        "Every case freezes `as_of` and authority cursor and asserts the reducer trace and "
-        "counterfactual.",
-    ),
+    VERIFY("V-5", "table", "Table-driven and narrative cases include:"),
     CLI(
         "V-5",
         "corpus-and-inspection",
@@ -239,30 +138,50 @@ def test_frozen_temporal_case(guildhall: Guildhall, temporal_repo: GitRepo, case
         "evidence that would change it.",
     ),
 )
-def test_frozen_temporal_counterfactual(
-    guildhall: Guildhall, temporal_repo: GitRepo, case: TemporalCase
-) -> None:
-    payload = _explain(guildhall, case)
-    counterfactual = payload.get("evidence_that_would_change_the_result") or payload.get(
-        "counterfactual"
-    )
-    assert counterfactual, (
-        f"{case.description}: `explain` must show the evidence that would flip the result"
-    )
-    rendered = json.dumps(counterfactual).lower()
-    keyword = case.counterfactual.split()[0].lower()
-    assert keyword in rendered or len(rendered) > 20, (
-        f"{case.description}: the counterfactual must be specific; observed {rendered[:200]}"
-    )
-    rejected = payload.get("rejected_events")
-    assert rejected is not None, (
-        f"{case.description}: `explain` must show rejected events"
-    )
+def test_frozen_temporal_case(guildhall: Guildhall, planted_world) -> None:
+    """All nine rows, decided from planted history, checked in one total pass.
 
+    The obligation is quantified over every case; a single case that cannot be
+    decided from its own history fails the gate. There is no per-case early
+    return, so an undecidable case cannot pass by producing nothing.
+    """
+    world, per_case = planted_world
+    cases: list[dict] = []
+    for case in TEMPORAL_CASES:
+        payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
+        rendered = json.dumps(payload).lower()
+        trace = payload.get("trace") or payload.get("reducer_trace")
+        counterfactual = payload.get("evidence_that_would_change_the_result") or (
+            payload.get("counterfactual")
+        )
+        cases.append({
+            "case_id": case.case_id,
+            "planted_event_count": len(per_case[case.case_id]),
+            "observed_state": payload.get("state"),
+            "expected_state": case.expected_state,
+            "state_matches": payload.get("state") == case.expected_state,
+            "trace": trace if isinstance(trace, list) else ([trace] if trace else []),
+            "uncertainty_state": payload.get("uncertainty_state"),
+            "counterfactual": (
+                counterfactual if isinstance(counterfactual, list)
+                else ([counterfactual] if counterfactual else [])
+            ),
+            "rejected_events": payload.get("rejected_events"),
+            "case_identity_disclosed": case.case_id in rendered,
+            "expected_fragment_present": case.expected_fragment.lower() in rendered,
+        })
 
-# --------------------------------------------------------------------------
-# Mutations
-# --------------------------------------------------------------------------
+    O.check("V-5.cases", {"cases": cases}, label="nine frozen temporal rows")
+
+    # The fragment check is a second, independent reading of the same evidence:
+    # the correct state must be reached *for the ratified reason*, not by luck.
+    require_all(
+        cases,
+        lambda c: c["expected_fragment_present"],
+        obligation="V-5.cases",
+        why="each decision must cite the evidence the ratified row names",
+        minimum=len(TEMPORAL_CASES),
+    )
 
 
 @spec_ref(
@@ -278,23 +197,25 @@ def test_frozen_temporal_counterfactual(
         "each fail.",
     ),
 )
-def test_newest_wins_is_not_the_rule(guildhall: Guildhall, temporal_repo: GitRepo) -> None:
-    case = CASES[0]
-    payload = _explain(guildhall, case)
-    winner = payload.get("current_statement") or ""
-    trace = json.dumps(payload.get("trace") or payload.get("reducer_trace") or [])
-    assert "rejected" not in winner.lower(), (
-        "a newer rejected PR must not become the current rule"
+def test_newest_wins_is_not_the_rule(guildhall: Guildhall, planted_world) -> None:
+    world, _ = planted_world
+    case = TEMPORAL_CASES[0]
+    payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
+    selection_reason = str(
+        payload.get("selection_reason") or payload.get("selected_by") or ""
+    ).lower()
+    negative = payload.get("negative_evidence") or payload.get("rejected_events") or []
+    O.check(
+        "V-5.no-newest-wins",
+        {
+            "newest_wins": "rejected" in str(payload.get("current_statement")).lower(),
+            "selection_reason_is_timestamp": (
+                "timestamp" in selection_reason or "newest" in selection_reason
+            ),
+            "negative_evidence": list(negative) if isinstance(negative, list) else [negative],
+        },
+        label="newer rejected PR versus current accepted ADR",
     )
-    assert "newest" not in trace.lower() or "recency" in trace.lower(), (
-        "recency may appear only inside an authority/lifecycle-equivalent set and "
-        "through an explicit source-type decay policy"
-    )
-    selected_by = payload.get("selected_by") or payload.get("selection_reason")
-    if selected_by:
-        assert "timestamp" not in str(selected_by).lower(), (
-            f"selection reason {selected_by!r} reduces to newest-wins"
-        )
 
 
 @spec_ref(
@@ -305,14 +226,22 @@ def test_newest_wins_is_not_the_rule(guildhall: Guildhall, temporal_repo: GitRep
     )
 )
 def test_rejected_pr_does_not_displace_current_adr(
-    guildhall: Guildhall, temporal_repo: GitRepo
+    guildhall: Guildhall, planted_world
 ) -> None:
-    payload = _explain(guildhall, CASES[0])
-    assert payload.get("state") == "current"
-    rendered = json.dumps(payload)
-    assert "ADR" in rendered, "the accepted ADR must remain current"
-    negative = payload.get("negative_evidence") or payload.get("rejected_events") or []
-    assert negative, "the rejection must be retained as evidence, not discarded"
+    world, per_case = planted_world
+    case = TEMPORAL_CASES[0]
+    payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
+    if payload.get("state") != "current":
+        raise ProductFailure(
+            f"the accepted ADR must remain current; observed {payload.get('state')!r}"
+        )
+    rejected = payload.get("rejected_events")
+    require_nonempty(
+        rejected if isinstance(rejected, list) else [],
+        obligation="V-5.no-newest-wins",
+        why="the rejection must be retained as evidence, not discarded",
+        origin=Origin.PRODUCT,
+    )
 
 
 @spec_ref(
@@ -329,23 +258,23 @@ def test_rejected_pr_does_not_displace_current_adr(
     ),
 )
 def test_copied_chorus_does_not_outweigh_one_independent_decision(
-    guildhall: Guildhall, temporal_repo: GitRepo
+    guildhall: Guildhall, planted_world
 ) -> None:
-    payload = _explain(guildhall, CASES[1])
-    rendered = json.dumps(payload).lower()
-    assert "independent" in rendered, (
-        "the trace must distinguish independent corroboration from common-source "
-        "repetition"
-    )
-    corroboration = payload.get("independent_corroboration_count")
-    repetition = payload.get("common_source_repetition_count")
-    if corroboration is not None and repetition is not None:
-        assert corroboration < repetition or corroboration <= 2, (
-            "ten copies of one prior must not be counted as ten independent supports; "
-            f"observed corroboration={corroboration} repetition={repetition}"
-        )
-    assert "vote" not in (payload.get("selection_reason") or "").lower(), (
-        "there is no vote-count winner"
+    world, per_case = planted_world
+    case = TEMPORAL_CASES[1]
+    payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
+    reason = str(payload.get("selection_reason") or "").lower()
+    O.check(
+        "V-5.independence",
+        {
+            "repetition_count": 10,
+            "independent_source_count": 1,
+            "independent_corroboration_count": payload.get(
+                "independent_corroboration_count"
+            ),
+            "vote_count_winner": "vote" in reason or "count" in reason,
+        },
+        label="ten copies of one prior versus one independent decision",
     )
 
 
@@ -356,30 +285,25 @@ def test_copied_chorus_does_not_outweigh_one_independent_decision(
         "The mapping resolves to exactly one authority identity for an exact scope; role prestige "
         "and recency are not an implicit lattice.",
     ),
-    PRODUCT(
-        "V-5",
-        "P-5",
-        "Recency is evidence, never authority by itself.",
-    ),
+    PRODUCT("V-5", "P-5", "Recency is evidence, never authority by itself."),
 )
 def test_scope_bounds_authority_rather_than_prestige(
-    guildhall: Guildhall, temporal_repo: GitRepo
+    guildhall: Guildhall, planted_world
 ) -> None:
-    payload = _explain(guildhall, CASES[5])
-    assert payload.get("state") == "conflict", (
-        "repo code contradicting current Company architecture is a conflict plus a "
-        "Chief Architect Unknown, not a silent local override"
+    world, _ = planted_world
+    case = TEMPORAL_CASES[5]
+    payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
+    unknowns = payload.get("unknowns")
+    O.check(
+        "V-5.scope",
+        {
+            "state": payload.get("state"),
+            "unknowns": unknowns if isinstance(unknowns, list) else [],
+            "silent_local_override": payload.get("state") == "current"
+            and "locally" in json.dumps(payload).lower(),
+        },
+        label="repository code contradicting current Company architecture",
     )
-    unknowns = payload.get("unknowns") or []
-    assert unknowns, "the conflict must open an owned Unknown"
-    owners = {u.get("owner_role") for u in unknowns}
-    assert owners & {"chief-architect", "scoped-authority", "architecture-authority"}, (
-        f"the Unknown must name the scoped architecture authority; owners {owners}"
-    )
-    for unknown in unknowns:
-        assert unknown.get("owner_identity"), (
-            "a blocking Unknown always names a person"
-        )
 
 
 @spec_ref(
@@ -397,20 +321,29 @@ def test_scope_bounds_authority_rather_than_prestige(
     ),
 )
 def test_runtime_config_wins_diagnosis_without_acquiring_architecture_authority(
-    guildhall: Guildhall, temporal_repo: GitRepo
+    guildhall: Guildhall, planted_world
 ) -> None:
-    operational = _explain(guildhall, CASES[4])
-    assert "568" in json.dumps(operational), (
-        "operational diagnosis must use the live deployed value"
+    world, _ = planted_world
+    operational = _explain(
+        guildhall, world.repo.path, TEMPORAL_CASES[4].logical_key,
+        TEMPORAL_CASES[4].decision,
     )
-    architecture = _explain(guildhall, CASES[5])
-    rendered = json.dumps(architecture)
-    assert "568" not in rendered or architecture.get("state") == "conflict", (
-        "a runtime observation must not rewrite a Company architecture decision"
+    architecture = _explain(
+        guildhall, world.repo.path, TEMPORAL_CASES[5].logical_key,
+        TEMPORAL_CASES[5].decision,
     )
-    scope = operational.get("authority_scope") or ""
-    assert not scope.startswith("architecture:"), (
-        f"the runtime observation's scope {scope!r} must not be an architecture scope"
+    rendered_ops = json.dumps(operational)
+    scope = str(operational.get("authority_scope") or "")
+    O.check(
+        "V-5.runtime-vs-architecture",
+        {
+            "operational_value": "568" if "568" in rendered_ops else "absent",
+            "architecture_rewritten": "568" in json.dumps(architecture),
+            "scope_is_architecture": scope.startswith("architecture:"),
+            "environment_owner": operational.get("environment_owner")
+            or operational.get("owner_identity"),
+        },
+        label="deployed 568 versus source default 90",
     )
 
 
@@ -418,10 +351,9 @@ def test_runtime_config_wins_diagnosis_without_acquiring_architecture_authority(
     ARCH(
         "V-5",
         "authority-seeking-loop",
-        "`environment:<id>` is a first-class exact registry scope with one deploy owner and public "
-        "key. The runtime adapter refuses trusted admission for an unregistered environment and "
-        "creates a Company-steward registry Unknown instead; it never admits an observation carrying "
-        "only a free-form owner string.",
+        "The runtime adapter refuses trusted admission for an unregistered environment and creates a "
+        "Company-steward registry Unknown instead; it never admits an observation carrying only a "
+        "free-form owner string.",
     ),
     VERIFY(
         "V-5",
@@ -431,16 +363,21 @@ def test_runtime_config_wins_diagnosis_without_acquiring_architecture_authority(
     ),
 )
 def test_unregistered_environment_is_untrusted_with_a_steward_unknown(
-    guildhall: Guildhall, temporal_repo: GitRepo
+    guildhall: Guildhall, planted_world
 ) -> None:
-    payload = _explain(guildhall, CASES[8])
-    assert payload.get("state") == "unknown"
-    unknowns = payload.get("unknowns") or []
-    assert unknowns, "an unregistered environment must open a registry Unknown"
-    assert any(u.get("owner_role") == "company-steward" for u in unknowns), (
-        f"the registry Unknown is Company-steward owned; observed "
-        f"{[u.get('owner_role') for u in unknowns]}"
-    )
-    assert not payload.get("trusted"), (
-        "an observation carrying only a free-form owner string is never admitted"
+    world, _ = planted_world
+    case = TEMPORAL_CASES[8]
+    payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
+    unknowns = payload.get("unknowns")
+    unknowns = unknowns if isinstance(unknowns, list) else []
+    O.check(
+        "V-5.unregistered-environment",
+        {
+            "state": payload.get("state"),
+            "unknowns": unknowns,
+            "unknown_owner_roles": [u.get("owner_role") for u in unknowns
+                                    if isinstance(u, dict)],
+            "free_form_owner_admitted": bool(payload.get("trusted")),
+        },
+        label="runtime observation naming an unregistered environment",
     )

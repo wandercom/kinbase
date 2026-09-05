@@ -16,6 +16,7 @@ and the custody rule that keeps the qualification honest:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sqlite3
@@ -23,6 +24,9 @@ import time
 from pathlib import Path
 
 import pytest
+
+from ._harness import obligations as O
+from ._harness.evidence_model import Origin, require_all, require_nonempty
 
 from ._harness import canaries, stats, synth
 from ._harness.cli import Guildhall
@@ -156,6 +160,22 @@ def test_randomized_qualification_publishes_every_denominator(
     assert fp_upper <= FALSE_POSITIVE_UPPER_BOUND, (
         f"false-positive Wilson upper bound {fp_upper:.4f} exceeds "
         f"{FALSE_POSITIVE_UPPER_BOUND}"
+    )
+    O.check(
+        "V-3.qualification",
+        {
+            "positives": len(plan),
+            "decoys": RANDOMIZED_DECOYS,
+            "sensitivity_wilson_lower": sensitivity_lower,
+            "false_positive_wilson_upper": fp_upper,
+            "stratification_met": ok,
+            "deterministic_controls_missed": len(misses),
+            "false_negative_bound": false_negative_bound,
+            "registry_values_not_exposed": all(
+                v not in serialised for v in registry.values()
+            ),
+        },
+        label="randomized detector qualification",
     )
 
 
@@ -378,9 +398,13 @@ def test_revoked_signer_reopens_downstream_facts_as_owned_unknowns(
         "ingest", "kindex", str(path), "--repo", str(guildhall.cwd), "--json", check=False
     )
     status = guildhall.run("status", "--repo", str(guildhall.cwd), "--json", check=False)
+    if status.returncode == 1:
+        raise ProductFailure("`status` returned the reserved ambiguous exit 1")
     if status.returncode not in (0, 3):
-        assert status.returncode != 1
-        return
+        raise ProductFailure(
+            f"`status` refused with {status.code}; the revocation cascade state must "
+            "be observable for the obligation to bind"
+        )
     payload = status.json
     cascade = payload.get("revocation_cascade") or {}
     if cascade:
@@ -417,9 +441,13 @@ def test_unreachable_clone_residual_is_recorded_with_every_field(
     guildhall: Guildhall,
 ) -> None:
     status = guildhall.run("status", "--repo", str(guildhall.cwd), "--json", check=False)
+    if status.returncode == 1:
+        raise ProductFailure("`status` returned the reserved ambiguous exit 1")
     if status.returncode not in (0, 3):
-        assert status.returncode != 1
-        return
+        raise ProductFailure(
+            f"`status` refused with {status.code}; the steward-owned residual must be "
+            "observable for the obligation to bind"
+        )
     residuals = status.json.get("unreachable_clone_residuals") or []
     for residual in residuals:
         for field in (
@@ -596,37 +624,96 @@ def test_same_uid_acquired_bytes_are_rejected_by_the_promotion_gate(
     ),
 )
 def test_auxiliary_corpus_selection_record_is_complete_and_frozen() -> None:
-    path = (
-        Path(__file__).resolve().parents[1]
-        / "fixtures"
-        / "policies"
-        / "auxiliary-corpus-request.json"
-    )
-    assert path.is_file(), (
-        "the Tester must publish the eligible auxiliary-corpus pool for the "
-        "implementation-blind Detector Reviewer to select from"
-    )
-    payload = json.loads(path.read_text(encoding="utf-8"))
-    assert payload["selected_by"] == "detector-reviewer", (
-        "neither Tester, Coder, Validator nor reconstructor selects the corpus"
-    )
-    for field in (
-        "selection_procedure",
-        "source_rights",
-        "contents",
-        "versions",
-        "digest_field",
-    ):
-        assert field in payload["reviewer_must_record"], field
-    assert payload["mutable_after_execution_begins"] is False, (
-        "the corpus cannot be weakened or replaced after execution begins"
-    )
-    assert payload["reconstructor_receives"] == [
-        "all_shared_surfaces",
-        "frozen_auxiliary_corpus",
-    ], payload["reconstructor_receives"]
+    """A concrete, digest-bound, rights-verified pool must exist to select from.
+
+    Detector Reviewer finding 17: the lane carried only a request listing field
+    names, so no selection or digest could be produced and the reconstructor had
+    nothing to correlate against. This asserts the pool itself --- concrete source
+    candidates with a verifiable rights basis, generated dictionaries,
+    correlation records, decoys and digests --- while leaving *selection* to the
+    fresh implementation-blind Reviewer, as the threat model requires.
+    """
+    root = Path(__file__).resolve().parents[1] / "fixtures" / "auxiliary"
+    pool_path = root / "pool.json"
+    if not pool_path.is_file():
+        raise HarnessInvalid(
+            "no eligible auxiliary-corpus pool exists; the reconstructor cannot "
+            "perform correlated reconstruction without one"
+        )
+    pool = json.loads(pool_path.read_text(encoding="utf-8"))
+
+    rights = pool["rights_basis"]
+    for field in ("license", "rights_holder", "authorship", "verification"):
+        if not rights.get(field):
+            raise HarnessInvalid(f"the rights basis does not record {field}")
+    if rights.get("customer_or_employer_confidential_material") is not False:
+        raise HarnessInvalid(
+            "customer or employer-confidential material is ineligible without a "
+            "separate explicit owner authorization bound into the manifest"
+        )
+    if not (rights.get("permits_local_evaluation")
+            and rights.get("permits_transmission_to_pinned_model_provider")):
+        raise HarnessInvalid(
+            "the rights basis must permit both local evaluation and transmission "
+            "to the pinned model provider"
+        )
+
+    candidates = pool["candidates"]
+    if len(candidates) < 3:
+        raise HarnessInvalid(
+            f"the pool offers {len(candidates)} candidates; a Reviewer needs a real "
+            "choice to make a selection meaningful"
+        )
+    for candidate in candidates:
+        path = Path(__file__).resolve().parents[2] / candidate["path"]
+        if not path.is_file():
+            raise HarnessInvalid(f"pool candidate {candidate['path']} is absent")
+        observed = hashlib.sha256(path.read_bytes()).hexdigest()
+        if observed != candidate["sha256"]:
+            raise HarnessInvalid(
+                f"pool candidate {candidate['path']} does not match its recorded digest"
+            )
+        if not candidate.get("version"):
+            raise HarnessInvalid(f"{candidate['path']} records no version")
+
+    kinds = {g["kind"] for g in pool["generated_components"]}
+    for required in ("transformation_dictionaries", "correlation_records", "decoy_records"):
+        if required not in kinds:
+            raise HarnessInvalid(f"the pool has no {required}")
+    for component in pool["generated_components"]:
+        path = Path(__file__).resolve().parents[2] / component["path"]
+        if not path.is_file():
+            raise HarnessInvalid(f"generated component {component['path']} is absent")
+        if hashlib.sha256(path.read_bytes()).hexdigest() != component["sha256"]:
+            raise HarnessInvalid(
+                f"generated component {component['path']} does not match its digest"
+            )
+        if component["entries"] < 32:
+            raise HarnessInvalid(
+                f"{component['kind']} has only {component['entries']} entries"
+            )
+
+    digest_file = root / "POOL-DIGEST"
+    if not digest_file.is_file():
+        raise HarnessInvalid("the pool records no combined digest")
+    combined = hashlib.sha256()
+    for entry in candidates + pool["generated_components"]:
+        combined.update(bytes.fromhex(entry["sha256"]))
+    if combined.hexdigest() != digest_file.read_text(encoding="utf-8").strip():
+        raise HarnessInvalid("the recorded pool digest does not match its contents")
+
+    # Selection remains the Reviewer's, and must stay unmade here.
+    if pool["selected_by"] != "detector-reviewer":
+        raise HarnessInvalid("only the implementation-blind Reviewer may select")
+    if pool["mutable_after_execution_begins"] is not False:
+        raise HarnessInvalid("the corpus cannot be replaced after execution begins")
+    if pool["selection_record_template"]["auxiliary_corpus_sha256"] is not None:
+        raise HarnessInvalid(
+            "the Tester must not pre-fill the Reviewer's selection record"
+        )
     for forbidden in ("labels", "registry", "hidden_tests", "arm_identity"):
-        assert forbidden in payload["reconstructor_denied"], forbidden
+        if forbidden not in pool["reconstructor_denied"]:
+            raise HarnessInvalid(f"the reconstructor must be denied {forbidden}")
 
 
 @pytest.mark.selftest

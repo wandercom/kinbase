@@ -159,12 +159,20 @@ class ManifestVerification:
     receipt_digests: dict[str, str]
 
 
-@functools.lru_cache(maxsize=1)
-def verify_manifest() -> ManifestVerification:
+@functools.lru_cache(maxsize=2)
+def verify_manifest(reviewer_mode: bool = False) -> ManifestVerification:
     """Recompute and check every digest the ratification manifest names.
 
     A mismatch raises :class:`HarnessInvalid`. The suite must never quietly
     measure against unratified bytes.
+
+    ``reviewer_mode`` restricts verification to the six ratified authority
+    artifacts. ``spec/verification.md`` "Instrument validity" gives the
+    implementation-blind Detector Reviewer only "ratified specs, tests/fixtures,
+    detector design, and the eligible licensed-public auxiliary-corpus pool", so
+    the review-evidence and receipt paths named by the manifest are outside its
+    surface. Receipt verification is the Validator's step and is unchanged for
+    an ordinary run.
     """
     root = repo_root()
     manifest_path = root / "spec" / "ratification-manifest.json"
@@ -196,6 +204,14 @@ def verify_manifest() -> ManifestVerification:
         raise HarnessInvalid(
             "manifest artifact set does not equal the precedence chain: "
             f"{tuple(digests)!r}"
+        )
+
+    if reviewer_mode:
+        return ManifestVerification(
+            manifest_sha256=observed_manifest,
+            artifact_digests=digests,
+            precedence=precedence,
+            receipt_digests={},
         )
 
     # The advocate review evidence digest is taken over the *decoded* JSON, not

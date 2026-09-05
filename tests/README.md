@@ -8,6 +8,36 @@ This suite is an **observation instrument**, not a verdict. `spec/verification.m
 "Role separation" reserves the verdict to the Validator; the suite reports a gate
 vector and the evidence a verdict is composed from.
 
+## Remediation 002 — what changed
+
+A fresh implementation-blind Detector Reviewer blocked the previous instrument on
+17 findings. The central ones were that unexecuted work reported `PASS`, that the
+frozen catalog had no executable controls or mutations, and that the instrument
+told the product the answer through forty environment selectors. All 17 are
+closed; the mechanisms are below and each is executable without the product.
+
+| finding | closure |
+|---|---|
+| 1 cleanliness not attestable | `tests/tools/attest-clean.sh` — content-addressed attestation over `spec/**` and `tests/**` only |
+| 2 self-test crosses the review boundary | `tests/reviewer-selftest.sh` — reads ratified `spec/**` + `tests/**`, installs nothing, writes only outside the repo |
+| 3 unexecuted work is `PASS` | every gate starts `NOT_RUN`; deselect/skip/uncollected/empty-parameter all stay non-green |
+| 4 product failure hides an invalid detector | two independent channels; dominance only with an independently content-addressed product observation |
+| 5 catalog lacks the four frozen elements | 92 obligations, 401 thresholds, all four derived per threshold |
+| 6 mutations declarative, not executable | product-independent kill ledger over every threshold + 35 executable planters + `tests/mutation-run.sh` |
+| 7 expected answers reach the product | all 40 selectors removed; policy enforced statically by `test_control_policy.py` |
+| 8–16 per-gate vacuity | real state construction, typed evidence, total quantifiers; every bare return, permissive default and tautology removed |
+| 17 no auxiliary corpus | `tests/fixtures/auxiliary/` — CC0 sources, dictionaries, correlations, decoys, digests, rights basis |
+
+## Reviewer entrypoint
+
+```sh
+tests/reviewer-selftest.sh
+```
+
+Product-independent, offline, and creates nothing inside the repository. It runs
+the instrument-validity work only: catalog totality, the kill ledger, the control
+policy, the green-path guard and the backreference integrity checks.
+
 ## Exact Validator invocation
 
 ```sh
@@ -70,11 +100,15 @@ Every assertion cites an exact ratified requirement:
 
 | quantity | value |
 |---|---:|
-| authored test functions | 241 |
-| collected by pytest | 268 |
-| parametrised expansion | 27 |
-| resolved backreferences | 436 |
+| collected by pytest | 266 |
+| catalogued obligations | 92 |
+| catalogued thresholds | 401 |
+| kill-ledger rows (product-independent) | 401 |
+| executable product planters | 35 |
+| product-independent self-tests | 108 |
 | unbackreferenced tests | 0 |
+
+Catalog digest `672bd2ac44ffcc36`; kill-ledger digest `4303638206a038ba`.
 
 The two numbers differ because `@pytest.mark.parametrize` expands one authored
 function into several collected node ids. The 27 extra nodes are: the nine frozen
@@ -117,6 +151,33 @@ alongside an invalid detector.
 
 A defect in the measuring device is therefore never reported as a product
 defect, and a fixture error can no longer leave a gate reading `PASS`.
+
+## The obligation catalog and the kill ledger
+
+`acceptance/_harness/catalog.py` declares each obligation once, as a conjunction
+of typed clauses. All four ratified elements are *derived* from that single
+declaration, so none can drift from the others:
+
+* **threshold** — the clause bound;
+* **positive control** — synthesised conforming evidence, which must be accepted;
+* **product mutation** — evidence violating one clause, which must be rejected in
+  the obligation's declared fail-closed channel;
+* **detector mutation** — the same evidence with that clause deleted from the
+  checker, which must therefore be *missed*.
+
+`tests/test_catalog_and_kill_ledger.py` executes all four for every threshold,
+with no product present, and refuses to pass if any positive control is rejected,
+any mutation survives, any detector mutation fails to blind, or any negative
+control trips. The result is content addressed.
+
+## Controls that may reach the product
+
+`acceptance/_harness/controls.py` is a closed allowlist. Only ordinary
+configuration and *witnessed* fault schedules may cross into the product process.
+Names shaped like `*_SCENARIO`, `*_CASE`, `*_FIXTURE`, `*_STATE`, `*_OVERRIDE`
+and anything acceptance-prefixed are forbidden outright, because their presence
+alone lets an implementation recognise the probe. `test_control_policy.py`
+enforces this by AST inspection over the whole suite.
 
 ## Mutation protocol
 

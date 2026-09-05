@@ -1,0 +1,105 @@
+{
+ "authority": "spec/threat-model.md, section 'Canary and auxiliary-corpus custody'",
+ "candidates": [
+  {
+   "bytes": 793,
+   "path": "tests/fixtures/auxiliary/sources/encoding-practice.txt",
+   "sha256": "a021c53a85134ba6108197e2d0f97394bea0f5fc6e8d2ac3362cbd0209e6bbf0",
+   "topic": "encoding practice",
+   "version": "1.0.0"
+  },
+  {
+   "bytes": 736,
+   "path": "tests/fixtures/auxiliary/sources/identifier-practice.txt",
+   "sha256": "6a112ade148d3400f77e36749ccdcbbfdc6d1734096fa4bffa252f84a5bb2676",
+   "topic": "identifier practice",
+   "version": "1.0.0"
+  },
+  {
+   "bytes": 810,
+   "path": "tests/fixtures/auxiliary/sources/incident-practice.txt",
+   "sha256": "fbc1542f319740c1de7b73170dea872e985e228f60ed5d16956ea20e99aa4792",
+   "topic": "incident practice",
+   "version": "1.0.0"
+  },
+  {
+   "bytes": 830,
+   "path": "tests/fixtures/auxiliary/sources/repository-knowledge.txt",
+   "sha256": "44c63883c6bf30ed4db37d8f89993fad16e8ba8e078e0dbd28d817cd5797cea0",
+   "topic": "repository knowledge",
+   "version": "1.0.0"
+  },
+  {
+   "bytes": 971,
+   "path": "tests/fixtures/auxiliary/sources/scheduling-conventions.txt",
+   "sha256": "1bd9fc413a7b5aebbce444b5ace875dd5752f41dd785d871902cec8de3f493dc",
+   "topic": "scheduling conventions",
+   "version": "1.0.0"
+  }
+ ],
+ "digest_field": "auxiliary_corpus_sha256",
+ "generated_components": [
+  {
+   "entries": 64,
+   "kind": "transformation_dictionaries",
+   "path": "tests/fixtures/auxiliary/dictionaries.json",
+   "sha256": "0c004be24952f6ba49936f142a9b097d0e219cc18db4e38fba5bcc68a0b706e1"
+  },
+  {
+   "entries": 96,
+   "kind": "correlation_records",
+   "path": "tests/fixtures/auxiliary/correlations.json",
+   "sha256": "4bcde9f188163baf35a08cba455907d181b65ea125421e9a14fa6c4b7d9fb353"
+  },
+  {
+   "entries": 512,
+   "kind": "decoy_records",
+   "path": "tests/fixtures/auxiliary/decoys.json",
+   "sha256": "379df73b14138577a5670f75de955e1c6b8f722e4514d6d6344bfbc206e5e430"
+  }
+ ],
+ "manifest_binding": "The experiment manifest binds the selected auxiliary-corpus digest alongside the threat-model and attack-catalog digests and the sealed canary-registry ciphertext metadata.",
+ "mutable_after_execution_begins": false,
+ "reconstructor_denied": [
+  "labels",
+  "registry",
+  "hidden_tests",
+  "arm_identity",
+  "canary_registry_capability"
+ ],
+ "reconstructor_receives": [
+  "all_shared_surfaces",
+  "frozen_auxiliary_corpus"
+ ],
+ "reviewer_must_record": [
+  "selection_procedure",
+  "source_rights",
+  "contents",
+  "versions",
+  "digest_field"
+ ],
+ "rights_basis": {
+  "authorship": "Every source document is original prose authored by the Tester role for this acceptance instrument. No third-party material is reproduced, quoted or adapted.",
+  "class": "licensed-public",
+  "customer_or_employer_confidential_material": false,
+  "license": "CC0-1.0",
+  "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "permits_local_evaluation": true,
+  "permits_transmission_to_pinned_model_provider": true,
+  "rights_holder": "Guildhall Factory Tester lane (sole author)",
+  "verification": "The rights basis is verifiable by inspection: sole authorship within this lane plus an explicit public-domain dedication. No external license was assumed and no external text was copied."
+ },
+ "schema": "guildhall-acceptance-auxiliary-corpus-pool/1",
+ "selected_by": "detector-reviewer",
+ "selection_record_template": {
+  "auxiliary_corpus_sha256": null,
+  "contents": null,
+  "recorded_by": "detector-reviewer",
+  "selected_candidates": [],
+  "selection_procedure": null,
+  "source_rights": null,
+  "versions": null
+ },
+ "selection_timing": "before implementation is combined",
+ "status": "eligible pool, awaiting Detector Reviewer selection"
+}

@@ -27,6 +27,9 @@ from pathlib import Path
 
 import pytest
 
+from ._harness import obligations as O
+from ._harness.evidence_model import Origin, require_all, require_nonempty
+
 from ._harness import canonical, ed25519_pure, synth
 from ._harness.cli import Guildhall
 from ._harness.gitfix import GitRepo
@@ -133,6 +136,14 @@ def test_every_frozen_attack_family_has_a_probe() -> None:
         "these frozen attack families have no probe, which makes V-3 INVALID_HARNESS: "
         + "; ".join(missing)
     )
+    require_all(
+        sorted(ATTACK_FAMILIES),
+        lambda n: f"attack-catalog-{n}" in anchors,
+        obligation="V-3.attack-families",
+        why="every one of the nineteen frozen families must have an executed probe",
+        minimum=19,
+        origin=Origin.HARNESS,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -214,9 +225,13 @@ def test_signed_prompt_injection_prose_cannot_change_instructions_or_approval(
         "--json",
         check=False,
     )
-    assert projected.returncode != 1
+    if projected.returncode == 1:
+        raise ProductFailure("`project` returned the reserved ambiguous exit 1")
     if projected.returncode not in (0, 3) or not projected.stdout.strip():
-        return
+        raise ProductFailure(
+            "the projection produced no payload, so the action trace could not be "
+            "observed; a refusal is not evidence that signed prose was contained"
+        )
     payload = projected.json
     serialised = json.dumps(payload)
 
@@ -445,7 +460,7 @@ def test_concurrent_approvals_and_double_submission_produce_one_event(
         "transaction may commit"
     )
     status = guildhall.run("status", "--repo", str(guildhall.cwd), "--json").ok().json
-    assert status.get("duplicate_events", 0) == 0
+    assert status.get("duplicate_events") == 0
 
 
 @spec_ref(
@@ -1131,9 +1146,13 @@ def test_saturated_signed_prompt_injection_does_not_change_the_action_trace(
         "--json",
         check=False,
     )
+    if baseline.returncode == 1:
+        raise ProductFailure("`project` returned the reserved ambiguous exit 1")
     if baseline.returncode != 0:
-        assert baseline.returncode != 1
-        return
+        raise ProductFailure(
+            "the saturated projection produced no payload, so the permitted action "
+            "trace was never observed; refusing is not containment"
+        )
     payload = baseline.json
     trace = payload.get("permitted_action_trace") or payload.get("action_trace")
     assert trace is not None, (

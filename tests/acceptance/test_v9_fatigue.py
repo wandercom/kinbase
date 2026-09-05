@@ -44,7 +44,15 @@ from ._harness.requirements import (
     ProductFailure,
     spec_ref,
 )
+from ._harness import obligations as O
+from ._harness.corpora import (
+    bind_maintenance_workload,
+    bind_operator_exercise,
+    load_gold,
+)
+from ._harness.evidence_model import product as product_evidence
 from ._harness.roots import ProofRoots
+from ._harness.worldbuilder import SignedWorld, Witness
 from ._harness.synth import RESET_REASON_CODES
 
 pytestmark = [pytest.mark.v9, pytest.mark.requires_product]
@@ -52,10 +60,58 @@ pytestmark = [pytest.mark.v9, pytest.mark.requires_product]
 
 @pytest.fixture()
 def fatigue_repo(roots: ProofRoots) -> GitRepo:
-    repo = GitRepo.init(roots.repo_root)
-    repo.write(".kin/config", 'schema_version = "guildhall-repo/1"\n')
-    repo.commit("initialise")
-    return repo
+    world = SignedWorld.create(roots.repo_root)
+    world.verify_planted()
+    return world.repo
+
+
+@pytest.fixture()
+def eligible_queue(guildhall: Guildhall, fatigue_repo: GitRepo, vault, tmp_path: Path):
+    """Seed genuinely eligible shared candidates.
+
+    Detector Reviewer finding 16: zero rendered prompts satisfied the ceiling,
+    because nothing was ever eligible. Here a real corpus is observed first, so
+    the four-slot ceiling actually binds on work that wanted to happen.
+    """
+    from ._harness import canaries
+    from ._harness.corpora import bind_routing_corpus
+    from ._harness.vault import VaultEntry
+
+    gold = load_gold("routing_corpus.json")
+    rng = canaries.make_rng(int(gold["generator_seed"]))
+    slot_values: dict[str, str] = {}
+    for index, slot in enumerate(sorted(gold["canary_slots"])):
+        canary = canaries.generate_canary(
+            rng, index=index,
+            family=gold["canary_slots"][slot]["transformation_family"],
+            kind=gold["canary_slots"][slot]["kind"],
+        )
+        slot_values[slot] = canary.value
+        vault.add(VaultEntry(
+            canary_id=canary.canary_id, raw_value=canary.value,
+            transformation_family=canary.family,
+            planted_surfaces=("personal_store",),
+            expected_destination_denial=("company", "codebase"),
+            gold_atom_label="observation", gold_destination_labels=("personal",),
+        ))
+    bound = bind_routing_corpus(
+        gold, slot_values, vault.raw_fixture_dir("v9-queue") / "messages.jsonl"
+    )
+    guildhall.run("session", "start", "--host", "codex",
+                  "--repo", str(fatigue_repo.path), "--json", check=False)
+    guildhall.run("session", "observe", "fatigue", "--event", str(bound.path),
+                  "--json", check=False)
+    listing = guildhall.run(
+        "proposals", "list", "--session", "fatigue", "--json", check=False
+    )
+    payload = listing.json if listing.stdout.strip() else {}
+    candidates = (payload or {}).get("candidates") or []
+    if len(candidates) < 5:
+        raise ProductFailure(
+            f"observing the held-out corpus produced {len(candidates)} candidates; "
+            "the four-slot ceiling cannot bind without more eligible work than slots"
+        )
+    return bound, candidates
 
 
 def _budget(guildhall: Guildhall, repo: GitRepo) -> dict:
@@ -85,61 +141,46 @@ def _budget(guildhall: Guildhall, repo: GitRepo) -> dict:
     ),
 )
 def test_four_total_per_hour_shared_across_destinations(
-    guildhall: Guildhall, fatigue_repo: GitRepo
+    guildhall: Guildhall, fatigue_repo: GitRepo, eligible_queue
 ) -> None:
+    """Genuinely eligible candidates contend for one shared four-slot shard."""
+    bound, candidates = eligible_queue
     rendered = 0
     suppressed = 0
-    destinations = ("company", "codebase:018f0000-0000-7000-8000-000000000001")
-    for index in range(12):
-        destination = destinations[index % len(destinations)]
+    for candidate in candidates[:12]:
         result = guildhall.run(
-            "proposals",
-            "list",
-            "--session",
-            "fatigue",
-            "--json",
-            env={
-                "GUILDHALL_ACCEPTANCE_REQUEST_PROMPT": destination,
-                "GUILDHALL_ACCEPTANCE_HOST_INSTANCE": "host-1",
-            },
+            "proposals", "show", candidate["candidate_id"],
+            "--destination", candidate.get("destination", "company"), "--json",
             check=False,
         )
-        assert result.returncode != 1
-        if result.returncode != 0 or not result.stdout.strip():
-            suppressed += 1
-            continue
-        payload = result.json
+        if result.returncode == 1:
+            raise ProductFailure("`proposals show` returned the reserved exit 1")
+        payload = result.json if result.stdout.strip() else {}
         if isinstance(payload, dict) and payload.get("prompt_rendered"):
             rendered += 1
         else:
             suppressed += 1
-    assert rendered <= PROMPTS_PER_SLIDING_HOUR, (
-        f"{rendered} prompts rendered in one sliding hour; destinations share the "
-        f"{PROMPTS_PER_SLIDING_HOUR}-slot ceiling and do not each receive four slots"
-    )
-    assert suppressed > 0, (
-        "exceeding the ceiling must suppress new shared prompts, not silently drop them"
-    )
 
     budget = _budget(guildhall, fatigue_repo)
-    if budget:
-        assert budget.get("consumed") is not None and budget.get("reserved") is not None, (
-            "spec/product.md P-9: `doctor` shows consumed/reserved counts"
-        )
-        assert budget.get("shard_id") or budget.get("host_instance_id"), (
-            "the host instance owns and signs its shard observation"
-        )
-        assert budget.get("signature") or budget.get("signed") is True, (
-            "the `prompt_budget_shard` observation is host-signed"
-        )
-        warning = json.dumps(budget).lower()
-        assert "global" in warning and (
-            "unknown" in warning or "no cross-machine" in warning
-        ), (
-            "`doctor` must carry the explicit warning that no global cross-machine "
-            "total is known"
-        )
-
+    ev = product_evidence("V-9.prompt-budget", "shard", budget)
+    O.check(
+        "V-9.prompt-budget",
+        {
+            "eligible_candidates": len(candidates),
+            "rendered": rendered,
+            "suppressed": suppressed,
+            "shard": {
+                "shard_id": ev.need(
+                    "shard_id", why="the host instance owns and signs its shard"
+                ),
+                "signed": ev.need_bool(
+                    "signed", why="the prompt_budget_shard observation is host-signed"
+                ),
+            },
+            "unknown_global_total_warning": "global" in json.dumps(budget).lower(),
+        },
+        label="four total prompts per sliding hour",
+    )
 
 @spec_ref(
     PRODUCT(
@@ -243,15 +284,17 @@ def test_reset_clears_only_the_consecutive_counter_once_per_hour(
     ),
 )
 def test_reissue_and_reservation_commit_in_one_immediate_transaction(
-    guildhall: Guildhall, fatigue_repo: GitRepo
+    guildhall: Guildhall, fatigue_repo: GitRepo, eligible_queue
 ) -> None:
-    def reissue(tag: str) -> tuple[int, str]:
+    bound, candidates = eligible_queue
+    target = candidates[0]["candidate_id"]
+
+    def reissue(_: str) -> tuple[int, str]:
         result = guildhall.run(
             "proposals",
             "reissue",
-            "acceptance-candidate",
+            target,
             "--json",
-            env={"GUILDHALL_ACCEPTANCE_REISSUE_TAG": tag},
             check=False,
         )
         return result.returncode, result.stdout
@@ -301,19 +344,17 @@ def test_reissue_and_reservation_commit_in_one_immediate_transaction(
     ),
 )
 def test_untrusted_branch_churn_cannot_trigger_byte_change_reissue(
-    guildhall: Guildhall, fatigue_repo: GitRepo
+    guildhall: Guildhall, fatigue_repo: GitRepo, eligible_queue
 ) -> None:
+    bound, candidates = eligible_queue
+    target = candidates[0]["candidate_id"]
     fatigue_repo.branch("untrusted/churn")
     fatigue_repo.write("churn.md", "byte change on an unreviewed branch\n")
     fatigue_repo.commit("churn on an untrusted branch")
 
+    # The untrusted source revision is a real unmerged branch, checked out.
     result = guildhall.run(
-        "proposals",
-        "reissue",
-        "acceptance-candidate",
-        "--json",
-        env={"GUILDHALL_ACCEPTANCE_SOURCE_TRUST": "unreviewed-branch"},
-        check=False,
+        "proposals", "reissue", target, "--json", check=False
     )
     assert result.returncode != 1
     assert result.returncode != 0, (
@@ -341,8 +382,11 @@ def test_untrusted_branch_churn_cannot_trigger_byte_change_reissue(
     ),
 )
 def test_interleaved_sessions_never_exceed_four_prompts_per_window(
-    guildhall: Guildhall, fatigue_repo: GitRepo
+    guildhall: Guildhall, fatigue_repo: GitRepo, eligible_queue
 ) -> None:
+    bound, candidates = eligible_queue
+    barrier_log: list[float] = []
+
     def request(host: str, index: int) -> tuple[int, str]:
         result = guildhall.run(
             "proposals",
@@ -350,13 +394,9 @@ def test_interleaved_sessions_never_exceed_four_prompts_per_window(
             "--session",
             f"{host}-{index}",
             "--json",
-            env={
-                "GUILDHALL_ACCEPTANCE_HOST_INSTANCE": "host-1",
-                "GUILDHALL_ACCEPTANCE_INTERLEAVE_AT": "between_slot_check_and_render",
-                "GUILDHALL_ACCEPTANCE_REQUEST_PROMPT": "company",
-            },
             check=False,
         )
+        barrier_log.append(time.monotonic())
         return result.returncode, result.stdout
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
@@ -383,19 +423,15 @@ def test_interleaved_sessions_never_exceed_four_prompts_per_window(
     )
 
     # Crash after reservation must remain counted until expiry.
-    crashed = guildhall.run(
-        "proposals",
-        "list",
-        "--session",
-        "crash-after-reservation",
-        "--json",
-        env={
-            "GUILDHALL_ACCEPTANCE_HOST_INSTANCE": "host-1",
-            "GUILDHALL_ACCEPTANCE_CRASH_AT": "after_reservation",
-        },
-        check=False,
+    # A crash after reservation: start the render, kill it, witness the death.
+    process = guildhall.popen(
+        "proposals", "list", "--session", "fatigue", "--json"
     )
-    assert crashed.returncode != 1
+    crash_witness = Witness(kind="kill:after_reservation")
+    time.sleep(0.05)
+    process.kill()
+    crash_witness.note(exit_code=process.wait(timeout=30), pid=process.pid)
+    crash_witness.require("the reservation crash must be witnessed")
     budget = _budget(guildhall, fatigue_repo)
     if budget.get("reserved") is not None:
         assert budget["reserved"] >= 0
@@ -419,15 +455,11 @@ def test_interleaved_sessions_never_exceed_four_prompts_per_window(
     ),
 )
 def test_blinded_operator_exercise_accuracy_and_median_time(
-    guildhall: Guildhall, fatigue_repo: GitRepo
+    guildhall: Guildhall, fatigue_repo: GitRepo, tmp_path: Path
 ) -> None:
-    fixture = (
-        Path(__file__).resolve().parents[1] / "fixtures" / "gold" / "operator_exercise.json"
-    )
-    assert fixture.is_file(), (
-        "the Tester must freeze the 20-item blinded operator exercise before the run"
-    )
-    exercise = json.loads(fixture.read_text(encoding="utf-8"))
+    exercise = load_gold("operator_exercise.json")
+    bound = bind_operator_exercise(exercise, tmp_path / "operator-items.jsonl")
+    bound.assert_no_gold_written()
     items = exercise["items"]
     assert len(items) == OPERATOR_EXERCISE_ITEMS, len(items)
     assert exercise["blinded"] is True
@@ -481,30 +513,31 @@ def test_blinded_operator_exercise_accuracy_and_median_time(
 )
 @pytest.mark.slow
 def test_corpus_growth_adequacy_under_the_fatigue_ceiling(
-    guildhall: Guildhall, fatigue_repo: GitRepo
+    guildhall: Guildhall, fatigue_repo: GitRepo, tmp_path: Path
 ) -> None:
-    fixture = (
-        Path(__file__).resolve().parents[1] / "fixtures" / "gold" / "maintenance_workload.json"
-    )
-    assert fixture.is_file(), (
-        "the Tester must freeze the 100-observation/20-durable-fact maintenance workload"
-    )
-    workload = json.loads(fixture.read_text(encoding="utf-8"))
+    workload = load_gold("maintenance_workload.json")
+    bound = bind_maintenance_workload(workload, tmp_path / "maintenance.jsonl")
+    bound.assert_no_gold_written()
     assert len(workload["observations"]) == MAINTENANCE_OBSERVATIONS
     durable = [o for o in workload["observations"] if o["durable_shared_fact"]]
     assert len(durable) == MAINTENANCE_DURABLE_FACTS, len(durable)
     assert workload["windows"] == MAINTENANCE_WINDOWS
 
+    # The product receives raw observations only; the gold labels stay here.
+    guildhall.run("session", "start", "--host", "codex",
+                  "--repo", str(fatigue_repo.path), "--json", check=False)
+    windows = Witness(kind="proof-clock-offset")
+    for window in range(MAINTENANCE_WINDOWS):
+        offset = window * 3600
+        guildhall.run(
+            "session", "observe", "maintenance", "--event", str(bound.path), "--json",
+            env={"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": str(offset)},
+            check=False,
+        )
+        windows.note(window=window, offset_seconds=offset)
+    windows.require("each sliding-hour window must be independently witnessed")
     result = guildhall.run(
-        "status",
-        "--repo",
-        str(fatigue_repo.path),
-        "--json",
-        env={
-            "GUILDHALL_ACCEPTANCE_MAINTENANCE_WORKLOAD": str(fixture),
-            "GUILDHALL_ACCEPTANCE_SIMULATED_WINDOWS": str(MAINTENANCE_WINDOWS),
-        },
-        check=False,
+        "status", "--repo", str(fatigue_repo.path), "--json", check=False
     )
     assert result.returncode != 1
     payload = result.json if result.stdout.strip() else {}

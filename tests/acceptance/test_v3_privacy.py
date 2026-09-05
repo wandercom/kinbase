@@ -27,12 +27,16 @@ from pathlib import Path
 
 import pytest
 
+from ._harness import obligations as O
+from ._harness.evidence_model import Origin, require_all, require_nonempty
+
 from ._harness import canaries, synth
 from ._harness.cli import Guildhall
 from ._harness.detectors import CanaryDetector, SemanticParaphraseReport
 from ._harness.gates import V3_CLAIM_FRAGMENT
 from ._harness.gitfix import GitRepo
 from ._harness.requirements import (
+    HarnessInvalid,
     ARCH,
     CLI,
     PRODUCT,
@@ -253,9 +257,16 @@ def test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle(
             "the recorded failure.'\n"
             + json.dumps([f.sanitised() for f in result.findings], indent=2)
         )
-    assert result.surfaces_scanned > 0, "the scan covered no surface at all"
-    assert len(result.surface_families) >= 3, (
-        f"too few surface families scanned: {result.surface_families}"
+    O.check(
+        "V-3.lifecycle-scan",
+        {
+            "findings": len(result.findings),
+            "surfaces_scanned": result.surfaces_scanned,
+            "surface_families_scanned": list(result.surface_families),
+            "lifecycle_stages_executed": list(LIFECYCLE_STAGES),
+            "scan_fail_closed": detector.fail_closed,
+        },
+        label="full-lifecycle shared-surface scan",
     )
 
 
@@ -440,6 +451,9 @@ def test_inherited_personal_descriptor_fails_startup(
     fd = os.open(str(roots.personal_root), os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         os.set_inheritable(fd, True)
+        # The descriptor is genuinely inherited via pass_fds. Announcing it in
+        # the environment, as the previous probe did, meant subprocess.run never
+        # passed it and the obligation was never exercised.
         result = guildhall.run(
             "project",
             "--repo",
@@ -449,7 +463,7 @@ def test_inherited_personal_descriptor_fails_startup(
             "--decision",
             "choose lookahead",
             "--json",
-            env={"GUILDHALL_ACCEPTANCE_INHERITED_FD": str(fd)},
+            pass_fds=(fd,),
             check=False,
         )
     finally:
@@ -558,7 +572,7 @@ def test_hard_blocking_taint_is_never_cleared_by_deidentification(
     payload = listing.json if listing.returncode == 0 else {}
     for candidate in payload.get("candidates", []):
         taints = set(candidate.get("source_taints", []))
-        destination = candidate.get("destination", "")
+        destination = candidate.get("destination")
         if taints & {"secret", "configured-canary", "forbidden-identifier", "credential"}:
             assert destination.startswith("personal") or destination == "none", (
                 "a hard-blocking taint yields no shared candidate at all; observed "
@@ -628,7 +642,7 @@ def test_paraphrase_only_output_stays_private_by_taint_policy(
     shared = [
         c
         for c in payload.get("candidates", [])
-        if not c.get("destination", "").startswith("personal")
+        if not c.get("destination").startswith("personal")
         and c.get("destination") != "none"
     ]
     assert not shared, (
@@ -661,16 +675,29 @@ def test_paraphrase_only_output_stays_private_by_taint_policy(
     ),
 )
 def test_egress_to_unnamed_processor_fails_with_typed_refusal(
-    guildhall: Guildhall, roots: ProofRoots
+    guildhall: Guildhall, roots: ProofRoots, tmp_path: Path
 ) -> None:
+    # The unapproved provider is configured the way a real deployment would
+    # configure it: in the launcher-only user config the ratified CLI contract
+    # names. A dedicated environment variable would let the product recognise
+    # the probe instead of enforcing its processor scope.
+    classifier = tmp_path / "unapproved-classifier"
+    classifier.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    os.chmod(classifier, 0o755)
+    roots.write_user_config(
+        classifier_path=classifier,
+        classifier_sha256=hashlib.sha256(classifier.read_bytes()).hexdigest(),
+        facts_token_file=roots.write_secret("facts.token", b"t"),
+        root_public_key_file=roots.write_secret("company-root.pub", b"k"),
+        classifier_args=("--json", "--provider=unapproved-provider.example"),
+    )
+    source = next(roots.personal_root.glob("*.jsonl"), None)
+    if source is None:
+        raise HarnessInvalid(
+            "a real private input must exist for the egress refusal to be meaningful"
+        )
     result = guildhall.run(
-        "session",
-        "observe",
-        "acceptance-egress",
-        "--event",
-        str(next(roots.personal_root.glob("*.jsonl"), roots.personal_root / "none")),
-        "--json",
-        env={"GUILDHALL_CLASSIFIER_PROVIDER": "unapproved-provider.example"},
+        "session", "observe", "acceptance-egress", "--event", str(source), "--json",
         check=False,
     )
     assert result.returncode != 0, (
@@ -735,7 +762,7 @@ def test_v3_claim_is_digest_qualified_and_never_unqualified(
         "status", "--repo", str(guildhall.cwd), "--json", check=False
     ).json
     claim = report.get("privacy_claim") or {}
-    text = claim.get("statement", "")
+    text = claim.get("statement")
     assert V3_CLAIM_FRAGMENT.lower() in text.lower(), (
         "the V-3 claim must use the qualified template verbatim; observed "
         f"{text[:200]!r}"

@@ -231,7 +231,10 @@ def test_product_verdict_states_are_exactly_the_ratified_set(
         "state'"
     )
     if result.returncode != 0 or not result.stdout.strip():
-        return
+        raise ProductFailure(
+            "`experiment verdict` produced no states to compare against the ratified "
+            "composition table"
+        )
     payload = result.json
     terminal = payload.get("terminal_product_verdict")
     if terminal is not None:

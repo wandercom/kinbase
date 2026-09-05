@@ -176,19 +176,37 @@ def test_every_gate_has_a_positive_and_negative_control_or_a_frozen_mutation() -
     obligations live in the frozen catalog. This asserts the catalog side and
     that each gate module carries at least one explicitly marked control.
     """
+    from ._harness import catalog as C
+
     catalogued = {mutation.gate for mutation in CATALOG.values()}
-    marked_controls: dict[str, int] = {}
-    for module_name in _test_modules():
-        module = importlib.import_module(module_name)
-        source = Path(inspect.getfile(module)).read_text(encoding="utf-8")
-        for _, function in _test_functions(module_name):
-            for ref in refs_of(function):
-                if "control_positive" in source or "control_negative" in source:
-                    marked_controls[ref.gate] = marked_controls.get(ref.gate, 0) + 1
+    missing_mutation = [
+        g for g in (f"V-{i}" for i in range(1, 10)) if g not in catalogued
+    ]
+    assert not missing_mutation, (
+        f"these gates have no frozen mutation obligation: {missing_mutation}"
+    )
+
+    # Detector Reviewer finding 5: the previous version computed a control count
+    # and never asserted it. All four elements are now derived per obligation by
+    # the catalog, so the assertion is that every gate has obligations and every
+    # obligation freezes all four.
+    incomplete: list[str] = []
     for gate in (f"V-{i}" for i in range(1, 10)):
-        assert gate in catalogued, (
-            f"{gate} has no frozen mutation obligation in the acceptance catalog"
-        )
+        obligations = C.for_gate(gate)
+        if not obligations:
+            incomplete.append(f"{gate}: no catalogued obligation")
+            continue
+        for obligation in obligations:
+            for tag in obligation.thresholds:
+                for element in (
+                    obligation.positive_control(tag),
+                    obligation.negative_control(tag),
+                    obligation.product_mutation(tag),
+                    obligation.detector_mutation(tag),
+                ):
+                    if tag not in element:
+                        incomplete.append(f"{obligation.oid}#{tag}: missing element")
+    assert not incomplete, "\n".join(incomplete)
 
 
 @spec_ref(

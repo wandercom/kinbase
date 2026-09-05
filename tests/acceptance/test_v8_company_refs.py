@@ -18,6 +18,8 @@ from pathlib import Path
 
 import pytest
 
+import time
+
 from ._harness import canaries, synth
 from ._harness.cli import Guildhall
 from ._harness.detectors import CanaryDetector
@@ -33,8 +35,16 @@ from ._harness.requirements import (
 )
 from ._harness.roots import ProofRoots
 from ._harness.scanners import git_object_surfaces, sweep
+from ._harness import obligations as O
+from ._harness.evidence_model import Origin, require_all, require_nonempty
 from ._harness.service import wait_for_loopback
 from ._harness.vault import CanaryVault, VaultEntry
+from ._harness.worldbuilder import (
+    REPO_UUID as WORLD_UUID,
+    SignedWorld,
+    Witness,
+    start_company,
+)
 
 pytestmark = [pytest.mark.v8, pytest.mark.requires_product]
 
@@ -72,11 +82,25 @@ def maintainer() -> synth.Signer:
 
 
 @pytest.fixture()
-def published(roots: ProofRoots, steward: synth.Signer, tmp_path: Path) -> GitRepo:
-    """A repository with a Company reference and an out-of-worktree certificate."""
-    origin = GitRepo.init(tmp_path / "origin")
-    origin.write(".kin/config", 'schema_version = "guildhall-repo/1"\n')
-    origin.install_attributes(REQUIRED_ATTRIBUTE_LINES)
+def company(guildhall: Guildhall, roots: ProofRoots):
+    """A genuinely running Company service.
+
+    Detector Reviewer finding 15: no Company server was ever started, so every
+    reference, digest, cache and revocation assertion was answered by an
+    environment selector. A gate that needs live Company behaviour must fail
+    loudly when the service is absent.
+    """
+    service = start_company(guildhall, roots)
+    try:
+        yield service
+    finally:
+        service.stop()
+
+
+@pytest.fixture()
+def published(roots: ProofRoots, tmp_path: Path):
+    """A repository whose Company reference is genuinely signed and addressed."""
+    world = SignedWorld.create(tmp_path / "origin")
     reference = synth.company_reference(
         company_id="company-demo",
         fact_id="fact_company_lookahead",
@@ -88,30 +112,24 @@ def published(roots: ProofRoots, steward: synth.Signer, tmp_path: Path) -> GitRe
         company_criticality="safety",
         relation="applies",
     )
-    origin.write(
-        ".kin/events/00/11/" + "2" * 60 + ".json",
-        json.dumps(
-            synth.fact_event(
-                store_kind="codebase",
-                authority_id="repo-maintainer-1",
-                authority_scope=f"codebase:{REPO_UUID}",
-                logical_key="architecture/scheduler/company-reference",
-                statement="This service applies the Company scheduler architecture.",
-                repository_id=REPO_UUID,
-                company_refs=[reference],
-            ),
-            sort_keys=True,
-        ),
+    world.plant_event(
+        world.maintainer,
+        store_kind="codebase",
+        logical_key="architecture/scheduler/company-reference",
+        statement="This service applies the Company scheduler architecture.",
+        company_refs=[reference],
     )
-    origin.commit("publish a Company reference")
-
+    world.verify_planted()
     certificate = tmp_path / "certificate.json"
     certificate.write_text(
-        json.dumps(synth.repo_certificate(steward, repository_uuid=REPO_UUID), sort_keys=True),
+        json.dumps(
+            synth.repo_certificate(world.steward, repository_uuid=REPO_UUID),
+            sort_keys=True,
+        ),
         encoding="utf-8",
     )
     os.chmod(certificate, 0o600)
-    return origin
+    return world, certificate
 
 
 @spec_ref(
@@ -133,9 +151,10 @@ def published(roots: ProofRoots, steward: synth.Signer, tmp_path: Path) -> GitRe
     ),
 )
 def test_fresh_clone_resolves_the_reference_without_copying_prose(
-    guildhall: Guildhall, published: GitRepo, roots: ProofRoots, tmp_path: Path, vault: CanaryVault
+    guildhall: Guildhall, published, company, roots: ProofRoots,
+    tmp_path: Path, vault: CanaryVault
 ) -> None:
-    clone = published.clone(tmp_path / "fresh-clone")
+    clone = published[0].repo.clone(tmp_path / "fresh-clone")
     rng = canaries.make_rng(808)
     prose_canary = canaries.generate_canary(rng, index=0, family="exact")
     vault.add(
@@ -163,32 +182,36 @@ def test_fresh_clone_resolves_the_reference_without_copying_prose(
         "which architecture applies",
         "--json",
         cwd=clone.path,
-        env={
-            "GUILDHALL_COMPANY_URL": roots.company_url,
-            "GUILDHALL_ACCEPTANCE_COMPANY_PROSE_CANARY": prose_canary.value,
-        },
+        env={"GUILDHALL_COMPANY_URL": company.url},
         check=False,
     )
-    assert projected.returncode != 1
-    if projected.returncode == 0:
-        payload = projected.json
-        assert payload.get("company_reference_resolved") or payload.get("facts"), (
-            "a valid Company architecture reference must resolve and project its live "
-            "statement"
-        )
+    if projected.returncode == 1:
+        raise ProductFailure("`project` returned the reserved ambiguous exit 1")
+    payload = projected.json if projected.stdout.strip() else {}
+    statement = ""
+    if isinstance(payload, dict):
+        statement = json.dumps(payload.get("facts") or payload.get("projection") or "")
 
     result = sweep(detector, git_object_surfaces(clone.path, detector))
-    assert result.clean, (
-        "spec/verification.md V-8: 'Scan Git objects, not only the worktree, for "
-        "copied Company/private canaries.'\n"
-        + json.dumps([f.sanitised() for f in result.findings], indent=2)
-    )
+    kin_hits = 0
     for path in clone.path.rglob(".kin/events/**/*.json"):
-        body = path.read_text(encoding="utf-8")
-        assert prose_canary.value not in body, (
-            "Company text is dereferenced only through an authorized live Company "
-            "capability and is never copied into `.kin/`"
-        )
+        if prose_canary.value in path.read_text(encoding="utf-8"):
+            kin_hits += 1
+
+    O.check(
+        "V-8.fresh-clone",
+        {
+            "company_service_running": company.alive,
+            "reference_resolved": bool(
+                isinstance(payload, dict)
+                and (payload.get("company_reference_resolved") or payload.get("facts"))
+            ),
+            "projected_statement": statement,
+            "git_object_findings": len(result.findings),
+            "kin_event_prose_hits": kin_hits,
+        },
+        label="fresh clone resolving a live Company reference",
+    )
 
 
 @spec_ref(
@@ -211,7 +234,7 @@ def test_fresh_clone_resolves_the_reference_without_copying_prose(
 def test_reference_carries_exactly_the_company_owned_field_set(
     guildhall: Guildhall, published: GitRepo, tmp_path: Path
 ) -> None:
-    clone = published.clone(tmp_path / "field-clone")
+    clone = published[0].repo.clone(tmp_path / "field-clone")
     events = list((clone.path / ".kin" / "events").rglob("*.json"))
     assert events, "the fixture must publish at least one referencing event"
     payload = json.loads(events[0].read_text(encoding="utf-8"))
@@ -258,51 +281,81 @@ def test_reference_carries_exactly_the_company_owned_field_set(
     ),
 )
 def test_stricter_of_company_and_local_class_controls_freshness(
-    guildhall: Guildhall, published: GitRepo, roots: ProofRoots, tmp_path: Path
+    guildhall: Guildhall, company, tmp_path: Path
 ) -> None:
-    clone = published.clone(tmp_path / "class-clone")
-    for company_class, local_class, expected in (
+    """Both classes come from signed state, never from an environment value.
+
+    Detector Reviewer control inventory: ``COMPANY_CRITICALITY`` and
+    ``LOCAL_DEPENDENCE`` were ``result_selector`` class -- the product was told
+    the answer. Here each combination is a separately planted repository whose
+    signed Company reference and signed maintainer-owned local-dependence fact
+    carry the classes, and the reducer must derive the stricter one.
+    """
+    combinations = []
+    for index, (company_class, local_class, expected) in enumerate((
         ("advisory", "safety", "safety"),
         ("safety", "advisory", "safety"),
         ("advisory", "advisory", "advisory"),
-    ):
+    )):
+        world = SignedWorld.create(tmp_path / f"class-world-{index}")
+        reference = synth.company_reference(
+            company_id="company-demo", fact_id="fact_company_lookahead",
+            semantic_digest="a" * 64, digest_alg_version="sha256/1",
+            authority="company-steward-1",
+            valid_from="2026-01-01T00:00:00.000Z",
+            valid_until="2026-12-31T00:00:00.000Z",
+            company_criticality=company_class, relation="applies",
+        )
+        world.plant_event(
+            world.maintainer, store_kind="codebase",
+            logical_key="architecture/scheduler/company-reference",
+            statement="This service applies the Company scheduler architecture.",
+            company_refs=[reference], commit=False,
+        )
+        world.plant_event(
+            world.maintainer, store_kind="codebase",
+            logical_key="architecture/scheduler/local-dependence",
+            statement=(
+                "Losing the Company scheduler reference is "
+                + ("safety-critical" if local_class == "safety" else "advisory")
+                + " for this repository."
+            ),
+            atom_kind="constraint",
+        )
+        world.verify_planted()
+        guildhall.run(
+            "ingest", "kindex", str(world.repo.path / ".kin"),
+            "--repo", str(world.repo.path), "--json",
+            cwd=world.repo.path, check=False,
+        )
         result = guildhall.run(
-            "explain",
-            "architecture/scheduler/company-reference",
-            "--repo",
-            str(clone.path),
-            "--decision",
-            "apply the Company architecture",
-            "--json",
-            cwd=clone.path,
-            env={
-                "GUILDHALL_ACCEPTANCE_COMPANY_CRITICALITY": company_class,
-                "GUILDHALL_ACCEPTANCE_LOCAL_DEPENDENCE": local_class,
-                "GUILDHALL_COMPANY_URL": roots.company_url,
-            },
-            check=False,
+            "explain", "architecture/scheduler/company-reference",
+            "--repo", str(world.repo.path), "--decision",
+            "apply the Company architecture", "--json",
+            cwd=world.repo.path,
+            env={"GUILDHALL_COMPANY_URL": company.url}, check=False,
         )
-        assert result.returncode != 1
-        if result.returncode not in (0, 3):
-            continue
-        payload = result.json
+        if result.returncode == 1:
+            raise ProductFailure("`explain` returned the reserved ambiguous exit 1")
+        payload = result.json if result.stdout.strip() else {}
+        payload = payload if isinstance(payload, dict) else {}
         trace = payload.get("dependence_trace") or payload.get("trace") or {}
-        derived = (
-            trace.get("effective_dependence_class")
-            if isinstance(trace, dict)
-            else payload.get("effective_dependence_class")
+        trace = trace if isinstance(trace, dict) else {}
+        derived = trace.get("effective_dependence_class") or payload.get(
+            "effective_dependence_class"
         )
-        assert derived == expected, (
-            f"company={company_class} local={local_class}: the stricter class must "
-            f"control; expected {expected}, observed {derived}"
-        )
-        if isinstance(trace, dict):
-            assert trace.get("dominating_input") in {"company", "local"}, (
-                "the trace must record which input dominated"
-            )
-            assert trace.get("company_owner") and trace.get("local_owner") is not None, (
-                "the trace must record both input facts and owners"
-            )
+        combinations.append({
+            "company_class": company_class,
+            "local_class": local_class,
+            "effective_class": derived,
+            "is_stricter": derived == expected,
+            "dominating_input": trace.get("dominating_input"),
+            "company_owner": trace.get("company_owner"),
+            "local_owner": trace.get("local_owner"),
+            "planted_as_signed_state": True,
+        })
+    O.check("V-8.stricter-class", {"combinations": combinations},
+            label="stricter-of derivation from signed state")
 
 
 @spec_ref(
@@ -321,7 +374,7 @@ def test_stricter_of_company_and_local_class_controls_freshness(
 def test_maintainer_may_request_but_not_mint_an_exception(
     guildhall: Guildhall, published: GitRepo, maintainer: synth.Signer, tmp_path: Path
 ) -> None:
-    clone = published.clone(tmp_path / "exception-clone")
+    clone = published[0].repo.clone(tmp_path / "exception-clone")
     request = maintainer.sign_message(
         "fact-event",
         synth.fact_event(
@@ -398,7 +451,7 @@ def test_maintainer_may_request_but_not_mint_an_exception(
 def test_only_company_steward_may_sign_a_relaxation(
     guildhall: Guildhall, published: GitRepo, steward: synth.Signer, tmp_path: Path
 ) -> None:
-    clone = published.clone(tmp_path / "relaxation-clone")
+    clone = published[0].repo.clone(tmp_path / "relaxation-clone")
     relaxation = steward.sign_message(
         "fact-event",
         {
@@ -462,41 +515,49 @@ def test_only_company_steward_may_sign_a_relaxation(
     ),
 )
 def test_unknown_digest_algorithm_is_a_client_upgrade_error(
-    guildhall: Guildhall, published: GitRepo, tmp_path: Path
+    guildhall: Guildhall, company, tmp_path: Path
 ) -> None:
-    clone = published.clone(tmp_path / "digest-alg-clone")
+    """The unknown algorithm version is carried by the signed reference itself."""
+    world = SignedWorld.create(tmp_path / "digest-alg")
+    world.plant_event(
+        world.maintainer, store_kind="codebase",
+        logical_key="architecture/scheduler/company-reference",
+        statement="This service applies the Company scheduler architecture.",
+        company_refs=[synth.company_reference(
+            company_id="company-demo", fact_id="fact_company_lookahead",
+            semantic_digest="a" * 64, digest_alg_version="sha3-512/99",
+            authority="company-steward-1",
+            valid_from="2026-01-01T00:00:00.000Z",
+            valid_until="2026-12-31T00:00:00.000Z",
+            company_criticality="safety", relation="applies")],
+    )
+    world.verify_planted()
+    guildhall.run("ingest", "kindex", str(world.repo.path / ".kin"),
+                  "--repo", str(world.repo.path), "--json",
+                  cwd=world.repo.path, check=False)
     result = guildhall.run(
-        "explain",
-        "architecture/scheduler/company-reference",
-        "--repo",
-        str(clone.path),
-        "--decision",
-        "apply the Company architecture",
-        "--json",
-        cwd=clone.path,
-        env={"GUILDHALL_ACCEPTANCE_DIGEST_ALG_VERSION": "sha3-512/99"},
+        "explain", "architecture/scheduler/company-reference",
+        "--repo", str(world.repo.path), "--decision",
+        "apply the Company architecture", "--json",
+        cwd=world.repo.path, env={"GUILDHALL_COMPANY_URL": company.url},
         check=False,
     )
-    assert result.returncode != 1
-    if result.returncode != 0:
-        result.refused("DIGEST_ALGORITHM_UNSUPPORTED")
-        remediation = result.error["remediation"].lower()
-        assert "upgrade" in remediation, (
+    if result.returncode == 1:
+        raise ProductFailure("`explain` returned the reserved ambiguous exit 1")
+    if result.returncode == 0:
+        raise ProductFailure(
+            "an unknown digest_alg_version must not resolve silently; "
+            "spec/cli.md requires DIGEST_ALGORITHM_UNSUPPORTED"
+        )
+    result.refused("DIGEST_ALGORITHM_UNSUPPORTED")
+    remediation = result.error["remediation"].lower()
+    if "upgrade" not in remediation:
+        raise ProductFailure(
             "the remediation must be a client upgrade, not an accusation that the "
             f"steward changed content; observed {remediation!r}"
         )
-        assert "steward" not in remediation or "do not recompute" in remediation
 
 
-@pytest.mark.parametrize(
-    "scenario,expected_owner",
-    (
-        ("historical_digest_differs", "company-steward"),
-        ("historical_digest_matches", "client"),
-        ("historical_version_missing", "company-steward"),
-        ("company_unavailable", None),
-    ),
-)
 @spec_ref(
     ARCH(
         "V-8",
@@ -517,34 +578,68 @@ def test_unknown_digest_algorithm_is_a_client_upgrade_error(
     ),
 )
 def test_digest_mismatch_attribution_truth_table(
-    guildhall: Guildhall, published: GitRepo, tmp_path: Path, scenario: str, expected_owner
+    guildhall: Guildhall, company, tmp_path: Path
 ) -> None:
-    clone = published.clone(tmp_path / f"digest-{scenario}")
-    result = guildhall.run(
-        "explain",
-        "architecture/scheduler/company-reference",
-        "--repo",
-        str(clone.path),
-        "--decision",
-        "apply the Company architecture",
-        "--json",
-        cwd=clone.path,
-        env={"GUILDHALL_ACCEPTANCE_DIGEST_SCENARIO": scenario},
-        check=False,
+    """Each attribution case is a distinct real reference against live Company.
+
+    The scenario name never reaches the product. What differs between cases is
+    the signed reference's own semantic digest and validity, and whether the
+    Company endpoint is reachable, so attribution must be derived.
+    """
+    cases = (
+        ("historical_digest_differs", "b" * 64, True, "company-steward"),
+        ("historical_digest_matches", "a" * 64, True, "client"),
+        ("historical_version_missing", "c" * 64, True, "company-steward"),
+        ("company_unavailable", "a" * 64, False, None),
     )
-    assert result.returncode != 1
-    if result.returncode not in (0, 3):
-        return
-    payload = result.json
-    unknowns = payload.get("unknowns") or []
-    if expected_owner is None:
-        assert not payload.get("accusation"), (
-            "an unavailable Company must withhold without accusation"
+    scenarios = []
+    for name, digest, reachable, expected_owner in cases:
+        world = SignedWorld.create(tmp_path / f"digest-{name}")
+        world.plant_event(
+            world.maintainer, store_kind="codebase",
+            logical_key="architecture/scheduler/company-reference",
+            statement="This service applies the Company scheduler architecture.",
+            company_refs=[synth.company_reference(
+                company_id="company-demo", fact_id="fact_company_lookahead",
+                semantic_digest=digest, digest_alg_version="sha256/1",
+                authority="company-steward-1",
+                valid_from="2026-01-01T00:00:00.000Z",
+                valid_until="2026-12-31T00:00:00.000Z",
+                company_criticality="safety", relation="applies")],
         )
-        return
-    owners = {u.get("owner_role") for u in unknowns}
-    assert expected_owner in owners, (
-        f"{scenario}: expected a {expected_owner}-owned Unknown; observed {owners}"
+        world.verify_planted()
+        guildhall.run("ingest", "kindex", str(world.repo.path / ".kin"),
+                      "--repo", str(world.repo.path), "--json",
+                      cwd=world.repo.path, check=False)
+        url = company.url if reachable else "http://127.0.0.1:1"
+        result = guildhall.run(
+            "explain", "architecture/scheduler/company-reference",
+            "--repo", str(world.repo.path), "--decision",
+            "apply the Company architecture", "--json",
+            cwd=world.repo.path, env={"GUILDHALL_COMPANY_URL": url}, check=False,
+        )
+        if result.returncode == 1:
+            raise ProductFailure("`explain` returned the reserved ambiguous exit 1")
+        payload = result.json if result.stdout.strip() else {}
+        payload = payload if isinstance(payload, dict) else {}
+        unknowns = payload.get("unknowns") or []
+        owners = [u.get("owner_role") for u in unknowns if isinstance(u, dict)]
+        scenarios.append({
+            "scenario": name,
+            "company_queried": reachable,
+            "owner_role": owners[0] if owners else None,
+            "owner_matches_expected": (
+                expected_owner in owners if expected_owner else True
+            ),
+        })
+    unavailable = [s_ for s_ in scenarios if s_["scenario"] == "company_unavailable"][0]
+    O.check(
+        "V-8.digest-attribution",
+        {
+            "scenarios": scenarios,
+            "unavailable_company_accuses": bool(unavailable["owner_role"] == "client"),
+        },
+        label="digest attribution over live Company state",
     )
 
 
@@ -564,55 +659,60 @@ def test_digest_mismatch_attribution_truth_table(
     ),
 )
 def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
-    guildhall: Guildhall, published: GitRepo, tmp_path: Path
+    guildhall: Guildhall, published, roots: ProofRoots, tmp_path: Path
 ) -> None:
-    clone = published.clone(tmp_path / "uncertified")
-    result = guildhall.run(
-        "status", "--repo", str(clone.path), "--json", cwd=clone.path, check=False
-    )
-    assert result.returncode != 1
-    payload = result.json if result.stdout.strip() else {}
-    if isinstance(payload, dict):
-        assert not payload.get("trusted_facts"), (
-            "an uncertified clone must yield zero trusted facts"
-        )
-        unknowns = payload.get("unknowns") or []
-        certificate_unknowns = [
-            u for u in unknowns if "certificate" in json.dumps(u).lower()
-        ]
-        assert len(certificate_unknowns) <= 1, (
-            "repeated starts must reuse one certificate Unknown, not duplicate it"
-        )
-        for unknown in certificate_unknowns:
-            assert unknown.get("owner_identity"), (
-                "the certificate Unknown must be owned by the in-scope repository "
-                "maintainer with Company steward fallback"
-            )
-            assert unknown.get("response_due_at")
+    """No certificate at all, then a self-issued one, both from real files.
 
-    # Attacker fork: parent events plus a self-issued certificate.
-    fork = published.clone(tmp_path / "attacker-fork")
+    The certificate is written to the out-of-worktree location the ratified CLI
+    contract names, not announced through an environment variable.
+    """
+    world, _ = published
+    clone = world.repo.clone(tmp_path / "uncertified")
+    result = guildhall.run("status", "--repo", str(clone.path), "--json",
+                           cwd=clone.path, check=False)
+    if result.returncode == 1:
+        raise ProductFailure("`status` returned the reserved ambiguous exit 1")
+    payload = result.json if result.stdout.strip() else {}
+    payload = payload if isinstance(payload, dict) else {}
+    unknowns = payload.get("unknowns") or []
+    certificate_unknowns = [
+        u for u in unknowns
+        if isinstance(u, dict) and "certificate" in json.dumps(u).lower()
+    ]
+
+    fork = world.repo.clone(tmp_path / "attacker-fork")
     attacker = synth.make_signer("attacker-steward", "company:root", seed_byte=19)
-    self_issued = tmp_path / "self-issued.json"
+    self_issued = roots.company_root / "self-issued-certificate.json"
+    self_issued.parent.mkdir(parents=True, exist_ok=True)
     self_issued.write_text(
-        json.dumps(synth.repo_certificate(attacker, repository_uuid=OTHER_UUID), sort_keys=True),
+        json.dumps(synth.repo_certificate(attacker, repository_uuid=OTHER_UUID),
+                   sort_keys=True),
         encoding="utf-8",
     )
+    os.chmod(self_issued, 0o600)
     forked = guildhall.run(
-        "status", "--repo", str(fork.path), "--json", cwd=fork.path,
-        env={"GUILDHALL_ACCEPTANCE_CERTIFICATE": str(self_issued)},
-        check=False,
+        "repo", "init", "--repo", str(fork.path),
+        "--certificate", str(self_issued), "--json",
+        cwd=fork.path, check=False,
     )
-    assert forked.returncode != 1
-    fork_payload = forked.json if forked.stdout.strip() else {}
-    if isinstance(fork_payload, dict):
-        assert not fork_payload.get("trusted_facts"), (
-            "a self-issued certificate must not produce trusted facts"
-        )
-        assert fork_payload.get("foreign_event_count") is not None, (
-            "foreign parent events must be counted and reported, not silently "
-            "presented as an empty healthy view"
-        )
+    if forked.returncode == 1:
+        raise ProductFailure("`repo init` returned the reserved ambiguous exit 1")
+    fork_status = guildhall.run("status", "--repo", str(fork.path), "--json",
+                                cwd=fork.path, check=False)
+    fork_payload = fork_status.json if fork_status.stdout.strip() else {}
+    fork_payload = fork_payload if isinstance(fork_payload, dict) else {}
+
+    O.check(
+        "V-8.uncertified",
+        {
+            "trusted_facts": len(payload.get("trusted_facts") or []),
+            "certificate_unknown_count": len(certificate_unknowns),
+            "certificate_unknown": certificate_unknowns[0] if certificate_unknowns else {},
+            "fork_trusted_facts": len(fork_payload.get("trusted_facts") or []),
+            "fork_foreign_event_count": fork_payload.get("foreign_event_count"),
+        },
+        label="uncertified clone and attacker fork",
+    )
 
 
 @spec_ref(
@@ -631,45 +731,63 @@ def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
     ),
 )
 def test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change(
-    guildhall: Guildhall, published: GitRepo, tmp_path: Path
+    guildhall: Guildhall, published, company, tmp_path: Path
 ) -> None:
-    clone = published.clone(tmp_path / "identity-clone")
-    baseline = guildhall.run(
-        "status", "--repo", str(clone.path), "--json", cwd=clone.path,
-        env={"GUILDHALL_ACCEPTANCE_DISCOVERY_HINT": "https://example.invalid/a.git"},
-        check=False,
-    )
-    changed_hint = guildhall.run(
-        "status", "--repo", str(clone.path), "--json", cwd=clone.path,
-        env={"GUILDHALL_ACCEPTANCE_DISCOVERY_HINT": "ssh://other.invalid/b.git"},
-        check=False,
-    )
-    for result in (baseline, changed_hint):
-        assert result.returncode != 1
-    if baseline.returncode in (0, 3) and changed_hint.returncode in (0, 3):
-        a = (baseline.json or {}).get("repository_uuid")
-        b = (changed_hint.json or {}).get("repository_uuid")
-        if a and b:
-            assert a == b, (
-                "changing the URL/protocol/ownership hint must not change the certified "
-                f"identity; {a} became {b}"
-            )
+    """Discovery hints are repository configuration, so they are changed on disk.
 
-    repinned = guildhall.run(
-        "status", "--repo", str(clone.path), "--json", cwd=clone.path,
-        env={"GUILDHALL_ACCEPTANCE_HINT_RESOLVES_TO_UUID": OTHER_UUID},
-        check=False,
+    ``spec/cli.md`` puts ``repository_uuid_hint`` in the tracked ``.kin/config``
+    and states it is not trust. Changing it there is a real deployment event;
+    passing it as an environment value would let the product read the expected
+    identity out of the request.
+    """
+    world, certificate = published
+    clone = world.repo.clone(tmp_path / "identity-clone")
+
+    def status(repo) -> dict:
+        result = guildhall.run("status", "--repo", str(repo.path), "--json",
+                               cwd=repo.path,
+                               env={"GUILDHALL_COMPANY_URL": company.url},
+                               check=False)
+        if result.returncode == 1:
+            raise ProductFailure("`status` returned the reserved ambiguous exit 1")
+        payload = result.json if result.stdout.strip() else {}
+        return payload if isinstance(payload, dict) else {}
+
+    baseline = status(clone)
+    config = clone.path / ".kin" / "config"
+    original = config.read_text(encoding="utf-8")
+    config.write_text(
+        original.replace("example-service", "renamed-service"), encoding="utf-8"
     )
-    assert repinned.returncode != 1
-    if repinned.returncode in (0, 3):
-        unknowns = (repinned.json or {}).get("unknowns") or []
-        owners = {u.get("owner_role") for u in unknowns}
-        assert "company-steward" in owners, (
-            "a hint resolving to a different UUID after pinning must block with a "
-            f"steward-owned identity Unknown; observed {owners}"
-        )
-    else:
-        assert repinned.code in {"REPO_UNCERTIFIED", "FOREIGN_REPO_EVENTS", "DIGEST_MISMATCH"}
+    clone.commit("change the safe-name discovery hint")
+    changed_hint = status(clone)
+
+    config.write_text(
+        original.replace(REPO_UUID, OTHER_UUID), encoding="utf-8"
+    )
+    clone.commit("resolve the hint to a different UUID")
+    repinned = status(clone)
+    repin_unknowns = repinned.get("unknowns") or []
+
+    fsck = guildhall.run("fsck", "--repo", str(clone.path), "--full", "--json",
+                         cwd=clone.path, check=False)
+    O.check(
+        "V-8.identity",
+        {
+            "uuid_stable_under_hint_change": (
+                baseline.get("repository_uuid") == changed_hint.get("repository_uuid")
+            ),
+            "silently_repinned": (
+                repinned.get("repository_uuid") == OTHER_UUID
+                and not repin_unknowns
+            ),
+            "repin_unknown_owner_roles": [
+                u.get("owner_role") for u in repin_unknowns if isinstance(u, dict)
+            ],
+            "two_certificates_fail_fsck": fsck.returncode != 0,
+        },
+        label="repository identity stability",
+    )
 
 
 @spec_ref(
@@ -694,30 +812,67 @@ def test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change(
     ),
 )
 def test_publish_manifest_enforces_monotonic_counts(
-    guildhall: Guildhall, published: GitRepo, roots: ProofRoots
+    guildhall: Guildhall, published, company
 ) -> None:
+    """The count regression is produced by deleting real events, not an override."""
+    world, _ = published
+    world.plant_event(
+        world.maintainer, store_kind="codebase",
+        logical_key="architecture/scheduler/extra-1",
+        statement="An additional signed repository fact.",
+    )
+    world.verify_planted()
     first = guildhall.run(
-        "repo", "publish-manifest", "--repo", str(published.path), "--json",
-        cwd=published.path,
-        env={"GUILDHALL_COMPANY_URL": roots.company_url},
-        check=False,
+        "repo", "publish-manifest", "--repo", str(world.repo.path), "--json",
+        cwd=world.repo.path, env={"GUILDHALL_COMPANY_URL": company.url}, check=False,
     )
-    assert first.returncode != 1
+    if first.returncode == 1:
+        raise ProductFailure("`publish-manifest` returned the reserved exit 1")
+
+    events = sorted((world.repo.path / ".kin" / "events").rglob("*.json"))
+    if len(events) < 2:
+        raise HarnessInvalid(
+            "a real count regression needs at least two planted events to remove one"
+        )
+    events[-1].unlink()
+    world.repo.commit("remove one signed event, lowering the reachable count")
+
     regression = guildhall.run(
-        "repo", "publish-manifest", "--repo", str(published.path), "--json",
-        cwd=published.path,
-        env={
-            "GUILDHALL_COMPANY_URL": roots.company_url,
-            "GUILDHALL_ACCEPTANCE_EVENT_COUNT_OVERRIDE": "0",
-        },
-        check=False,
+        "repo", "publish-manifest", "--repo", str(world.repo.path), "--json",
+        cwd=world.repo.path, env={"GUILDHALL_COMPANY_URL": company.url}, check=False,
     )
-    assert regression.returncode != 1
-    if regression.returncode != 0:
-        regression.refused("MANIFEST_HEAD_REGRESSION")
-        assert "rollback" in regression.error["remediation"].lower() or (
-            "rewrite" in regression.error["remediation"].lower()
-        ), "the remediation must name the signed rollback/rewrite event"
+    if regression.returncode == 1:
+        raise ProductFailure("`publish-manifest` returned the reserved exit 1")
+    if regression.returncode == 0:
+        raise ProductFailure(
+            "a lowered reachable event count was admitted without a signed "
+            "rollback/rewrite event"
+        )
+    regression.refused("MANIFEST_HEAD_REGRESSION")
+    remediation = regression.error["remediation"].lower()
+
+    rewrite = world.plant_event(
+        world.maintainer, store_kind="codebase",
+        logical_key="architecture/scheduler/rollback",
+        statement="Maintainer-signed rewrite explaining the lowered event count.",
+        atom_kind="decision",
+    )
+    explained = guildhall.run(
+        "repo", "publish-manifest", "--repo", str(world.repo.path), "--json",
+        cwd=world.repo.path, env={"GUILDHALL_COMPANY_URL": company.url}, check=False,
+    )
+    O.check(
+        "V-8.publish-manifest",
+        {
+            "first_publication_admitted": first.returncode == 0,
+            "regression_refusal_code": regression.code,
+            "remediation_names_rollback_event": (
+                "rollback" in remediation or "rewrite" in remediation
+            ),
+            "signed_rewrite_admitted": explained.returncode == 0,
+        },
+        label="monotonic manifest admission",
+    )
 
 
 @spec_ref(
@@ -741,17 +896,21 @@ def test_company_emits_its_own_observation_expired_event(
     guildhall: Guildhall, published: GitRepo, roots: ProofRoots
 ) -> None:
     result = guildhall.run(
-        "status", "--repo", str(published.path), "--json", cwd=published.path,
+        "status", "--repo", str(published[0].repo.path), "--json", cwd=published[0].repo.path,
         env={
             "GUILDHALL_COMPANY_URL": roots.company_url,
             "GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "864000",
         },
         check=False,
     )
-    assert result.returncode != 1
+    if result.returncode == 1:
+        raise ProductFailure("`status` returned the reserved ambiguous exit 1")
     payload = result.json if result.stdout.strip() else {}
     if not isinstance(payload, dict):
-        return
+        raise ProductFailure(
+            "`status --json` returned no object, so the Company expiry event could "
+            "not be observed"
+        )
     events = [
         e
         for e in payload.get("company_events") or []
@@ -766,17 +925,8 @@ def test_company_emits_its_own_observation_expired_event(
         )
 
 
-@pytest.mark.parametrize(
-    "revocation,fact_validity,dependence,expected",
-    CACHE_TRUTH_TABLE,
-    ids=[f"{r}-{f}-{d}" for r, f, d, _ in CACHE_TRUTH_TABLE],
-)
 @spec_ref(
-    ARCH(
-        "V-8",
-        "cache-truth-table",
-        "Cache disagreement is total and ordered:",
-    ),
+    ARCH("V-8", "cache-truth-table", "Cache disagreement is total and ordered:"),
     VERIFY(
         "V-8",
         "truth-table",
@@ -785,53 +935,105 @@ def test_company_emits_its_own_observation_expired_event(
     ),
 )
 def test_cache_disagreement_truth_table(
-    guildhall: Guildhall,
-    published: GitRepo,
-    roots: ProofRoots,
-    revocation: str,
-    fact_validity: str,
-    dependence: str,
-    expected: str,
+    guildhall: Guildhall, company, tmp_path: Path
 ) -> None:
-    result = guildhall.run(
-        "project",
-        "--repo",
-        str(published.path),
-        "--task",
-        "apply the Company architecture",
-        "--decision",
-        "which architecture applies",
-        "--json",
-        cwd=published.path,
-        env={
-            "GUILDHALL_COMPANY_URL": roots.company_url,
-            "GUILDHALL_ACCEPTANCE_REVOCATION_SNAPSHOT": revocation,
-            "GUILDHALL_ACCEPTANCE_FACT_VALIDITY": fact_validity,
-            "GUILDHALL_ACCEPTANCE_DEPENDENCE_CLASS": dependence,
+    """All six rows, each from really constructed validity and cache state.
+
+    Fact validity is written into the signed reference's own interval.
+    Revocation staleness is produced by advancing the proof clock past the
+    cache's revocation window -- a permitted, witnessed fault schedule -- and the
+    instrument reads the elapsed interval back as the witness.
+    """
+    rows = []
+    for index, (revocation, fact_validity, dependence, expected) in enumerate(
+        CACHE_TRUTH_TABLE
+    ):
+        world = SignedWorld.create(tmp_path / f"cache-{index}")
+        valid_until = (
+            "2026-12-31T00:00:00.000Z" if fact_validity == "fresh"
+            else "2026-01-02T00:00:00.000Z"
+        )
+        world.plant_event(
+            world.maintainer, store_kind="codebase",
+            logical_key="architecture/scheduler/company-reference",
+            statement="This service applies the Company scheduler architecture.",
+            company_refs=[synth.company_reference(
+                company_id="company-demo", fact_id="fact_company_lookahead",
+                semantic_digest="a" * 64, digest_alg_version="sha256/1",
+                authority="company-steward-1",
+                valid_from="2026-01-01T00:00:00.000Z",
+                valid_until=valid_until,
+                company_criticality=(
+                    "safety" if dependence in ("safety", "any") else "advisory"
+                ),
+                relation="applies")],
+            commit=False,
+        )
+        world.plant_event(
+            world.maintainer, store_kind="codebase",
+            logical_key="architecture/scheduler/local-dependence",
+            statement=(
+                "Losing the Company scheduler reference is "
+                + ("safety-critical" if dependence == "safety" else "advisory")
+                + " for this repository."
+            ),
+            atom_kind="constraint",
+        )
+        world.verify_planted()
+        guildhall.run("ingest", "kindex", str(world.repo.path / ".kin"),
+                      "--repo", str(world.repo.path), "--json",
+                      cwd=world.repo.path, check=False)
+
+        env = {"GUILDHALL_COMPANY_URL": company.url}
+        witness = Witness(kind="proof-clock-offset")
+        if revocation == "stale":
+            offset = 60 * 60 * 24 * 30
+            env["GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS"] = str(offset)
+            witness.note(offset_seconds=offset, purpose="age the revocation snapshot")
+        started = time.monotonic()
+        result = guildhall.run(
+            "project", "--repo", str(world.repo.path),
+            "--task", "apply the Company architecture",
+            "--decision", "which architecture applies", "--json",
+            cwd=world.repo.path, env=env, check=False,
+        )
+        elapsed = time.monotonic() - started
+        if revocation == "stale":
+            witness.note(elapsed_seconds=elapsed)
+            witness.require("the revocation-staleness schedule must be witnessed")
+        if result.returncode == 1:
+            raise ProductFailure("`project` returned the reserved ambiguous exit 1")
+        payload = result.json if result.stdout.strip() else {}
+        payload = payload if isinstance(payload, dict) else {}
+        projection = (
+            payload.get("projection_state")
+            or payload.get("company_projection")
+            or (result.code if result.returncode not in (0, 3) else None)
+        )
+        rows.append({
+            "revocation": revocation,
+            "fact_validity": fact_validity,
+            "dependence": dependence,
+            "projection": projection,
+            "state_constructed": True,
+            "matches_expected": (
+                projection == "trusted" if expected == "trusted"
+                else projection != "trusted"
+            ),
+        })
+    stale_safety = [
+        r for r in rows if r["revocation"] == "stale" and r["dependence"] == "safety"
+    ]
+    O.check(
+        "V-8.cache-table",
+        {
+            "rows": rows,
+            "stale_revocation_dominates_safety": all(
+                r["projection"] != "trusted" for r in stale_safety
+            ) and bool(stale_safety),
         },
-        check=False,
+        label="cache disagreement truth table",
     )
-    assert result.returncode != 1
-    if result.returncode not in (0, 3):
-        assert result.code in {"REVOCATION_STALE", "CACHE_EXPIRED", "COMPANY_UNREACHABLE"}
-        return
-    payload = result.json
-    projection = payload.get("projection_state") or payload.get("company_projection")
-    if projection is None:
-        return
-    if expected == "trusted":
-        assert projection == "trusted", (
-            f"{revocation}/{fact_validity}/{dependence} must project trusted"
-        )
-    else:
-        assert projection != "trusted", (
-            f"{revocation}/{fact_validity}/{dependence} must not project trusted; "
-            f"observed {projection!r}"
-        )
-    if revocation == "stale" and dependence == "safety":
-        assert projection in {"withheld", "withheld_revocation_stale"}, (
-            "stale revocation dominates safety projection"
-        )
 
 
 @spec_ref(
@@ -851,7 +1053,7 @@ def test_cache_disagreement_truth_table(
 def test_uncertified_codebase_only_mode_emits_counts_and_status_only(
     guildhall: Guildhall, published: GitRepo, tmp_path: Path
 ) -> None:
-    clone = published.clone(tmp_path / "counts-only")
+    clone = published[0].repo.clone(tmp_path / "counts-only")
     envelope = json.dumps(
         {
             "hook_event_name": "SessionStart",
@@ -865,9 +1067,13 @@ def test_uncertified_codebase_only_mode_emits_counts_and_status_only(
         stdin=envelope,
         check=False,
     )
-    assert result.returncode != 1
+    if result.returncode == 1:
+        raise ProductFailure("`hooks dispatch` returned the reserved exit 1")
     if not result.stdout.strip():
-        return
+        raise ProductFailure(
+            "SessionStart emitted no payload, so the counts-only claim could not be "
+            "checked; silence is not a counts-only response"
+        )
     rendered = result.stdout
     payload = result.json
     if isinstance(payload, dict):

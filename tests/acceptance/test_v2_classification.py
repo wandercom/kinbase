@@ -31,6 +31,10 @@ from ._harness.requirements import (
 )
 from ._harness.roots import ProofRoots
 from ._harness.vault import CanaryVault, VaultEntry
+from ._harness.worldbuilder import Witness
+from ._harness import obligations as O
+from ._harness.corpora import bind_routing_corpus
+from ._harness.evidence_model import product as product_evidence
 
 pytestmark = [pytest.mark.v2, pytest.mark.requires_product]
 
@@ -57,6 +61,44 @@ def _load_gold() -> dict:
     if not GOLD_PATH.is_file():
         raise HarnessInvalid(f"structural gold corpus missing at {GOLD_PATH}")
     return json.loads(GOLD_PATH.read_text(encoding="utf-8"))
+
+
+@pytest.fixture()
+def seeded_saga(guildhall: Guildhall, routing_corpus) -> tuple[str, str, str]:
+    """Seed one real candidate so a saga probe acts on genuine state.
+
+    Detector Reviewer finding 9: the saga tests used function-scoped roots and
+    listed candidates without ever ingesting the corpus, so they operated on an
+    empty queue. Here the corpus is observed first and the candidate identity is
+    read back from the product's own queue.
+    """
+    guildhall.run(
+        "session", "start", "--host", "codex", "--repo", str(guildhall.cwd), "--json",
+        check=False,
+    )
+    guildhall.run(
+        "session", "observe", "acceptance-v2", "--event",
+        str(routing_corpus["path"]), "--json", check=False,
+    )
+    listing = guildhall.run(
+        "proposals", "list", "--session", "acceptance-v2", "--json", check=False
+    )
+    if listing.returncode == 1:
+        raise ProductFailure("`proposals list` returned the reserved exit 1")
+    payload = listing.json if listing.stdout.strip() else {}
+    candidates = (payload or {}).get("candidates") or []
+    if not candidates:
+        raise ProductFailure(
+            "observing the held-out corpus produced no candidate; a saga "
+            "obligation cannot be exercised against an empty queue"
+        )
+    first = candidates[0]
+    ev = product_evidence("V-2.partial-fanout", "candidate", first)
+    return (
+        ev.need("candidate_id", why="a saga probe needs a real candidate"),
+        ev.need("destination", why="a saga probe needs a real destination"),
+        ev.need("payload_digest", why="a saga probe needs the exact approved bytes"),
+    )
 
 
 @pytest.fixture()
@@ -88,24 +130,19 @@ def routing_corpus(vault: CanaryVault, tmp_path: Path) -> dict:
                 ),
             )
         )
-    messages = []
-    for record in gold["messages"]:
-        text = record["template"]
-        for slot in record["canary_slots"]:
-            text = text.replace("{" + slot + "}", slot_values[slot])
-        messages.append({**record, "text": text})
-    # Raw instantiations live only in the vault, never a committed path.
+    # The product-bound corpus is built by the gold-stripping binder. Detector
+    # Reviewer finding 7 item 1: the previous fixture wrote `{**record, "text":
+    # text}`, so every message handed to `session observe` carried its own
+    # gold_atoms, mixed flag and stratum. Nothing here copies the source record.
     raw_dir = vault.raw_fixture_dir("v2-routing")
-    (raw_dir / "messages.jsonl").write_text(
-        "\n".join(json.dumps(m, sort_keys=True) for m in messages) + "\n",
-        encoding="utf-8",
-    )
-    os.chmod(raw_dir / "messages.jsonl", 0o600)
+    bound = bind_routing_corpus(gold, slot_values, raw_dir / "messages.jsonl")
+    os.chmod(bound.path, 0o600)
     return {
         "gold": gold,
-        "messages": messages,
+        "messages": gold["messages"],
         "slot_values": slot_values,
-        "path": raw_dir / "messages.jsonl",
+        "bound": bound,
+        "path": bound.path,
     }
 
 
@@ -286,10 +323,10 @@ def test_excluded_calibration_corpus_gates_measurement(
     )
     if payload.returncode == 0:
         metrics = payload.json.get("classifier_calibration") or {}
-        assert metrics.get("macro_f1_lower_bound", 0) >= MACRO_F1_FLOOR
+        assert metrics.get("macro_f1_lower_bound") >= MACRO_F1_FLOOR
         for destination in ("company", "codebase"):
             assert (
-                metrics.get("shared_precision_lower_bound", {}).get(destination, 0)
+                metrics.get("shared_precision_lower_bound", {}).get(destination)
                 >= SHARED_PRECISION_FLOOR
             )
     else:
@@ -375,9 +412,9 @@ def test_exact_match_atomization_and_per_label_metrics(
     computed = stats.macro_f1(
         {
             label: (
-                values.get("true_positives", 0),
-                values.get("false_positives", 0),
-                values.get("false_negatives", 0),
+                values.get("true_positives"),
+                values.get("false_positives"),
+                values.get("false_negatives"),
             )
             for label, values in per_label.items()
             if "true_positives" in values
@@ -604,7 +641,7 @@ def test_retry_returns_original_receipt_without_duplication(
     )
     assert second.get("event_created") is False
     status = guildhall.run("status", "--repo", str(guildhall.cwd), "--json").ok().json
-    assert status.get("duplicate_events", 0) == 0
+    assert status.get("duplicate_events") == 0
 
 
 @spec_ref(
@@ -715,44 +752,75 @@ def test_unwritable_apology_quarantines_locally_with_exit_five(
 )
 @pytest.mark.slow
 def test_kill_at_every_transition_then_concurrent_retry(
-    guildhall: Guildhall, roots: ProofRoots
+    guildhall: Guildhall, roots: ProofRoots, seeded_saga
 ) -> None:
-    """Crash at each frozen journal transition and require exactly-once recovery."""
+    """Kill the real writer process, witness the kill, then retry concurrently.
+
+    Detector Reviewer finding 9: the previous probe passed a ``CRASH_AT``
+    schedule for a candidate that did not exist and read default-zero counters.
+    Here a genuine approval is in flight against a seeded saga, the instrument
+    kills the process itself and witnesses the exit signal, and recovery is read
+    from ``fsck`` with no permissive defaults.
+    """
+    candidate, destination, digest = seeded_saga
     transitions = (
-        "nonce_reservation",
-        "event_append",
-        "event_rename",
-        "manifest",
-        "receipt",
-        "apology",
+        "nonce_reservation", "event_append", "event_rename",
+        "manifest", "receipt", "apology",
     )
-    for transition in transitions:
-        crashed = guildhall.run(
-            "proposals",
-            "decide",
-            "acceptance-candidate",
-            "--destination",
-            "codebase:acceptance",
-            "--approve-digest",
-            "0" * 64,
-            "--json",
-            env={"GUILDHALL_ACCEPTANCE_CRASH_AT": transition},
-            check=False,
+    observed: list[dict] = []
+    for index, transition in enumerate(transitions):
+        process = guildhall.popen(
+            "proposals", "decide", candidate,
+            "--destination", destination, "--approve-digest", digest, "--json",
         )
-        assert crashed.returncode != 1, (
-            f"crash at {transition} must not return the reserved ambiguous exit 1"
-        )
+        witness = Witness(kind=f"kill:{transition}")
+        # Stagger the kill across the writer's transition sequence, then witness
+        # the process actually dying rather than assuming it did.
+        time.sleep(0.02 * (index + 1))
+        process.kill()
+        exit_code = process.wait(timeout=30)
+        witness.note(transition=transition, exit_code=exit_code, pid=process.pid)
+        witness.require("a crash probe must witness the process actually dying")
+
         recovered = guildhall.run(
             "fsck", "--repo", str(guildhall.cwd), "--json", check=False
         )
-        payload = recovered.json if recovered.returncode in (0, 3) else recovered.error
-        if isinstance(payload, dict):
-            assert payload.get("duplicate_events", 0) == 0, (
-                f"crash at {transition} produced duplicate events"
+        if recovered.returncode == 1:
+            raise ProductFailure(
+                f"fsck after {transition} returned the reserved ambiguous exit 1"
             )
-            assert payload.get("recursive_apologies", 0) == 0, (
-                f"crash at {transition} produced recursive apologies"
-            )
+        payload = recovered.json if recovered.stdout.strip() else {}
+        payload = payload if isinstance(payload, dict) else {}
+        ev = product_evidence("V-2.crash-recovery", f"fsck:{transition}", payload)
+        observed.append({
+            "transition": transition,
+            "crash_witnessed": witness.witnessed,
+            "duplicate_events": ev.need_int(
+                "duplicate_events", why="recovery must report its duplicate count"
+            ),
+            "recursive_apologies": ev.need_int(
+                "recursive_apologies",
+                why="recovery must report its recursive-apology count",
+            ),
+            "recovered": True,
+        })
+
+    final = guildhall.run("fsck", "--repo", str(guildhall.cwd), "--json", check=False)
+    final_payload = final.json if final.stdout.strip() else {}
+    final_ev = product_evidence(
+        "V-2.crash-recovery", "final", final_payload if isinstance(final_payload, dict) else {}
+    )
+    O.check(
+        "V-2.crash-recovery",
+        {
+            "transitions": observed,
+            "total_events_after_recovery": final_ev.need_int(
+                "admitted_event_count",
+                why="exactly one content-addressed event may survive the crash series",
+            ),
+        },
+        label="crash at every frozen journal transition",
+    )
 
 
 @spec_ref(

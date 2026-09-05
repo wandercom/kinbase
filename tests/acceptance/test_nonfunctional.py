@@ -18,6 +18,9 @@ from pathlib import Path
 
 import pytest
 
+from ._harness import obligations as O
+from ._harness.evidence_model import Origin, require_all, require_nonempty
+
 from ._harness import canaries, synth
 from ._harness.cli import ERROR_CODES, EXIT_MEANING, Guildhall
 from ._harness.gitfix import GitRepo
@@ -43,6 +46,7 @@ from ._harness.requirements import (
     spec_ref,
 )
 from ._harness.roots import ProofRoots, assert_mode_no_broader_than
+from ._harness.worldbuilder import SignedWorld
 from ._harness.service import (
     REJECTION_PROBES,
     ClientKey,
@@ -79,6 +83,12 @@ def test_commands_have_bounded_help(guildhall: Guildhall) -> None:
         ("questions", "--help"),
         ("hooks", "--help"),
         ("experiment", "--help"),
+    )
+    require_nonempty(
+        surfaces,
+        obligation="V-4.ceiling",
+        why="the bounded-help obligation must range over a non-empty command set",
+        origin=Origin.HARNESS,
     )
     for argv in surfaces:
         result = guildhall.run(*argv, timeout=60, check=False)
@@ -461,10 +471,25 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
             "spec/cli.md: 'never truncate silently'"
         )
 
+    # Cross the projection ceiling with real admitted facts rather than a flag.
+    world = SignedWorld.create(tmp_path / "ceiling-world")
+    for index in range(PROJECTION_FACTS + 8):
+        world.plant_event(
+            world.maintainer, store_kind="codebase",
+            logical_key=f"scheduler/ceiling/{index}",
+            statement=f"Admitted repository constraint number {index}.",
+            commit=False,
+        )
+    world.repo.commit("plant more facts than the projection ceiling admits")
+    world.verify_planted()
+    guildhall.run("ingest", "kindex", str(world.repo.path / ".kin"),
+                  "--repo", str(world.repo.path), "--json",
+                  cwd=world.repo.path, check=False)
     projection = guildhall.run(
-        "project", "--repo", str(repo.path), "--task", "x", "--decision", "y", "--json",
-        env={"GUILDHALL_ACCEPTANCE_FORCE_CEILING": "projection"},
-        check=False,
+        "project", "--repo", str(world.repo.path), "--task",
+        "apply every scheduler constraint", "--decision",
+        "which constraints apply", "--json",
+        cwd=world.repo.path, check=False,
     )
     assert projection.returncode != 1
     if projection.returncode in (0, 3) and projection.stdout.strip():

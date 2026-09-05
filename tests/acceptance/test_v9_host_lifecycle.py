@@ -18,11 +18,15 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import statistics
 import time
 from pathlib import Path
 
 import pytest
+
+from ._harness import obligations as O
+from ._harness.evidence_model import Origin, require_all, require_nonempty
 
 from ._harness import hosts, synth
 from ._harness.cli import Guildhall
@@ -57,6 +61,7 @@ from ._harness.requirements import (
     spec_ref,
 )
 from ._harness.roots import ProofRoots
+from ._harness.worldbuilder import SignedWorld
 from ._harness.service import blackhole_endpoint
 
 pytestmark = [pytest.mark.v9, pytest.mark.requires_product]
@@ -76,11 +81,44 @@ def _require_host(name: str) -> hosts.HostBinary:
 
 @pytest.fixture()
 def host_repo(roots: ProofRoots) -> GitRepo:
-    repo = GitRepo.init(roots.repo_root)
-    repo.write(".kin/config", 'schema_version = "guildhall-repo/1"\n')
-    repo.write("README.md", "acceptance host lifecycle fixture\n")
-    repo.commit("initialise")
-    return repo
+    """A repository with real admitted facts, so context can be non-empty."""
+    world = SignedWorld.create(roots.repo_root)
+    for index in range(8):
+        world.plant_event(
+            world.maintainer, store_kind="codebase",
+            logical_key=f"architecture/scheduler/host-{index}",
+            statement=f"Admitted repository constraint number {index}.",
+            commit=False,
+        )
+    world.repo.write("README.md", "acceptance host lifecycle fixture\n")
+    world.repo.commit("seed the host lifecycle repository")
+    world.verify_planted()
+    return world.repo
+
+
+def _construct_start_state(roots: ProofRoots, repo: GitRepo, state: str) -> None:
+    """Really create the precondition each measured start state names."""
+    cache = roots.company_cache
+    index = repo.path / ".kin" / "local" / "guildhall-index.json"
+    if state == "warm":
+        cache.mkdir(parents=True, exist_ok=True)
+        os.chmod(cache, 0o700)
+        (cache / "verified.json").write_text(
+            json.dumps({"state": "verified"}), encoding="utf-8"
+        )
+    elif state == "cold":
+        shutil.rmtree(cache, ignore_errors=True)
+        cache.mkdir(parents=True, exist_ok=True)
+        os.chmod(cache, 0o700)
+    elif state == "invalid-cache":
+        cache.mkdir(parents=True, exist_ok=True)
+        os.chmod(cache, 0o700)
+        (cache / "verified.json").write_bytes(b"\x00 corrupted cache bytes")
+    elif state == "full-fsck-required":
+        if index.exists():
+            index.unlink()
+    else:  # pragma: no cover - guarded by START_STATES
+        raise HarnessInvalid(f"unknown start state {state!r}")
 
 
 # --------------------------------------------------------------------------
@@ -141,17 +179,23 @@ def test_hooks_plan_is_read_only_and_install_requires_native_approval(
         "`hooks plan` changed files in the isolated HOME; the dry run must change nothing"
     )
 
-    unapproved = guildhall.run(
-        "hooks", "install", host, "--json",
-        env={"GUILDHALL_ACCEPTANCE_HOST_APPROVAL": "denied"},
-        check=False,
-    )
-    assert unapproved.returncode != 1
-    if unapproved.returncode != 0:
-        unapproved.refused("HOOK_APPROVAL_REQUIRED")
-        assert before == {
-            path: path.read_bytes() for path in roots.home.rglob("*") if path.is_file()
-        }, "a refused install must leave config untouched"
+    # Denial is expressed the way the host expresses it: no approval marker
+    # exists in the isolated HOME, so the host's own approval path must refuse.
+    # A dedicated environment value would let the product recognise the probe.
+    unapproved = guildhall.run("hooks", "install", host, "--json", check=False)
+    if unapproved.returncode == 1:
+        raise ProductFailure("`hooks install` returned the reserved exit 1")
+    if unapproved.returncode == 0:
+        raise ProductFailure(
+            "an install with no host approval succeeded; spec/architecture.md "
+            "section 9 forbids any silent config write or permission bypass"
+        )
+    unapproved.refused("HOOK_APPROVAL_REQUIRED")
+    after_denied = {
+        path: path.read_bytes() for path in roots.home.rglob("*") if path.is_file()
+    }
+    if before != after_denied:
+        raise ProductFailure("a refused install must leave config untouched")
 
     for forbidden in ("--yes", "-y", "--force", "--no-confirm"):
         assert forbidden not in guildhall.run("hooks", "install", "--help", check=False).stdout, (
@@ -201,7 +245,7 @@ def test_native_host_events_prime_capture_and_exclude_personal(
         result = guildhall.run(
             "hooks", "dispatch", host, event, "--json",
             stdin=json.dumps(envelope),
-            env={"PATH": f"{recorder_dir}:{os.environ.get('PATH', '')}"},
+            env={"PATH": f"{recorder_dir}:{os.environ.get('PATH')}"},
             check=False,
         )
         assert result.returncode != 1, f"{host}/{event} returned the reserved exit 1"
@@ -464,22 +508,31 @@ def test_session_start_p95_under_two_seconds_in_every_state(
 ) -> None:
     _require_host(host)
     samples: dict[str, LatencySample] = {}
+    refusals = 0
     for state in START_STATES:
         durations: list[float] = []
         for index in range(INVOCATIONS_PER_HOST_STATE):
             envelope = envelope_for(
                 host, "SessionStart", session_id=f"{host}-{state}-{index}", cwd=str(host_repo.path)
             )
+            # The start state is constructed on disk before each invocation:
+            # a warm start reuses the verified cache, a cold start has none, an
+            # invalid cache is corrupted, and a full fsck follows a removed
+            # reducer index. Announcing the state would let the product report a
+            # latency it never earned.
+            _construct_start_state(roots, host_repo, state)
             started = time.monotonic()
             result = guildhall.run(
                 "hooks", "dispatch", host, "SessionStart", "--json",
                 stdin=json.dumps(envelope),
-                env={"GUILDHALL_ACCEPTANCE_START_STATE": state},
                 timeout=30,
                 check=False,
             )
             durations.append(time.monotonic() - started)
-            assert result.returncode != 1, f"{host}/{state}/{index}"
+            if result.returncode == 1:
+                raise ProductFailure(f"{host}/{state}/{index} returned exit 1")
+            if result.returncode not in (0, 3):
+                refusals += 1
         samples[state] = LatencySample(host=host, state=state, durations=tuple(durations))
         assert len(durations) >= INVOCATIONS_PER_HOST_STATE, (
             f"{host}/{state}: {len(durations)} invocations, at least "
@@ -491,9 +544,23 @@ def test_session_start_p95_under_two_seconds_in_every_state(
         for state, sample in samples.items()
         if not sample.within_budget()
     }
+    require_all(
+        list(samples.values()),
+        lambda s: s.within_budget() and len(s.durations) >= INVOCATIONS_PER_HOST_STATE,
+        obligation="V-9.latency",
+        why="every measured start state must clear the two-second p95 over a full "
+            "200-invocation sample",
+        minimum=len(START_STATES),
+        origin=Origin.PRODUCT,
+    )
     assert not over, (
         f"{host}: SessionStart p95 exceeded the two-second budget in {over}"
     )
+    if refusals:
+        raise ProductFailure(
+            f"{refusals} SessionStart invocations refused; latency may not pass by "
+            "refusing every call"
+        )
 
     # Latency cannot pass by always degrading.
     warm = samples["warm"]
@@ -589,10 +656,11 @@ def test_connect_budget_cold_projection_and_full_fsck_ceiling(
         f"the Company connect budget is 250 ms; the call took {connect_elapsed:.3f}s"
     )
 
+    _construct_start_state(roots, host_repo, "cold")
     cold = guildhall.run(
-        "project", "--repo", str(host_repo.path), "--task", "x", "--decision", "y", "--json",
-        env={"GUILDHALL_ACCEPTANCE_START_STATE": "cold"},
-        check=False,
+        "project", "--repo", str(host_repo.path), "--task",
+        "apply the scheduler constraints", "--decision",
+        "which constraints apply", "--json", check=False,
     )
     assert cold.returncode != 1
     if cold.returncode in (0, 3) and cold.stdout.strip():
@@ -605,7 +673,6 @@ def test_connect_budget_cold_projection_and_full_fsck_ceiling(
     fsck_started = time.monotonic()
     full = guildhall.run(
         "fsck", "--repo", str(host_repo.path), "--full", "--json",
-        env={"GUILDHALL_ACCEPTANCE_SYNTHETIC_EVENT_COUNT": "10000"},
         timeout=FULL_FSCK_CEILING_SECONDS + 60,
         check=False,
     )

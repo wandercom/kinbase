@@ -1,0 +1,630 @@
+{
+ "coverage_gaps": [],
+ "planter_count": 35,
+ "planters": [
+  {
+   "commands": [
+    "ingest"
+   ],
+   "gate": "V-1",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v1_ingestion.py::test_adapter_receipt_reports_observations_not_counts",
+    "test_v1_ingestion.py::test_end_to_end_build_uses_at_least_seven_source_classes"
+   ],
+   "mutation_id": "v1.adapter_count_without_observations",
+   "requirement": "Mutation: make one adapter return a source count without observations; V-1 fails.",
+   "semantics": "One adapter's receipt reports a source count while emitting an empty observation batch.",
+   "target": "observations",
+   "transform": "empty_list",
+   "transform_meaning": "replace a named list with an empty list",
+   "value": null
+  },
+  {
+   "commands": [
+    "ingest"
+   ],
+   "gate": "V-1",
+   "method": "fixture",
+   "must_fail_nodes": [
+    "test_v1_ingestion.py::test_misextraction_notice_is_approver_owned_and_withholds_only",
+    "test_v1_ingestion.py::test_never_true_requires_subject_matter_authority"
+   ],
+   "mutation_id": "v1.approver_mints_never_true",
+   "requirement": "A distinct steward/maintainer `never_true` event performs semantic withdrawal; mutation that lets the approver mint it must fail.",
+   "semantics": "The approver principal is permitted to sign a `never_true` semantic withdrawal instead of only a `misextraction` notice.",
+   "target": "",
+   "transform": "echo_success",
+   "transform_meaning": "replace a typed refusal with exit 0 and an empty object",
+   "value": null
+  },
+  {
+   "commands": [
+    "session"
+   ],
+   "gate": "V-2",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v2_classification.py::test_mixed_messages_atomise_rather_than_take_one_label",
+    "test_v2_classification.py::test_exact_match_atomization_and_per_label_metrics"
+   ],
+   "mutation_id": "v2.whole_message_single_label",
+   "requirement": "Mutations: whole-message single label; shared-by-default under low confidence; common fan-out transaction; remove nonce uniqueness/recovery. Each must fail.",
+   "semantics": "Classification assigns one destination label to the entire message instead of atomising mixed scope.",
+   "target": "atoms",
+   "transform": "collapse_list",
+   "transform_meaning": "replace a named list with a single element",
+   "value": null
+  },
+  {
+   "commands": [
+    "session"
+   ],
+   "gate": "V-2",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v2_classification.py::test_low_confidence_shared_label_demotes_to_none_or_unknown"
+   ],
+   "mutation_id": "v2.shared_by_default_low_confidence",
+   "requirement": "Mutations: whole-message single label; shared-by-default under low confidence; common fan-out transaction; remove nonce uniqueness/recovery. Each must fail.",
+   "semantics": "A low-confidence shared label is emitted as a shared candidate instead of being demoted to `none`/Unknown.",
+   "target": "atoms.*.destination",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": "company"
+  },
+  {
+   "commands": [
+    "status"
+   ],
+   "gate": "V-2",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v2_classification.py::test_partial_fanout_failure_does_not_roll_back_committed_destination",
+    "test_v2_classification.py::test_no_cross_store_transaction_exists"
+   ],
+   "mutation_id": "v2.common_fanout_transaction",
+   "requirement": "Mutations: whole-message single label; shared-by-default under low confidence; common fan-out transaction; remove nonce uniqueness/recovery. Each must fail.",
+   "semantics": "Fan-out uses one cross-destination transaction with global rollback instead of per-destination sagas.",
+   "target": "fanout_receipts.codebase.state",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": "refused"
+  },
+  {
+   "commands": [
+    "fsck",
+    "status"
+   ],
+   "gate": "V-2",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v2_classification.py::test_kill_at_every_transition_then_concurrent_retry",
+    "test_v2_classification.py::test_retry_returns_original_receipt_without_duplication"
+   ],
+   "mutation_id": "v2.remove_nonce_uniqueness_recovery",
+   "requirement": "Mutations: whole-message single label; shared-by-default under low confidence; common fan-out transaction; remove nonce uniqueness/recovery. Each must fail.",
+   "semantics": "The `(destination, nonce)` uniqueness constraint and the recoverable destination journal are removed.",
+   "target": "duplicate_events",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": 2
+  },
+  {
+   "commands": [
+    "status"
+   ],
+   "gate": "V-3",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v3_privacy.py::test_no_transcript_digest_or_path_on_any_shared_surface"
+   ],
+   "mutation_id": "v3.transcript_digest_in_receipt",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "The destination receipt carries the raw transcript content digest.",
+   "target": "receipt.transcript_digest",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": "planted"
+  },
+  {
+   "commands": [
+    "doctor"
+   ],
+   "gate": "V-3",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v3_privacy.py::test_shared_writer_has_no_personal_capability",
+    "test_v3_privacy.py::test_sandbox_denies_personal_root_for_shared_processes"
+   ],
+   "mutation_id": "v3.mount_personal_in_coding_query",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "The coding projection process is given a Personal store handle.",
+   "target": "processes.projector.holds_personal_capability",
+   "transform": "flip_bool",
+   "transform_meaning": "invert a named boolean",
+   "value": null
+  },
+  {
+   "commands": [
+    "status"
+   ],
+   "gate": "V-3",
+   "method": "fixture",
+   "must_fail_nodes": [
+    "test_v3_attacks.py::test_worktree_cannot_mint_trust_root_or_certificate"
+   ],
+   "mutation_id": "v3.trust_kin_trust_json",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "A worktree `.kin/trust.json` is accepted as a trust root.",
+   "target": "",
+   "transform": "echo_success",
+   "transform_meaning": "replace a typed refusal with exit 0 and an empty object",
+   "value": null
+  },
+  {
+   "commands": [
+    "proposals"
+   ],
+   "gate": "V-3",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v3_privacy.py::test_hard_blocking_taint_is_never_cleared_by_deidentification",
+    "test_v3_privacy.py::test_paraphrase_only_output_stays_private_by_taint_policy"
+   ],
+   "mutation_id": "v3.clear_taint_after_deidentification",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "`deidentify` clears provenance taint on the candidate record.",
+   "target": "candidates.*.taint_cleared",
+   "transform": "flip_bool",
+   "transform_meaning": "invert a named boolean",
+   "value": null
+  },
+  {
+   "commands": [
+    "proposals"
+   ],
+   "gate": "V-3",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v3_attacks.py::test_approved_bytes_are_the_exact_buffer_rehashed_at_commit"
+   ],
+   "mutation_id": "v3.reread_candidate_path_after_approval",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "The destination writer resolves and re-reads the candidate pathname instead of committing the inline approved buffer.",
+   "target": "committed_digest",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  {
+   "commands": [
+    "ingest"
+   ],
+   "gate": "V-3",
+   "method": "fixture",
+   "must_fail_nodes": [
+    "test_v3_attacks.py::test_unauthorized_and_worktree_only_signers_are_refused"
+   ],
+   "mutation_id": "v3.worktree_only_key_admission",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "An event signed by a key present only inside the worktree is admitted.",
+   "target": "",
+   "transform": "echo_success",
+   "transform_meaning": "replace a typed refusal with exit 0 and an empty object",
+   "value": null
+  },
+  {
+   "commands": [
+    "ingest"
+   ],
+   "gate": "V-3",
+   "method": "fixture",
+   "must_fail_nodes": [
+    "test_v3_attacks.py::test_cross_message_type_signature_reuse_is_refused"
+   ],
+   "mutation_id": "v3.signature_reuse_across_message_types",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "Domain separation is dropped so one signature verifies under a different `message_type`.",
+   "target": "",
+   "transform": "echo_success",
+   "transform_meaning": "replace a typed refusal with exit 0 and an empty object",
+   "value": null
+  },
+  {
+   "commands": [
+    "ingest"
+   ],
+   "gate": "V-3",
+   "method": "fixture",
+   "must_fail_nodes": [
+    "test_v3_attacks.py::test_parser_differential_duplicate_and_reordered_keys_refuse"
+   ],
+   "mutation_id": "v3.verify_one_parse_apply_another",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "Verification and semantic use read two different parses of the buffer.",
+   "target": "",
+   "transform": "echo_success",
+   "transform_meaning": "replace a typed refusal with exit 0 and an empty object",
+   "value": null
+  },
+  {
+   "commands": [
+    "status"
+   ],
+   "gate": "V-3",
+   "method": "fixture",
+   "must_fail_nodes": [
+    "test_v3_attacks.py::test_facts_token_scope_sets_require_exact_canonical_membership",
+    "test_v3_attacks.py::test_empty_scope_set_grants_nothing"
+   ],
+   "mutation_id": "v3.wildcard_authority_scope",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "Authority scope matching accepts a wildcard, prefix or glob instead of canonical exact byte equality.",
+   "target": "",
+   "transform": "echo_success",
+   "transform_meaning": "replace a typed refusal with exit 0 and an empty object",
+   "value": null
+  },
+  {
+   "commands": [
+    "explain"
+   ],
+   "gate": "V-3",
+   "method": "fixture",
+   "must_fail_nodes": [
+    "test_v3_attacks.py::test_sql_like_glob_fts_and_nul_metacharacters_do_not_widen_matching"
+   ],
+   "mutation_id": "v3.sql_interpolation",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "A scope or logical key is interpolated into SQL rather than bound.",
+   "target": "",
+   "transform": "echo_success",
+   "transform_meaning": "replace a typed refusal with exit 0 and an empty object",
+   "value": null
+  },
+  {
+   "commands": [
+    "doctor"
+   ],
+   "gate": "V-3",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v3_privacy.py::test_process_artifacts_contain_no_personal_root_canary"
+   ],
+   "mutation_id": "v3.personal_path_in_shared_argv_config",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "The shared process configuration or argv carries the Personal root.",
+   "target": "processes.projector.personal_root_in_serialized_config",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": true
+  },
+  {
+   "commands": [
+    "status"
+   ],
+   "gate": "V-3",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v3_attacks.py::test_stolen_base_facts_token_cannot_read_directory_or_admit_answers",
+    "test_v3_attacks.py::test_administrative_issuance_has_no_body_read_capability"
+   ],
+   "mutation_id": "v3.remove_scoped_token_enforcement",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "Capability-scope enforcement on service tokens is removed.",
+   "target": "",
+   "transform": "echo_success",
+   "transform_meaning": "replace a typed refusal with exit 0 and an empty object",
+   "value": null
+  },
+  {
+   "commands": [
+    "proposals"
+   ],
+   "gate": "V-3",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v3_attacks.py::test_approval_replay_and_retarget_are_refused"
+   ],
+   "mutation_id": "v3.remove_nonce_uniqueness",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "The unique `(destination, nonce)` constraint is dropped.",
+   "target": "",
+   "transform": "echo_success",
+   "transform_meaning": "replace a typed refusal with exit 0 and an empty object",
+   "value": null
+  },
+  {
+   "commands": [
+    "proposals"
+   ],
+   "gate": "V-3",
+   "method": "fixture",
+   "must_fail_nodes": [
+    "test_v3_attacks.py::test_concurrent_approvals_and_double_submission_produce_one_event"
+   ],
+   "mutation_id": "v3.race_concurrent_approvals",
+   "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+   "semantics": "Concurrent approvals for one candidate are not serialised.",
+   "target": "",
+   "transform": "echo_success",
+   "transform_meaning": "replace a typed refusal with exit 0 and an empty object",
+   "value": null
+  },
+  {
+   "commands": [
+    "proposals"
+   ],
+   "gate": "V-3",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v3_attacks.py::test_terminal_deception_payloads_are_rejected_or_bijectively_escaped"
+   ],
+   "mutation_id": "v3.raw_terminal_output",
+   "requirement": "Mutation to raw terminal output must fail.",
+   "semantics": "The approval preview emits raw terminal bytes instead of the frozen bijective escaped form.",
+   "target": "canonical_utf8",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": "approved\rDENIED"
+  },
+  {
+   "commands": [
+    "explain"
+   ],
+   "gate": "V-4",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v4_maintenance.py::test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event",
+    "test_v5_temporal.py::test_newest_wins_is_not_the_rule"
+   ],
+   "mutation_id": "v4.greatest_timestamp_wins",
+   "requirement": "Mutation: choose the greatest timestamp/latest file on conflict, omit `as_of`, or treat a stale Company head observation as Git authority; V-4 fails.",
+   "semantics": "Conflicting heads are resolved by greatest timestamp or newest file.",
+   "target": "state",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": "current"
+  },
+  {
+   "commands": [
+    "corpus"
+   ],
+   "gate": "V-4",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v4_maintenance.py::test_rebuild_is_deterministic_over_frozen_inputs",
+    "test_v4_maintenance.py::test_omitting_as_of_breaks_determinism_and_is_refused"
+   ],
+   "mutation_id": "v4.omit_as_of",
+   "requirement": "Mutation: choose the greatest timestamp/latest file on conflict, omit `as_of`, or treat a stale Company head observation as Git authority; V-4 fails.",
+   "semantics": "The reducer reads an ambient wall clock instead of an explicit `as_of`.",
+   "target": "inputs.as_of",
+   "transform": "drop_field",
+   "transform_meaning": "remove a required field from every emitted object",
+   "value": null
+  },
+  {
+   "commands": [
+    "fsck"
+   ],
+   "gate": "V-4",
+   "method": "fixture",
+   "must_fail_nodes": [
+    "test_v4_maintenance.py::test_manifest_comparison_classifies_lag_incomplete_and_expiry"
+   ],
+   "mutation_id": "v4.stale_company_head_as_git_authority",
+   "requirement": "Mutation: choose the greatest timestamp/latest file on conflict, omit `as_of`, or treat a stale Company head observation as Git authority; V-4 fails.",
+   "semantics": "An expired Company manifest observation is treated as repository authority rather than dated maintainer testimony.",
+   "target": "manifest_comparison.classification",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": "normal_lag"
+  },
+  {
+   "commands": [
+    "repo",
+    "status"
+   ],
+   "gate": "V-4",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v4_maintenance.py::test_linked_worktrees_serialize_on_one_common_dir_lock"
+   ],
+   "mutation_id": "v4.worktree_local_lock",
+   "requirement": "A worktree-local lock mutation must fail.",
+   "semantics": "The admission lock lives in the per-worktree directory instead of Git's common directory.",
+   "target": "lock_in_common_dir",
+   "transform": "flip_bool",
+   "transform_meaning": "invert a named boolean",
+   "value": null
+  },
+  {
+   "commands": [
+    "status"
+   ],
+   "gate": "V-4",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v4_maintenance.py::test_pre_revocation_replay_returns_history_without_readmission"
+   ],
+   "mutation_id": "v4.content_path_before_revocation",
+   "requirement": "Mutation that checks content path before authority/ revocation admission fails.",
+   "semantics": "The path-exists fast path runs before authority and revocation admission, so a revoked event is re-admitted.",
+   "target": "pre_revocation_replay.readmitted",
+   "transform": "flip_bool",
+   "transform_meaning": "invert a named boolean",
+   "value": null
+  },
+  {
+   "commands": [
+    "explain"
+   ],
+   "gate": "V-5",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v5_temporal.py::test_newest_wins_is_not_the_rule",
+    "test_v5_temporal.py::test_rejected_pr_does_not_displace_current_adr"
+   ],
+   "mutation_id": "v5.newest_wins",
+   "requirement": "Mutations newest-wins, highest-authority-always-wins, and repetition-as-independence must each fail.",
+   "semantics": "The reducer selects the newest event for a logical key.",
+   "target": "selection_reason",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": "newest timestamp wins"
+  },
+  {
+   "commands": [
+    "explain"
+   ],
+   "gate": "V-5",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v5_temporal.py::test_scope_bounds_authority_rather_than_prestige"
+   ],
+   "mutation_id": "v5.highest_authority_always_wins",
+   "requirement": "Mutations newest-wins, highest-authority-always-wins, and repetition-as-independence must each fail.",
+   "semantics": "The reducer selects by authority rank regardless of scope, validity or supersession.",
+   "target": "state",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": "current"
+  },
+  {
+   "commands": [
+    "explain"
+   ],
+   "gate": "V-5",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v5_temporal.py::test_copied_chorus_does_not_outweigh_one_independent_decision"
+   ],
+   "mutation_id": "v5.repetition_as_independence",
+   "requirement": "Mutations newest-wins, highest-authority-always-wins, and repetition-as-independence must each fail.",
+   "semantics": "Repeated copies of one prior are counted as independent corroboration.",
+   "target": "independent_corroboration_count",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": 10
+  },
+  {
+   "commands": [
+    "project"
+   ],
+   "gate": "V-6",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v6_authority.py::test_signed_answer_from_a_separate_process_materially_changes_the_decision",
+    "test_v6_authority.py::test_unavailable_authority_yields_declared_degraded_policy"
+   ],
+   "mutation_id": "v6.synthesize_answer_from_model_prior",
+   "requirement": "Mutation: locally synthesize an answer from model prior; V-6 fails.",
+   "semantics": "An unresolved authority Unknown is closed from the model prior instead of a signed in-scope answer.",
+   "target": "trusted_recommendation",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": "synthesised from the model prior"
+  },
+  {
+   "commands": [
+    "project"
+   ],
+   "gate": "V-7",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v7_projection.py::test_duplicates_do_not_crowd_out_the_high_distortion_invariant",
+    "test_v7_projection.py::test_marginal_value_is_recomputed_against_the_current_set"
+   ],
+   "mutation_id": "v7.independent_scalar_topk",
+   "requirement": "Mutation: independent scalar rank/top-k; V-7 fails because duplicates crowd out the invariant.",
+   "semantics": "The projector ranks candidates independently by scalar score and takes the top k, with no set-conditional recomputation.",
+   "target": "stopping_reason",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": "token_window_full"
+  },
+  {
+   "commands": [
+    "ingest"
+   ],
+   "gate": "V-8",
+   "method": "fixture",
+   "must_fail_nodes": [
+    "test_v8_company_refs.py::test_only_company_steward_may_sign_a_relaxation",
+    "test_v8_company_refs.py::test_maintainer_may_request_but_not_mint_an_exception"
+   ],
+   "mutation_id": "v8.codebase_authorizes_exception_to",
+   "requirement": "Mutation: let Codebase authorize `exception_to`; V-8 fails.",
+   "semantics": "A Codebase maintainer signature is accepted for a Company exception.",
+   "target": "",
+   "transform": "echo_success",
+   "transform_meaning": "replace a typed refusal with exit 0 and an empty object",
+   "value": null
+  },
+  {
+   "commands": [
+    "status"
+   ],
+   "gate": "V-9",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v9_host_lifecycle.py::test_mid_session_capture_continues_across_native_events",
+    "test_v9_host_lifecycle.py::test_precompact_and_stop_flush_pending_proposals"
+   ],
+   "mutation_id": "v9.disable_mid_session_capture",
+   "requirement": "Mutation: disable mid-session capture while keeping SessionStart green; V-9 fails.",
+   "semantics": "Prompt/observation and pre-edit events stop capturing while SessionStart still returns a healthy payload.",
+   "target": "observation_count",
+   "transform": "zero_counter",
+   "transform_meaning": "force a named counter to zero",
+   "value": null
+  },
+  {
+   "commands": [
+    "proposals"
+   ],
+   "gate": "V-9",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window"
+   ],
+   "mutation_id": "v9.reservation_after_render",
+   "requirement": "Moving the reservation increment after render must produce more than four prompts and make the mutation fail",
+   "semantics": "The prompt-slot reservation increments after the prompt renders.",
+   "target": "prompt_rendered",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": true
+  },
+  {
+   "commands": [
+    "proposals"
+   ],
+   "gate": "V-9",
+   "method": "validator_source_patch",
+   "must_fail_nodes": [
+    "test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction"
+   ],
+   "mutation_id": "v9.check_outside_transaction",
+   "requirement": "moving any check outside the transaction must produce a failing duplicate/starvation mutation",
+   "semantics": "Reissue eligibility, digest lock, slot reservation or consecutive count is checked outside the single `BEGIN IMMEDIATE`.",
+   "target": "payload_digest",
+   "transform": "constant_value",
+   "transform_meaning": "replace a named field with a fixed value",
+   "value": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+  }
+ ],
+ "product_mutation_count": 35,
+ "schema": "guildhall-acceptance-planter-manifest/1",
+ "transforms": {
+  "collapse_list": "replace a named list with a single element",
+  "constant_value": "replace a named field with a fixed value",
+  "drop_field": "remove a required field from every emitted object",
+  "echo_success": "replace a typed refusal with exit 0 and an empty object",
+  "empty_list": "replace a named list with an empty list",
+  "flip_bool": "invert a named boolean",
+  "zero_counter": "force a named counter to zero"
+ }
+}

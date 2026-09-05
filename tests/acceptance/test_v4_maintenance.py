@@ -19,6 +19,9 @@ from pathlib import Path
 
 import pytest
 
+from ._harness import obligations as O
+from ._harness.evidence_model import Origin, require_all, require_nonempty
+
 from ._harness import canonical, synth
 from ._harness.cli import Guildhall
 from ._harness.gitfix import REQUIRED_ATTRIBUTE_LINES, GitRepo
@@ -37,6 +40,7 @@ from ._harness.requirements import (
     spec_ref,
 )
 from ._harness.roots import ProofRoots
+from ._harness.worldbuilder import REPO_UUID as WORLD_UUID, SignedWorld
 
 pytestmark = [pytest.mark.v4, pytest.mark.requires_product]
 
@@ -62,12 +66,117 @@ INCREMENTAL_CYCLE = (
 
 
 @pytest.fixture()
-def codebase(roots: ProofRoots) -> GitRepo:
-    repo = GitRepo.init(roots.repo_root)
-    repo.write(".kin/config", 'schema_version = "guildhall-repo/1"\n')
-    repo.install_attributes(REQUIRED_ATTRIBUTE_LINES)
-    repo.commit("initialise repository")
-    return repo
+def world(roots: ProofRoots) -> SignedWorld:
+    """A repository carrying genuinely signed, content-addressed events."""
+    built = SignedWorld.create(roots.repo_root)
+    built.plant_event(
+        built.maintainer, store_kind="codebase",
+        logical_key="architecture/scheduler/seed",
+        statement="Seed constraint for the maintenance cycle.",
+    )
+    built.verify_planted()
+    return built
+
+
+@pytest.fixture()
+def codebase(world: SignedWorld) -> GitRepo:
+    return world.repo
+
+
+def _apply_cycle_stage(world: SignedWorld, iteration: int, stage: str) -> None:
+    """Perform one real state transition for the named cycle stage.
+
+    Detector Reviewer finding 11: the cycle previously passed a stage name and
+    left repository state unchanged, so thirteen named stages produced one
+    unchanging corpus. Each branch here mutates real signed events, refs or
+    validity so the incremental simulation genuinely advances.
+    """
+    key = f"architecture/scheduler/cycle-{iteration}"
+    repo = world.repo
+    if stage == "create":
+        world.plant_event(world.maintainer, store_kind="codebase",
+                          logical_key=key, statement=f"Created at {iteration}.")
+    elif stage == "duplicate":
+        world.plant_event(world.maintainer, store_kind="codebase",
+                          logical_key=key, statement=f"Created at {iteration}.")
+    elif stage == "edit":
+        world.plant_event(world.maintainer, store_kind="codebase",
+                          logical_key=key, statement=f"Edited at {iteration}.")
+    elif stage == "supersede":
+        prior = world.planted[-1]["event_id"]
+        world.plant_event(world.maintainer, store_kind="codebase",
+                          logical_key=key, statement=f"Superseding at {iteration}.",
+                          supersedes=[prior], parents=[prior])
+    elif stage == "retract":
+        world.plant_event(world.maintainer, store_kind="codebase",
+                          logical_key=key, statement=f"Retracted at {iteration}.",
+                          disposition="retracted")
+    elif stage == "revoke":
+        world.plant_event(world.steward, store_kind="company",
+                          logical_key=key + "/revocation",
+                          statement=f"Revoking support at {iteration}.",
+                          disposition="revoked")
+    elif stage == "expire":
+        world.plant_event(world.maintainer, store_kind="codebase",
+                          logical_key=key + "/temporary",
+                          statement=f"Temporary at {iteration}.",
+                          effective_from="2026-01-01T00:00:00.000Z",
+                          effective_until="2026-01-02T00:00:00.000Z")
+    elif stage == "branch":
+        repo.branch(f"cycle/{iteration}")
+    elif stage == "merge":
+        repo.checkout(repo.default_branch)
+        repo.merge(f"cycle/{iteration}", message=f"union cycle {iteration}")
+    elif stage == "conflict":
+        world.plant_event(world.maintainer, store_kind="codebase",
+                          logical_key=key, statement=f"Conflicting head {iteration}.")
+    elif stage == "resolve":
+        prior = world.planted[-1]["event_id"]
+        world.plant_event(world.maintainer, store_kind="codebase",
+                          logical_key=key, statement=f"Resolved at {iteration}.",
+                          supersedes=[prior], parents=[prior])
+    elif stage in ("rebuild", "restart"):
+        # Both are observed by the rebuild the caller runs next; the restart is
+        # a fresh process invocation, which the driver always performs.
+        return
+    world.verify_planted()
+
+
+def _build_manifest_state(world: SignedWorld, scenario: str) -> None:
+    """Construct the real manifest/reachability state for one comparison case."""
+    repo = world.repo
+    manifests = repo.path / ".kin" / "manifests" / "12" / "34"
+    manifests.mkdir(parents=True, exist_ok=True)
+    heads = [r["digest"] for r in world.planted]
+    if scenario == "local_superset_fresh":
+        published = heads[:-1] if len(heads) > 1 else heads
+        fresh_until = "2099-01-01T00:00:00.000Z"
+    elif scenario == "missing_expected_head":
+        published = heads + ["f" * 64]
+        fresh_until = "2099-01-01T00:00:00.000Z"
+    elif scenario == "expired_observation":
+        published = heads
+        fresh_until = "2026-01-01T00:00:00.000Z"
+    else:
+        published = heads
+        fresh_until = "2099-01-01T00:00:00.000Z"
+    body = world.maintainer.sign_message("manifest", {
+        "schema": "guildhall-manifest/1",
+        "repository_uuid": WORLD_UUID,
+        "branch": repo.default_branch,
+        "observed_default_branch_revision": repo.head(),
+        "manifest_head_set": published,
+        "event_count": len(published),
+        "merkle_root": "0" * 64,
+        "observed_at": "2026-03-01T00:00:00.000Z",
+        "fresh_until": fresh_until,
+    })
+    raw = canonical.jcs(body)
+    digest = canonical.content_digest_hex(raw)
+    target = repo.path / ".kin" / "manifests" / canonical.event_shard_path(digest)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(raw)
+    repo.commit(f"publish manifest observation for {scenario}")
 
 
 @spec_ref(
@@ -93,24 +202,35 @@ def codebase(roots: ProofRoots) -> GitRepo:
 )
 @pytest.mark.slow
 def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
-    guildhall: Guildhall, codebase: GitRepo, roots: ProofRoots
+    guildhall: Guildhall, world: SignedWorld, codebase: GitRepo, roots: ProofRoots
 ) -> None:
     sizes: list[int] = []
     views: list[str] = []
+    stage_records: list[dict] = []
     for iteration in range(3):
         for stage in INCREMENTAL_CYCLE:
+            # Each stage performs a real state transition on the repository
+            # before the rebuild, so the cycle advances rather than idling.
+            _apply_cycle_stage(world, iteration, stage)
             result = guildhall.run(
-                "corpus",
-                "rebuild",
-                "--store",
-                "codebase",
-                "--repo",
-                str(guildhall.cwd),
-                "--json",
-                env={"GUILDHALL_ACCEPTANCE_CYCLE_STAGE": f"{iteration}:{stage}"},
+                "corpus", "rebuild", "--store", "codebase",
+                "--repo", str(guildhall.cwd),
+                "--as-of", "2026-03-05T00:00:00.000Z",
+                "--authority-cursor", "1000", "--json",
                 check=False,
             )
-            assert result.returncode != 1, f"{stage} returned the reserved exit 1"
+            if result.returncode == 1:
+                raise ProductFailure(f"{stage} returned the reserved exit 1")
+            post = json.dumps(
+                sorted(r["digest"] for r in world.planted), sort_keys=True
+            )
+            stage_records.append({
+                "stage": stage,
+                "state_changed": stage in ("rebuild", "restart")
+                or post != (stage_records[-1]["post_state_digest"]
+                            if stage_records else ""),
+                "post_state_digest": post,
+            })
         payload = guildhall.run(
             "corpus", "rebuild", "--store", "codebase", "--repo", str(guildhall.cwd), "--json"
         ).ok().json
@@ -121,8 +241,15 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
     assert views[-1] == views[-2], (
         "the derived current view must stabilise across repeated identical cycles"
     )
-    assert sizes[-1] <= sizes[0] * 4, (
-        f"repository growth is unbounded across the incremental simulation: {sizes}"
+    O.check(
+        "V-4.incremental-cycle",
+        {
+            "stages": stage_records,
+            "view_stabilises": views[-1] == views[-2],
+            "growth_bounded": sizes[-1] <= sizes[0] * 4,
+            "cycle_state_digests": sorted(set(views)),
+        },
+        label="repeated incremental maintenance cycle",
     )
 
 
@@ -191,9 +318,13 @@ def test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event(
         "--json",
         check=False,
     )
+    if explained.returncode == 1:
+        raise ProductFailure("`explain` returned the reserved ambiguous exit 1")
     if explained.returncode not in (0, 3):
-        assert explained.returncode != 1
-        return
+        raise ProductFailure(
+            f"`explain` refused with {explained.code}; incompatible heads must be "
+            "surfaced as a conflict, not hidden behind a refusal"
+        )
     payload = explained.json
     assert payload.get("state") in {"conflict", "unknown"}, (
         "incompatible surviving heads must remain conflict/Unknown, never resolved by "
@@ -225,17 +356,13 @@ def test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event(
     ),
 )
 def test_manifest_comparison_classifies_lag_incomplete_and_expiry(
-    guildhall: Guildhall, codebase: GitRepo, roots: ProofRoots
+    guildhall: Guildhall, world: SignedWorld, codebase: GitRepo, roots: ProofRoots
 ) -> None:
     outcomes: dict[str, dict] = {}
     for scenario in ("local_superset_fresh", "missing_expected_head", "expired_observation"):
+        _build_manifest_state(world, scenario)
         result = guildhall.run(
-            "fsck",
-            "--repo",
-            str(guildhall.cwd),
-            "--json",
-            env={"GUILDHALL_ACCEPTANCE_MANIFEST_SCENARIO": scenario},
-            check=False,
+            "fsck", "--repo", str(guildhall.cwd), "--json", check=False
         )
         assert result.returncode != 1, scenario
         payload = result.json if result.stdout.strip() else {}
@@ -374,7 +501,12 @@ def test_rebuild_is_deterministic_over_frozen_inputs(
         "rebuild from immutable events with the same explicit inputs must be "
         "byte-identical"
     )
-    assert rebuild(**{"--as-of": "2026-04-05T00:00:00.000Z"}) != first or True
+    varied_as_of = rebuild(**{"--as-of": "2026-04-05T00:00:00.000Z"})
+    if varied_as_of == first:
+        raise ProductFailure(
+            "varying the explicit as_of produced an identical current view; the "
+            "reducer is not a function of as_of"
+        )
     varied_cursor = rebuild(**{"--authority-cursor": "2000"})
     assert isinstance(varied_cursor, str)
 
@@ -446,9 +578,6 @@ def test_ten_times_the_admission_ceiling_refuses_writes_but_still_diagnoses(
         "--repo",
         str(guildhall.cwd),
         "--json",
-        env={
-            "GUILDHALL_ACCEPTANCE_SYNTHETIC_EVENT_COUNT": str(KIN_INTAKE_EVENTS * 10),
-        },
         check=False,
     )
     assert over.returncode != 1
@@ -462,9 +591,6 @@ def test_ten_times_the_admission_ceiling_refuses_writes_but_still_diagnoses(
         "--repo",
         str(guildhall.cwd),
         "--json",
-        env={
-            "GUILDHALL_ACCEPTANCE_SYNTHETIC_EVENT_COUNT": str(KIN_INTAKE_EVENTS * 10),
-        },
         timeout=FULL_FSCK_CEILING_SECONDS + 60,
         check=False,
     )
@@ -515,18 +641,17 @@ def test_revocation_cascade_completes_in_bound_or_stays_fail_closed(
         "--authority-cursor",
         "2000",
         "--json",
-        env={
-            "GUILDHALL_ACCEPTANCE_SYNTHETIC_EVENT_COUNT": str(KIN_INTAKE_EVENTS),
-            "GUILDHALL_ACCEPTANCE_REVOKE_DENSE_KEY": "1",
-        },
         timeout=REVOCATION_CASCADE_SECONDS + 120,
         check=False,
     )
     elapsed = time.monotonic() - started
-    assert result.returncode != 1
+    if result.returncode == 1:
+        raise ProductFailure("`corpus rebuild` returned the reserved exit 1")
     payload = result.json if result.stdout.strip() else {}
     if not isinstance(payload, dict):
-        return
+        raise ProductFailure(
+            "the rebuild emitted no object, so the cascade state is unobservable"
+        )
     cascade = payload.get("revocation_cascade") or {}
     if cascade.get("state") == "complete":
         assert elapsed <= REVOCATION_CASCADE_SECONDS + 30, (
@@ -562,17 +687,15 @@ def test_pre_revocation_replay_returns_history_without_readmission(
     guildhall: Guildhall, codebase: GitRepo
 ) -> None:
     result = guildhall.run(
-        "status",
-        "--repo",
-        str(guildhall.cwd),
-        "--json",
-        env={"GUILDHALL_ACCEPTANCE_REPLAY_PRE_REVOCATION": "1"},
-        check=False,
+        "status", "--repo", str(guildhall.cwd), "--json", check=False
     )
-    assert result.returncode != 1
+    if result.returncode == 1:
+        raise ProductFailure("`status` returned the reserved ambiguous exit 1")
     payload = result.json if result.stdout.strip() else {}
     if not isinstance(payload, dict):
-        return
+        raise ProductFailure(
+            "`status --json` emitted no object, so the replay outcome is unobservable"
+        )
     replay = payload.get("pre_revocation_replay") or {}
     if replay:
         assert replay.get("historical_receipt_returned") is True
@@ -618,7 +741,6 @@ def test_linked_worktrees_serialize_on_one_common_dir_lock(
             str(repo.path),
             "--json",
             cwd=repo.path,
-            env={"GUILDHALL_ACCEPTANCE_ADMIT_TAG": tag},
             check=False,
         ).returncode
 

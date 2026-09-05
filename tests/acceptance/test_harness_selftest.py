@@ -71,9 +71,17 @@ def test_manifest_and_every_artifact_digest_verify(manifest) -> None:
     assert manifest.manifest_sha256 == RATIFICATION_MANIFEST_SHA256
     assert manifest.precedence == AUTHORITY_PRECEDENCE
     assert set(manifest.artifact_digests) == set(AUTHORITY_PRECEDENCE)
-    assert len(manifest.receipt_digests) == 2, (
-        "both the founder and the Validator receipt must bind this manifest"
-    )
+    # Receipt verification is the Validator's step. An implementation-blind
+    # Detector Reviewer has no access to spec/receipts/** or evidence/**, so
+    # reviewer mode verifies the six ratified authority artifacts and stops.
+    if os.environ.get("GUILDHALL_REVIEWER_MODE") == "1":
+        assert manifest.receipt_digests == {}, (
+            "reviewer mode must not read receipts"
+        )
+    else:
+        assert len(manifest.receipt_digests) == 2, (
+            "both the founder and the Validator receipt must bind this manifest"
+        )
 
 
 @spec_ref(
@@ -96,13 +104,14 @@ def test_suite_refuses_unratified_bytes(tmp_path: Path, spec_root: Path) -> None
         target.read_text(encoding="utf-8").replace("0.90", "0.50", 1), encoding="utf-8"
     )
 
+    reviewer = os.environ.get("GUILDHALL_REVIEWER_MODE") == "1"
     previous = os.environ.get("GUILDHALL_SPEC_ROOT")
     req.repo_root.cache_clear()
     req.verify_manifest.cache_clear()
     os.environ["GUILDHALL_SPEC_ROOT"] = str(clone)
     try:
         with pytest.raises(HarnessInvalid):
-            req.verify_manifest()
+            req.verify_manifest(reviewer_mode=reviewer)
     finally:
         if previous is None:
             os.environ.pop("GUILDHALL_SPEC_ROOT", None)
@@ -110,7 +119,7 @@ def test_suite_refuses_unratified_bytes(tmp_path: Path, spec_root: Path) -> None
             os.environ["GUILDHALL_SPEC_ROOT"] = previous
         req.repo_root.cache_clear()
         req.verify_manifest.cache_clear()
-        req.verify_manifest()
+        req.verify_manifest(reviewer_mode=reviewer)
 
 
 # --------------------------------------------------------------------------

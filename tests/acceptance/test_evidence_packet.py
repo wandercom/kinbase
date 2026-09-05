@@ -16,6 +16,9 @@ from pathlib import Path
 
 import pytest
 
+from ._harness import obligations as O
+from ._harness.evidence_model import Origin, require_all, require_nonempty
+
 from ._harness import canaries
 from ._harness.cli import Guildhall
 from ._harness.evidence import (
@@ -74,6 +77,12 @@ def test_packet_schema_requires_every_declared_section() -> None:
     complete = validate_packet(_minimal_packet())
     assert complete.ok, complete
 
+    require_nonempty(
+        REQUIRED_PACKET_SECTIONS,
+        obligation="V-3.claim",
+        why="the packet schema must declare a non-empty required-section set",
+        origin=Origin.HARNESS,
+    )
     for section in REQUIRED_PACKET_SECTIONS:
         partial = _minimal_packet()
         partial.pop(section)
@@ -225,9 +234,13 @@ def test_retention_and_incident_hold_fields_are_enforced(
     run_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(run_dir, 0o700)
     result = guildhall.run("experiment", "verdict", str(run_dir), "--json", check=False)
-    assert result.returncode != 1
+    if result.returncode == 1:
+        raise ProductFailure("`experiment verdict` returned the reserved exit 1")
     if result.returncode != 0 or not result.stdout.strip():
-        return
+        raise ProductFailure(
+            "`experiment verdict` produced no packet, so retention and incident-hold "
+            "discipline could not be checked"
+        )
     payload = result.json
     retention = payload.get("retention") or {}
     if retention:
@@ -370,9 +383,12 @@ def test_factory_method_evidence_is_labelled_method_poc(
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True, exist_ok=True)
     result = guildhall.run("experiment", "verdict", str(run_dir), "--json", check=False)
-    assert result.returncode != 1
+    if result.returncode == 1:
+        raise ProductFailure("`experiment verdict` returned the reserved exit 1")
     if result.returncode != 0 or not result.stdout.strip():
-        return
+        raise ProductFailure(
+            "`experiment verdict` produced no method-evidence label to check"
+        )
     rendered = json.dumps(result.json)
     assert FORBIDDEN_METHOD_LABEL not in rendered, (
         f"this interactive tmux run may not claim {FORBIDDEN_METHOD_LABEL}"

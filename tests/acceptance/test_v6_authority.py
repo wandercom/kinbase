@@ -26,6 +26,9 @@ from pathlib import Path
 
 import pytest
 
+from ._harness import obligations as O
+from ._harness.evidence_model import Origin, require_all, require_nonempty
+
 from ._harness import ed25519_pure, synth
 from ._harness.cli import Guildhall
 from ._harness.gitfix import GitRepo
@@ -173,6 +176,12 @@ def test_service_starts_and_registers_a_named_chief_architect(
     entry = architects[0]
     assert entry.get("authority_id"), "the registry stores a stable authority ID"
     assert entry.get("public_key"), "the registry stores a public key"
+    require_nonempty(
+        entries,
+        obligation="V-6.registration",
+        why="the authority registry must contain the registered Chief Architect",
+        origin=Origin.PRODUCT,
+    )
     assert entry.get("channel_reference"), "the registry stores an opaque channel reference"
     for forbidden in ("display_name", "contact", "email", "private_key", "token"):
         assert forbidden not in entry, (
@@ -519,10 +528,7 @@ def test_unavailable_authority_yields_declared_degraded_policy(
         "--decision",
         "which lookahead value is authoritative",
         "--json",
-        env={
-            "GUILDHALL_COMPANY_URL": "http://127.0.0.1:1",
-            "GUILDHALL_ACCEPTANCE_CACHE_EXPIRED": "1",
-        },
+        env={"GUILDHALL_COMPANY_URL": "http://127.0.0.1:1"},
         check=False,
     )
     assert result.returncode != 1
@@ -573,11 +579,7 @@ def test_frozen_answer_service_refuses_the_third_call_and_returns_no_code(
             "ask",
             f"benchmark-q-{attempt}",
             "--json",
-            env={
-                "GUILDHALL_COMPANY_URL": roots.company_url,
-                "GUILDHALL_ACCEPTANCE_FROZEN_ANSWER_SERVICE": "1",
-                "GUILDHALL_ACCEPTANCE_TASK_ID": "task-1",
-            },
+            env={"GUILDHALL_COMPANY_URL": roots.company_url},
             check=False,
         )
         outcomes.append(result)

@@ -1,0 +1,14 @@
+Identifier and correlation practice.
+
+Stable identifiers are convenient and dangerous. An identifier that persists
+across contexts allows records to be joined; the same property allows an observer
+holding two partial datasets to reconstruct a third.
+
+High-entropy opaque tokens avoid this when they are minted per context and never
+reused. A token that is deterministic in a subject, however, is a correlation key
+whatever it looks like, and hashing a subject without a secret does not remove the
+correlation.
+
+Prefixes leak. A marker of the shape PREFIX-BODY-SUFFIX discloses its family
+through the prefix even when the body is random, which is exactly what makes such
+markers useful as detectable canaries and useless as anonymisers.
