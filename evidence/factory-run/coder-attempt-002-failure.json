@@ -1,0 +1,21 @@
+{
+  "schema_version": "guildhall-factory-author-attempt/1",
+  "role": "Coder",
+  "attempt": 2,
+  "ratification_manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "recovery_prompt_sha256": "697495e1244761381f41c130fa4e89017f092deda68df3c3aac504c4f5a85a27",
+  "launch_sha256": "07881e9d5ec169d2711cb8ac39648b46d1311393b56f18e8362d3ad94f4d8b82",
+  "event_stream_sha256": "11ca9986886f05fc9e7f83634bb3e68327226fe91cf6ee6a943bb589cbf880c9",
+  "exit_file_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+  "exit_code": 1,
+  "thread_id": "01a0728b-d872-7df3-8a5d-e4e7450145eb",
+  "reported_model": "glm-5.3:cloud",
+  "terminal_event": "turn.failed",
+  "terminal_reason": "two TLS handshake timeouts followed by exhausted response-stream reconnects",
+  "model_actions_after_resume": 0,
+  "git_state_unchanged": true,
+  "known_syntax_error_unchanged": "guildhall/experiment.py line 971",
+  "disposition": "RECOVERABLE_TRANSPORT_ONLY_FAILURE",
+  "gate_effect": "NONE"
+}
