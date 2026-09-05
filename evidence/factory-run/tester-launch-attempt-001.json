@@ -1,0 +1,16 @@
+{
+  "schema": "guildhall-lane-launch-observation/1",
+  "run_id": "guildhall-proof",
+  "role": "tester",
+  "attempt": 1,
+  "agent": "claude-code",
+  "requested_model": "opus",
+  "reported_model": "claude-opus-5",
+  "result": "AUTHENTICATION_FAILED",
+  "reason": "Workstation OAuth session was expired and could not be refreshed.",
+  "model_turn_started": false,
+  "author_artifacts_written": false,
+  "reported_cost_usd": 0,
+  "retained_private_log_sha256": "402b69589563c69c8f39eb0828ce5ab636f377922116fd4ca901cdc76abb63a7",
+  "disposition": "Retained without overwrite; attempt 2 uses an existing environment API-key source and the identical frozen prompt. No credential value enters repository evidence."
+}
