@@ -1,0 +1,12 @@
+{
+  "schema": "guildhall-ratification-receipt/1",
+  "actor": "codex-root-validator",
+  "actor_kind": "factory-validator",
+  "action": "co-ratify-implementation-specification",
+  "manifest_path": "spec/ratification-manifest.json",
+  "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "observed_at": "2026-09-05T17:01:54Z",
+  "statement": "I co-ratify Guildhall manifest ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db as Validator for isolated Factory implementation and independent test authorship.",
+  "authority_effect": "Opens the Coder and Tester lanes under the exact bound specification. The Validator retains neither implementation nor test authorship and cannot declare the concept proven without V-1 through V-10 and the founder-signed terminal verdict.",
+  "provenance": "Validator receipt over the exact manifest digest; no external cryptographic signature is claimed."
+}

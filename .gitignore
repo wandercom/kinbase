@@ -1,0 +1,17 @@
+.DS_Store
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.guildhall/
+.factory/
+.constrain/
+evidence/private/
+evidence/runs/
+evidence/launch-orchestrator.sh
+evidence/orchestrator-brief.md

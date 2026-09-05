@@ -1,0 +1,13 @@
+name: guildhall
+description: >-
+  Company knowledge and three-store Kindex proving ground. Repository facts must
+  remain codebase-scoped; global architecture is referenced from Company authority.
+audience: team
+domains:
+  - kindex
+  - guildhall
+  - knowledge-systems
+  - brownfield-engineering
+data_dir: .kin/local
+work_policy:
+  require_active_tag: true

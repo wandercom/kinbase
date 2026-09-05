@@ -1,0 +1,51 @@
+{
+  "schema": "factory-spec-ratification/1",
+  "run": "guildhall-proof",
+  "status": "awaiting-founder-ratification",
+  "authority_precedence": [
+    "spec/source-request.md",
+    "spec/product.md",
+    "spec/architecture.md",
+    "spec/threat-model.md",
+    "spec/verification.md",
+    "spec/cli.md"
+  ],
+  "artifacts": [
+    {
+      "path": "spec/source-request.md",
+      "sha256": "1b2548e7025d00a8e06ab2e1445e89fdabf9f27833885c9f7953a8a0da354350"
+    },
+    {
+      "path": "spec/product.md",
+      "sha256": "452c81e1c59bd96b59239939f1cb485a0016cd6e82f2dd627d853e448cf4c090"
+    },
+    {
+      "path": "spec/architecture.md",
+      "sha256": "4b8d9bfc241f59af9e4c3188e3343f52186c923b73816671694577612a77c520"
+    },
+    {
+      "path": "spec/threat-model.md",
+      "sha256": "6391c14853c0bc1a059a0a4aded31c878ed74eddecb5578903717aa152f10f09"
+    },
+    {
+      "path": "spec/verification.md",
+      "sha256": "2a07e44a68380cc2ab305e12fcff6b5501dd6854d8a0aef790dac1a8ac8ae94c"
+    },
+    {
+      "path": "spec/cli.md",
+      "sha256": "0a0edc5e6ebe13a42c7e325836f9fe5e3eeca329006c02631736e3cde0448b6d"
+    }
+  ],
+  "review_evidence": {
+    "constrain_session": "b9919684-4ca9-40cc-885f-6a729e0cd00d",
+    "advocate_final_review": "20260905T050912-2cd7da1d",
+    "advocate_final_path": "evidence/advocate-final-pre-ratification.json.b64",
+    "advocate_final_encoding": "base64",
+    "advocate_final_sha256": "6566039055caae27e7c742ec1dfb0aa389ae66727fac86005c4034e7dd08c254",
+    "orchestrator_clearance": "cursor-7:NO-OP",
+    "orchestrator_clearance_path": "evidence/orchestrator-clearance-007.md"
+  },
+  "author_lane_rule": "No Coder or Tester dispatch before founder and Validator receipts bind this exact manifest.",
+  "proof_rule": "Ratification authorizes implementation only. PROVEN requires all V-1 through V-10 gates and the terminal eleven-arm outcome experiment.",
+  "spend_rule": "This ratification does not authorize model/GPU spend. The founder separately binds the aggregate call/token/dollar/time ceiling before pilot outcomes."
+}

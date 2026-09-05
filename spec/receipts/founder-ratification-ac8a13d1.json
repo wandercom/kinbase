@@ -1,0 +1,12 @@
+{
+  "schema": "guildhall-ratification-receipt/1",
+  "actor": "Jeremy McEntire",
+  "actor_kind": "human-founder",
+  "action": "ratify-implementation-specification",
+  "manifest_path": "spec/ratification-manifest.json",
+  "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "observed_at": "2026-09-05T17:01:54Z",
+  "statement": "I ratify Guildhall manifest ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db for implementation under the Factory roles.",
+  "authority_effect": "Authorizes isolated Coder and Tester implementation work against the bound artifacts. Does not establish proof, sign a terminal verdict, or authorize outcome-experiment spending.",
+  "provenance": "Exact user message in the active Codex conversation, projected by the Validator; no external cryptographic signature is claimed."
+}
