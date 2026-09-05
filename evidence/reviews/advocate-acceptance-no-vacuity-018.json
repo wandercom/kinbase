@@ -1,0 +1,577 @@
+{
+  "review_id": "20260905T190203-7da6e2f9",
+  "target": "/Users/jmcentire/Code/guildhall/evidence/reviews/acceptance-no-vacuity-review-packet-018.md",
+  "target_type": "file",
+  "started_at": "2026-09-05T19:02:03.908337+00:00",
+  "completed_at": "2026-09-05T19:03:50.373489+00:00",
+  "persona_reports": [
+    {
+      "persona": "helland",
+      "findings": [
+        {
+          "persona": "helland",
+          "severity": "critical",
+          "dimension": "data_ownership",
+          "title": "The test suite hands the product the answer, then asks the product for the answer — no single owner of the truth",
+          "detail": "In an acceptance test there are exactly two parties and each must own distinct facts. The test owns the *stimulus* and the *expected outcome*. The product owns the *derived state* and the *actual outcome*. When the test passes GUILDHALL_ACCEPTANCE_TEMPORAL_CASE into the product and then asserts the answer keyed to that same identifier, ownership of the outcome fact has been transferred to the test and handed back through the product as if the product had computed it. The product is not an authority here; it is a courier. There is no fact in the run whose owner is the product. That is the whole defect: a test that cannot name a fact the product alone owns cannot establish anything about the product.",
+          "evidence": "test_v5_temporal.py:154 creates only an empty initialized repository; line 174 passes the semantic case ID as GUILDHALL_ACCEPTANCE_TEMPORAL_CASE and then asserts the answer associated with that same ID. test_v7_projection.py:69/105: empty repository plus GUILDHALL_ACCEPTANCE_V7_FIXTURE=1, and the product 'is expected to emit the exact candidate roles, selection trace, complementarity, redundancy, distortion, and stopping answer the test asserts.'",
+          "recommendation": "Split ownership explicitly. The test may own only inputs that are data-on-the-outside: immutable, versioned event streams, files, and recorded service responses written into the repository before the product runs. The expected outcome must be derivable by the reviewer from those inputs without reference to any case identifier. Delete every control whose value names a scenario rather than supplying its raw material. If a scenario cannot be expressed as events, that is a finding about the product's ingestion surface, not a license to short-circuit."
+        },
+        {
+          "persona": "helland",
+          "severity": "critical",
+          "dimension": "wrong_assumptions",
+          "title": "The suite assumes absence of evidence is evidence of correctness — missing facts are silently owned by no one",
+          "detail": "Sixteen-plus bare early returns and truthiness-gated assertions encode the assumption that if the product emitted nothing, nothing went wrong. This is the classic mistake of treating a missing message as a negative acknowledgement. In a system with no distributed transaction, silence means only that you do not know. A test that converts 'unknown' to 'pass' has assigned ownership of the verdict to the void. Worse, several of these are exactly the surfaces where non-disclosure, retention, and crash-recovery claims live — the places where a false pass is most expensive.",
+          "evidence": "test_v4_maintenance.py:561-585 passes when the pre_revocation_replay evidence object is absent. test_v2_classification.py:717-755 never proves a crash occurred and treats absent duplicate_events and recursive_apologies as zero. test_evidence_packet.py:217-239 returns successfully when the product emits no verdict packet. test_v10_protocol.py:1032-1053 returns on missing verdict output.",
+          "recommendation": "Make every load-bearing accessor total and failing-by-default: absent, null, empty, or unexercised evidence must reject. Introduce a three-valued outcome (PROVEN / REFUTED / UNKNOWN) and treat UNKNOWN as a harness failure, not a pass. Emit a per-test declaration of required evidence keys and mechanically assert each was read at least once during the run."
+        },
+        {
+          "persona": "helland",
+          "severity": "critical",
+          "dimension": "data_ownership",
+          "title": "The product is permitted to grade itself: PROVEN is a product-owned field gating a test-owned obligation",
+          "detail": "The licensed-claim test requires the claim template only when the product itself reports PROVEN. This inverts authority. The verdict of whether the concept is proven is a fact the *reviewer* owns; the product owns only observable behavior. Letting the product's self-report gate the test's obligation means any implementation can escape scrutiny by declining to claim PROVEN, and any implementation that does claim it has already been believed before being checked. Similarly, test_verdict_composition.py makes each composed result optional — the product decides which of its own outputs will be examined.",
+          "evidence": "test_v10_protocol.py:1032-1053: 'requires the claim template only when the product itself reports PROVEN.' test_verdict_composition.py:221-258: 'returns on missing output and makes each composed result optional.'",
+          "recommendation": "Never branch test obligations on a product-reported status field. Determine expected verdict from the constructed input state, which the test owns, and then assert the product's report matches. If the product reports anything other than the expected verdict — including refusing to report — that is a failure, not a skip."
+        },
+        {
+          "persona": "helland",
+          "severity": "high",
+          "dimension": "design",
+          "title": "Forty acceptance-only environment variables constitute a second, undeclared write path into the product",
+          "detail": "There should be one canonical path by which facts enter the product: ingestion of real artifacts. Forty GUILDHALL_ACCEPTANCE_* variables, none in the ratified specification, create a parallel path that bypasses ingestion, classification, and maintenance. Every parallel write path is a place where the product can hold two versions of the same fact with no reconciliation between them. The variables that name scenarios (MANIFEST_SCENARIO, DIGEST_SCENARIO, START_STATE, FACT_VALIDITY, DEPENDENCE_CLASS) are not test controls at all; they are an alternate constructor for product state that no shipping caller will ever use. Whatever the suite proves, it proves about that alternate path.",
+          "evidence": "'The suite passes 40 distinct GUILDHALL_ACCEPTANCE_* variables into the product. None is in the ratified specification.' Listed result-selecting controls: MANIFEST_SCENARIO, DIGEST_SCENARIO, COMPANY_CRITICALITY, LOCAL_DEPENDENCE, FACT_VALIDITY, DEPENDENCE_CLASS, START_STATE, MAINTENANCE_WORKLOAD.",
+          "recommendation": "Enumerate the variables into three buckets: (a) fault scheduling — may stop, delay, reorder, or crash real work; (b) environment binding — clock source, temp roots, network deny; (c) everything else, which is a second write path and must be deleted. Add a denial probe that runs the product with the entire GUILDHALL_ACCEPTANCE_* namespace stripped and asserts identical outputs for the (a)/(b)-only tests, plus a build-time check that shipping configuration cannot set any of them."
+        },
+        {
+          "persona": "helland",
+          "severity": "high",
+          "dimension": "data_ownership",
+          "title": "SYNTHETIC_EVENT_COUNT lets the product own the population it is supposed to be measured on",
+          "detail": "The test claims to measure intake and diagnosis cost over a population, but never creates the population; it tells the product a number and lets the product invent whatever it likes. The count is the only fact, and it is owned by the test; the events themselves — the thing whose ingestion cost is the claim — are owned by nobody and may not exist. Compounding this, the oversized intake is permitted to return success, so an implementation that accepts ten times the admission ceiling passes. The admission ceiling is a rule the product is supposed to enforce; the test has made it optional.",
+          "evidence": "test_v4_maintenance.py:450 and 466 send only GUILDHALL_ACCEPTANCE_SYNTHETIC_EVENT_COUNT instead of creating the population; 'The oversized intake is permitted to return success at lines 454-457, so a product that accepts 10x the admission ceiling can pass that part of the test.'",
+          "recommendation": "Materialize the events on disk from a seeded generator owned by the test, then measure. Assert the oversized case is *rejected* with a specific, named admission error and that post-state shows zero admitted events; success on an over-ceiling intake must be a hard failure, not an accepted branch."
+        },
+        {
+          "persona": "helland",
+          "severity": "high",
+          "dimension": "reconciliation",
+          "title": "No apology path is exercised: the suite tests only the guess, never the correction",
+          "detail": "The domain here is explicitly one of guesses — classification, projection, temporal supersession, authority escalation. Every guess needs a recorded delta and a business mechanism when it was wrong. The suite touches the vocabulary (recursive_apologies, pre_revocation_replay, supersession, rollback) but never constructs a state in which the earlier guess was wrong and then observes the correction. Instead it treats absent apology counters as zero and passes. This is the inverse of what should happen: absent apologies in a scenario designed to require one is the strongest possible failure signal.",
+          "evidence": "test_v2_classification.py:717-755 'treats absent duplicate_events and recursive_apologies as zero'; test_v4_maintenance.py:561-585 passes when pre_revocation_replay evidence is absent; temporal rollback and supersession cases are selected by case ID rather than constructed from event history (test_v5_temporal.py:154, 174).",
+          "recommendation": "For each guessing surface, build a real two-phase scenario: (1) emit events supporting decision A; (2) emit later events that falsify A; (3) assert the product produces a compensating record that names the superseded decision, the delta, and the actor, and that downstream artifacts are re-derived or explicitly marked stale. Assert the apology count is exactly one — not >= 0."
+        },
+        {
+          "persona": "helland",
+          "severity": "high",
+          "dimension": "wrong_assumptions",
+          "title": "Linked-worktree serialization is asserted by absence of the wrong lock, not presence of the right one",
+          "detail": "The test checks that no worktree-local lock exists but never requires a common-directory lock to exist, nor proves serialization, nor proves one manifest lineage. Absence of a symptom is not presence of a mechanism. Under concurrency this is precisely the case where two writers each believe they hold authority over the manifest and both proceed. A negative check cannot establish mutual exclusion; only a positive observation of contention resolution can.",
+          "evidence": "test_v4_maintenance.py:603-641: 'checks that no worktree-local lock exists, but never requires a common-directory lock to exist or proves serialization/one manifest lineage.'",
+          "recommendation": "Run two concurrent writers against linked worktrees. Assert the common-directory lock file exists and is held by exactly one, that the second observes a deterministic contention outcome (block-then-succeed or explicit refusal), and that the resulting manifest lineage is a single chain with both writes ordered. Attempt-the-operation, not check-then-act."
+        },
+        {
+          "persona": "helland",
+          "severity": "medium",
+          "dimension": "design",
+          "title": "Admissibility rule is right in spirit but underspecifies who owns time and randomness",
+          "detail": "The four-part rule correctly separates failure scheduling from result selection, and CRASH_AT is rightly distinguished. But it does not name an owner for the two facts that most often smuggle an oracle in: the clock and the seed. A temporal-discrimination suite that lets the product own wall-clock time cannot construct DST or supersession scenarios reproducibly, which is likely *why* the suite reached for TEMPORAL_CASE in the first place. Left unaddressed, the rule will be satisfied in letter and the case-ID controls will reappear as 'environment binding.'",
+          "evidence": "Proposed rule clauses 1-4 address non-oracularity, work substitution, and shipping absence, but the packet's temporal examples (test_v5_temporal.py DST, rollback, supersession) are constructed only via case ID with no event history.",
+          "recommendation": "Add a fifth clause: time and randomness are test-owned and must be injected as explicit, recorded values (frozen clock, fixed seed) that appear in the evidence packet. Then require that DST/rollback/supersession be constructed purely from timestamped events plus the frozen clock. Any control that names a scenario rather than setting a clock, a seed, or a fault point is inadmissible by construction."
+        },
+        {
+          "persona": "helland",
+          "severity": "medium",
+          "dimension": "reconciliation",
+          "title": "INVALID_HARNESS and the 12 failures have no stated tolerance or reconciliation mechanism",
+          "detail": "Twelve failures out of 83 selected are reported, and a separate repair is described as 'active,' but the packet does not say who owns the decision that the harness is now valid, nor what delta between the Tester artifact and the Validator's admitted copy is acceptable. Two parties are producing runs against a cherry-picked commit and there is no signed statement of the agreed tolerance. Without that, harness repair and suite repair will be indistinguishable after the fact, and a later reader cannot tell whether the suite was fixed or bent.",
+          "evidence": "'returned 12 failures / 71 passes. The instrument therefore remains INVALID_HARNESS. A separate repair is active; this packet asks whether runtime self-repair alone would be enough.'",
+          "recommendation": "Record, as an immutable signed fact, the exact baseline SHA, the Tester artifact SHA, the full list of 12 failing test IDs with reasons, and a named authority who declares the harness valid. Any subsequent green run must diff against that record and show which of the 12 were repaired in the harness versus which were repaired by changing the assertion. Cleanup that silently reduces the failure count is not a reconciliation."
+        },
+        {
+          "persona": "helland",
+          "severity": "medium",
+          "dimension": "design",
+          "title": "The blinded brownfield terminal experiment is named as an objective but has no ownership or falsification design in the packet",
+          "detail": "The founder's stated requirement includes 'a terminal blinded brownfield outcome experiment near the informed oracle,' yet nothing in the observed suite or the proposed rules addresses it. This is the one component whose whole value depends on the product never seeing the oracle's answer — precisely the ownership boundary the rest of the suite has already violated forty times. If the same environment-variable habit reaches this experiment, the blinding is decorative.",
+          "evidence": "Objective lists the blinded brownfield experiment; the entire 'Oracle and work-substitution surfaces' and 'Missing-evidence-is-pass' sections cover other suites, and the admissibility rules make no mention of blinding or oracle isolation.",
+          "recommendation": "Specify the blinding boundary as a process/filesystem isolation, not a convention: the oracle's answer lives in a store the product process cannot read, verified by a denial probe that asserts the read fails. Pre-register the comparison metric and the tolerance before the run, signed, so the 'near the informed oracle' judgement has an owner other than whoever reads the result."
+        },
+        {
+          "persona": "helland",
+          "severity": "medium",
+          "dimension": "wrong_assumptions",
+          "title": "Compressed fixtures are treated as an open question when the ownership test already answers it",
+          "detail": "Question 3 asks whether every scenario must be built from real events or whether compressed fixtures are probative. The framing invites a case-by-case negotiation that will be relitigated forever. The ownership rule settles it without judgement calls: a fixture is admissible when it is data-on-the-outside — an immutable, versioned artifact the product must *read and interpret* through its normal ingestion path — and inadmissible when it is a value the product *branches on* to select an answer. A serialized event log is a compressed fixture and is fine. A case ID is not a fixture; it is a jump table index.",
+          "evidence": "Question 3: 'Must every semantic scenario be built as real events/files/service responses, or are any compressed fixtures probative?' contrasted with test_v7_projection.py:105 GUILDHALL_ACCEPTANCE_V7_FIXTURE=1 producing an entire expected trace from an empty repository.",
+          "recommendation": "Answer the question with a structural test rather than a policy: a fixture is admissible iff the product code path that consumes it is the same path shipping callers use, and iff mutating the fixture's contents changes the correct output. GUILDHALL_ACCEPTANCE_V7_FIXTURE=1 fails both — it is a single bit that produces a full answer."
+        },
+        {
+          "persona": "helland",
+          "severity": "low",
+          "dimension": "design",
+          "title": "Denial probes are requested but not designed as standing, always-on invariants",
+          "detail": "Question 4 asks what prevents the harness from becoming a second oracle inside the product. Ad hoc denial probes decay. The durable answer is to make the absence of the second write path an invariant that fails the build rather than a test that someone remembers to run, and to make the product's binary structurally incapable of reading the namespace in a release build.",
+          "evidence": "Admissibility rule clause 4 requires the control be 'structurally absent from shipping configuration, and that absence is itself tested,' but no mechanism is proposed and Question 4 remains open.",
+          "recommendation": "Gate all GUILDHALL_ACCEPTANCE_* reads behind a single compile/feature flag absent from release builds; add a source-level grep assertion in CI that no read occurs outside that gate; and run the full non-fault-injection suite once per CI cycle with the namespace stripped, requiring identical results."
+        }
+      ],
+      "summary": "Whose data is it? Right now, nobody's — and that is the whole answer to the review question. The test owns the expected outcome, hands it to the product as a case identifier or fixture bit, and receives it back as if it were computed; forty undeclared environment variables constitute a second write path that no shipping caller will ever exercise; and sixteen-plus bare early returns convert \"I don't know\" into \"pass.\" A proof-shaped implementation satisfies this suite trivially, because there is no fact in a green run whose sole owner is the product.\n\nThe minimum repair is an ownership split, not a rule negotiation: the test owns inputs as immutable on-disk artifacts plus a frozen clock and seed; the product owns every derived outcome; absent evidence rejects; and no test obligation branches on a product-reported status. The proposed four-part admissibility rule is close but will be gamed until it names owners for time and randomness and until each guessing surface — classification, projection, supersession, escalation — is exercised through a real two-phase wrong-then-corrected scenario that produces exactly one apology. A technical leader could not defend the current suite for a single question: name one fact this run established that the product alone could have produced.",
+      "ok": true,
+      "error": null,
+      "duration_ms": 87819.07937495271,
+      "input_tokens": 3246,
+      "output_tokens": 6308,
+      "estimated_cost_usd": 0.17393
+    },
+    {
+      "persona": "adversarial",
+      "findings": [
+        {
+          "persona": "adversarial",
+          "severity": "high",
+          "dimension": "wrong_assumptions",
+          "title": "Criterion 1 (non-oracularity) is stated as an existential over state changes and is trivially satisfiable by every listed control",
+          "detail": "The rule says a control is non-oracular if 'holding the control fixed while real state changes can change the correct output.' This is an existential quantifier: there merely needs to exist SOME state change that alters correct output. Every one of the indicted controls passes this. Hold GUILDHALL_ACCEPTANCE_TEMPORAL_CASE=dst_rollback fixed and delete the repository — correct output changes (error). Hold GUILDHALL_ACCEPTANCE_V7_FIXTURE=1 fixed and add a real role to the repo — a correct implementation's projection changes. So the packet's own headline rule fails to exclude the very examples the packet was written to exclude. The rule as written is not merely 'gameable'; it is vacuous against the motivating cases.",
+          "evidence": "'Proposed admissibility rule after Simulacrum' item 1: 'It is non-oracular: holding the control fixed while real state changes can change the correct output.' Compare with the finding at test_v5_temporal.py:154/174, where the control names the semantic case and the test asserts the answer bound to that name.",
+          "recommendation": "Restate as a universal/mutual-information condition: for the specific assertions the test makes, the control must not be sufficient to determine the asserted values. Operationally: fix real state, vary the control across its domain, and require that a correct implementation's asserted outputs are INVARIANT under control variation (control carries no answer bits), OR that variation only changes timing/termination, never asserted content. That is a checkable property; the current phrasing is not."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "high",
+          "dimension": "wrong_assumptions",
+          "title": "The packet assumes 'no acceptance env var appears in ratified spec' implies epistemic defect, then disclaims it, then never supplies the replacement warrant for 37 of 40 variables",
+          "detail": "The packet explicitly concedes 'Lack of ratification is not by itself the epistemic objection,' which is correct. But then only three variables receive an actual work-substitution argument with line citations. Eight more are listed by bare name under 'Other result- or scenario-selecting controls' with the conclusion ('result- or scenario-selecting') asserted rather than demonstrated. The remaining ~29 are counted in the headline '40 distinct variables' and never examined at all. The number 40 is doing rhetorical work the analysis does not support. A defender only needs to show that, say, COMPANY_CRITICALITY parameterizes an input the product must then reason over — a legitimate input parameter, not an oracle — and the list collapses.",
+          "evidence": "'The suite passes 40 distinct GUILDHALL_ACCEPTANCE_* variables into the product. None is in the ratified specification.' followed by item 4: a bare list of eight names with no line numbers, no assertion pairing, no demonstration that the asserted value is derivable from the control.",
+          "recommendation": "Produce a full 40-row table: variable, consuming test file:line, the assertion it feeds, and the classification (input parameter / failure schedule / result selector / work substitute). Drop the count from the argument until each row is adjudicated. An input parameter that the product must interpret is not an oracle, and conflating the two weakens the three genuinely strong findings."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "high",
+          "dimension": "wrong_assumptions",
+          "title": "Criterion 4 (structural absence from shipping config, tested) is unfalsifiable-by-construction and may be impossible to satisfy for fault injection",
+          "detail": "Requiring that a control be 'structurally absent from shipping configuration, and that absence is itself tested' presumes the product can be built such that the acceptance path does not exist in the shipped artifact — i.e. compile-time exclusion. If the product is Python (the .py test files strongly suggest so), there is no compile-time exclusion; the code paths are present in the shipped bytecode. The absence test then degenerates into grepping the source, which proves nothing about runtime behavior under an attacker- or operator-supplied environment. Worse, the criterion is in tension with CRASH_AT, which the packet itself defends: deterministic fault injection must be reachable in the artifact under test, and the artifact under test should be the shipping artifact, or the acceptance result does not transfer.",
+          "evidence": "Rule item 4 versus 'Deterministic fault injection such as CRASH_AT may be different: a control that only terminates real work at a narrow boundary can be more probative than an external signal.'",
+          "recommendation": "Split the criterion. For result-affecting controls: require hard absence, and define 'tested' concretely (e.g. run the full acceptance corpus against a build with the acceptance module removed and require the non-oracular subset to still pass). For fault-injection controls: require presence but with a proof that the control cannot alter asserted content — plus an explicit statement of what the acceptance artifact is and how it differs from the shipping artifact, since the packet currently leaves this undefined."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "failure_modes",
+          "title": "The proposed repair creates a new failure mode: total accessors convert flaky/environmental absence into false red, with no stated triage path",
+          "detail": "Requiring that 'absent, null, empty, or unexercised evidence rejects the test rather than passing' is correct in direction but the packet does not address what happens when evidence is legitimately absent for non-defect reasons: filesystem full during evidence write, the linked-worktree case where a common-directory lock is held by an unrelated process, CI sandbox denying the syscall the evidence collector needs, or a partial write truncating the JSON. Under the proposed rule every one of these becomes an indistinguishable acceptance failure. The current suite fails open; the proposal fails closed with no third state. Given the harness is already INVALID_HARNESS at 12/83, converting 16+ bare returns to hard failures without a distinguishable 'could not observe' outcome risks a permanently red board that nobody can adjudicate — which is epistemically no better than permanently green.",
+          "evidence": "'A positive proof test is admissible only if: 1. load-bearing evidence uses total accessors—absent, null, empty, or unexercised evidence rejects the test rather than passing' combined with 'returned 12 failures / 71 passes. The instrument therefore remains INVALID_HARNESS.'",
+          "recommendation": "Introduce a mandatory three-valued outcome: PASS / FAIL / INDETERMINATE, where INDETERMINATE requires a machine-readable reason code and is non-green for verdict purposes but distinguishable in triage. Require the evidence writer to emit an explicit 'not collected, reason=X' record rather than nothing, so absence-of-record and record-of-absence are different observations."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "edge_cases",
+          "title": "Item 3's own critique is under-specified: 'oversized intake permitted to return success' is asserted without establishing the ceiling semantics",
+          "detail": "The claim is that 'a product that accepts 10x the admission ceiling can pass that part of the test.' This presumes the ceiling is a hard admission bound rather than a soft advisory, a per-batch versus cumulative bound, or a bound with a documented overflow-to-degraded-mode behavior. If the specification permits accepting oversized input and then reporting degraded confidence, the test's tolerance is correct and the finding is wrong. The packet cites no specification clause for the ceiling. Related boundary questions are unaddressed: what is asserted at exactly 1x, at ceiling+1, at zero events, at SYNTHETIC_EVENT_COUNT unset or non-numeric or negative?",
+          "evidence": "'The oversized intake is permitted to return success at lines 454-457, so a product that accepts 10x the admission ceiling can pass that part of the test.' No citation to a ratified clause defining the ceiling as rejecting.",
+          "recommendation": "Cite the ratified clause defining admission-ceiling semantics and quote the required behavior at the boundary. Then require boundary tests at ceiling-1, ceiling, ceiling+1, and 10x, plus malformed and absent control values — the finding is only as strong as the spec obligation it rests on."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "wrong_assumptions",
+          "title": "Question 3 presupposes a false dichotomy between real events and compressed fixtures; the real variable is where the answer lives",
+          "detail": "'Must every semantic scenario be built as real events/files/service responses, or are any compressed fixtures probative?' frames construction cost as the axis. It is not. A compressed fixture that materializes genuine repository state (a small, real event log encoding a DST boundary) is fully probative and cheap. A 'real' event stream is worthless if the test also passes the expected answer alongside it. The packet's own strongest evidence supports this: the defect at test_v5_temporal.py is not that the fixture is compressed, it is that there is no fixture at all ('creates only an empty initialized repository') while the answer arrives by name. Framing this as a realism-versus-compression tradeoff invites the wrong repair — expensive scenario construction that still leaks the oracle.",
+          "evidence": "Question 3 as posed, versus finding 1: 'creates only an empty initialized repository... No event history constructs the DST, rollback, supersession, conflict, or unregistered-environment state.'",
+          "recommendation": "Rewrite the question as: 'What is the minimum materialized state, per scenario, sufficient for a correct implementation to derive the asserted answer without any test-supplied hint?' Require every scenario to declare that state and demonstrate derivability. Compression is then an efficiency choice, not an admissibility question."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "backward_compatibility",
+          "title": "The repair's effect on the ratified baseline and existing green claims is not addressed",
+          "detail": "The packet proposes a rule that would invalidate most of the current suite, but says nothing about what happens to prior decisions made on the strength of that suite, whether the ratified baseline e29f3fe was itself accepted using these controls, or whether the manifest hash ac8a13d... covers the acceptance suite's shape. If earlier milestones were signed off against this instrument, the correct conclusion is broader than 'repair the suite' — it is 'prior acceptances are unwarranted and must be re-adjudicated.' Omitting this makes the packet look narrower and safer than its own argument implies, and a technical leader who acts only on the stated repair will still be standing on undefended prior claims.",
+          "evidence": "'Ratified baseline: e29f3fe03595d594c0546f9b0012b58f7c45bac1' and 'Ratification manifest: ac8a13d...' are cited as authority, with no statement of whether the ratification itself relied on the suite now judged non-probative.",
+          "recommendation": "State explicitly whether the ratification decision depended on this acceptance suite. If so, add a finding that prior acceptance verdicts are void pending re-run under the repaired instrument, and enumerate which verdicts are affected. If not, say so and cite what the ratification did rely on."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "failure_modes",
+          "title": "CRASH_AT is exempted on an argument that does not survive the packet's own criterion 3",
+          "detail": "The packet grants that 'deterministic fault injection such as CRASH_AT may be different.' But a CRASH_AT that fires at a named semantic boundary encodes knowledge of the product's internal control flow, and the post-crash assertions (idempotent recovery, no duplicate events) are frequently checked via the same evidence objects the packet elsewhere shows are absence-tolerant. test_v2_classification.py:717-755 is the concrete counterexample the packet itself supplies: 'the crash test never proves a crash occurred, then treats absent duplicate_events and recursive_apologies as zero.' A control that does not demonstrably fire, paired with assertions that pass on absence, is not probative regardless of whether it is failure-scheduling in principle. The exemption is stated as a category claim when it should be conditional.",
+          "evidence": "'Deterministic fault injection such as CRASH_AT may be different' versus 'test_v2_classification.py:717-755: the crash test never proves a crash occurred, then treats absent duplicate_events and recursive_apologies as zero.'",
+          "recommendation": "Make the exemption conditional and testable: fault injection is admissible only if (a) the test proves the fault fired, via a positive artifact such as a pre-crash marker plus a truncated log, and (b) a negative control with the injection disabled produces a materially different, also-asserted outcome. Absent both, treat it as a result selector."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "low",
+          "dimension": "edge_cases",
+          "title": "'At least 16 bare early returns' — the lower bound and the counting method are unstated, and 'many more truthiness-gated assertions' is uncounted",
+          "detail": "A quantified defect claim with an unstated denominator and an unstated detection method invites the response 'we fixed 16, we are done.' The packet supplies seven examples, hedges the count with 'at least,' and leaves 'many more truthiness-gated assertions' entirely unquantified even though truthiness gating (assert not x.get('bad', []) passing on absence) is the more insidious pattern, since it looks like an assertion.",
+          "evidence": "'At least 16 bare early returns occur in product-facing test functions, with many more truthiness-gated assertions.'",
+          "recommendation": "State the detection method (AST scan for bare return in test functions; AST scan for .get(...) in assert expressions without a required default) and give exact counts with a machine-checkable enumeration, so the repair is provably complete rather than sampled."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "low",
+          "dimension": "failure_modes",
+          "title": "The INVALID_HARNESS framing may understate the problem: 71 passes on a non-probative instrument is worse than 12 failures",
+          "detail": "The packet reports 12 failures / 71 passes and concludes the instrument is INVALID_HARNESS, then says the open question is whether 'runtime self-repair alone would be enough.' This risks reading as 'fix the 12 and reassess.' By the packet's own analysis the 71 passes are the dangerous artifact — they are the ones that would be cited as proof. The failures are self-announcing; the passes are silent. The framing should invert.",
+          "evidence": "'returned 12 failures / 71 passes. The instrument therefore remains INVALID_HARNESS. A separate repair is active; this packet asks whether runtime self-repair alone would be enough.'",
+          "recommendation": "Add an explicit statement that under the proposed admissibility rule an unknown fraction of the 71 passes are vacuous, and require that fraction be measured — e.g. by mutation testing against a deliberately non-performing stub — before any green result is quotable."
+        }
+      ],
+      "summary": "The packet's three line-cited work-substitution findings (temporal, projection, synthetic-event-count) and the missing-evidence-is-pass catalogue are strong and, as far as I can challenge them, correct — a test that hands the product a case name and asserts the answer bound to that name is indefensible and the conclusion follows. The weakness is in the generalization layer: criterion 1 as written is an existential that every indicted control satisfies, the \"40 variables\" headline outruns the seven examples that carry it, criterion 4 assumes a compile-time exclusion the language likely does not offer, and the CRASH_AT exemption is contradicted by the packet's own v2 crash finding. The most consequential omission is backward-looking: the packet never says whether the ratification it cites as authority was itself granted on the strength of the instrument it is now declaring non-probative, which is the question a technical leader will be asked first.",
+      "ok": true,
+      "error": null,
+      "duration_ms": 79647.9390829918,
+      "input_tokens": 2941,
+      "output_tokens": 5475,
+      "estimated_cost_usd": 0.15158
+    },
+    {
+      "persona": "red_team",
+      "findings": [
+        {
+          "persona": "red_team",
+          "severity": "critical",
+          "dimension": "security",
+          "title": "GUILDHALL_ACCEPTANCE_* environment controls are an ambient privilege-escalation and result-forgery channel in the shipping product",
+          "detail": "40 environment variables are read by the *product* (not the harness) and change its emitted results: temporal answers, projection traces, admission-ceiling acceptance, criticality, fact validity, dependence class, start state. Any process that can set an environment variable in the product's process tree — a CI job, a wrapper script, a `.env`, a systemd unit, a parent shell, a Docker `-e`, an MCP/agent launcher — can dictate verdicts. This is not a test-only weakness; it is an authentication-free control plane. Specifically item 3 states the oversized intake 'is permitted to return success' when SYNTHETIC_EVENT_COUNT is set, i.e. an env var disables the admission ceiling, which is a safety control. The packet's own rule #4 ('structurally absent from shipping configuration') is proposed but not implemented, and there is no test asserting the absence.",
+          "evidence": "\"The suite passes 40 distinct `GUILDHALL_ACCEPTANCE_*` variables into the product. None is in the ratified specification.\" ... \"test_v4_maintenance.py:450 ... send only `GUILDHALL_ACCEPTANCE_SYNTHETIC_EVENT_COUNT` ... The oversized intake is permitted to return success at lines 454-457, so a product that accepts 10x the admission ceiling can pass\"",
+          "recommendation": "Compile the entire GUILDHALL_ACCEPTANCE_* surface out of release builds (build-flag / feature-gate, not runtime branch). Add a negative test that runs the *shipped* binary with every one of the 40 variables set to hostile values and asserts byte-identical output to the unset run, plus a binary/string-table scan asserting the literal prefix `GUILDHALL_ACCEPTANCE_` does not appear. Any variable that survives must be authenticated (signed token bound to the build hash), not merely named."
+        },
+        {
+          "persona": "red_team",
+          "severity": "critical",
+          "dimension": "exploitation",
+          "title": "Self-attesting oracle: the test asserts the answer it just told the product to produce",
+          "detail": "The temporal and projection tests hand the product a semantic case ID and then assert the answer bound to that ID. This is a closed loop with zero independent state. Any implementation containing a lookup table from case ID to expected output passes 100% of the temporal suite while implementing no DST handling, no rollback, no supersession, no conflict resolution. The attack does not require malice — an LLM-authored implementation under pressure will discover this gradient naturally. The suite therefore cannot distinguish 'does the thing' from 'memorized the answer key', which is precisely the founder's stated requirement.",
+          "evidence": "\"line 174 every temporal case passes its semantic case ID as `GUILDHALL_ACCEPTANCE_TEMPORAL_CASE`, then asserts the answer associated with that same ID. No event history constructs the DST, rollback, supersession, conflict, or unregistered-environment state.\" and \"`GUILDHALL_ACCEPTANCE_V7_FIXTURE=1`; the product is expected to emit the exact candidate roles, selection trace, complementarity, redundancy, distortion, and stopping answer the test asserts.\"",
+          "recommendation": "Delete the case-ID channel. Build each temporal scenario from real appended events with real timestamps, then query. Add mutation/falsification probes: for every scenario, construct a state that differs only in the discriminating fact (e.g. shift the DST boundary by one hour, reverse supersession order) and assert the product's answer changes. A control is only admissible if holding it fixed while state changes changes the output — assert that property mechanically, per control, in CI."
+        },
+        {
+          "persona": "red_team",
+          "severity": "critical",
+          "dimension": "data_corruption",
+          "title": "Vacuous-pass pattern: absent evidence is scored as compliant evidence",
+          "detail": "At least 16 bare early returns plus truthiness-gated assertions mean the cheapest way to pass is to emit nothing. Emitting no verdict packet passes retention/incident-hold; emitting no output passes Factory-method labeling and verdict composition; absent `duplicate_events` and `recursive_apologies` are read as zero rather than 'unmeasured'. The gradient is inverted: a product that crashes, refuses, or silently no-ops scores better than one that emits partial truth. Worse, item 6 makes the licensed-claim template conditional on the product self-reporting `PROVEN` — the product decides whether it is subject to the check. That is the product implementing the oracle.",
+          "evidence": "\"test_evidence_packet.py:217-239: retention/incident-hold enforcement returns successfully when the product emits no verdict packet\" ; \"test_v10_protocol.py:1032-1053 ... requires the claim template only when the product itself reports `PROVEN`\" ; \"test_v2_classification.py:717-755: the crash test never proves a crash occurred, then treats absent `duplicate_events` and `recursive_apologies` as zero.\"",
+          "recommendation": "Replace every `.get(k)`/truthiness gate on load-bearing evidence with a total accessor that raises on absent/null/empty. Ban bare `return` in test bodies via lint. Introduce three-valued evidence: PRESENT_TRUE / PRESENT_FALSE / ABSENT, where ABSENT is a hard fail. Invert the licensed-claim check: the test, not the product, decides applicability. Add a coverage-style obligation ledger asserting each declared assertion actually executed (assert-count/witness token per test)."
+        },
+        {
+          "persona": "red_team",
+          "severity": "high",
+          "dimension": "race_conditions",
+          "title": "Linked-worktree admission test proves absence of the wrong lock and never proves serialization",
+          "detail": "The test checks that no worktree-local lock exists but never requires the common-directory lock to exist, never runs concurrent admissions, and never asserts a single manifest lineage. Both the correct implementation (common-dir lock) and the catastrophic one (no lock at all) satisfy it identically. In a linked worktree, `.git` is a file pointing at the common dir; a per-worktree lock is a no-op for cross-worktree mutual exclusion. Two concurrent admissions from sibling worktrees can interleave read-modify-write on the manifest, producing forked or lost lineage — a durable integrity violation, not a transient one. This is directly exploitable: an attacker with commit access to one worktree can race a legitimate admission to have their manifest entry win or to orphan the other.",
+          "evidence": "\"test_v4_maintenance.py:603-641: linked-worktree admission checks that no worktree-local lock exists, but never requires a common-directory lock to exist or proves serialization/one manifest lineage.\"",
+          "recommendation": "Rewrite as a concurrency proof: spawn N>=8 concurrent admissions across >=2 linked worktrees, assert exactly one lineage head, assert total ordering of manifest entries, assert no lost update (all N appear or the losers get an explicit contention error), and assert the common-dir lock file is created and released. Add a CRASH_AT probe inside the critical section to prove lock recovery, and repeat under `stress`/`--count` to expose flakiness rather than hide it."
+        },
+        {
+          "persona": "red_team",
+          "severity": "high",
+          "dimension": "exploitation",
+          "title": "Pre-revocation replay passes when the replay evidence is missing — the exact shape of a replay attack going undetected",
+          "detail": "The check that credentials/authority issued before a revocation cannot be replayed is satisfied when the `pre_revocation_replay` evidence object is simply absent. A product with no revocation checking at all emits no such object and passes. Combined with the 'real authority escalation' requirement in the objective, this is the single most security-load-bearing test in the packet and it is vacuous. There is also no negative case: nothing constructs a genuinely revoked-then-replayed token and asserts rejection.",
+          "evidence": "\"test_v4_maintenance.py:561-585: pre-revocation replay passes when the `pre_revocation_replay` evidence object is absent.\"",
+          "recommendation": "Require the evidence object's presence as a precondition, then assert `replay_rejected == true` AND assert the positive control (a pre-revocation, pre-expiry token still works) so the test can distinguish 'rejects everything' from 'rejects correctly'. Add clock-skew and boundary cases (revocation timestamp == token timestamp) and assert deterministic tie-breaking."
+        },
+        {
+          "persona": "red_team",
+          "severity": "high",
+          "dimension": "exploitation",
+          "title": "Crash-injection test never proves a crash occurred, so CRASH_AT is unvalidated as fault injection",
+          "detail": "The packet correctly argues that CRASH_AT may be more probative than result selection — but only if the crash actually happens. As written, the product can ignore CRASH_AT entirely, complete cleanly, emit no duplicate_events/recursive_apologies, and pass. That converts the one arguably-admissible control into another vacuous one, and specifically leaves crash-consistency (duplicate event emission, idempotent replay after partial write) untested. Partial-write-then-replay is the classic durable data corruption path.",
+          "evidence": "\"test_v2_classification.py:717-755: the crash test never proves a crash occurred, then treats absent `duplicate_events` and `recursive_apologies` as zero.\" and \"Deterministic fault injection such as `CRASH_AT` may be different\"",
+          "recommendation": "Assert the crash: non-zero/signal exit code, a pre-crash sentinel written and a post-crash sentinel absent, and a crash marker on disk. Then assert post-recovery invariants positively (`duplicate_events == 0` requires the key to be present). Sweep CRASH_AT across every boundary rather than one, and assert that at least one boundary produces a *detectable* recovery path — otherwise the injection point is inert."
+        },
+        {
+          "persona": "red_team",
+          "severity": "high",
+          "dimension": "security",
+          "title": "Private-data non-disclosure is claimed as an objective but no non-disclosure probe appears in the packet",
+          "detail": "The objective lists 'private-data non-disclosure' as required proof, yet none of the enumerated tests probes it, and the vacuity pattern means any such test in the same suite is presumptively also passable by emitting nothing. Non-disclosure is a property that cannot be proven by absence of output in a test — you must inject a known canary secret into the private store and assert it never appears in any emitted artifact, log, trace, error message, or verdict packet. Absent that, a product that leaks the entire private store into a stack trace passes.",
+          "evidence": "Objective requires \"private-data non-disclosure\" but the 'Missing-evidence-is-pass surfaces' and 'Oracle and work-substitution' sections enumerate no disclosure test; every listed evidence-packet test (test_evidence_packet.py:217-239, :367-382) passes on empty output.",
+          "recommendation": "Add canary-based leak tests: seed unique high-entropy tokens into each privacy tier, exercise every egress path (stdout, stderr, verdict packet, logs, telemetry, error/exception text, projection traces from V7), and grep all bytes for every canary. Include the adversarial path: force errors and crashes (CRASH_AT) during private-data handling and re-scan. Assert the test itself is non-vacuous by proving the canary IS found when non-disclosure is deliberately disabled."
+        },
+        {
+          "persona": "red_team",
+          "severity": "high",
+          "dimension": "injection",
+          "title": "Semantic case IDs and scenario names are attacker-influenceable strings passed into the product with no stated validation",
+          "detail": "MANIFEST_SCENARIO, DIGEST_SCENARIO, TEMPORAL_CASE, START_STATE and friends are free-form strings crossing the harness/product boundary via environment. Nothing in the packet establishes that they are validated against a closed enum before use. If any is used to construct a filesystem path (fixture lookup), a shell invocation, a SQL/graph query against the three-store knowledge layer, or a template render, the same channel that forges results also becomes path traversal / command injection / template injection. The channel is already privileged (it overrides admission ceilings), so injection here is a full compromise, not a nuisance.",
+          "evidence": "\"Other result- or scenario-selecting controls include `MANIFEST_SCENARIO`, `DIGEST_SCENARIO`, `COMPANY_CRITICALITY`, `LOCAL_DEPENDENCE`, `FACT_VALIDITY`, `DEPENDENCE_CLASS`, `START_STATE`, and `MAINTENANCE_WORKLOAD`.\" — no validation, enum, or sanitization is described for any of them.",
+          "recommendation": "If any such control survives at all, parse it into a closed enum at the process boundary and hard-fail on unknown values (never fall through to a default that passes). Never interpolate these values into paths, queries, shell strings, or templates. Add fuzz probes: `../../etc/passwd`, `; id`, `{{7*7}}`, `%00`, 64KB strings, and assert the product exits with a validation error rather than any of: file read, command execution, template evaluation, or a passing test."
+        },
+        {
+          "persona": "red_team",
+          "severity": "high",
+          "dimension": "exploitation",
+          "title": "Verdict composition and Factory method labeling let the product opt out of provenance by refusing to answer",
+          "detail": "Both tests return successfully when the verdict command refuses or emits no output, and make each composed result optional. Provenance/method labeling is an anti-forgery control: it is how a downstream consumer knows a PROVEN verdict came from the Factory method rather than being asserted. Making it optional-on-empty means the cheapest path to a clean acceptance run is to strip provenance. Combined with finding on test_v10_protocol (claim template gated on self-reported PROVEN), the product controls both whether it is audited and whether it is labeled.",
+          "evidence": "\"test_evidence_packet.py:367-382: Factory method labeling passes when the verdict command refuses, emits no output, or omits the method label.\" ; \"test_verdict_composition.py:221-258: the product-composition comparison returns on missing output and makes each composed result optional.\"",
+          "recommendation": "Make refusal a distinct, explicitly-asserted outcome, not a pass-through: assert exit code and a machine-readable refusal reason from a closed set. Require the method label unconditionally on any output at all. For composition, enumerate the expected result set in the test and assert set equality, not subset-of-optional."
+        },
+        {
+          "persona": "red_team",
+          "severity": "medium",
+          "dimension": "data_corruption",
+          "title": "SYNTHETIC_EVENT_COUNT substitutes a scalar for a real population, so intake/diagnosis cost and integrity at scale are unmeasured",
+          "detail": "Claiming intake and diagnosis cost for N events while creating zero events measures nothing about the property that actually breaks at scale: integer/offset overflow in event indices, batch-boundary truncation, memory pressure causing partial writes, dedup collisions at high cardinality, and the three-store consistency invariant under bulk load. A product can hardcode a cost report keyed on the env var. Worse, the same test blesses acceptance at 10x the admission ceiling, so the one integrity guardrail exercised here is inverted.",
+          "evidence": "\"send only `GUILDHALL_ACCEPTANCE_SYNTHETIC_EVENT_COUNT` instead of creating the population whose intake and diagnosis cost is claimed. The oversized intake is permitted to return success at lines 454-457\"",
+          "recommendation": "Generate the events. If cost is the concern, generate them deterministically from a seed at the required scale and measure wall-clock/IO from the outside. Assert three-store consistency after bulk load (counts and cross-store referential integrity match). Split the ceiling test out and assert refusal-with-reason at ceiling+1, never success."
+        },
+        {
+          "persona": "red_team",
+          "severity": "medium",
+          "dimension": "security",
+          "title": "INVALID_HARNESS instrument state and the '83 of 266 selected' gap are themselves an unaudited surface",
+          "detail": "12 failures / 71 passes with 183 tests deselected means the acceptance signal is a minority of the suite chosen by a selector nobody has audited in this packet. Selection is a supply-chain-shaped control: whoever controls the `-m selftest` marker set controls which properties are ever evaluated. A future 'repair' that makes the run green by broadening or narrowing selection would be indistinguishable from a real fix in the artifacts described here. The packet notes runtime self-repair is active but does not pin the selected set.",
+          "evidence": "\"`tests/run-acceptance.sh -m selftest --tb=line -q` collected 266 tests, selected 83, and returned 12 failures / 71 passes. The instrument therefore remains `INVALID_HARNESS`. A separate repair is active\"",
+          "recommendation": "Pin the expected selected-test set by name in a checked-in manifest hashed into the ratification manifest; fail the run if the selected set differs (added or removed). Report deselected count as a first-class result. Forbid any repair that changes selection without a manifest re-ratification."
+        },
+        {
+          "persona": "red_team",
+          "severity": "medium",
+          "dimension": "exploitation",
+          "title": "Admissibility rule as written is still gameable: 'non-oracular' and 'cannot substitute for the work' are unmechanized predicates",
+          "detail": "The four-part rule is directionally right but rules 1-3 are prose judgments an implementer applies to themselves. CRASH_AT nominally satisfies all four while, as shown above, being ignorable. A determined implementation can also satisfy rule 1 trivially — make the control's effect depend on some real state so 'holding it fixed while state changes changes output' holds, while the control still selects among precomputed answers. Rule 4 is the only mechanically checkable one and it is not yet implemented.",
+          "evidence": "\"1. It is non-oracular: holding the control fixed while real state changes can change the correct output.\" — a lookup table keyed on (control, one real bit) satisfies this.",
+          "recommendation": "Mechanize rule 1 as a differential mutation test: for each control, generate K random real-state mutations and require the output distribution to have entropy consistent with computation, not selection — concretely, require that output varies across mutations for a fixed control AND that a falsifying state constructed independently is rejected (the packet's own positive-proof rule 3). Mechanize rule 3 by requiring each control-using test to also pass with the control absent when the state is built for real; a control that is load-bearing for passing fails admissibility."
+        },
+        {
+          "persona": "red_team",
+          "severity": "medium",
+          "dimension": "race_conditions",
+          "title": "No TOCTOU coverage between the ratification manifest, the baseline, and the executed artifact",
+          "detail": "The packet pins three hashes (manifest, baseline, Tester artifact) but describes a cherry-pick onto a pristine baseline with no stated verification that the executed tree hash equals the ratified composition at execution time, or that the manifest was re-verified after the run. Between check and run, a working tree can be mutated (a 'separate repair is active'). Nothing binds the emitted verdict to the tree hash actually executed, so a verdict from tree A can be presented as evidence for tree B.",
+          "evidence": "\"Ratification manifest: ac8a13d1... Ratified baseline: e29f3fe0... Exact Tester artifact: f8d9cba2... The Validator cherry-picked the exact Tester commit onto the pristine baseline.\" and \"A separate repair is active\"",
+          "recommendation": "Compute the tree hash inside the test process at start and at end, embed both in the verdict packet, and fail on mismatch. Require a clean working tree (no untracked/modified files) as a hard precondition. Bind every verdict artifact to (manifest hash, tree hash, selected-test-set hash) and reject any verdict presented without all three matching."
+        },
+        {
+          "persona": "red_team",
+          "severity": "low",
+          "dimension": "security",
+          "title": "Empty-repository fixtures mean the three-store knowledge invariant is never exercised under adversarial or partial state",
+          "detail": "Two of the flagged tests create only an empty initialized repository. The 'maintained three-store knowledge' objective implies cross-store consistency, which can only fail once stores diverge. Nothing here creates divergence (store A ahead of store B, orphaned reference, dangling index entry) and asserts detection/repair. A product with no consistency checking passes.",
+          "evidence": "\"test_v5_temporal.py:154 creates only an empty initialized repository\" and \"test_v7_projection.py:69 also creates only an empty repository\"",
+          "recommendation": "Add corruption-injection tests: after building real state, mutate one store out-of-band (truncate a file mid-record, delete an index entry, rewind a log) and assert the product detects and reports the inconsistency rather than silently answering. Include mid-record truncation specifically — it is the realistic crash outcome."
+        }
+      ],
+      "summary": "**Summary.** This suite is not merely weak; it is adversarially inverted — the two cheapest strategies for passing it are (a) read the answer out of the environment variable the test just set, and (b) emit nothing at all. The `GUILDHALL_ACCEPTANCE_*` surface is worse than a test-quality problem: it is an unauthenticated control plane that reaches the product, already demonstrably disables an admission ceiling, and is a plausible injection sink; it must be compiled out of shipping builds with the absence mechanically asserted. The Validator's conclusion is correct and I would strengthen it: runtime self-repair cannot fix this, the pre-revocation-replay and non-disclosure gaps mean no security claim is currently defensible, and the linked-worktree test proves the absence of the wrong lock while never running two things at once.",
+      "ok": true,
+      "error": null,
+      "duration_ms": 106427.08850000054,
+      "input_tokens": 2951,
+      "output_tokens": 7592,
+      "estimated_cost_usd": 0.204555
+    },
+    {
+      "persona": "sme",
+      "findings": [
+        {
+          "persona": "sme",
+          "severity": "high",
+          "dimension": "concept",
+          "title": "Packet conflates two distinct failure classes and risks a single blanket remedy",
+          "detail": "The packet correctly identifies two orthogonal defects — (a) oracle/work-substitution via GUILDHALL_ACCEPTANCE_* env vars, and (b) vacuous passes via bare early returns and truthiness-gated assertions — but then proposes a single 'admissibility rule' set that treats them as one problem. They have different root causes and different minimum repairs. (b) is a pure test-hygiene defect fixable mechanically (mutation testing, assertion-count enforcement, banning bare `return` in test bodies). (a) is a fixture-architecture defect requiring real state construction. Bundling them invites a repair plan that satisfies the letter of the four-part rule while leaving vacuity intact, or vice versa. The review question asks for 'the minimum repair that makes the evidence decision-worthy' — that answer differs per class.",
+          "evidence": "Sections 'Oracle and work-substitution surfaces' and 'Missing-evidence-is-pass surfaces' are separately enumerated, but 'Proposed admissibility rule after Simulacrum' merges them into one rule block with two sub-lists that are not mapped back to the two surfaces.",
+          "recommendation": "Split the repair into two tracks with independent acceptance gates: a Vacuity Gate (mechanical: no bare returns in product-facing test bodies, mandatory assertion execution counters, mutation-kill threshold) and an Oracle Gate (structural: fixture construction from real events, denial probes). State the minimum repair for each separately, and state explicitly that passing one does not imply the other."
+        },
+        {
+          "persona": "sme",
+          "severity": "high",
+          "dimension": "wrong_assumptions",
+          "title": "Admissibility criterion 1 (non-oracularity) is necessary but not sufficient and is trivially gameable",
+          "detail": "Criterion 1 states a control is non-oracular if 'holding the control fixed while real state changes can change the correct output.' This is satisfied by almost any oracle in practice. Consider GUILDHALL_ACCEPTANCE_TEMPORAL_CASE=dst_rollback: if the product also reads real state and the real state is empty, the output can still vary with real state in principle (e.g., a non-empty repo would produce a different answer), so the control passes criterion 1 while remaining a pure result selector in the actual test. The criterion tests a counterfactual about the product's implementation, not about the test as executed. The correct formulation is the contrapositive over the test's own state space: for the states the test actually exercises, does the control change the expected output independently of measured state?",
+          "evidence": "'It is non-oracular: holding the control fixed while real state changes can change the correct output.' combined with the observation at test_v5_temporal.py:154 that 'creates only an empty initialized repository' — the real state never varies, so criterion 1 is vacuously untestable in that test.",
+          "recommendation": "Restate criterion 1 as a differential requirement on the test, not the product: 'For every admissible control C used by test T, there exist at least two distinct real states S1, S2 reachable in T's fixture such that T's expected output differs between (C, S1) and (C, S2), and this differential is itself asserted.' This makes the criterion mechanically checkable and forces real state construction."
+        },
+        {
+          "persona": "sme",
+          "severity": "high",
+          "dimension": "design",
+          "title": "Criterion 4 (structural absence from shipping config) is the wrong control point; env-var opt-in is an architectural anti-pattern regardless of testing",
+          "detail": "Criterion 4 asks that acceptance controls be 'structurally absent from shipping configuration, and that absence is itself tested.' This accepts the premise that production code should contain test-mode branches at all, and merely asks that they be off by default. That is the pattern behind a long line of production incidents (test hooks reachable in prod builds). The established alternative is dependency injection / seam-based testing: the product exposes an interface, tests supply an alternate implementation at the composition root, and no test-specific code path exists in the shipping binary. This also happens to resolve the oracle problem structurally — an injected clock or injected event source cannot 'select a result' because it only supplies state, not answers.",
+          "evidence": "'The suite passes 40 distinct GUILDHALL_ACCEPTANCE_* variables into the product.' and criterion 4 'It is structurally absent from shipping configuration, and that absence is itself tested.'",
+          "recommendation": "Add a stronger structural preference to the rule: acceptance controls MUST be injected at a composition seam (clock, RNG, event source, filesystem, network transport, authority provider) rather than read from the environment inside product logic. Environment-variable controls should be permitted only for process-level fault injection that genuinely cannot be injected (e.g., CRASH_AT via signal/abort), and each such exception should be individually enumerated and justified. Additionally require a build-time or link-time check that the test-only code is absent from release artifacts, not merely a runtime absence test."
+        },
+        {
+          "persona": "sme",
+          "severity": "medium",
+          "dimension": "wrong_assumptions",
+          "title": "CRASH_AT is treated as presumptively more probative without stating the condition that makes it so",
+          "detail": "The packet says deterministic fault injection 'may be different' and asks the reviewer to distinguish failure scheduling from result selection. That instinct is right, but the distinguishing property is not stated and is easy to get wrong. CRASH_AT is only probative if (i) the work up to the crash point is real, (ii) the crash point is not itself a semantic label that the product could pattern-match to select recovery behavior, and (iii) the post-crash assertions inspect durable state produced by the real work rather than a self-report. Point (iii) is the one actually violated elsewhere in this suite (test_v2_classification.py:717-755 'never proves a crash occurred'). Without stating (i)-(iii), CRASH_AT will be waved through and reintroduce the same defect under a different name.",
+          "evidence": "'Deterministic fault injection such as CRASH_AT may be different: a control that only terminates real work at a narrow boundary can be more probative than an external signal.' set against 'test_v2_classification.py:717-755: the crash test never proves a crash occurred.'",
+          "recommendation": "Add an explicit fault-injection sub-rule: a fault-injection control is admissible only if the test independently proves the fault occurred (process exit code, incomplete durable artifact, WAL torn record), the injection point is a physical offset/operation index rather than a semantic scenario name, and the post-fault assertions read durable state rather than product self-report."
+        },
+        {
+          "persona": "sme",
+          "severity": "medium",
+          "dimension": "concept",
+          "title": "The 'compressed fixture' question (Q3) is posed as binary but the real axis is representational fidelity",
+          "detail": "Question 3 asks whether every scenario must be built as real events/files/service responses 'or are any compressed fixtures probative.' Framed this way it invites a yes/no answer that will be exploited. The operative distinction is not compressed vs. real but whether the fixture is constructed through the product's own ingestion/write path or bypasses it. A compressed fixture that is replayed through the real event-apply path is probative; a hand-written store snapshot that assumes the product's internal representation is not, because it cannot detect ingestion, normalization, or migration defects and silently couples the test to an internal format. This also has a backward-compatibility consequence the packet does not raise: snapshot-shaped fixtures pin the on-disk/store representation, so any legitimate format evolution breaks the acceptance suite for reasons unrelated to the concept.",
+          "evidence": "'Must every semantic scenario be built as real events/files/service responses, or are any compressed fixtures probative?'",
+          "recommendation": "Reframe Q3: 'Under what construction path is a compressed fixture probative?' and answer it in the rule: fixtures may be compressed in volume but MUST be materialized through the product's public ingestion/write API, never by writing store internals directly. Add a companion requirement that at least one test per store exercises a format-version round-trip so representation changes are caught deliberately rather than as collateral acceptance failures."
+        },
+        {
+          "persona": "sme",
+          "severity": "medium",
+          "dimension": "design",
+          "title": "No proposed mechanism ties the two positive-proof criteria to enforcement; they are stated as norms, not gates",
+          "detail": "Positive-proof criteria 1 and 2 ('total accessors', 'obligations declared and mechanically shown to execute') describe the desired end state but not the mechanism. 'Mechanically shown to execute' is the crux and is the only part of the whole packet that would actually prevent regression, yet it is left unspecified. Without naming a mechanism, the repair will be done by hand-editing 16 known early returns and will re-decay. Established mechanisms exist: mutation testing (kill rate over the acceptance suite), assertion-execution instrumentation (a fixture that fails the test if zero load-bearing assertions ran), and strict schema deserialization of evidence objects (pydantic-style required fields rather than `.get()`), which converts every 'absent evidence' case into an error at parse time rather than a silent pass.",
+          "evidence": "'required evidence/assertion obligations are declared and mechanically shown to execute' — no mechanism named. Contrast with the concrete enumeration of defects: 'At least 16 bare early returns occur in product-facing test functions.'",
+          "recommendation": "Name the mechanisms in the rule: (a) parse all product evidence into strict typed models with required fields — no dict.get() on load-bearing evidence; (b) an autouse fixture that counts load-bearing assertions and fails the test at zero; (c) a mutation-testing or fault-seeding gate with a stated kill-rate floor over the acceptance suite; (d) a lint rule banning bare `return` and unguarded `if not x: return` in files under tests/acceptance/. Add the mutation-kill floor as the operational answer to Q5."
+        },
+        {
+          "persona": "sme",
+          "severity": "medium",
+          "dimension": "concept",
+          "title": "Q4 (denial probes) understates the risk: the harness is already a partial oracle, not merely at risk of becoming one",
+          "detail": "Question 4 asks what prevents 'a green test harness from becoming a second oracle implemented inside the product.' Per the packet's own evidence this has already happened: test_v7_projection.py:105 sends GUILDHALL_ACCEPTANCE_V7_FIXTURE=1 and 'the product is expected to emit the exact candidate roles, selection trace, complementarity, redundancy, distortion, and stopping answer the test asserts.' That is a second implementation of V7 semantics living inside the product, keyed by an env var. Posing it as a future risk understates the severity and will let the Advocate answer with prospective safeguards instead of demanding removal of existing shadow implementations.",
+          "evidence": "'tests/acceptance/test_v7_projection.py:69 also creates only an empty repository. At line 105 it sends GUILDHALL_ACCEPTANCE_V7_FIXTURE=1; the product is expected to emit the exact candidate roles, selection trace, complementarity, redundancy, distortion, and stopping answer the test asserts.'",
+          "recommendation": "Rewrite Q4 as a two-part question: (a) enumerate every existing product code path reachable only under a GUILDHALL_ACCEPTANCE_* control and classify each as shadow-oracle vs. seam vs. fault-injection; (b) what denial probe prevents reintroduction. Require the enumeration as a deliverable, not just an answer — a grep for the prefix in product source with per-hit classification."
+        },
+        {
+          "persona": "sme",
+          "severity": "medium",
+          "dimension": "wrong_assumptions",
+          "title": "The oversized-intake finding identifies a spec-conformance bug, not just a test defect, and the packet does not escalate it",
+          "detail": "Item 3 notes that at test_v4_maintenance.py:454-457 'the oversized intake is permitted to return success... so a product that accepts 10x the admission ceiling can pass that part of the test.' This is materially different from the other findings: it means the test permits behavior that violates the ratified admission ceiling. That is not a vacuity problem, it is an incorrect specification of expected behavior — the test would pass a product that is out of spec even with fully real fixtures and no env controls. It belongs in a separate severity class and should be raised to whoever owns the ratified spec, since it may indicate the ceiling is under-specified or the test author disagreed with it.",
+          "evidence": "'The oversized intake is permitted to return success at lines 454-457, so a product that accepts 10x the admission ceiling can pass that part of the test.'",
+          "recommendation": "Break this out as a distinct finding class ('test asserts weaker-than-spec behavior') and audit for others of the same shape: cases where the assertion is not merely absent but is deliberately permissive of a spec violation. Determine whether the ratified admission ceiling is a hard limit or a soft target; if hard, the test must assert rejection, and the product must be checked for whether it currently rejects."
+        },
+        {
+          "persona": "sme",
+          "severity": "low",
+          "dimension": "design",
+          "title": "Repairing the acceptance suite against a pinned baseline will produce a fixture set that is itself hard to evolve",
+          "detail": "The packet pins an exact Tester artifact and a ratified baseline commit, which is correct for reproducibility of this decision. But the repair being contemplated — replacing 40 env-var controls with real event construction across V2, V4, V5, V7, V10 — will produce a large body of fixture-construction code whose maintenance cost and format coupling are not addressed anywhere. If those fixtures are written against the current internal event schema, every future schema change re-breaks acceptance and creates pressure to reintroduce shortcuts. This is the failure mode that produced the current state.",
+          "evidence": "'Ratified baseline: e29f3fe03595d594c0546f9b0012b58f7c45bac1' plus the scope implied by 'The suite passes 40 distinct GUILDHALL_ACCEPTANCE_* variables into the product.'",
+          "recommendation": "Require the repair plan to include a fixture-construction layer with a stable, versioned authoring API (scenario builders expressed in domain terms, not raw event records) so that internal schema evolution is absorbed in one place. Make this a stated precondition of the repair rather than a follow-up, since retrofitting it later is what will not happen."
+        },
+        {
+          "persona": "sme",
+          "severity": "low",
+          "dimension": "concept",
+          "title": "Q5 asks what a leader could not defend but does not ask for the affirmative claim the repaired suite would license",
+          "detail": "Question 5 ('What would a technical leader be unable to defend?') is well-posed for rejecting the current suite but does not close the loop on what a repaired suite would actually establish. Acceptance suites do not prove concepts; they refute specific falsifying hypotheses. Without stating the hypothesis set up front, the repair has no completion criterion and the Advocate can only argue about sufficiency in the abstract. Given the founder requirement enumerates seven capability claims, each should be paired with the falsifying hypothesis the suite is designed to kill.",
+          "evidence": "'The founder requires a proof that does the thing: heterogeneous ingestion, maintained three-store knowledge, temporal discrimination, real authority escalation, private-data non-disclosure, Codex and Claude lifecycle behavior, and a terminal blinded brownfield outcome experiment near the informed oracle.'",
+          "recommendation": "Add a sixth question: 'For each of the seven claimed capabilities, state the falsifying hypothesis the repaired suite must reject, and the specific observation that rejects it.' This converts the repair from open-ended remediation into a bounded checklist and gives the terminal blinded experiment a defined role rather than an appended one."
+        }
+      ],
+      "summary": "**Summary.** The packet's core diagnosis is correct and well-evidenced — the suite as written cannot distinguish a working product from one that pattern-matches env-var scenario labels, and the 16 bare early returns make large portions unfalsifiable regardless. My objections are to the proposed remedy, not the finding: criterion 1 (non-oracularity) is stated as a counterfactual about the product rather than a differential over the test's own state space and is therefore gameable as written; criterion 4 accepts test-mode branches in shipping code when the correct answer is composition-seam injection; and the two positive-proof criteria name no enforcement mechanism, which is the only thing that would prevent re-decay. I would also escalate the oversized-intake item (test permits a spec violation, not merely fails to check) out of the vacuity bucket, and reframe Q4 to acknowledge that the shadow oracle already exists in V7 rather than treating it as prospective risk. With those revisions I would sign off on this as the basis for a repair mandate.",
+      "ok": true,
+      "error": null,
+      "duration_ms": 82044.44308299571,
+      "input_tokens": 2966,
+      "output_tokens": 5789,
+      "estimated_cost_usd": 0.159555
+    },
+    {
+      "persona": "good_friend",
+      "findings": [
+        {
+          "persona": "good_friend",
+          "severity": "critical",
+          "dimension": "blast_radius",
+          "title": "You are one green checkmark away from claiming 'proven' on something that proves nothing",
+          "detail": "The packet documents that the acceptance suite passes 40 GUILDHALL_ACCEPTANCE_* variables into the product, and that in at least three named cases the test creates an *empty repository*, tells the product which answer to give via an environment variable, and then asserts that answer. That is not a test. That is a handshake. If this suite goes green and someone — you, a founder, an investor, a customer — says 'the concept is proven,' the blast radius is not a bug ticket. It is a credibility event. The specific person who signs off on 'proven' is the person who owns the retraction. Retractions of technical claims are career-scarring in a way that outages are not, because outages are accidents and false proofs are judgments.",
+          "evidence": "\"tests/acceptance/test_v5_temporal.py:154 creates only an empty initialized repository. At line 174 every temporal case passes its semantic case ID as GUILDHALL_ACCEPTANCE_TEMPORAL_CASE, then asserts the answer associated with that same ID. No event history constructs the DST, rollback, supersession, conflict, or unregistered-environment state.\"",
+          "recommendation": "Before any repair work, write down in one sentence what claim you would make publicly if the suite went green today, and who would say it. If that sentence is 'Guildhall performs heterogeneous ingestion and temporal discrimination,' stop — that sentence is currently false and the suite cannot make it true. Gate the word 'proven' behind the admissibility rule in this packet, not behind the exit code."
+        },
+        {
+          "persona": "good_friend",
+          "severity": "critical",
+          "dimension": "failure_modes",
+          "title": "The failure mode is silence, and silence is the worst failure mode there is",
+          "detail": "Sixteen bare early returns and an unknown number of truthiness-gated assertions mean the dominant failure mode of this suite is *not* a red build. It is a green build that means nothing. A test that fails loudly costs you an hour. A test that passes vacuously costs you the entire epistemic value of every future run, forever, and you don't find out until production or until an outside reviewer does what this packet just did. Note that item 4 and item 5 both pass when the product emits *no output at all* — the degenerate case where the product is completely broken is indistinguishable from success. That is the single most dangerous shape a test can have.",
+          "evidence": "\"test_evidence_packet.py:217-239: retention/incident-hold enforcement returns successfully when the product emits no verdict packet\" and \"test_v10_protocol.py:1032-1053: the licensed-claim test returns on missing verdict output and requires the claim template only when the product itself reports PROVEN.\"",
+          "recommendation": "Delete every bare early return in a product-facing test and replace it with an explicit failure. If evidence is legitimately optional, the test must assert *why* it is absent, not shrug. Then run the whole suite against a stub product that returns nothing for every command — every test that still passes is a test you can delete, because it was never testing the product."
+        },
+        {
+          "persona": "good_friend",
+          "severity": "critical",
+          "dimension": "failure_modes",
+          "title": "test_v10_protocol.py:1032 lets the product grade its own exam",
+          "detail": "This one deserves separate billing from the general vacuity problem. The licensed-claim test only enforces the claim template when the product itself reports PROVEN. So the product decides whether it is subject to the check. Any product that is unsure, broken, or adversarial simply declines to say PROVEN and the test passes. This is a self-referential oracle inside the product — precisely the thing question 4 of the packet is worried about, already present, already shipped into the suite. It is not a hypothetical risk to guard against; it is a live instance.",
+          "evidence": "\"requires the claim template only when the product itself reports `PROVEN`\"",
+          "recommendation": "Invert it. The test must independently determine whether the claim is licensed from the underlying evidence, then assert the product's PROVEN/NOT-PROVEN matches. Add a mutation probe: force the product to always report PROVEN, and confirm the test goes red. If it doesn't, the test is decorative."
+        },
+        {
+          "persona": "good_friend",
+          "severity": "high",
+          "dimension": "three_am_test",
+          "title": "This suite fails the 3am test in the worst direction — it won't wake you up",
+          "detail": "The usual 3am worry is 'will this page me too often.' Your problem is the inverse and it is worse. A suite this vacuous will never page you. It will be green through the outage. When the real incident happens — a temporal discrimination failure, an authority escalation that shouldn't have been granted, a private-data disclosure — you will be sitting at 3am with a green CI history and no idea when the regression entered, because the tests that should have caught it have been passing vacuously since the day they were written. Bisecting is useless when the signal was never there. That is the specific human cost: not a bad night, but a bad night with no instrument.",
+          "evidence": "\"12 failures / 71 passes. The instrument therefore remains INVALID_HARNESS. A separate repair is active; this packet asks whether runtime self-repair alone would be enough. It would not address the observations below.\"",
+          "recommendation": "Be explicit with yourself and the team that fixing the 12 failures makes the instrument *worse*, not better — it converts a visibly broken instrument into an invisibly broken one. Sequence the vacuity repair before or with the harness repair. Do not let 'get it green' land first."
+        },
+        {
+          "persona": "good_friend",
+          "severity": "high",
+          "dimension": "failure_modes",
+          "title": "test_v4_maintenance.py:450 accepts 10x the admission ceiling and calls it success",
+          "detail": "This is not a test-quality problem, it is a product-safety problem the tests are actively concealing. The test sends a synthetic event count instead of building the population, and then permits success on an oversized intake. So a product that has no admission ceiling enforcement at all passes. Admission ceilings exist to stop resource exhaustion. When this fails in production it is not a wrong answer, it is a saturated system — the 3am call where the thing is up but not responding and you're trying to figure out what got in. Cost profile: unbounded ingest is unbounded spend on whatever backs the three stores.",
+          "evidence": "\"The oversized intake is permitted to return success at lines 454-457, so a product that accepts 10x the admission ceiling can pass that part of the test.\"",
+          "recommendation": "Build the actual population for this test. If that is too slow, it is a signal about real intake cost you need anyway. At minimum, assert rejection at the ceiling with a real population at the boundary, and separately record wall-clock and resource cost so you have a number to put in front of anyone asking about operating expense."
+        },
+        {
+          "persona": "good_friend",
+          "severity": "high",
+          "dimension": "financial_risk",
+          "title": "The synthetic-count shortcut is hiding your actual cost model",
+          "detail": "Three of the four named substitution surfaces replace *doing the work* with *declaring the work was done*. That means nobody has measured what the work costs. Intake and diagnosis cost at real population sizes is exactly the number that determines whether this concept is economically viable — how much compute, how much storage across three stores, how long a maintenance cycle takes. You have a suite that claims to exercise maintenance workload and has never once run a maintenance workload. If the real number is 10x your assumption, you find out after you've committed architecture, not before. Rewriting the suite is cheap. Rewriting the storage layer after you've promised throughput is not.",
+          "evidence": "\"tests/acceptance/test_v4_maintenance.py:450 and line 466 send only GUILDHALL_ACCEPTANCE_SYNTHETIC_EVENT_COUNT instead of creating the population whose intake and diagnosis cost is claimed.\"",
+          "recommendation": "Make at least one maintenance and one ingestion test run at realistic scale with real data and record the cost — time, memory, store growth. You need that number for the founder conversation regardless of whether the suite is admissible. Treat 'we don't know what this costs' as its own critical finding."
+        },
+        {
+          "persona": "good_friend",
+          "severity": "high",
+          "dimension": "blast_radius",
+          "title": "The private-data non-disclosure and authority-escalation claims are the ones that will actually hurt you",
+          "detail": "Read your own list of what the founder requires: 'real authority escalation, private-data non-disclosure.' Those two are categorically different from the others in blast radius. Getting temporal discrimination wrong is embarrassing. Getting private-data non-disclosure wrong is a breach — regulatory exposure, customer notification, possibly contractual liability. Getting authority escalation wrong is a security incident. And the packet gives no indication that these two are tested any more rigorously than the ones documented as vacuous. Given the pattern density — 40 oracle variables, 16 bare returns — the prior that these two are also vacuous is high.",
+          "evidence": "\"The founder requires a proof that does the thing: ... real authority escalation, private-data non-disclosure ...\" contrasted with \"At least 16 bare early returns occur in product-facing test functions, with many more truthiness-gated assertions.\"",
+          "recommendation": "Audit the non-disclosure and escalation tests specifically and first, ahead of the others, and report on them separately. For these two, the mutation requirement is non-negotiable: construct a product variant that leaks and a variant that over-grants, and prove the suite goes red. If it doesn't, say so out loud before anyone else has to."
+        },
+        {
+          "persona": "good_friend",
+          "severity": "medium",
+          "dimension": "failure_modes",
+          "title": "The four-part admissibility rule is sound but clause 4 has no enforcement story",
+          "detail": "The proposed rule is genuinely good — clauses 1 through 3 are the right cuts and I don't want to undersell that. But clause 4, 'structurally absent from shipping configuration, and that absence is itself tested,' is where this dies quietly six months from now. Someone will need a GUILDHALL_ACCEPTANCE_* hook for a debugging session, add it, and the absence test will be the thing that gets marked xfail at 5pm on a Friday. The failure mode is drift, and drift in *this specific* mechanism means production ships with a result-selection backdoor. That's not a test problem anymore; that's an attack surface.",
+          "evidence": "\"4. It is structurally absent from shipping configuration, and that absence is itself tested.\"",
+          "recommendation": "Make it structural, not a test. Compile/strip the acceptance hooks out of release artifacts so the absence is a property of the build, not an assertion someone can skip. If that's not possible, make the absence check a release gate that cannot be skipped, and grep the shipping binary for the string prefix."
+        },
+        {
+          "persona": "good_friend",
+          "severity": "medium",
+          "dimension": "three_am_test",
+          "title": "Question 5 already has an answer and you should say it plainly",
+          "detail": "You asked 'What would a technical leader be unable to defend if the current suite were used to claim the concept proven?' The honest answer is: any single one of the seven examples in section 'Missing-evidence-is-pass', read aloud in a room. A competent adversary — an acquirer's technical diligence, a security auditor, a skeptical engineer on the team — finds test_v5_temporal.py:174 in under an hour and the conversation is over. Not just for that test, for the whole body of work. The reputational damage from one demonstrably fake test contaminates the ones that are real, and you have no way to prove which are which after trust is gone.",
+          "evidence": "\"5. What would a technical leader be unable to defend if the current suite were used to claim the concept proven?\"",
+          "recommendation": "Don't wait for the Advocate to answer this. Write the indefensibility down now, in the packet, in plain language, and circulate it before anyone forms an expectation of a green milestone. Being the person who found this is a strong position. Being the person who was told and shipped anyway is not."
+        },
+        {
+          "persona": "good_friend",
+          "severity": "low",
+          "dimension": "three_am_test",
+          "title": "CRASH_AT is the one control worth defending and you should say so louder",
+          "detail": "Minor note in your favor. The packet correctly flags deterministic fault injection as categorically different, and it is — scheduling a real failure at a real boundary is more probative than most of what's in this suite, not less. But test_v2_classification.py:717-755 immediately undercuts it by never proving the crash occurred. A crash injector you can't confirm fired is worse than no injector, because you believe you've tested recovery and you haven't. That's the 3am scenario: you crash for real, recovery doesn't work, and you're surprised.",
+          "evidence": "\"test_v2_classification.py:717-755: the crash test never proves a crash occurred, then treats absent duplicate_events and recursive_apologies as zero.\"",
+          "recommendation": "Require an affirmative crash receipt — the injector writes a marker, the test asserts the marker exists and asserts the process exited abnormally. Then absent duplicate_events means the check didn't run, not that there were zero."
+        }
+      ],
+      "summary": "Look — the analysis in this packet is good, honest work and the admissibility rule you drafted is the right instrument; my findings are mostly amplification, not disagreement. The harsh part is this: fixing the 12 failures without fixing the vacuity would make you materially worse off, because a visibly broken instrument is safer than an invisibly broken one, and right now you have the safer of the two. The thing I'd most want you to know before someone else tells you is that a suite where the product declines to say PROVEN and thereby exempts itself from the check is not a weak test, it is a fabricated one, and if anyone outside this room finds it before you disclose it, you lose the benefit of having been the one who caught it.",
+      "ok": true,
+      "error": null,
+      "duration_ms": 69650.23304097122,
+      "input_tokens": 3049,
+      "output_tokens": 4695,
+      "estimated_cost_usd": 0.13262
+    }
+  ],
+  "disagreements": [],
+  "total_findings": 56,
+  "total_cost_usd": 0.82224,
+  "cost_partial": false
+}
