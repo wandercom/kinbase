@@ -1,0 +1,22 @@
+{
+  "schema_version": "guildhall-factory-author-attempt/1",
+  "role": "Coder",
+  "attempt": 3,
+  "ratification_manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "recovery_prompt_sha256": "697495e1244761381f41c130fa4e89017f092deda68df3c3aac504c4f5a85a27",
+  "launch_sha256": "033a288cdf749a6f25c328f3f14fee824235b16ef0b891fbfc1c09c3fd292fed",
+  "event_stream_sha256": "e9ecc4847827c47018226b8f9aebc5c33ec5d2ddef7372e88dffbea149498b50",
+  "exit_file_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+  "exit_code": 1,
+  "thread_id": "01a0728b-d872-7df3-8a5d-e4e7450145eb",
+  "reported_model": "glm-5.3:cloud",
+  "terminal_event": "turn.failed",
+  "terminal_reason": "response stream reconnects exhausted",
+  "model_actions_after_resume": 0,
+  "reasoning_fragments_after_resume": 5,
+  "git_state_unchanged": true,
+  "known_syntax_error_unchanged": "guildhall/experiment.py line 971",
+  "disposition": "RECOVERABLE_TRANSPORT_ONLY_FAILURE",
+  "gate_effect": "NONE"
+}
