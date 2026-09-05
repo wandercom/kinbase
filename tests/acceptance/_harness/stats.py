@@ -15,6 +15,18 @@ from typing import Callable, Sequence
 
 Z95 = 1.959963984540054  # two-sided 95%
 Z90_ONE_SIDED = 1.2815515655446004  # one-sided 90%
+Z80 = 0.8416212335729143  # 80% power term
+
+#: Sample size for a two-sided 95% test with 80% power against a paired effect
+#: (or, at true gap 0, for demonstrating equivalence within a band) of size
+#: ``delta`` given an upper paired SD. This single expression reproduces both
+#: columns of the ``spec/verification.md`` V-10 normal-approximation table
+#: exactly at every published row.
+def normal_approx_n(sd: float, delta: float) -> int:
+    if sd <= 0 or delta <= 0:
+        raise ValueError("sd and delta must be positive")
+    return math.ceil(((Z95 + Z80) ** 2) * (sd / delta) ** 2)
+
 
 
 # --------------------------------------------------------------------------

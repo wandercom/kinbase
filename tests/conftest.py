@@ -34,6 +34,7 @@ from acceptance._harness import mutations as mutation_catalog  # noqa: E402
 from acceptance._harness.cli import Guildhall  # noqa: E402
 from acceptance._harness.requirements import (  # noqa: E402
     HarnessInvalid,
+    ProductFailure,
     refs_of,
     repo_root,
     verify_manifest,
@@ -134,33 +135,72 @@ def _refs_for(item: pytest.Item) -> list[str]:
     return [ref.render() for ref in refs_of(function)]
 
 
-@pytest.hookimpl(hookwrapper=True)
-def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> Iterator[None]:
-    outcome = yield
-    report = outcome.get_result()
-    if report.when != "call":
-        return
+def _classify(item: pytest.Item, call: pytest.CallInfo) -> tuple[str, str]:
+    """Decide whether a failure is an instrument defect or a product finding.
+
+    ``spec/verification.md`` "Verdict semantics" separates ``INVALID_HARNESS``
+    from ``PRODUCT_FAILURE``, and "Instrument validity" makes the instrument's
+    own soundness a precondition for believing any gate observation. A defect in
+    the measuring device is therefore never reported as a product defect. The
+    ordered rules:
+
+    * a failure outside the call phase is a fixture/collection defect;
+    * a ``selftest``-marked test never touches the product, so any failure in it
+      is an instrument condition by construction;
+    * an explicit :class:`HarnessInvalid` is an instrument condition;
+    * an unexpected exception type -- anything that is not the deliberate
+      :class:`ProductFailure` or a plain assertion -- means the instrument
+      itself misbehaved rather than that it observed a product violation;
+    * only a deliberate product assertion is ``PRODUCT_FAILURE``.
+    """
+    if call.when != "call":
+        return "INVALID_HARNESS", f"failure during {call.when}"
+    if item.get_closest_marker("selftest") is not None:
+        return "INVALID_HARNESS", "selftest failure (no product involved)"
+    exc = call.excinfo.value if call.excinfo is not None else None
+    if isinstance(exc, HarnessInvalid):
+        return "INVALID_HARNESS", "HarnessInvalid"
+    if isinstance(exc, ProductFailure):
+        return "PRODUCT_FAILURE", "ProductFailure"
+    if isinstance(exc, AssertionError):
+        return "PRODUCT_FAILURE", "assertion"
+    return "INVALID_HARNESS", f"unexpected {type(exc).__name__}"
+
+
+def _record(item: pytest.Item, call: pytest.CallInfo) -> None:
     gate = _gate_of(item)
     state = getattr(item.config, "_guildhall_gate_state", None)
     if state is None:
         return
-    if report.failed:
-        classification = "PRODUCT_FAILURE"
-        if call.excinfo is not None and isinstance(call.excinfo.value, HarnessInvalid):
-            classification = "INVALID_HARNESS"
-        # PRODUCT_FAILURE dominates INVALID_HARNESS inside a gate, matching
-        # spec/verification.md: an independently valid product-failure
-        # observation is retained alongside an invalid detector.
-        if state.get(gate) != "PRODUCT_FAILURE":
-            state[gate] = classification
-        item.config._guildhall_records.append(
-            {
-                "node": item.nodeid,
-                "gate": gate,
-                "outcome": classification,
-                "refs": _refs_for(item),
-            }
-        )
+    classification, reason = _classify(item, call)
+    # The INSTRUMENT gate is definitionally an instrument observation.
+    if gate == "INSTRUMENT":
+        classification = "INVALID_HARNESS"
+    # PRODUCT_FAILURE dominates INVALID_HARNESS inside a gate, matching
+    # spec/verification.md: an independently valid product-failure observation
+    # is retained alongside an invalid detector.
+    if state.get(gate) != "PRODUCT_FAILURE":
+        state[gate] = classification
+    item.config._guildhall_records.append(
+        {
+            "node": item.nodeid,
+            "gate": gate,
+            "outcome": classification,
+            "reason": reason,
+            "phase": call.when,
+            "refs": _refs_for(item),
+        }
+    )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> Iterator[None]:
+    outcome = yield
+    report = outcome.get_result()
+    # Setup and teardown errors are instrument conditions and must not be
+    # dropped: an unreported fixture failure would leave the gate reading PASS.
+    if report.failed or (report.outcome == "failed"):
+        _record(item, call)
 
 
 def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # noqa: ANN001

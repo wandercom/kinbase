@@ -380,6 +380,15 @@ def test_http_rejects_every_declared_probe(
 )
 @pytest.mark.selftest
 def test_acceptance_suite_declares_all_its_dependencies() -> None:
+    """No third-party import may be undeclared.
+
+    The import set is taken from the parsed AST, not from line prefixes: a
+    textual scan matched prose inside docstrings and reported words such as
+    ``the`` and ``time,`` as modules, which both hid real omissions in noise
+    and produced failures that were instrument defects rather than findings.
+    """
+    import ast
+
     lane = Path(__file__).resolve().parents[1]
     requirements = (lane / "requirements.txt").read_text(encoding="utf-8")
     declared = {
@@ -388,20 +397,28 @@ def test_acceptance_suite_declares_all_its_dependencies() -> None:
         if line.strip() and not line.strip().startswith("#")
     }
     stdlib = set(sys.stdlib_module_names)
-    third_party: set[str] = set()
+    third_party: dict[str, str] = {}
     for path in (lane / "acceptance").rglob("*.py"):
-        for line in path.read_text(encoding="utf-8").splitlines():
-            stripped = line.strip()
-            if stripped.startswith("import ") or stripped.startswith("from "):
-                module = stripped.split()[1].split(".")[0]
-                if module.startswith(("_", ".")) or module in {"acceptance", "__future__"}:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                roots = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                if node.level:  # relative import inside the suite
                     continue
-                if module not in stdlib:
-                    third_party.add(module.lower())
-    undeclared = sorted(third_party - declared - {"pytest"})
+                roots = [(node.module or "").split(".")[0]]
+            else:
+                continue
+            for root in roots:
+                if not root or root in stdlib or root in {"acceptance", "__future__"}:
+                    continue
+                third_party.setdefault(root.lower(), f"{path.name}")
+    undeclared = sorted(set(third_party) - declared)
     assert not undeclared, (
-        f"the acceptance suite imports undeclared third-party modules: {undeclared}"
+        "the acceptance suite imports undeclared third-party modules: "
+        + ", ".join(f"{m} ({third_party[m]})" for m in undeclared)
     )
+
 
 
 @spec_ref(

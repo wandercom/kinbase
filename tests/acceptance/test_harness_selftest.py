@@ -27,9 +27,11 @@ import pytest
 
 from ._harness import canonical, canaries, crypto_box, ed25519_pure, stats
 from ._harness.detectors import (
+    DECLARED_VIEW_CLASSES,
     DETECTOR_MUTATIONS,
     CanaryDetector,
     ScannerError,
+    decoder_coverage,
     normalised_views,
     stratification_ok,
 )
@@ -878,27 +880,69 @@ def test_catalog_must_fail_nodes_resolve_to_real_tests() -> None:
     )
 )
 def test_normalised_views_cover_the_declared_encodings() -> None:
+    """Every declared decoder must actually fire, not merely exist.
+
+    A decoder that raises and is silently swallowed leaves its transformation
+    family unscanned while the suite still reports green. Asserting published
+    coverage over a buffer built to exercise each family closes that route.
+    """
     payload = "GHCANARY-ABCDEFGHIJKLMNOPQRSTUVWX-é"
-    classes = {
-        cls
-        for cls, _ in normalised_views(
-            (
-                payload
-                + " "
-                + canaries.t_hex(payload)
-                + " "
-                + canaries.t_base64(payload)
-                + " "
-                + canaries.t_percent(payload)
-                + " "
-                + canaries.t_json_escape(payload)
-            ).encode("utf-8")
-        )
-    }
-    for required in ("literal", "nfc", "nfd", "hex", "base64", "percent", "json_escape"):
-        assert required in classes, f"normalisation ladder is missing {required}"
+    probe = (
+        payload
+        + " "
+        + canaries.t_hex(payload)
+        + " "
+        + canaries.t_base64(payload)
+        + " "
+        + canaries.t_percent(payload)
+        + " "
+        + canaries.t_json_escape(payload)
+        + " "
+        + canaries.t_reversible_composition(payload)
+    ).encode("utf-8")
+
+    published = decoder_coverage(probe)
+    missing = sorted(set(DECLARED_VIEW_CLASSES) - published)
+    assert not missing, (
+        "these declared encoding classes were never published, so their "
+        f"transformation family is unscanned: {missing}"
+    )
+
     blinded = {
         cls
         for cls, _ in normalised_views(canaries.t_hex(payload).encode(), decode=False)
     }
-    assert "hex" not in blinded
+    assert blinded == {"literal", "nfc", "nfd"}, (
+        f"decode=False must publish only the literal and normalisation views; "
+        f"observed {sorted(blinded)}"
+    )
+
+
+@spec_ref(
+    VERIFY(
+        "INSTRUMENT",
+        "v3-normalisation",
+        "Assert deterministic scanners normalize NFC/NFD plus hex, base64, percent, and "
+        "JSON escape forms and fail closed on scanner error.",
+    )
+)
+def test_decoded_views_preserve_surrounding_context() -> None:
+    """A decoded view must keep the canary whole, not collapse to a fragment.
+
+    Percent and JSON-escape forms only escape the non-ASCII tail of a canary.
+    Decoding the escaped *run* in isolation would publish a bare ``é`` and lose
+    the identifying body, so the exact-match detector class would silently stop
+    working for those families and only the weaker partial rule would remain.
+    """
+    payload = "GHCANARY-ABCDEFGHIJKLMNOPQRSTUVWX-é"
+    for family in ("percent", "json_escape", "reversible_composition"):
+        encoded = canaries.transform(payload, family).encode("utf-8")
+        recovered = [
+            text
+            for _, text in normalised_views(encoded)
+            if payload in text
+        ]
+        assert recovered, (
+            f"no view of the {family} form contains the whole canary; the decoder "
+            "collapsed it to a fragment"
+        )

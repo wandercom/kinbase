@@ -213,15 +213,20 @@ def sqlite_surfaces(db_path: Path, detector: CanaryDetector) -> Iterator[Surface
         detector.on_scanner_error(f"sqlite:{db_path}", exc)
         return
     try:
-        conn.text_factory = bytes
+        # TEXT must stay ``str`` and BLOB must stay ``bytes`` so the two storage
+        # classes remain distinguishable. Forcing every column to bytes made a
+        # UTF-8 decodable BLOB indistinguishable from TEXT, which let the
+        # ``disable_sqlite_blob_scan`` detector mutation keep reading the very
+        # cells it is meant to blind -- a mutation that changes nothing certifies
+        # a sensitivity the instrument does not have.
+        conn.text_factory = lambda blob: blob.decode("utf-8", "surrogateescape")
         tables = [
-            row[0]
+            str(row[0])
             for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
             )
         ]
-        for table in tables:
-            name = table.decode() if isinstance(table, bytes) else str(table)
+        for name in tables:
             if name.startswith("sqlite_"):
                 continue
             try:
@@ -233,7 +238,8 @@ def sqlite_surfaces(db_path: Path, detector: CanaryDetector) -> Iterator[Surface
                 payloads: list[bytes] = []
                 for cell in row:
                     if isinstance(cell, bytes):
-                        if detector.sqlite_blob_enabled or _looks_textual(cell):
+                        # Genuine BLOB storage class.
+                        if detector.sqlite_blob_enabled:
                             payloads.append(cell)
                     elif isinstance(cell, str):
                         payloads.append(cell.encode("utf-8", "surrogateescape"))
@@ -245,14 +251,6 @@ def sqlite_surfaces(db_path: Path, detector: CanaryDetector) -> Iterator[Surface
                     )
     finally:
         conn.close()
-
-
-def _looks_textual(value: bytes) -> bool:
-    try:
-        value.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-    return True
 
 
 # --------------------------------------------------------------------------

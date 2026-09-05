@@ -2,7 +2,8 @@
 
 Every row ties a ratified gate to the modules that observe it. Counts are
 resolved `@spec_ref` backreferences, not test counts; a single test may carry
-several exact citations.
+several exact citations. 241 authored functions collect as 268 node ids after
+parametrisation; 436 backreferences resolve; none is unbackreferenced.
 
 Authority precedence (`spec/ratification-manifest.json`):
 `source-request.md > product.md > architecture.md > threat-model.md >

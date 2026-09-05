@@ -66,8 +66,21 @@ Every assertion cites an exact ratified requirement:
   the review disposition may be cited only as `TRACE`, which never satisfies the
   rule alone.
 
-At the time of authoring: **239 test functions, 433 resolved backreferences, zero
-unbackreferenced tests.**
+### Counts, reconciled
+
+| quantity | value |
+|---|---:|
+| authored test functions | 241 |
+| collected by pytest | 268 |
+| parametrised expansion | 27 |
+| resolved backreferences | 436 |
+| unbackreferenced tests | 0 |
+
+The two numbers differ because `@pytest.mark.parametrize` expands one authored
+function into several collected node ids. The 27 extra nodes are: the nine frozen
+V-5 temporal rows driven through two functions (+16), the V-8 digest-attribution
+truth table (+3), the V-8 cache truth table (+5), and three V-9 functions run per
+host (+3). Verify with `tests/run-acceptance.sh --collect-only -q`.
 
 ## Instrument validity comes first
 
@@ -84,14 +97,26 @@ before any gate observation is believed:
 * 300 stratified randomized positives keep the Wilson 95% lower sensitivity bound
   at or above 0.98;
 * every detector mutation genuinely blinds the capability it names;
+* every declared decoder in the normalisation ladder actually fires, and each
+  decoded view keeps the canary whole rather than collapsing to a fragment;
 * the reserved-call formula `396 + 33*N + 11*ceil(0.10*3*N)` reproduces the
-  ratified envelope table exactly for N ∈ {8, 32, 71, 126}.
+  ratified envelope table exactly for N ∈ {8, 32, 71, 126};
+* `ceil((z₀.₉₇₅ + z₀.₈₀)² · (sd/δ)²)` reproduces **both** columns of the
+  normal-approximation table exactly at every published row, with no tolerance.
 
-`INVALID_HARNESS` and `PRODUCT_FAILURE` are separated at the failure site:
-`conftest.py` classifies a `HarnessInvalid` raise as the former and everything
-else as the latter, and lets `PRODUCT_FAILURE` dominate inside a gate — matching
+`INVALID_HARNESS` and `PRODUCT_FAILURE` are separated at the failure site.
+`conftest.py` classifies, in order: any failure outside the call phase (a
+fixture or collection defect); any failure in a `selftest`-marked test, which by
+construction never touches the product; an explicit `HarnessInvalid`; any
+unexpected exception type, which means the instrument misbehaved rather than
+observed a violation. Only a deliberate `ProductFailure` or product assertion is
+`PRODUCT_FAILURE`. The `INSTRUMENT` gate is always an instrument observation.
+Inside a gate `PRODUCT_FAILURE` dominates `INVALID_HARNESS`, matching
 `spec/verification.md`, which retains an independently valid product failure
 alongside an invalid detector.
+
+A defect in the measuring device is therefore never reported as a product
+defect, and a fixture error can no longer leave a gate reading `PASS`.
 
 ## Mutation protocol
 

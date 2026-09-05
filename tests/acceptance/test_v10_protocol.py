@@ -610,23 +610,30 @@ def test_published_call_envelope_matches_the_formula() -> None:
     )
 )
 def test_normal_approximation_table_is_internally_consistent() -> None:
+    """Both published columns must fall out of one power expression, exactly.
+
+    ``spec/verification.md`` V-10 gives, per upper paired SD, the N for a 0.10
+    nonzero paired effect at 80% power and the N for 95%-CI equivalence within
+    +/-0.05 at true gap 0. Both are ``ceil((z_0.975 + z_0.80)^2 * (sd/delta)^2)``
+    with delta = 0.10 and 0.05 respectively, and reproduce every published cell
+    with no tolerance. A tolerance would let a transcription error pass.
+    """
     for sd, (n_effect, n_equivalence) in stats.NORMAL_APPROX_TABLE.items():
-        # N for an 80%-power two-sided test at effect 0.10.
-        approx = ((stats.Z95 + 0.8416212335729143) * sd / 0.10) ** 2
-        assert n_effect >= 1
-        if sd >= 0.10:
-            assert abs(n_effect - math.ceil(approx)) <= 2, (
-                f"sd={sd}: table says N={n_effect}, normal approximation gives "
-                f"{math.ceil(approx)}"
-            )
-        # N for a 95%-CI half-width of 0.05 at true gap 0.
-        equivalence = (stats.Z95 * sd / 0.05) ** 2
-        assert abs(n_equivalence - math.ceil(equivalence)) <= 2, (
-            f"sd={sd}: table says N={n_equivalence}, computation gives "
-            f"{math.ceil(equivalence)}"
+        assert stats.normal_approx_n(sd, 0.10) == n_effect, (
+            f"sd={sd}: table says N={n_effect} for a 0.10 paired effect, the "
+            f"power expression gives {stats.normal_approx_n(sd, 0.10)}"
         )
+        assert stats.normal_approx_n(sd, 0.05) == n_equivalence, (
+            f"sd={sd}: table says N={n_equivalence} for +/-0.05 equivalence, the "
+            f"power expression gives {stats.normal_approx_n(sd, 0.05)}"
+        )
+    # The structural floor dominates the smallest row: 2 is arithmetically
+    # sufficient there, but P-10 still requires at least eight eligible tasks.
     assert stats.NORMAL_APPROX_TABLE[0.05][0] == 2
     assert stats.STRUCTURAL_TASK_FLOOR == 8
+    # The conservative pilot simulation may only increase N, never decrease it.
+    assert min(n for n, _ in stats.NORMAL_APPROX_TABLE.values()) < stats.STRUCTURAL_TASK_FLOOR
+
 
 
 @pytest.mark.selftest

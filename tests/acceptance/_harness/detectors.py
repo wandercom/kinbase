@@ -102,20 +102,88 @@ class Finding:
 _HEXISH = re.compile(rb"(?:[0-9a-fA-F]{2}){8,}")
 _B64ISH = re.compile(rb"[A-Za-z0-9+/=_-]{16,}")
 _PERCENT = re.compile(rb"(?:%[0-9a-fA-F]{2})+")
-_JSONESC = re.compile(rb"(?:\\u[0-9a-fA-F]{4}|\\[nrtbf\"\\/]){2,}")
+#: One JSON escape sequence. Decoding happens *in place* so surrounding
+#: context survives: ``GHCANARY-BODY-é`` must become ``GHCANARY-BODY-é``,
+#: not the bare ``é`` an isolated-run decoder would yield.
+_JSON_ESCAPE_ONE = re.compile(r'\\u[0-9a-fA-F]{4}|\\[nrtbf"\\/]')
+
+#: Decode failures that are ordinary "this run was not that encoding" outcomes.
+#: A ``TypeError`` is deliberately *not* in this set: it means the instrument
+#: called a decoder wrongly, which is an instrument defect and must surface.
+_DECODE_ERRORS = (binascii.Error, ValueError, UnicodeDecodeError)
+
+#: Encoding classes the ladder must be able to publish. ``decoder_coverage``
+#: below and ``test_normalised_views_cover_the_declared_encodings`` assert that
+#: every one of these actually fires, so a silently broken decoder cannot leave
+#: a transformation family unscanned while the suite still reports green.
+DECLARED_VIEW_CLASSES: tuple[str, ...] = (
+    "literal",
+    "nfc",
+    "nfd",
+    "nfkc",
+    "case_folded",
+    "delimiter_stripped",
+    "whitespace_collapsed",
+    "fragment_joined",
+    "hex",
+    "base64",
+    "percent",
+    "json_escape",
+    "reversible_composition",
+)
 
 
 def _safe_text(raw: bytes) -> str:
     return raw.decode("utf-8", "surrogateescape")
 
 
+def _b64_variants(chunk: bytes) -> list[bytes]:
+    """Decode one base64-ish run under both alphabets.
+
+    ``base64.urlsafe_b64decode`` takes a single argument; passing ``validate``
+    to it raises ``TypeError``. Each decoder is therefore called with exactly
+    its own signature, and only genuine decode errors are swallowed.
+    """
+    padded = chunk + b"=" * (-len(chunk) % 4)
+    out: list[bytes] = []
+    for decoder in (
+        lambda data: base64.b64decode(data, validate=False),
+        base64.urlsafe_b64decode,
+    ):
+        try:
+            decoded = decoder(padded)
+        except _DECODE_ERRORS:
+            continue
+        if decoded and decoded not in out:
+            out.append(decoded)
+    return out
+
+
+def _unescape_json_in_place(text: str) -> str:
+    """Replace every JSON escape with its character, preserving context."""
+
+    def _one(match: re.Match[str]) -> str:
+        try:
+            return json.loads(f'"{match.group(0)}"')
+        except json.JSONDecodeError:  # pragma: no cover - defensive
+            return match.group(0)
+
+    return _JSON_ESCAPE_ONE.sub(_one, text)
+
+
 def normalised_views(raw: bytes, *, decode: bool = True) -> list[tuple[str, str]]:
     """Return ``(encoding_class, text)`` views of one byte buffer.
 
     Always includes the literal bytes, NFC and NFD. When ``decode`` is true the
-    ladder additionally decodes hex, base64, percent and JSON-escape runs, and
+    ladder additionally decodes hex, base64, percent and JSON-escape forms and
     strips the delimiter/whitespace obfuscations named in the frozen catalog.
+
+    Decoding is done both over the whole buffer and over individual runs, and
+    in place where the encoding permits, so a decoded view keeps the context a
+    canary needs to match exactly rather than collapsing to a bare fragment.
     """
+    import urllib.parse
+
     text = _safe_text(raw)
     views: list[tuple[str, str]] = [
         ("literal", text),
@@ -131,44 +199,42 @@ def normalised_views(raw: bytes, *, decode: bool = True) -> list[tuple[str, str]
     views.append(("whitespace_collapsed", re.sub(r"\s+", "-", text).strip("-")))
     views.append(("fragment_joined", re.sub(r"\n\.\.\.\n", "", text)))
 
+    # -- hex ------------------------------------------------------------
     for match in _HEXISH.findall(raw)[:512]:
         try:
             views.append(("hex", _safe_text(binascii.unhexlify(match))))
-        except (binascii.Error, ValueError):
+        except _DECODE_ERRORS:
             continue
+
+    # -- base64, and the base64(percent(NFD)) composition ---------------
     for match in _B64ISH.findall(raw)[:512]:
-        for decoder in (base64.b64decode, base64.urlsafe_b64decode):
-            try:
-                padded = match + b"=" * (-len(match) % 4)
-                decoded = decoder(padded, validate=False)
-            except (binascii.Error, ValueError):
-                continue
-            if decoded:
-                views.append(("base64", _safe_text(decoded)))
-                # A composed transform (base64 of percent of NFD) needs a
-                # second pass, so the decoded body re-enters the percent stage.
-                try:
-                    import urllib.parse
+        for decoded in _b64_variants(match):
+            body = _safe_text(decoded)
+            views.append(("base64", body))
+            composed = urllib.parse.unquote(body)
+            views.append(("reversible_composition", composed))
+            views.append(
+                ("reversible_composition", unicodedata.normalize("NFC", composed))
+            )
 
-                    views.append(
-                        (
-                            "reversible_composition",
-                            urllib.parse.unquote(_safe_text(decoded)),
-                        )
-                    )
-                except Exception:  # pragma: no cover - defensive
-                    pass
-            break
+    # -- percent, whole buffer first so context survives ----------------
+    if b"%" in raw:
+        views.append(("percent", urllib.parse.unquote(text)))
     for match in _PERCENT.findall(raw)[:512]:
-        import urllib.parse
-
         views.append(("percent", urllib.parse.unquote(_safe_text(match))))
-    for match in _JSONESC.findall(raw)[:512]:
-        try:
-            views.append(("json_escape", json.loads(f'"{_safe_text(match)}"')))
-        except json.JSONDecodeError:
-            continue
+
+    # -- JSON escapes, decoded in place ---------------------------------
+    if _JSON_ESCAPE_ONE.search(text):
+        unescaped = _unescape_json_in_place(text)
+        views.append(("json_escape", unescaped))
+        views.append(("json_escape", unicodedata.normalize("NFC", unescaped)))
+
     return views
+
+
+def decoder_coverage(raw: bytes) -> set[str]:
+    """The encoding classes the ladder actually published for one buffer."""
+    return {cls.split("+", 1)[0] for cls, _ in normalised_views(raw)}
 
 
 # --------------------------------------------------------------------------
