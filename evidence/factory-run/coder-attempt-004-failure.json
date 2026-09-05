@@ -1,0 +1,39 @@
+{
+  "schema_version": "guildhall-factory-author-attempt/1",
+  "role": "Coder",
+  "attempt": 4,
+  "ratification_manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "continuation_prompt_sha256": "832ce2bc2b01f34750e1494aa9231f352f34a1ed7b4602452b631c0e32f1703a",
+  "launch_sha256": "3902c2719e1d9954c9d217ff67525d24df9a121de9cbad353ed2262a77781a4e",
+  "event_stream_sha256": "0c3ab25b27c5bed4387717a11342c98e6aee27cea54148b4569e7cac807b7754",
+  "exit_file_sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865",
+  "exit_code": 1,
+  "thread_id": "01a072d7-a9e2-7190-8b96-6f8abf42355b",
+  "reported_model": "glm-5.3:cloud",
+  "terminal_event": "turn.failed",
+  "terminal_reason": "Ollama account session usage limit exhausted; provider directed the account owner to add extra usage",
+  "git_state": {
+    "head": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+    "commits_authored": 0,
+    "untracked_product_paths": [
+      "guildhall/",
+      "pyproject.toml"
+    ],
+    "changed_paths_outside_assignment": [],
+    "tests_touched": false,
+    "spec_touched": false,
+    "evidence_touched": false
+  },
+  "static_state": {
+    "python_files": 29,
+    "syntax_errors": []
+  },
+  "stream_anomaly": {
+    "event_item": "item_187",
+    "classification": "retained nonterminal marker; see orchestrator-clearance-015.md"
+  },
+  "available_glm_5_3_alternate_provider": false,
+  "disposition": "BLOCKED_BY_EXTERNAL_MODEL_QUOTA",
+  "gate_effect": "NONE"
+}
