@@ -1,0 +1,35 @@
+{
+  "schema": "guildhall-factory-run/1",
+  "run_id": "guildhall-proof",
+  "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
+  "criticality": "Critical",
+  "validator": "codex-root-validator",
+  "orchestrator": {
+    "agent": "agy",
+    "version": "1.1.26",
+    "tmux_window": "guildhall-proof:orchestrator",
+    "effects": [
+      "block",
+      "no-op"
+    ]
+  },
+  "coder": {
+    "agent": "codex-via-ollama",
+    "model": "glm-5.3:cloud",
+    "branch": "factory/coder-ac8a13d1",
+    "repository": "run-private:coder",
+    "write_surface": "implementation excluding tests and ratified authority artifacts"
+  },
+  "tester": {
+    "agent": "claude-code",
+    "model": "opus",
+    "branch": "factory/tester-ac8a13d1",
+    "repository": "run-private:tester",
+    "write_surface": "tests only"
+  },
+  "validator_repository": "run-private:validator",
+  "path_disclosure": "Concrete workstation paths stay in the untracked run-control directory and do not travel with repository evidence.",
+  "isolation_claim": "Separate standalone repositories and no author-to-author channel. Same-user filesystem, process, and log confidentiality is not claimed.",
+  "proof_state": "NOT_YET_JUDGED"
+}
