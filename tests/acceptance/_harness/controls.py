@@ -76,6 +76,13 @@ _ENVIRONMENT = (
     ("GUILDHALL_COMPANY_URL",
      "the Company endpoint, an ordinary ratified configuration input; a live "
      "service, a closed port or a blackhole is a real deployment condition"),
+    ("GUILDHALL_PLANTER_SPEC",
+     "configures the mutation interposer wrapper only. The wrapper consumes it "
+     "and does not forward it, so the real product never observes it; it is "
+     "listed here because the wrapper is itself started as a child process"),
+    ("GUILDHALL_PLANTER_REAL",
+     "the real entry point the mutation interposer wraps; consumed by the "
+     "wrapper and never forwarded to the product"),
 )
 
 #: Perturbation schedules. Permitted only with an independent witness proving the

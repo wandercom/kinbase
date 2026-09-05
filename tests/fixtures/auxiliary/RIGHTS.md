@@ -1,22 +1,40 @@
 # Auxiliary-corpus rights basis
 
-Every document under `sources/` is **original prose authored by the Guildhall
-Factory Tester lane** for this acceptance instrument, and is dedicated to the
-public domain under [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/).
+## Status: INCOMPLETE — a named human rightsholder grant is outstanding
 
-No third-party text is reproduced, quoted, adapted or paraphrased. The rights
-basis is therefore verifiable by inspection rather than by trusting an asserted
-upstream license: sole authorship within this lane, plus an explicit
-public-domain dedication.
+Detector Reviewer finding 21 is correct that a Tester assertion of authorship
+cannot independently prove authorship or authority to grant a licence. That
+gap is stated here rather than papered over, and the pool is **not selectable**
+until it is closed.
 
-That basis permits both uses `spec/verification.md` requires of benchmark
-material --- local evaluation, and transmission to the pinned model provider named
-in the experiment manifest.
+## What the Tester can and cannot establish
 
-`spec/threat-model.md` reserves *selection* to the implementation-blind Detector
-Reviewer. This directory is the eligible pool only. The Tester does not select
-from it, and selecting it here would destroy the independence the threat model
-requires.
+The Tester **can** state, and this repository's history can corroborate, that
+every byte under `sources/` first appeared in this lane, authored for this
+acceptance instrument, and that no third-party text was reproduced, quoted or
+adapted. That is a provenance *claim* with a checkable commit history.
 
-Combined pool digest over every candidate and generated component is in
-`POOL-DIGEST`.
+The Tester **cannot** supply what the finding requires:
+
+* a named human rightsholder,
+* that person's signature over an exact licence grant, and
+* an independently verifiable publication or authorship record.
+
+Authoring any of those would be fabricating a human grant, which the Tester
+dispatch forbids outright. So they are left blank, and the fields naming them
+are present-but-null in `pool.json` so a Reviewer sees the exact hole.
+
+## What is ready for the Reviewer
+
+* Five candidate documents with recorded versions and per-file digests.
+* Three generated components, each reproducible byte-for-byte from a named seed
+  by `python3 -m acceptance._harness.auxgen` (see `generation` in `pool.json`).
+* A combined digest that binds the complete pool manifest, this file, the rights
+  metadata, candidate versions and declared ordering — not only content hashes.
+* A deterministic selection protocol the Reviewer executes and signs.
+
+## What is needed to close the finding
+
+A named human with authority over these bytes must sign the exact grant text in
+`GRANT-TEMPLATE.md`, and the signed bytes must be committed as `GRANT.md`. The
+pool digest then rebinds over it and the Reviewer may select.

@@ -250,7 +250,7 @@ def test_signed_prompt_injection_prose_cannot_change_instructions_or_approval(
     unapproved = guildhall.run(
         "proposals",
         "decide",
-        "injection-candidate",
+        "c9b2d6a3",
         "--destination",
         "company",
         "--approve-digest",
@@ -283,7 +283,7 @@ def test_signed_prompt_injection_prose_cannot_change_instructions_or_approval(
 )
 def test_approval_replay_and_retarget_are_refused(guildhall: Guildhall) -> None:
     listing = guildhall.run(
-        "proposals", "list", "--session", "acceptance-attack", "--json", check=False
+        "proposals", "list", "--session", "s3c1a6f0", "--json", check=False
     )
     payload = listing.json if listing.returncode == 0 else {}
     candidates = payload.get("candidates") or []
@@ -351,7 +351,7 @@ def test_approved_bytes_are_the_exact_buffer_rehashed_at_commit(
     guildhall: Guildhall, roots: ProofRoots
 ) -> None:
     listing = guildhall.run(
-        "proposals", "list", "--session", "acceptance-attack", "--json", check=False
+        "proposals", "list", "--session", "s3c1a6f0", "--json", check=False
     )
     candidates = (listing.json if listing.returncode == 0 else {}).get("candidates") or []
     assert candidates
@@ -422,7 +422,7 @@ def test_concurrent_approvals_and_double_submission_produce_one_event(
     guildhall: Guildhall,
 ) -> None:
     listing = guildhall.run(
-        "proposals", "list", "--session", "acceptance-attack", "--json", check=False
+        "proposals", "list", "--session", "s3c1a6f0", "--json", check=False
     )
     candidates = (listing.json if listing.returncode == 0 else {}).get("candidates") or []
     assert candidates
@@ -1043,7 +1043,7 @@ def test_terminal_deception_payloads_are_rejected_or_bijectively_escaped(
         observed = guildhall.run(
             "session",
             "observe",
-            "acceptance-deception",
+            "s3d9b4e2",
             "--event",
             str(event_path),
             "--json",
@@ -1053,7 +1053,7 @@ def test_terminal_deception_payloads_are_rejected_or_bijectively_escaped(
             assert observed.returncode != 1
             continue
         shown = guildhall.run(
-            "proposals", "list", "--session", "acceptance-deception", "--json", check=False
+            "proposals", "list", "--session", "s3d9b4e2", "--json", check=False
         )
         if shown.returncode != 0:
             continue
@@ -1329,7 +1329,7 @@ def test_pathname_swap_after_descriptor_hashing_cannot_execute(
     result = guildhall.run(
         "session",
         "observe",
-        "acceptance-swap",
+        "s3e7c1a8",
         "--event",
         str(tmp_path / "missing.json"),
         "--json",

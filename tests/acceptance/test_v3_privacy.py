@@ -238,7 +238,7 @@ def test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle(
     guildhall: Guildhall, roots: ProofRoots, planted: dict
 ) -> None:
     detector: CanaryDetector = planted["detector"]
-    session = "acceptance-v3"
+    session = "s3b8e2d9"
     guildhall.run("session", "start", "--host", "codex", "--repo", str(guildhall.cwd), "--json")
     for path in sorted(roots.personal_root.glob("session-*.jsonl")):
         guildhall.run("session", "observe", session, "--event", str(path), "--json", check=False)
@@ -307,9 +307,9 @@ def test_no_transcript_digest_or_path_on_any_shared_surface(
     guildhall.run("session", "start", "--host", "codex", "--repo", str(guildhall.cwd), "--json", check=False)
     for path in transcript_paths:
         guildhall.run(
-            "session", "observe", "acceptance-v3", "--event", str(path), "--json", check=False
+            "session", "observe", "s3b8e2d9", "--event", str(path), "--json", check=False
         )
-    guildhall.run("session", "end", "acceptance-v3", "--json", check=False)
+    guildhall.run("session", "end", "s3b8e2d9", "--json", check=False)
 
     result = sweep(detector, _shared_surfaces(roots, detector))
     assert result.clean, (
@@ -415,7 +415,7 @@ def test_sandbox_denies_personal_root_for_shared_processes(
     attempt = guildhall.run(
         "proposals",
         "decide",
-        "acceptance-stolen",
+        "s3f2d5b6",
         "--destination",
         "company",
         "--approve-digest",
@@ -562,7 +562,7 @@ def test_process_artifacts_contain_no_personal_root_canary(
 def test_hard_blocking_taint_is_never_cleared_by_deidentification(
     guildhall: Guildhall, roots: ProofRoots, planted: dict
 ) -> None:
-    session = "acceptance-taint"
+    session = "s3c8a2e5"
     guildhall.run("session", "start", "--host", "codex", "--repo", str(guildhall.cwd), "--json", check=False)
     for path in sorted(roots.personal_root.glob("session-*.jsonl")):
         guildhall.run("session", "observe", session, "--event", str(path), "--json", check=False)
@@ -632,7 +632,7 @@ def test_paraphrase_only_output_stays_private_by_taint_policy(
         )
         + "\n",
     )
-    session = "acceptance-paraphrase"
+    session = "s3b6f0d3"
     guildhall.run("session", "start", "--host", "codex", "--repo", str(guildhall.cwd), "--json", check=False)
     guildhall.run("session", "observe", session, "--event", str(source), "--json", check=False)
     listing = guildhall.run(
@@ -697,7 +697,7 @@ def test_egress_to_unnamed_processor_fails_with_typed_refusal(
             "a real private input must exist for the egress refusal to be meaningful"
         )
     result = guildhall.run(
-        "session", "observe", "acceptance-egress", "--event", str(source), "--json",
+        "session", "observe", "s3a4e8c1", "--event", str(source), "--json",
         check=False,
     )
     assert result.returncode != 0, (

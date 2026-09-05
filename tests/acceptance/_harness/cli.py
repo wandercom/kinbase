@@ -292,6 +292,12 @@ class Guildhall:
     #: dropped so a shared process cannot inherit a Personal hint from the
     #: Tester's own shell (threat-model.md attack family 14).
     ENV_ALLOWLIST: tuple[str, ...] = (
+        # Interposer configuration. Detector Reviewer finding 8: base_env()
+        # dropped these, so the wrapper aborted before invoking the product and
+        # the resulting nonzero status was still counted as a kill. They
+        # configure the wrapper only and are never read by the real product.
+        "GUILDHALL_PLANTER_SPEC",
+        "GUILDHALL_PLANTER_REAL",
         "PATH",
         "LANG",
         "LC_ALL",

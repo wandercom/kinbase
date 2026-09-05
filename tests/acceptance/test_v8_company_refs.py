@@ -1057,7 +1057,7 @@ def test_uncertified_codebase_only_mode_emits_counts_and_status_only(
     envelope = json.dumps(
         {
             "hook_event_name": "SessionStart",
-            "session_id": "acceptance-v8",
+            "session_id": "s8d1b7f4",
             "cwd": str(clone.path),
         }
     )

@@ -79,6 +79,15 @@ class Obligation:
         ):
             if not value:
                 raise HarnessInvalid(f"{self.oid}: {name} must be non-empty")
+            # Detector Reviewer finding 5: `vectors=("...")` without a trailing
+            # comma is a string, and `tuple()` of it silently becomes one entry
+            # per character. Every element must be a non-trivial string.
+            for element in value:
+                if not isinstance(element, str) or len(element) < 2:
+                    raise HarnessInvalid(
+                        f"{self.oid}: {name} element {element!r} is malformed; a "
+                        "missing trailing comma turns a string into characters"
+                    )
         if not self.requirement.strip():
             raise HarnessInvalid(f"{self.oid}: requirement quote is empty")
 
@@ -1016,7 +1025,7 @@ _o(
                 "an authorized parent-bound event does resolve the conflict"),
     ),
     surfaces=("guildhall explain --json", ".kin/events"),
-    vectors=("two clones, disjoint events, incompatible heads"),
+    vectors=("two clones, disjoint events, incompatible heads",),
     nodes=("test_v4_maintenance.py::test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event",),
 )
 

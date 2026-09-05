@@ -34,16 +34,43 @@ _LANE = _SUITE.parent
 #: forbid them, so they are excluded from their own scan.
 _POLICY_MODULES = {"controls.py", "test_control_policy.py"}
 
+#: Modules that *are* the child-process mechanism. They construct the
+#: environment the policy governs, so scanning them for "controls" would flag
+#: the allowlist itself. Their contents are governed by ``ENV_ALLOWLIST``.
+_MECHANISM_MODULES = {"cli.py", "gitfix.py", "worldbuilder.py", "planters.py"}
+
+
+def _subscript_keys(tree: ast.Module, mapping: ast.expr) -> list[str]:
+    """Literal keys assigned into a named mapping anywhere in the module."""
+    if not isinstance(mapping, ast.Name):
+        return []
+    keys: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if (
+                isinstance(target, ast.Subscript)
+                and isinstance(target.value, ast.Name)
+                and target.value.id == mapping.id
+                and isinstance(target.slice, ast.Constant)
+                and isinstance(target.slice.value, str)
+            ):
+                keys.append(target.slice.value)
+    return keys
+
 
 def _modules() -> list[Path]:
     return sorted(p for p in _SUITE.rglob("*.py") if p.name not in _POLICY_MODULES)
 
 
 def _env_names_passed_to_product() -> dict[str, list[str]]:
-    """Every string literal used as an env key in an ``env=`` mapping.
+    """Every environment key the suite can place in a child process.
 
-    The driver merges ``env=`` overrides into the child process environment, so
-    each such key is physically visible to the product.
+    Detector Reviewer finding 20: the previous scan read only literal keys inside
+    a literal ``env={...}`` argument, so a variable mapping or a constructor
+    ``extra_env`` was invisible. Both are inspected now, and a non-literal
+    mapping is itself reported, because an unreadable channel cannot be cleared.
     """
     found: dict[str, list[str]] = {}
     for path in _modules():
@@ -52,12 +79,75 @@ def _env_names_passed_to_product() -> dict[str, list[str]]:
             if not isinstance(node, ast.Call):
                 continue
             for keyword in node.keywords:
-                if keyword.arg != "env" or not isinstance(keyword.value, ast.Dict):
+                if keyword.arg not in ("env", "extra_env"):
+                    continue
+                if not isinstance(keyword.value, ast.Dict):
+                    # A mapping built by name is readable when every key
+                    # assigned into it in this module is a literal string; the
+                    # driver's own base_env and the git fixture env are
+                    # mechanism, not test-supplied controls.
+                    if path.name in _MECHANISM_MODULES:
+                        continue
+                    literal_keys = _subscript_keys(tree, keyword.value)
+                    if literal_keys:
+                        for key in literal_keys:
+                            found.setdefault(key, []).append(path.name)
+                        continue
+                    found.setdefault(
+                        f"<non-literal {keyword.arg} mapping>", []
+                    ).append(f"{path.name}:{node.lineno}")
                     continue
                 for key in keyword.value.keys:
                     if isinstance(key, ast.Constant) and isinstance(key.value, str):
                         found.setdefault(key.value, []).append(path.name)
+                    else:
+                        found.setdefault(
+                            f"<computed {keyword.arg} key>", []
+                        ).append(f"{path.name}:{node.lineno}")
     return found
+
+
+#: Words that name a semantic case, scenario or expected outcome. None of these
+#: may appear in any value the product can read on any channel: argv, cwd,
+#: session identifiers, committed paths, stdin payloads or service requests.
+SEMANTIC_TOKENS: tuple[str, ...] = (
+    "scenario", "expected", "historical_digest_differs", "historical_digest_matches",
+    "historical_version_missing", "company_unavailable", "local_superset_fresh",
+    "missing_expected_head", "expired_observation", "full-fsck-required",
+    "invalid-cache", "newest_wins", "highest_authority", "repetition_as",
+    "acceptance-v", "acceptance-",
+)
+
+
+def _product_readable_string_literals() -> list[tuple[str, int, str]]:
+    """String literals that flow into argv, cwd, stdin or a committed path.
+
+    Any literal passed positionally to a ``guildhall.run``/``popen`` call, used
+    as a commit message, or written into a repository path is readable by the
+    product. The scan is deliberately broad: a literal that never reaches the
+    product costs nothing to rename, while one that does is a leak.
+    """
+    out: list[tuple[str, int, str]] = []
+    for path in _modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            target = node.func
+            name = (
+                target.attr if isinstance(target, ast.Attribute)
+                else getattr(target, "id", "")
+            )
+            if name not in ("run", "popen", "commit", "write", "write_text",
+                            "write_bytes", "mkdir", "create", "plant_event"):
+                continue
+            for argument in list(node.args) + [k.value for k in node.keywords]:
+                for literal in ast.walk(argument):
+                    if isinstance(literal, ast.Constant) and isinstance(
+                        literal.value, str
+                    ):
+                        out.append((path.name, literal.lineno, literal.value))
+    return out
 
 
 @spec_ref(
@@ -147,6 +237,37 @@ def test_every_permitted_fault_schedule_declares_a_witness() -> None:
     assert not unwitnessed, (
         "a fault schedule the instrument cannot independently witness is a work "
         f"substitute, not a perturbation: {unwitnessed}"
+    )
+
+
+@spec_ref(
+    VERIFY(
+        "INSTRUMENT",
+        "oracle-privacy",
+        "**Tester (Claude):** reads ratified product, architecture, verification strategy, and a "
+        "clean test lane; authors acceptance/benchmark tests and fixtures only; cannot read "
+        "implementation or Coder work or issue a verdict.",
+    )
+)
+def test_no_semantic_case_identity_reaches_the_product_on_any_channel() -> None:
+    """argv, cwd, session IDs, committed paths and messages carry no case name.
+
+    Detector Reviewer finding 20 named three concrete leaks: V-4 committed the
+    manifest scenario into Git history, V-8 embedded the digest-attribution case
+    in a repository path, and V-9 embedded the expected start state in a session
+    ID. Fixed acceptance-prefixed session identifiers disclosed run identity too.
+    """
+    offenders: list[str] = []
+    for module, line, value in _product_readable_string_literals():
+        lowered = value.lower()
+        for token in SEMANTIC_TOKENS:
+            if token in lowered:
+                offenders.append(f"{module}:{line} {value[:70]!r} contains {token!r}")
+                break
+    assert not offenders, (
+        "these product-readable strings disclose a case identity, scenario or "
+        "expected outcome; use an opaque harness-mapped identifier:\n  "
+        + "\n  ".join(sorted(set(offenders)))
     )
 
 

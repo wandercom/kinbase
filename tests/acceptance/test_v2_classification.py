@@ -77,11 +77,11 @@ def seeded_saga(guildhall: Guildhall, routing_corpus) -> tuple[str, str, str]:
         check=False,
     )
     guildhall.run(
-        "session", "observe", "acceptance-v2", "--event",
+        "session", "observe", "s2a1f4c7", "--event",
         str(routing_corpus["path"]), "--json", check=False,
     )
     listing = guildhall.run(
-        "proposals", "list", "--session", "acceptance-v2", "--json", check=False
+        "proposals", "list", "--session", "s2a1f4c7", "--json", check=False
     )
     if listing.returncode == 1:
         raise ProductFailure("`proposals list` returned the reserved exit 1")
@@ -253,7 +253,7 @@ def test_five_pinned_runs_lower_bound_meets_macro_f1_and_shared_precision(
     payload = guildhall.run(
         "session",
         "observe",
-        "acceptance-v2",
+        "s2a1f4c7",
         "--event",
         str(routing_corpus["path"]),
         "--json",
@@ -355,7 +355,7 @@ def test_mixed_messages_atomise_rather_than_take_one_label(
     payload = guildhall.run(
         "session",
         "observe",
-        "acceptance-v2",
+        "s2a1f4c7",
         "--event",
         str(routing_corpus["path"]),
         "--json",
@@ -397,7 +397,7 @@ def test_exact_match_atomization_and_per_label_metrics(
     payload = guildhall.run(
         "session",
         "observe",
-        "acceptance-v2",
+        "s2a1f4c7",
         "--event",
         str(routing_corpus["path"]),
         "--json",
@@ -441,7 +441,7 @@ def test_low_confidence_shared_label_demotes_to_none_or_unknown(
     payload = guildhall.run(
         "session",
         "observe",
-        "acceptance-v2",
+        "s2a1f4c7",
         "--event",
         str(routing_corpus["path"]),
         "--json",
@@ -482,7 +482,7 @@ def test_independent_candidates_with_distinct_minimized_bytes(
     payload = guildhall.run(
         "session",
         "observe",
-        "acceptance-v2",
+        "s2a1f4c7",
         "--event",
         str(routing_corpus["path"]),
         "--json",
@@ -541,7 +541,7 @@ def test_partial_fanout_failure_does_not_roll_back_committed_destination(
 ) -> None:
     """Commit Codebase, then make Company terminally unreachable."""
     candidate = guildhall.run(
-        "proposals", "list", "--session", "acceptance-v2", "--json"
+        "proposals", "list", "--session", "s2a1f4c7", "--json"
     ).ok().json
     items = candidate.get("candidates") or candidate.get("items") or []
     assert items, "no candidate available to fan out"
@@ -610,7 +610,7 @@ def test_retry_returns_original_receipt_without_duplication(
     guildhall: Guildhall,
 ) -> None:
     items = (
-        guildhall.run("proposals", "list", "--session", "acceptance-v2", "--json")
+        guildhall.run("proposals", "list", "--session", "s2a1f4c7", "--json")
         .ok()
         .json.get("candidates", [])
     )

@@ -594,7 +594,7 @@ def test_same_uid_acquired_bytes_are_rejected_by_the_promotion_gate(
         attempt = guildhall.run(
             "proposals",
             "decide",
-            "same-uid-candidate",
+            "c9a7c4f1",
             "--destination",
             destination,
             "--approve-digest",
@@ -624,96 +624,103 @@ def test_same_uid_acquired_bytes_are_rejected_by_the_promotion_gate(
     ),
 )
 def test_auxiliary_corpus_selection_record_is_complete_and_frozen() -> None:
-    """A concrete, digest-bound, rights-verified pool must exist to select from.
+    """The pool must be complete, reproducible, digest-bound and *not* selectable.
 
-    Detector Reviewer finding 17: the lane carried only a request listing field
-    names, so no selection or digest could be produced and the reconstructor had
-    nothing to correlate against. This asserts the pool itself --- concrete source
-    candidates with a verifiable rights basis, generated dictionaries,
-    correlation records, decoys and digests --- while leaving *selection* to the
-    fresh implementation-blind Reviewer, as the threat model requires.
+    Detector Reviewer finding 21. The completable parts are asserted here:
+    concrete candidates with versions and digests, generated components that
+    reproduce byte-for-byte from named seeds, a digest that binds the whole
+    manifest and the rights and protocol bytes, and a selection protocol.
+
+    The uncompletable part is asserted too, as a failure. A named human
+    rightsholder grant cannot be authored by the Tester, so while ``GRANT.md``
+    is absent the pool is not selectable and this is ``INVALID_HARNESS`` --- an
+    instrument condition naming the exact missing bytes, never a pass.
     """
     root = Path(__file__).resolve().parents[1] / "fixtures" / "auxiliary"
+    lane = Path(__file__).resolve().parents[2]
     pool_path = root / "pool.json"
     if not pool_path.is_file():
-        raise HarnessInvalid(
-            "no eligible auxiliary-corpus pool exists; the reconstructor cannot "
-            "perform correlated reconstruction without one"
-        )
+        raise HarnessInvalid("no eligible auxiliary-corpus pool exists")
     pool = json.loads(pool_path.read_text(encoding="utf-8"))
 
-    rights = pool["rights_basis"]
-    for field in ("license", "rights_holder", "authorship", "verification"):
-        if not rights.get(field):
-            raise HarnessInvalid(f"the rights basis does not record {field}")
-    if rights.get("customer_or_employer_confidential_material") is not False:
-        raise HarnessInvalid(
-            "customer or employer-confidential material is ineligible without a "
-            "separate explicit owner authorization bound into the manifest"
-        )
-    if not (rights.get("permits_local_evaluation")
-            and rights.get("permits_transmission_to_pinned_model_provider")):
-        raise HarnessInvalid(
-            "the rights basis must permit both local evaluation and transmission "
-            "to the pinned model provider"
-        )
-
+    # -- candidates: concrete, versioned, digest-matched -------------------
     candidates = pool["candidates"]
     if len(candidates) < 3:
-        raise HarnessInvalid(
-            f"the pool offers {len(candidates)} candidates; a Reviewer needs a real "
-            "choice to make a selection meaningful"
-        )
+        raise HarnessInvalid(f"the pool offers only {len(candidates)} candidates")
     for candidate in candidates:
-        path = Path(__file__).resolve().parents[2] / candidate["path"]
+        path = lane / candidate["path"]
         if not path.is_file():
             raise HarnessInvalid(f"pool candidate {candidate['path']} is absent")
-        observed = hashlib.sha256(path.read_bytes()).hexdigest()
-        if observed != candidate["sha256"]:
-            raise HarnessInvalid(
-                f"pool candidate {candidate['path']} does not match its recorded digest"
-            )
+        if hashlib.sha256(path.read_bytes()).hexdigest() != candidate["sha256"]:
+            raise HarnessInvalid(f"{candidate['path']} does not match its digest")
         if not candidate.get("version"):
             raise HarnessInvalid(f"{candidate['path']} records no version")
 
-    kinds = {g["kind"] for g in pool["generated_components"]}
-    for required in ("transformation_dictionaries", "correlation_records", "decoy_records"):
-        if required not in kinds:
-            raise HarnessInvalid(f"the pool has no {required}")
+    # -- generated components reproduce byte-for-byte from their seeds -----
+    from ._harness import auxgen
+
+    regenerated = auxgen.regenerate()
     for component in pool["generated_components"]:
-        path = Path(__file__).resolve().parents[2] / component["path"]
+        path = lane / component["path"]
         if not path.is_file():
-            raise HarnessInvalid(f"generated component {component['path']} is absent")
+            raise HarnessInvalid(f"{component['path']} is absent")
         if hashlib.sha256(path.read_bytes()).hexdigest() != component["sha256"]:
+            raise HarnessInvalid(f"{component['path']} does not match its digest")
+        name = Path(component["path"]).stem
+        expected = auxgen.serialise(regenerated[name])
+        if hashlib.sha256(expected.encode()).hexdigest() != component["sha256"]:
             raise HarnessInvalid(
-                f"generated component {component['path']} does not match its digest"
+                f"{component['path']} does not reproduce from seed "
+                f"{component['seed']}; it was hand-edited rather than generated"
             )
-        if component["entries"] < 32:
-            raise HarnessInvalid(
-                f"{component['kind']} has only {component['entries']} entries"
-            )
+    recipe = pool["generation"]
+    for field in ("seeds", "algorithms", "counts", "reproduce_with"):
+        if not recipe.get(field):
+            raise HarnessInvalid(f"the generation recipe records no {field}")
 
-    digest_file = root / "POOL-DIGEST"
-    if not digest_file.is_file():
-        raise HarnessInvalid("the pool records no combined digest")
+    # -- the digest binds every byte, not only content hashes --------------
+    core = {k: v for k, v in pool.items() if k != "pool_digest_sha256"}
     combined = hashlib.sha256()
-    for entry in candidates + pool["generated_components"]:
-        combined.update(bytes.fromhex(entry["sha256"]))
-    if combined.hexdigest() != digest_file.read_text(encoding="utf-8").strip():
-        raise HarnessInvalid("the recorded pool digest does not match its contents")
+    combined.update(
+        json.dumps(core, sort_keys=True, separators=(",", ":")).encode()
+    )
+    for extra in ("RIGHTS.md", "GRANT-TEMPLATE.md", "SELECTION-PROTOCOL.md"):
+        extra_path = root / extra
+        if not extra_path.is_file():
+            raise HarnessInvalid(f"the pool is missing {extra}")
+        combined.update(
+            hashlib.sha256(extra_path.read_bytes()).hexdigest().encode()
+        )
+    if combined.hexdigest() != pool["pool_digest_sha256"]:
+        raise HarnessInvalid("the pool digest does not bind the current bytes")
+    if (root / "POOL-DIGEST").read_text(encoding="utf-8").strip() != combined.hexdigest():
+        raise HarnessInvalid("POOL-DIGEST disagrees with the manifest")
 
-    # Selection remains the Reviewer's, and must stay unmade here.
+    # -- selection remains the Reviewer's and is not pre-filled ------------
     if pool["selected_by"] != "detector-reviewer":
         raise HarnessInvalid("only the implementation-blind Reviewer may select")
+    if pool["selection_record"] is not None:
+        raise HarnessInvalid(
+            "the Tester must not author the Reviewer's selection record"
+        )
     if pool["mutable_after_execution_begins"] is not False:
         raise HarnessInvalid("the corpus cannot be replaced after execution begins")
-    if pool["selection_record_template"]["auxiliary_corpus_sha256"] is not None:
+
+    # -- the outstanding human grant is a stated instrument condition ------
+    rights = pool["rights_basis"]
+    if not (root / "GRANT.md").is_file():
         raise HarnessInvalid(
-            "the Tester must not pre-fill the Reviewer's selection record"
+            "the auxiliary corpus is not selectable: no signed rights grant "
+            "exists. spec/threat-model.md requires the Reviewer to record "
+            "source rights before selection, and a Tester assertion of "
+            "authorship cannot establish authority to grant a licence. A named "
+            "human must sign tests/fixtures/auxiliary/GRANT-TEMPLATE.md over "
+            f"pool digest {pool['pool_digest_sha256']} and commit it as "
+            "tests/fixtures/auxiliary/GRANT.md."
         )
-    for forbidden in ("labels", "registry", "hidden_tests", "arm_identity"):
-        if forbidden not in pool["reconstructor_denied"]:
-            raise HarnessInvalid(f"the reconstructor must be denied {forbidden}")
+    for field in ("named_rightsholder", "rightsholder_signature", "authority_basis"):
+        if not rights.get(field):
+            raise HarnessInvalid(f"the rights basis records no {field}")
 
 
 @pytest.mark.selftest

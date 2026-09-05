@@ -20,6 +20,7 @@ is composed from.
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import sys
@@ -32,7 +33,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from acceptance._harness import catalog as catalog_module  # noqa: E402
 from acceptance._harness import mutations as mutation_catalog  # noqa: E402
-from acceptance._harness.census import GROUPS, Census  # noqa: E402
+from acceptance._harness.census import (  # noqa: E402
+    GROUPS,
+    INSTRUMENT_ONLY,
+    PRODUCT_BEARING,
+    Census,
+)
 from acceptance._harness.cli import Guildhall  # noqa: E402
 from acceptance._harness.evidence_model import Outcome, content_address  # noqa: E402
 from acceptance._harness.requirements import (  # noqa: E402
@@ -70,6 +76,26 @@ def pytest_configure(config: pytest.Config) -> None:
     authority artifacts, omitting the receipt and review-evidence paths that lie
     outside an implementation-blind Detector Reviewer's permitted surface.
     """
+    # Detector Reviewer finding 22: pytest warned that `timeout`,
+    # `timeout_method` and `cache_dir` were unknown, yet the supposedly strict
+    # run exited zero, so no global test timeout was ever active.
+    # spec/verification.md requires every external/process call to have a
+    # timeout, so a missing plugin or an unrecognised strict option is an
+    # instrument condition and must stop the run.
+    missing_plugins = [
+        name for name in ("pytest_timeout",)
+        if importlib.util.find_spec(name) is None
+    ]
+    if missing_plugins and os.environ.get("GUILDHALL_ALLOW_NO_TIMEOUT", "") != "1":
+        raise pytest.UsageError(
+            "INVALID_HARNESS: required plugin(s) "
+            f"{missing_plugins} are unavailable, so the declared global timeout "
+            "is not enforced. Provision tests/requirements.txt, or set "
+            "GUILDHALL_ALLOW_NO_TIMEOUT=1 to record an explicitly untimed run."
+        )
+    if missing_plugins:
+        config._guildhall_untimed = True
+
     reviewer = os.environ.get("GUILDHALL_REVIEWER_MODE", "") == "1"
     try:
         verification = verify_manifest(reviewer_mode=reviewer)
@@ -127,6 +153,11 @@ def pytest_collection_modifyitems(
     for item in items:
         record = census.record(item.nodeid, _gate_of(item))
         record.collected = True
+        record.origin = (
+            INSTRUMENT_ONLY
+            if item.get_closest_marker("selftest") is not None
+            else PRODUCT_BEARING
+        )
 
 
 def pytest_deselected(items: Sequence[pytest.Item]) -> None:
@@ -162,6 +193,11 @@ def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> Itera
     gate = _gate_of(item)
     record = census.record(item.nodeid, gate)
     record.collected = True
+    record.origin = (
+        INSTRUMENT_ONLY
+        if item.get_closest_marker("selftest") is not None
+        else PRODUCT_BEARING
+    )
     record.phases[report.when] = report.outcome
 
     if report.outcome == "failed":
@@ -223,6 +259,14 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # no
         "NOT_RUN is non-green: an unexecuted, deselected, skipped or uncollected "
         "obligation never reports as satisfied."
     )
+    terminalreporter.write_line(
+        "A selftest-marked node is instrument-only and can never resolve the "
+        "product channel."
+    )
+    if getattr(config, "_guildhall_untimed", False):
+        terminalreporter.write_line(
+            "WARNING: this run executed without the declared global timeout."
+        )
     terminalreporter.write_line(
         "spec/verification.md reserves verdict composition to the Validator."
     )
