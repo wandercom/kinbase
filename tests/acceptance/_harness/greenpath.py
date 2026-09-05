@@ -212,16 +212,48 @@ def _unconditional_statements(func: ast.FunctionDef) -> list[ast.stmt]:
     return out
 
 
+#: Rules that only govern *product-facing* tests. A ``selftest``-marked node is
+#: instrument-only: ``census.py`` forbids it from resolving the product channel
+#: at all, so requiring it to declare a product channel or consume a catalog row
+#: would describe a claim it is structurally incapable of making. Every other
+#: rule --- bare return, permissive default, collection fallback, tautology,
+#: swallowed failure, unproved loop --- applies to every test without exception.
+PRODUCT_FACING_RULES: frozenset[str] = frozenset({
+    "bare-assert", "no-catalog-consumption", "optional-guard",
+})
+
+
+def _module_is_selftest(tree: ast.Module) -> bool:
+    for node in tree.body:
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id == "pytestmark":
+                if "selftest" in ast.unparse(node.value):
+                    return True
+    return False
+
+
+def _is_selftest(func: ast.FunctionDef) -> bool:
+    return any(
+        "selftest" in ast.unparse(decorator) for decorator in func.decorator_list
+    )
+
+
 def analyse_module(path: Path) -> list[Finding]:
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(path))
     constants = _module_constants(tree)
+    module_selftest = _module_is_selftest(tree)
     findings: list[Finding] = []
 
     for func in ast.walk(tree):
         if not isinstance(func, ast.FunctionDef) or not func.name.startswith("test_"):
             continue
-        findings.extend(_analyse_test(path.name, func, constants))
+        results = _analyse_test(path.name, func, constants)
+        if module_selftest or _is_selftest(func):
+            results = [f for f in results if f.rule not in PRODUCT_FACING_RULES]
+        findings.extend(results)
     return findings
 
 
