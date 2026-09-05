@@ -956,6 +956,38 @@ _o(
 )
 
 _o(
+    "V-3.auxiliary-corpus", "V-3",
+    "the auxiliary corpus is generated, digest bound and rights complete",
+    T, "auxiliary-corpus",
+    "The Reviewer records selection procedure, source rights, contents, versions, "
+    "and digest.",
+    clauses(
+        at_least("candidate_count", 5,
+                 "the pool must offer the Reviewer a real choice"),
+        is_true("deterministic_components_reproduced",
+                "every generated component must reproduce byte for byte from its "
+                "named seed"),
+        present("generation_recipe", "the derivation recipe is recorded"),
+        present("pool_digest", "one digest binds manifest, rights and candidates"),
+        is_true("selection_protocol_present",
+                "the Reviewer's selection procedure is committed"),
+        is_true("grant_template_present",
+                "the unsigned rights-grant template is committed"),
+        is_true("named_rightsholder_grant_present",
+                "a named human rightsholder must sign the grant; the Tester may "
+                "not author or fabricate it"),
+        is_true("selectable",
+                "the pool is selectable only once its rights are complete"),
+    ),
+    surfaces=("tests/fixtures/auxiliary/",),
+    vectors=("licensed public sources", "generated dictionaries",
+             "correlation records", "decoy records"),
+    nodes=("test_v3_qualification.py::"
+           "test_auxiliary_corpus_selection_record_is_complete_and_frozen",),
+    fail_closed=INSTRUMENT,
+)
+
+_o(
     "V-3.attack-families", "V-3", "every frozen attack family is executed",
     T, "attack-catalog",
     "Every family has an exact positive control, negative control, and detector "
