@@ -1,0 +1,63 @@
+{
+  "schema_version": "guildhall-factory-tester-remediation-result/1",
+  "completed_at": "2026-09-05T20:44:51Z",
+  "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+  "role": "Tester",
+  "attempt": "remediation-continuation-003",
+  "tester_session_id": "7b88a154-cc04-48b3-854f-08902f264c66",
+  "reported_model": "claude-opus-5",
+  "parent_commit": "244184e631695cc331d64667bd20cfae7f286526",
+  "terminal_commit": "263d41d77ae11e4e62f2ce2716378a8e1ebdc7f2",
+  "terminal_tree": "61af5f8966f9a070e36eef31681d2c6c98a68c58",
+  "event_stream_sha256": "cc236bd57f26dc9bcbbffff96feaae42db60887fa5f8cc21ea00829004b5cd11",
+  "event_stream_bytes": 1187273,
+  "event_stream_lines": 383,
+  "exit_file_sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+  "exit_code": 0,
+  "provider_duration_api_ms": 2113891,
+  "provider_num_turns": 76,
+  "provider_cost_usd": 43.12914025000002,
+  "combined_remediation_cost_usd": 48.64545275000002,
+  "provider_usage": {
+    "input_tokens": 152,
+    "cache_creation_input_tokens": 1531119,
+    "cache_read_input_tokens": 57650423,
+    "output_tokens": 189347,
+    "thinking_tokens": 13529,
+    "web_search_requests": 0,
+    "web_fetch_requests": 0
+  },
+  "tool_trace": {
+    "Bash": 60,
+    "Edit": 1,
+    "Write": 14,
+    "forbidden_delegation_or_web_calls": 0,
+    "tool_inputs_naming_coder_validator_detector_control_main_product_or_kindex_paths": 0
+  },
+  "git_state": {
+    "status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "changed_path_count": 52,
+    "all_changed_paths_under_tests": true,
+    "non_regular_git_modes": [],
+    "alternates_file_present": false,
+    "commit_author": "Jeremy McEntire <jandrewmcentire@gmail.com>",
+    "author_override_reason": "Repository identity guard rejected the isolated factory-tester@local identity; Tester reports a one-off git -c override and no config mutation."
+  },
+  "tester_reported_selftests": {
+    "reviewer_safe_passed": 108,
+    "product_facing_deselected": 158,
+    "collected_tests": 266,
+    "declared_obligations": 92,
+    "declared_threshold_rows": 401,
+    "self_reported_sound_threshold_rows": 401,
+    "executable_planters": 35
+  },
+  "tester_disclosed_residual_risks": [
+    "Generic interposer planters mutate observable contracts and are only a floor; Validator-applied real source mutations are still required.",
+    "Some V-1 lifecycle cells such as raw expiry and late arrival use shaped artifacts because no ratified lever was exposed; a product-informed Validator may require stronger transitions.",
+    "The 158 product-facing tests remain unexecuted until a combined snapshot exists."
+  ],
+  "disposition": "TERMINAL_TESTER_ARTIFACT_PENDING_VALIDATOR_AND_FRESH_DETECTOR_REVIEW",
+  "gate_effect": "NONE",
+  "admitted_artifact": false
+}
