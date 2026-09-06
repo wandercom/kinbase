@@ -16,8 +16,11 @@ implementation language and Coder runtime is recoverable only through a new buil
 new independent evidence, and coordinated reratification. Once a repository byte
 is transmitted to a marketplace host, that disclosure cannot be proven erased even
 if the instance is destroyed. Therefore public model staging may precede
-ratification, but no Guildhall, Personal, Company, Codebase, test, secret, or
-customer byte may reach the Vast host before this amendment is exactly ratified.
+ratification, but no byte sourced from the Guildhall repository, its
+specifications, its lane artifacts, a Personal/Company/Codebase store, a test or
+oracle, a secret, or customer data may reach the Vast host before this amendment
+is exactly ratified. Synthetic probe text and generic Codex harness metadata are
+the only pre-ratification request content allowed.
 
 The founder previously classified the three-store physical-boundary decision as a
 Type 1, expensive-to-revert decision because clone leakage cannot be reliably
@@ -107,6 +110,20 @@ The exact initial runtime is:
   tests, Kindex graph, or coordination channel;
 - the inference API is reachable only through a local SSH tunnel. No inference port
   is publicly mapped; request-body and access logging are disabled.
+- recovery state remains local: the real Coder run is a non-ephemeral Codex thread,
+  and both its native session journal and every completed operator-facing Codex JSON
+  event are `fsync`ed on the workstation before the event is forwarded to the
+  operator console. The final response, thread ID, current Git HEAD, and worktree
+  status digest are also recorded locally. The Coder
+  makes a local Git checkpoint after each independently coherent implementation
+  slice and never carries more than fifteen minutes of material changed state
+  without a checkpoint. On endpoint loss, the Validator restores the same pinned
+  serving configuration and resumes the same local Codex thread. At most the
+  in-flight model generation may be lost;
+- vLLM prefix caching remains enabled for efficiency, but it is volatile GPU state,
+  is neither a result journal nor recovery evidence, and may disappear with the
+  instance. No repository-bearing prompt, response, or result cache is persisted on
+  the Vast host.
 
 The old Python tree may be read only by the new GLM-5.3 Coder as same-role,
 unadmitted historical work. It is not authority, not evidence of conformance, and
@@ -171,12 +188,17 @@ receipts.
 6. The Rust build spends the remaining credit before a commit. The Coder must make
    small coherent local commits/checkpoints; the Validator stops new turns at the
    ceiling and reports incomplete work rather than purchasing or claiming success.
-7. Prompt/tool output reaches an unratified host, a public inference port, logs, or
-   host storage. This is negative V-3 evidence and blocks the run; later deletion
-   cannot retroactively authorize it.
+7. Non-synthetic or repository-derived prompt/tool output reaches the unratified
+   host, any request reaches a public inference port, or repository-bearing request
+   content reaches provider logs or host storage. This is negative V-3 evidence and
+   blocks the run; later deletion cannot retroactively authorize it.
 8. The old Python artifact contaminates attribution or remains in the shipped
    product. The candidate is rejected until provenance and production footprint are
    exact.
+9. A Vast or tunnel failure loses completed Coder events or forces a fresh thread
+   whose prior work must be reconstructed from memory. Dispatch is blocked unless a
+   synthetic interruption proves that completed tool/results events survive locally
+   and the same thread resumes after the endpoint returns.
 
 ## 4. Constraints
 
@@ -193,6 +215,8 @@ receipts.
 - Local tool execution and all writes remain in the isolated Coder repository.
 - No Personal or customer data may be used in infrastructure or compatibility
   probes.
+- Completed Coder events and coherent worktree progress must survive model-host or
+  tunnel loss without any remote prompt/result persistence.
 - A passing build, translation completion, or model-server health check is not a
   product or proof milestone.
 
@@ -256,13 +280,16 @@ showing results to the Coder. Assumption 3 remains a measured run constraint.
    semantics? Resolve before any repository prompt.
 2. Does BF16 KV sustain the bound 262K context on this node? Resolve with a synthetic
    long-prefix probe; record memory and prefix-cache reuse.
-3. Can the existing Tester artifact remain behaviorally valid after only an
+3. Does the local journal retain each completed synthetic tool/result event across
+   a forced tunnel interruption, and can Codex resume the same non-ephemeral thread
+   after reconnection? Resolve before any repository prompt.
+4. Can the existing Tester artifact remain behaviorally valid after only an
    implementation-blind launcher amendment? Resolve before its admission; otherwise
    dispatch a fresh Tester under the amended manifest.
-4. Does the first Rust Coder checkpoint indicate that USD 300 is enough? Report
+5. Does the first Rust Coder checkpoint indicate that USD 300 is enough? Report
    elapsed time, remaining credit, and coherent capability coverage at the USD 210
    warning threshold; the founder alone may raise the ceiling.
-5. The named-human auxiliary-corpus rights grant remains separately unresolved and
+6. The named-human auxiliary-corpus rights grant remains separately unresolved and
    still blocks Detector admission.
 
 ---
