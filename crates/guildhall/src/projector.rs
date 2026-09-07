@@ -1,6 +1,7 @@
 use crate::model::CurrentFact;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::Path;
 
 pub const PROJECTION_LIMIT: usize = 32;
 
@@ -44,26 +45,38 @@ pub fn project(facts: &[CurrentFact], working_set: &[String]) -> ProjectionTrace
 }
 
 pub fn run(
-    repo: &std::path::Path,
+    repo: &Path,
     _task: &str,
     decision: &str,
     working_set: &[String],
     json: bool,
 ) -> crate::error::Result<()> {
-    let view_path = repo.join(".kin/local/current.json");
-    let facts: Vec<crate::model::CurrentFact> = if view_path.exists() {
-        std::fs::read_to_string(view_path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .map(|view: serde_json::Value| view.get("facts").cloned())
-            .flatten()
-            .map(|facts| serde_json::from_value(facts).unwrap_or_default())
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
+    let mut facts: Vec<CurrentFact> = Vec::new();
+    for store in [crate::StoreKind::Company, crate::StoreKind::Codebase] {
+        let root = crate::store::store_root(store, repo);
+        let view_path = root.join("current.json");
+        if view_path.exists() {
+            if let Ok(text) = std::fs::read_to_string(&view_path) {
+                if let Ok(view) = serde_json::from_str::<Value>(&text) {
+                    if let Some(view_facts) = view.get("facts").cloned() {
+                        if let Ok(store_facts) =
+                            serde_json::from_value::<Vec<CurrentFact>>(view_facts)
+                        {
+                            facts.extend(store_facts);
+                        }
+                    }
+                }
+            }
+        }
+    }
     let trace = project(&facts, working_set);
-    let result = serde_json::json!({"decision":decision,"selected_count":trace.selected.len(),"omitted_count":trace.omitted_count,"stopping_reason":trace.stopping_reason,"facts":trace.selected});
+    let result = serde_json::json!({
+        "decision": decision,
+        "selected_count": trace.selected.len(),
+        "omitted_count": trace.omitted_count,
+        "stopping_reason": trace.stopping_reason,
+        "facts": trace.selected
+    });
     if json {
         println!("{}", serde_json::to_string(&result).unwrap_or_default());
     } else {

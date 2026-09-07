@@ -220,3 +220,51 @@ fn io_error(error: std::io::Error) -> ContractError {
         ExitCode::InternalFailure,
     )
 }
+
+pub fn repository_id(repo: &Path) -> Result<String, ContractError> {
+    let config_path = repo.join(".kin/config");
+    let text = std::fs::read_to_string(config_path).map_err(io_error)?;
+    let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
+        ContractError::new(
+            "CONFIG_INVARIANT",
+            error.to_string(),
+            "Run repo init first.",
+            false,
+            ExitCode::Refused,
+        )
+    })?;
+    value
+        .get("repository_uuid_hint")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_owned())
+        .ok_or_else(|| {
+            ContractError::new(
+                "CONFIG_INVARIANT",
+                "repository UUID missing",
+                "Run repo init.",
+                false,
+                ExitCode::Refused,
+            )
+        })
+}
+
+pub fn git_revision(repo: &Path) -> Result<String, ContractError> {
+    let output = std::process::Command::new("git")
+        .arg("rev-parse")
+        .arg("HEAD")
+        .current_dir(repo)
+        .output()
+        .map_err(io_error)?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+pub fn git_branch(repo: &Path) -> Result<String, ContractError> {
+    let output = std::process::Command::new("git")
+        .arg("rev-parse")
+        .arg("--abbrev-ref")
+        .arg("HEAD")
+        .current_dir(repo)
+        .output()
+        .map_err(io_error)?;
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}

@@ -7,8 +7,10 @@ pub enum Taint {
     Secret,
     Credential,
     Canary,
+    ForbiddenIdentifier,
     PersonalSession,
     CompanyConfidential,
+    Codebase,
     Public,
 }
 
@@ -18,14 +20,19 @@ impl Taint {
             Self::Secret => "secret",
             Self::Credential => "credential",
             Self::Canary => "configured-canary",
+            Self::ForbiddenIdentifier => "forbidden-identifier",
             Self::PersonalSession => "personal-session",
             Self::CompanyConfidential => "company-confidential",
+            Self::Codebase => "codebase",
             Self::Public => "public",
         }
     }
 
     pub fn hard_block(self) -> bool {
-        matches!(self, Self::Secret | Self::Credential | Self::Canary)
+        matches!(
+            self,
+            Self::Secret | Self::Credential | Self::Canary | Self::ForbiddenIdentifier
+        )
     }
 }
 
@@ -37,9 +44,9 @@ pub struct ScanResult {
 }
 
 pub fn scanner(text: &str) -> ScanResult {
+    let normalized = text.to_lowercase();
     let mut taints = Vec::new();
     let mut findings = Vec::new();
-    let normalized = text.to_lowercase();
     let markers = [
         ("api_key", Taint::Secret),
         ("apikey", Taint::Secret),
@@ -47,7 +54,12 @@ pub fn scanner(text: &str) -> ScanResult {
         ("password", Taint::Credential),
         ("bearer ", Taint::Credential),
         ("ghp_", Taint::Credential),
+        ("github_pat_", Taint::Credential),
+        ("sk-", Taint::Credential),
+        ("akia", Taint::Credential),
         ("guildhall-canary", Taint::Canary),
+        ("social-security", Taint::ForbiddenIdentifier),
+        ("passport-number", Taint::ForbiddenIdentifier),
     ];
     for (marker, taint) in markers {
         if normalized.contains(marker) {
@@ -60,6 +72,9 @@ pub fn scanner(text: &str) -> ScanResult {
         || normalized.contains("my medical")
     {
         taints.push(Taint::PersonalSession);
+    }
+    if normalized.contains("company confidential") || normalized.contains("internal only") {
+        taints.push(Taint::CompanyConfidential);
     }
     taints.push(Taint::Public);
     taints.sort_by_key(|taint| taint.as_str());

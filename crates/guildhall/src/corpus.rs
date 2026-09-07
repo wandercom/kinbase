@@ -3,7 +3,7 @@ use serde_json::json;
 use std::path::Path;
 
 pub fn rebuild(repo: &Path, store: crate::StoreKind, json: bool) -> Result<(), ContractError> {
-    let atoms = crate::store::read_jsonl(&repo.join(".kin/local/atoms.jsonl")).unwrap_or_default();
+    let atoms = crate::store::read_records(store, repo, "atoms.jsonl").unwrap_or_default();
     let facts = atoms
         .iter()
         .filter(|atom| {
@@ -14,15 +14,14 @@ pub fn rebuild(repo: &Path, store: crate::StoreKind, json: bool) -> Result<(), C
                 .unwrap_or_default();
             destinations
                 .iter()
-                .any(|destination| destination.as_str() == Some("codebase"))
+                .any(|destination| destination.as_str() == Some(store_name(store)))
         })
         .cloned()
         .collect::<Vec<_>>();
     let current_view = json!({"facts":facts,"reducer_version":crate::reducer::REDUCER_VERSION});
-    let path = repo.join(".kin/local/current.json");
-    std::fs::create_dir_all(path.parent().unwrap()).map_err(io_error)?;
+    let root = crate::store::ensure_store_root(store, repo).map_err(io_error)?;
     std::fs::write(
-        &path,
+        root.join("current.json"),
         serde_json::to_vec_pretty(&current_view)
             .map_err(|error| ContractError::internal(error.to_string()))?,
     )
@@ -30,9 +29,11 @@ pub fn rebuild(repo: &Path, store: crate::StoreKind, json: bool) -> Result<(), C
     if json {
         println!(
             "{}",
-            serde_json::to_string(
-                &json!({"status":"rebuilt","store":store_name(store),"fact_count":facts.len()})
-            )
+            serde_json::to_string(&json!({
+                "status": "rebuilt",
+                "store": store_name(store),
+                "fact_count": facts.len()
+            }))
             .unwrap_or_default()
         );
     } else {
@@ -49,7 +50,14 @@ pub fn explain(
     decision: &str,
     json: bool,
 ) -> Result<(), ContractError> {
-    let result = json!({"logical_key":logical_key,"decision":decision,"steps":[{"step":"admit"},{"step":"project"}]});
+    let result = json!({
+        "logical_key": logical_key,
+        "decision": decision,
+        "steps": [
+            {"step": "admit"},
+            {"step": "project"}
+        ]
+    });
     if json {
         println!("{}", serde_json::to_string(&result).unwrap_or_default());
     } else {

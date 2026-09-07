@@ -3,6 +3,7 @@ pub mod cli;
 pub mod command_types;
 pub mod company;
 pub mod corpus;
+pub mod crypto;
 pub mod error;
 pub mod experiment;
 pub mod hash;

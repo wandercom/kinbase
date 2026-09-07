@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-
 pub const EVENT_SCHEMA: &str = "guildhall-event/1";
+pub const UNKNOWN_SCHEMA: &str = "guildhall-unknown/1";
+pub const MAX_CONFIDENCE: u16 = 10_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Observation {
@@ -36,9 +36,32 @@ pub struct Atom {
     pub atom_kind: String,
     pub confidence: u16,
     pub provenance: String,
+    pub observation_id: String,
+    pub source_digest: String,
     pub taints: Vec<String>,
     pub destinations: Vec<String>,
     pub unresolved_uncertainty: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Distortion {
+    pub trigger: String,
+    pub loss_if_absent: u16,
+    pub rationale: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CompanyReference {
+    pub company_id: String,
+    pub fact_id: String,
+    pub semantic_content_digest: String,
+    pub digest_alg_version: String,
+    pub authority: String,
+    pub valid_from: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub valid_until: Option<String>,
+    pub company_criticality: String,
+    pub relation: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -61,15 +84,36 @@ pub struct FactEvent {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_until: Option<String>,
     pub disposition: String,
-    pub distortion: Value,
+    pub distortion: Distortion,
     pub parents: Vec<String>,
     pub supersedes: Vec<String>,
     pub redundancy_with: Vec<String>,
     pub complements: Vec<String>,
-    pub company_refs: Vec<Value>,
+    pub company_refs: Vec<CompanyReference>,
     pub authority_snapshot_cursor: String,
     pub confidence: u16,
     pub unresolved_uncertainty: Option<String>,
+    pub signer: String,
+    pub signature: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct UnknownEvent {
+    pub schema: String,
+    pub unknown_id: String,
+    pub store_kind: String,
+    pub scope: String,
+    pub decision_blocked: String,
+    pub owner_role: String,
+    pub owner_identity: String,
+    pub question: String,
+    pub closure_evidence: Vec<String>,
+    pub status: String,
+    pub response_due_at: String,
+    pub expiry_policy: String,
+    pub distortion: Distortion,
+    pub created_at: String,
+    pub signer: String,
     pub signature: String,
 }
 
@@ -77,10 +121,17 @@ pub struct FactEvent {
 pub struct CurrentFact {
     pub fact_id: String,
     pub logical_key: String,
+    pub atom_kind: String,
+    pub scope: String,
     pub statement: String,
     pub status: String,
+    pub disposition: String,
+    pub authority_id: String,
     pub authority_scope: String,
     pub effective_from: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_until: Option<String>,
+    pub loss_if_absent: u16,
+    pub company_refs: Vec<CompanyReference>,
+    pub evidence_refs: Vec<String>,
 }
