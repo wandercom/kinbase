@@ -1,0 +1,23 @@
+[package]
+name = "guildhall"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Three-store knowledge system for brownfield coding work"
+build = "build.rs"
+
+[dependencies]
+base64 = "=0.22.1"
+chrono = { version = "=0.4.44", default-features = false, features = ["clock", "serde"] }
+clap = { version = "=4.6.6", features = ["derive"] }
+ed25519-dalek = { version = "=2.2.0", features = ["rand_core"] }
+rand = "=0.8.7"
+rusqlite = { version = "=0.32.1", features = ["bundled"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.151", features = ["preserve_order"] }
+sha2 = "=0.10.9"
+toml = "=0.8.23"
+
+[dev-dependencies]
+tempfile = "=3.27.0"

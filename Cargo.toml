@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/guildhall"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.98.0"
+version = "0.1.0"
+license = "UNLICENSED"
+
+[profile.release]
+debug = 1
+lto = "thin"
+codegen-units = 1
+
+[profile.dev]
+debug = 1
