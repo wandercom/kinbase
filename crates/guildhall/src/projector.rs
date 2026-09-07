@@ -42,3 +42,35 @@ pub fn project(facts: &[CurrentFact], working_set: &[String]) -> ProjectionTrace
         marginal_gains,
     }
 }
+
+pub fn run(
+    repo: &std::path::Path,
+    _task: &str,
+    decision: &str,
+    working_set: &[String],
+    json: bool,
+) -> crate::error::Result<()> {
+    let view_path = repo.join(".kin/local/current.json");
+    let facts: Vec<crate::model::CurrentFact> = if view_path.exists() {
+        std::fs::read_to_string(view_path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .map(|view: serde_json::Value| view.get("facts").cloned())
+            .flatten()
+            .map(|facts| serde_json::from_value(facts).unwrap_or_default())
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let trace = project(&facts, working_set);
+    let result = serde_json::json!({"decision":decision,"selected_count":trace.selected.len(),"omitted_count":trace.omitted_count,"stopping_reason":trace.stopping_reason,"facts":trace.selected});
+    if json {
+        println!("{}", serde_json::to_string(&result).unwrap_or_default());
+    } else {
+        println!("decision: {decision}");
+        println!("selected_count: {}", trace.selected.len());
+        println!("omitted_count: {}", trace.omitted_count);
+        println!("stopping_reason: {}", trace.stopping_reason);
+    }
+    Ok(())
+}

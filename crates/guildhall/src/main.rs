@@ -1,3 +1,10 @@
+use clap::Parser;
+
+pub use guildhall::Cli;
+pub use guildhall::cli::run;
+pub use guildhall::command_types::*;
+
 fn main() {
-    println!("Guildhall CLI foundation");
+    let cli = Cli::parse();
+    run(cli.json, cli.command);
 }
