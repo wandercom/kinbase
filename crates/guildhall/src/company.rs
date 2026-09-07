@@ -1,12 +1,13 @@
 use crate::error::{ContractError, ExitCode};
-use crate::hash::sha256_bytes;
-use crate::json::canonical_bytes;
+use crate::hash::{sha256_bytes, sha256_text};
+use crate::json::{canonical_bytes, canonical_text};
+use crate::scanner::hard_blocked;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use ed25519_dalek::SigningKey;
 use rand::rngs::OsRng;
 use rusqlite::{Connection, OptionalExtension, params};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream};
 use std::os::unix::fs::OpenOptionsExt;
@@ -22,6 +23,11 @@ struct ServiceConfig {
     root_key_file: PathBuf,
     facts_token_file: PathBuf,
     directory_token_file: Option<PathBuf>,
+    auth_failures_per_minute: i64,
+    default_fact_freshness_seconds: i64,
+    candidate_lifetime_seconds: i64,
+    clock_skew_seconds: i64,
+    nonce_retention_seconds: i64,
 }
 
 pub fn init(config: &Path, json: bool) -> Result<(), ContractError> {
@@ -43,7 +49,6 @@ pub fn init(config: &Path, json: bool) -> Result<(), ContractError> {
              CREATE TABLE IF NOT EXISTS unknowns (unknown_id TEXT PRIMARY KEY, scope TEXT NOT NULL, owner_identity TEXT NOT NULL, status TEXT NOT NULL, question TEXT NOT NULL, response_due_at TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS nonces (nonce TEXT PRIMARY KEY, expires_at TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS auth_failures (minute INTEGER PRIMARY KEY, count INTEGER NOT NULL);
-             INSERT OR IGNORE INTO company_meta(key, value) VALUES ('cursor', '0');
              INSERT OR IGNORE INTO company_meta(key, value) VALUES ('cursor', '0');",
         )
         .map_err(sqlite_error)?;
@@ -129,8 +134,9 @@ fn parse_config(config: &Path) -> Result<ServiceConfig, ContractError> {
             "nonce_retention_seconds must exceed candidate_lifetime_seconds + clock_skew_seconds",
         ));
     }
-    integer_field(&parsed, "default_fact_freshness_seconds", 1)?;
-    integer_field(&parsed, "auth_failures_per_minute", 1)?;
+    let default_fact_freshness_seconds =
+        integer_field(&parsed, "default_fact_freshness_seconds", 1)?;
+    let auth_failures_per_minute = integer_field(&parsed, "auth_failures_per_minute", 1)?;
     Ok(ServiceConfig {
         company_id: company_id.to_owned(),
         sqlite_path,
@@ -138,6 +144,11 @@ fn parse_config(config: &Path) -> Result<ServiceConfig, ContractError> {
         root_key_file,
         facts_token_file,
         directory_token_file,
+        auth_failures_per_minute,
+        default_fact_freshness_seconds,
+        candidate_lifetime_seconds: lifetime,
+        clock_skew_seconds: skew,
+        nonce_retention_seconds: retention,
     })
 }
 
@@ -176,7 +187,28 @@ fn ensure_config_mode(path: &Path) -> Result<(), ContractError> {
 
 fn ensure_key_file(path: &Path) -> Result<(), ContractError> {
     let public_path = PathBuf::from(format!("{}.pub", path.to_string_lossy()));
-    if !path.exists() || !public_path.exists() {
+    if path.exists() && !public_path.exists() {
+        let encoded = std::fs::read_to_string(path).map_err(io_error)?;
+        let decoded = BASE64
+            .decode(encoded.trim())
+            .map_err(|error| config_error(&error.to_string()))?;
+        if decoded.len() != 32 {
+            return Err(config_error("root private key must contain 32 bytes"));
+        }
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(&decoded);
+        let signing_key = SigningKey::from_bytes(&seed);
+        write_mode_0600(
+            &public_path,
+            BASE64
+                .encode(signing_key.verifying_key().to_bytes())
+                .as_bytes(),
+        )?;
+    } else if !path.exists() && public_path.exists() {
+        return Err(config_error(
+            "root public key exists without its private key; never replace trust locally",
+        ));
+    } else if !path.exists() {
         let signing_key = SigningKey::generate(&mut OsRng);
         write_mode_0600(path, BASE64.encode(signing_key.to_bytes()).as_bytes())?;
         write_mode_0600(
@@ -316,26 +348,55 @@ fn handle_connection(mut stream: TcpStream, config: &ServiceConfig) -> Result<()
             return respond(&mut stream, 415, &json!({"error":"json-required"}));
         }
     }
+    if content_length > 64 * 1024 {
+        return respond(&mut stream, 413, &json!({"error":"request-too-large"}));
+    }
     let mut body = vec![0u8; content_length];
     if content_length > 0 {
         reader.read_exact(&mut body).map_err(io_error)?;
     }
+    let route = path.split('?').next().unwrap_or_default().to_owned();
+    let parsed_body = if body.is_empty() {
+        serde_json::Map::new()
+    } else {
+        crate::json::parse_strict_object(&body).map_err(|error| {
+            ContractError::new(
+                "CONFIG_INVARIANT",
+                error,
+                "Send canonical strict JSON with sorted keys and no floats.",
+                false,
+                ExitCode::Refused,
+            )
+        })?
+    };
+    let mut connection = Connection::open(&config.sqlite_path).map_err(sqlite_error)?;
+    if auth_failures_exceeded(&connection, config)? {
+        return respond(
+            &mut stream,
+            429,
+            &json!({"error":"authentication-ceiling-exceeded"}),
+        );
+    }
     let token = bearer_token(&headers).ok_or_else(|| config_error("bearer token required"))?;
     let token_record = read_token_record(&config.facts_token_file)?;
     if !constant_time_equal(token.as_bytes(), token_record.token.as_bytes()) {
-        record_auth_failure(&config)?;
+        record_auth_failure(&mut connection, config)?;
         return respond(&mut stream, 401, &json!({"error":"unauthorized"}));
     }
     if !verify_request_signature(&headers, &method, &path, &body, &token_record)? {
-        record_auth_failure(&config)?;
+        record_auth_failure(&mut connection, config)?;
         return respond(
             &mut stream,
             401,
             &json!({"error":"request-signature-invalid"}),
         );
     }
-    let connection = Connection::open(&config.sqlite_path).map_err(sqlite_error)?;
-    let response = match (method.as_str(), path.as_str()) {
+    if !consume_request_nonce(&connection, config, &headers)? {
+        record_auth_failure(&mut connection, config)?;
+        return respond(&mut stream, 401, &json!({"error":"request-replayed"}));
+    }
+    let mut status = 200;
+    let response = match (method.as_str(), route.as_str()) {
         ("GET", "/status") => {
             require_scope(&token_record, "facts:read")?;
             let cursor: String = connection
@@ -359,7 +420,7 @@ fn handle_connection(mut stream: TcpStream, config: &ServiceConfig) -> Result<()
             if !token_record
                 .authority_scopes
                 .iter()
-                .any(|authorized| authorized == scope)
+                .any(|authorized| authorized == &scope)
             {
                 return respond(&mut stream, 403, &json!({"error":"authority-scope-denied"}));
             }
@@ -379,27 +440,49 @@ fn handle_connection(mut stream: TcpStream, config: &ServiceConfig) -> Result<()
         }
         ("POST", "/questions") => {
             require_scope(&token_record, "questions:write")?;
-            let body: Value =
-                serde_json::from_slice(&body).map_err(|error| config_error(&error.to_string()))?;
-            let question_id = body
-                .get("question_id")
+            let scope = required_text(&parsed_body, "scope")?;
+            let question_kind = required_text(&parsed_body, "question_kind")?;
+            let authority = resolve_registered_authority(&connection, &scope, &question_kind)?;
+            let authority_id = authority
+                .get("authority_id")
                 .and_then(Value::as_str)
-                .unwrap_or(&format!("question_{}", Uuid::new_v4()))
+                .unwrap_or_default()
                 .to_owned();
-            connection.execute(
-                "INSERT INTO questions(question_id, unknown_id, authority_id, scope, question_kind, question, status, created_at, response_due_at) VALUES (?1,?2,?3,?4,?5,?6,'queued',?7,?8)",
-                params![
-                    question_id,
-                    body.get("unknown_id").and_then(Value::as_str),
-                    body.get("authority_id").and_then(Value::as_str).unwrap_or("company-steward"),
-                    body.get("scope").and_then(Value::as_str).unwrap_or("architecture:company"),
-                    body.get("question_kind").and_then(Value::as_str).unwrap_or("architecture"),
-                    body.get("question").and_then(Value::as_str).unwrap_or_default(),
-                    crate::time::now_rfc3339_millis(),
-                    crate::time::format_rfc3339_millis(chrono::Utc::now() + chrono::Duration::hours(24))
-                ],
-            ).map_err(sqlite_error)?;
-            json!({"status":"queued", "question_id":question_id})
+            let supplied_authority = parsed_body
+                .get("authority_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !supplied_authority.is_empty() && supplied_authority != authority_id {
+                status = 403;
+                json!({"error":"authority-wrong-scope"})
+            } else {
+                let question_id = parsed_body
+                    .get("question_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("question_{}", Uuid::new_v4()));
+                let unknown_id = parsed_body
+                    .get("unknown_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let question = required_text(&parsed_body, "question")?;
+                let now = crate::time::now_rfc3339_millis();
+                let due = crate::time::format_rfc3339_millis(
+                    chrono::Utc::now() + chrono::Duration::hours(24),
+                );
+                let inserted = connection
+                    .execute(
+                        "INSERT OR IGNORE INTO questions(question_id, unknown_id, authority_id, scope, question_kind, question, status, created_at, response_due_at) VALUES (?1,?2,?3,?4,?5,?6,'queued',?7,?8)",
+                        params![question_id, unknown_id, authority_id, scope, question_kind, question, now, due],
+                    )
+                    .map_err(sqlite_error)?;
+                if inserted == 0 {
+                    status = 409;
+                    json!({"error":"question-already-exists"})
+                } else {
+                    json!({"status":"queued", "question_id":question_id, "authority_id":authority_id})
+                }
+            }
         }
         ("GET", path) if path.starts_with("/questions/") => {
             require_scope(&token_record, "facts:read")?;
@@ -410,11 +493,24 @@ fn handle_connection(mut stream: TcpStream, config: &ServiceConfig) -> Result<()
                 })
                 .optional()
                 .map_err(sqlite_error)?;
+            if row.is_none() {
+                status = 404;
+            }
             row.unwrap_or_else(|| json!({"error":"not-found"}))
+        }
+        ("POST", "/answers") => {
+            require_scope(&token_record, "answers:write")?;
+            admit_answer(&mut connection, config, &parsed_body).map(|(answer_status, value)| {
+                status = answer_status;
+                value
+            })?
         }
         _ => json!({"error":"not-found"}),
     };
-    respond(&mut stream, 200, &response)
+    if response.get("error").is_some() && status == 200 {
+        status = 404;
+    }
+    respond(&mut stream, status, &response)
 }
 
 fn host_is_loopback(host: &str) -> bool {
@@ -488,10 +584,283 @@ fn require_scope(token: &TokenRecord, scope: &str) -> Result<(), ContractError> 
     }
 }
 
-fn path_scope(path: &str) -> &str {
-    path.split_once("scope=")
+fn path_scope(path: &str) -> String {
+    path.split_once("?scope=")
         .map(|(_, scope)| scope)
-        .unwrap_or("")
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn auth_failures_exceeded(
+    connection: &Connection,
+    config: &ServiceConfig,
+) -> Result<bool, ContractError> {
+    let minute = chrono::Utc::now().timestamp() / 60;
+    let count = connection
+        .query_row(
+            "SELECT count FROM auth_failures WHERE minute=?1",
+            params![minute],
+            |row| row.get::<_, i64>(0),
+        )
+        .optional()
+        .map_err(sqlite_error)?
+        .unwrap_or(0);
+    Ok(count >= config.auth_failures_per_minute)
+}
+
+fn consume_request_nonce(
+    connection: &Connection,
+    config: &ServiceConfig,
+    headers: &[String],
+) -> Result<bool, ContractError> {
+    let nonce = header_value(headers, "x-guildhall-nonce");
+    if nonce.is_empty() {
+        return Ok(false);
+    }
+    let now = chrono::Utc::now();
+    connection
+        .execute(
+            "DELETE FROM nonces WHERE expires_at <= ?1",
+            params![now.to_rfc3339()],
+        )
+        .map_err(sqlite_error)?;
+    let expires_at = crate::time::format_rfc3339_millis(
+        now + chrono::Duration::seconds(config.nonce_retention_seconds),
+    );
+    let inserted = connection
+        .execute(
+            "INSERT OR IGNORE INTO nonces(nonce, expires_at) VALUES (?1, ?2)",
+            params![nonce, expires_at],
+        )
+        .map_err(sqlite_error)?;
+    Ok(inserted == 1)
+}
+
+fn required_text(body: &Map<String, Value>, field: &str) -> Result<String, ContractError> {
+    let value = body
+        .get(field)
+        .and_then(Value::as_str)
+        .ok_or_else(|| config_error(&format!("{field} is required")))?;
+    if value.is_empty() {
+        return Err(config_error(&format!("{field} must not be empty")));
+    }
+    Ok(value.to_owned())
+}
+
+fn resolve_registered_authority(
+    connection: &Connection,
+    scope: &str,
+    question_kind: &str,
+) -> Result<Value, ContractError> {
+    let authorities = connection
+        .prepare(
+            "SELECT authority_id, public_key, status FROM authority_registry
+             WHERE scope=?1 AND question_kind=?2 ORDER BY authority_id",
+        )
+        .map_err(sqlite_error)?
+        .query_map(params![scope, question_kind], |row| {
+            Ok(json!({
+                "authority_id": row.get::<_, String>(0)?,
+                "public_key": row.get::<_, String>(1)?,
+                "status": row.get::<_, String>(2)?
+            }))
+        })
+        .map_err(sqlite_error)?
+        .collect::<Result<Vec<Value>, _>>()
+        .map_err(sqlite_error)?;
+    let active: Vec<&Value> = authorities
+        .iter()
+        .filter(|authority| authority.get("status").and_then(Value::as_str) == Some("active"))
+        .collect();
+    match active.as_slice() {
+        [authority] => Ok((*authority).clone()),
+        [] => Err(ContractError::new(
+            "UNKNOWN_OWNER_UNRESOLVED",
+            "no active authority resolves the exact scope and question kind",
+            "Ask the Company steward to publish exactly one active authority.",
+            false,
+            ExitCode::DegradedSafe,
+        )),
+        _ => Err(ContractError::new(
+            "UNKNOWN_OWNER_UNRESOLVED",
+            "multiple active authorities resolve the exact scope",
+            "Ask the Company steward to resolve the registry conflict.",
+            false,
+            ExitCode::DegradedSafe,
+        )),
+    }
+}
+
+fn admit_answer(
+    connection: &mut Connection,
+    config: &ServiceConfig,
+    body: &Map<String, Value>,
+) -> Result<(u16, Value), ContractError> {
+    let question_id = required_text(body, "question_id")?;
+    let answer_text = required_text(body, "answer")?;
+    let signature = required_text(body, "signature")?;
+    if hard_blocked(&answer_text) {
+        return Ok((403, json!({"error": "hard-blocked-answer"})));
+    }
+    let question = connection
+        .prepare(
+            "SELECT question_id, unknown_id, authority_id, scope, question_kind, question, status
+             FROM questions WHERE question_id=?1",
+        )
+        .map_err(sqlite_error)?
+        .query_row(params![question_id], |row| {
+            Ok(json!({
+                "question_id": row.get::<_, String>(0)?,
+                "unknown_id": row.get::<_, Option<String>>(1)?,
+                "authority_id": row.get::<_, String>(2)?,
+                "scope": row.get::<_, String>(3)?,
+                "question_kind": row.get::<_, String>(4)?,
+                "question": row.get::<_, String>(5)?,
+                "status": row.get::<_, String>(6)?
+            }))
+        })
+        .optional()
+        .map_err(sqlite_error)?;
+    let Some(question) = question else {
+        return Ok((404, json!({"error": "question-not-found"})));
+    };
+    if question.get("status").and_then(Value::as_str) == Some("answered") {
+        return Ok((409, json!({"error": "question-already-answered"})));
+    }
+    let scope = question
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let question_kind = question
+        .get("question_kind")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let authority = resolve_registered_authority(connection, &scope, &question_kind)?;
+    let authority_id = authority
+        .get("authority_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    if question.get("authority_id").and_then(Value::as_str) != Some(&authority_id)
+        || body.get("authority_id").and_then(Value::as_str) != Some(&authority_id)
+    {
+        return Ok((403, json!({"error": "authority-wrong-scope"})));
+    }
+    let public_key = authority
+        .get("public_key")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let decoded_key = BASE64
+        .decode(public_key)
+        .map_err(|error| config_error(&error.to_string()))?;
+    if decoded_key.len() != 32 {
+        return Err(config_error("authority public key must contain 32 bytes"));
+    }
+    let public_path =
+        std::env::temp_dir().join(format!("guildhall-authority-{}.pub", Uuid::new_v4()));
+    write_mode_0600(&public_path, &decoded_key)?;
+    let answer_value = json!({
+        "answer": answer_text,
+        "authority_id": authority_id,
+        "question_id": question_id
+    });
+    let signed = crate::crypto::verify_message(
+        "answer",
+        canonical_bytes(&answer_value).as_slice(),
+        &signature,
+        &public_path,
+    );
+    let _ = std::fs::remove_file(&public_path);
+    if !signed? {
+        return Ok((401, json!({"error": "authority-signature-invalid"})));
+    }
+    let answer_id = format!(
+        "answer_{}",
+        &sha256_text(&format!("{question_id}\0{answer_text}"))[..24]
+    );
+    let fact_id = format!(
+        "fact_{}",
+        &sha256_text(&format!("{scope}\0{answer_text}"))[..24]
+    );
+    let event_id = format!(
+        "event_{}",
+        &sha256_text(&format!("{scope}\0{answer_text}\0{answer_id}"))[..24]
+    );
+    let answered_at = crate::time::now_rfc3339_millis();
+    let cursor = advance_cursor(connection)?;
+    let transaction = connection.transaction().map_err(sqlite_error)?;
+    transaction
+        .execute(
+            "INSERT INTO answers(answer_id, question_id, authority_id, scope, answer, signature, answered_at)
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+            params![
+                answer_id,
+                question_id,
+                authority_id,
+                scope,
+                answer_text,
+                signature,
+                answered_at
+            ],
+        )
+        .map_err(sqlite_error)?;
+    transaction
+        .execute(
+            "UPDATE questions SET status='answered' WHERE question_id=?1",
+            params![question_id],
+        )
+        .map_err(sqlite_error)?;
+    if let Some(unknown_id) = question.get("unknown_id").and_then(Value::as_str) {
+        transaction
+            .execute(
+                "UPDATE unknowns SET status='closed', question=?2 WHERE unknown_id=?1",
+                params![unknown_id, question_id],
+            )
+            .map_err(sqlite_error)?;
+    }
+    transaction
+        .execute(
+            "INSERT INTO facts(fact_id, scope, statement, event_id, authority_id)
+             VALUES (?1,?2,?3,?4,?5)",
+            params![fact_id, scope, answer_text, event_id, authority_id],
+        )
+        .map_err(sqlite_error)?;
+    transaction
+        .execute(
+            "INSERT INTO events(id, kind, payload, cursor) VALUES (?1,'authority-answer',?2,?3)",
+            params![event_id, canonical_text(&answer_value), cursor],
+        )
+        .map_err(sqlite_error)?;
+    transaction.commit().map_err(sqlite_error)?;
+    let _ = config;
+    Ok((
+        201,
+        json!({
+            "status": "answered",
+            "answer_id": answer_id,
+            "question_id": question_id,
+            "unknown_id": question.get("unknown_id").cloned().unwrap_or(Value::Null),
+            "fact_id": fact_id,
+            "event_id": event_id,
+            "cursor": cursor
+        }),
+    ))
+}
+
+fn advance_cursor(connection: &Connection) -> Result<i64, ContractError> {
+    connection
+        .query_row(
+            "UPDATE company_meta SET value=CAST(value AS INTEGER)+1
+             WHERE key='cursor' RETURNING value",
+            [],
+            |row| {
+                row.get::<_, String>(0)
+                    .map(|value| value.parse::<i64>().unwrap_or_default())
+            },
+        )
+        .map_err(sqlite_error)
 }
 
 fn verify_request_signature(
@@ -548,8 +917,11 @@ fn header_value(headers: &[String], name: &str) -> String {
         .unwrap_or_default()
 }
 
-fn record_auth_failure(config: &ServiceConfig) -> Result<(), ContractError> {
-    let connection = Connection::open(&config.sqlite_path).map_err(sqlite_error)?;
+fn record_auth_failure(
+    connection: &mut Connection,
+    config: &ServiceConfig,
+) -> Result<(), ContractError> {
+    let _ = config;
     let minute = chrono::Utc::now().timestamp() / 60;
     connection
         .execute(

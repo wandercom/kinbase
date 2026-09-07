@@ -9,10 +9,7 @@ pub fn run(json: bool, command: Command) {
         if json {
             let value = serde_json::to_value(&error)
                 .unwrap_or_else(|_| serde_json::json!({"code":"RUN_INTEGRITY_FAILED"}));
-            println!(
-                "{}",
-                serde_json::to_string_pretty(&value).unwrap_or_default()
-            );
+            println!("{}", crate::json::canonical_text(&value));
         } else {
             println!("{}: {}", error.code, error.message);
             println!("remediation: {}", error.remediation);
