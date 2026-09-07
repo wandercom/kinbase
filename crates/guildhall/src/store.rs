@@ -212,15 +212,26 @@ pub fn manifest(
         leaves.push(canonical.as_bytes().to_vec());
     }
     let merkle_root = merkle_root(&leaves);
-    let manifest = json!({
+    let fresh_until = crate::time::format_rfc3339_millis(
+        crate::time::parse_rfc3339_millis(observed_at)
+            .map_err(std::io::Error::other)?
+            + chrono::Duration::hours(1),
+    );
+    let mut manifest = json!({
         "schema": "guildhall-manifest/1",
         "repository_uuid": repository_id,
         "branch": branch,
         "revision": revision,
         "event_count": event_count,
         "merkle_root": merkle_root,
-        "observed_at": observed_at
+        "observed_at": observed_at,
+        "fresh_until": fresh_until,
+        "signer": "repository-maintainer"
     });
+    let private_key = root.join("local").join("keys").join("ed25519.key");
+    let signature = crate::crypto::sign_message("manifest", canonical_bytes(&manifest).as_slice(), &private_key)
+        .map_err(std::io::Error::other)?;
+    manifest["signature"] = Value::String(signature);
     let canonical = canonical_bytes(&manifest);
     let manifest_digest = sha256_bytes(&canonical);
     let relative = event_path(&manifest_digest);

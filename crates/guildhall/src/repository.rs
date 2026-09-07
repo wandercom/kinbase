@@ -1,214 +1,342 @@
 use crate::error::{ContractError, ExitCode};
-use serde_json::json;
-use std::path::Path;
+use crate::hash::{is_sha256, sha256_bytes};
+use crate::json::{canonical_bytes, canonical_text, parse_strict_object};
+use serde_json::{Map, Value, json};
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 pub fn issue_certificate(repo: &Path, company: &str, json: bool) -> Result<(), ContractError> {
-    let id = Uuid::new_v4().to_string();
-    let certificate =
-        json!({"schema":"guildhall-repo-certificate/1","repository_uuid":id,"company":company});
-    let bytes = serde_json::to_vec_pretty(&certificate)
-        .map_err(|error| ContractError::internal(error.to_string()))?;
-    std::fs::write(repo.join(".kin/certificate.json"), bytes).map_err(io_error)?;
+    let id = repository_uuid_from_git(repo)?;
+    let issued_at = crate::time::now_rfc3339_millis();
+    let mut certificate = json!({
+        "schema": "guildhall-repo-certificate/1",
+        "repository_uuid": id,
+        "company": company,
+        "issued_at": issued_at,
+        "fresh_until": crate::time::format_rfc3339_millis(
+            crate::time::parse_rfc3339_millis(&issued_at).map_err(|error| ContractError::internal(error))?
+                + chrono::Duration::hours(24 * 365)
+        ),
+        "signer": "company-steward"
+    });
+    let (private_key, _) = crate::crypto::ensure_keypair(crate::StoreKind::Company, repo)?;
+    let signature = crate::crypto::sign_message(
+        "repo-certificate",
+        canonical_text(&certificate).as_bytes(),
+        &private_key,
+    )?;
+    certificate["signature"] = Value::String(signature);
     if json {
-        println!(
-            "{}",
-            serde_json::to_string(&certificate).unwrap_or_default()
-        );
+        println!("{}", serde_json::to_string(&certificate).unwrap_or_default());
     } else {
-        println!("repository_uuid: {id}");
+        println!("{}", serde_json::to_string_pretty(&certificate).unwrap_or_default());
     }
     Ok(())
 }
 
 pub fn init(repo: &Path, certificate: &Path, json: bool) -> Result<(), ContractError> {
-    let certificate_text = std::fs::read_to_string(certificate).map_err(io_error)?;
-    let certificate_value: serde_json::Value =
-        serde_json::from_str(&certificate_text).map_err(|error| {
-            ContractError::new(
-                "CONFIG_INVARIANT",
-                error.to_string(),
-                "Use a valid signed repository certificate.",
-                false,
-                ExitCode::Refused,
-            )
-        })?;
-    let repository_id = certificate_value
+    let bytes = std::fs::read(certificate).map_err(io_error)?;
+    let map: Map<String, Value> = parse_strict_object(&bytes)
+        .map_err(|error| ContractError::new("CONFIG_INVARIANT", error, "Use a steward-issued repository certificate.", false, ExitCode::Refused))?;
+    if map.get("schema").and_then(Value::as_str) != Some("guildhall-repo-certificate/1") {
+        return Err(ContractError::new(
+            "CONFIG_INVARIANT",
+            "unsupported repository certificate schema",
+            "Use a ratified Company steward certificate.",
+            false,
+            ExitCode::Refused,
+        ));
+    }
+    let signature = map
+        .get("signature")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ContractError::new("SIGNATURE_INVALID", "certificate signature missing", "Ask the Company steward for a signed certificate.", false, ExitCode::IntegrityFailure))?
+        .to_owned();
+    let mut unsigned = map.clone();
+    unsigned.remove("signature");
+    let company_root = crate::store::store_root(crate::StoreKind::Company, repo);
+    let public_key = company_root.join("local").join("keys").join("ed25519.pub");
+    if !public_key.exists()
+        || !crate::crypto::verify_message(
+            "repo-certificate",
+            canonical_bytes(&Value::Object(unsigned)).as_slice(),
+            &signature,
+            &public_key,
+        )?
+    {
+        return Err(ContractError::new(
+            "SIGNATURE_INVALID",
+            "repository certificate signature failed",
+            "Quarantine the certificate and ask the Company steward for a valid one.",
+            false,
+            ExitCode::IntegrityFailure,
+        ));
+    }
+    let repository_id = map
         .get("repository_uuid")
-        .and_then(|value| value.as_str())
-        .ok_or_else(|| {
-            ContractError::new(
-                "CONFIG_INVARIANT",
-                "certificate lacks repository_uuid",
-                "Use a steward-issued certificate.",
-                false,
-                ExitCode::Refused,
-            )
-        })?;
+        .and_then(Value::as_str)
+        .ok_or_else(|| ContractError::new("CONFIG_INVARIANT", "repository UUID missing", "Use a steward-issued certificate.", false, ExitCode::Refused))?;
+    let company = map
+        .get("company")
+        .and_then(Value::as_str)
+        .ok_or_else(|| ContractError::new("CONFIG_INVARIANT", "company hint missing", "Use a steward-issued certificate.", false, ExitCode::Refused))?;
     let kin = repo.join(".kin");
     std::fs::create_dir_all(kin.join("events")).map_err(io_error)?;
     std::fs::create_dir_all(kin.join("manifests")).map_err(io_error)?;
     std::fs::create_dir_all(kin.join("local")).map_err(io_error)?;
-    let config = json!({"schema_version":"guildhall-repo/1","repository_uuid_hint":repository_id,"safe_name":repo.file_name().and_then(|name|name.to_str()).unwrap_or("repository")});
-    std::fs::write(
-        kin.join("config"),
-        serde_json::to_vec_pretty(&config).unwrap(),
-    )
-    .map_err(io_error)?;
+    let config = json!({
+        "schema_version": "guildhall-repo/1",
+        "repository_uuid": repository_id,
+        "company_hint": company
+    });
+    std::fs::write(kin.join("config"), canonical_bytes(&config)).map_err(io_error)?;
     let attributes_path = repo.join(".gitattributes");
     let mut attributes = std::fs::read_to_string(&attributes_path).unwrap_or_default();
     if !attributes.contains(".kin/events/**") {
-        attributes.push_str(
-            "\n.kin/events/** -text -diff -merge\n.kin/manifests/** -text -diff -merge\n",
-        );
+        if !attributes.is_empty() && !attributes.ends_with('\n') {
+            attributes.push('\n');
+        }
+        attributes.push_str(".kin/events/** -text -diff -merge\n.kin/manifests/** -text -diff -merge\n");
         std::fs::write(&attributes_path, attributes).map_err(io_error)?;
     }
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string(
-                &json!({"status":"repo-initialized","repository_uuid":repository_id})
-            )
-            .unwrap_or_default()
-        );
-    } else {
-        println!("repository_uuid: {repository_id}");
-    }
+    let result = json!({"status":"repo-initialized", "repository_uuid":repository_id});
+    print_value(&result, json);
     Ok(())
 }
 
 pub fn publish_manifest(repo: &Path, json: bool) -> Result<(), ContractError> {
-    let config_path = repo.join(".kin/config");
-    let config_text = std::fs::read_to_string(&config_path).map_err(io_error)?;
-    let config: serde_json::Value = serde_json::from_str(&config_text).map_err(|error| {
-        ContractError::new(
-            "CONFIG_INVARIANT",
-            error.to_string(),
-            "Run repo init first.",
-            false,
-            ExitCode::Refused,
-        )
-    })?;
-    let repository_id = config
-        .get("repository_uuid_hint")
-        .and_then(|value| value.as_str())
-        .unwrap_or_default();
-    let branch = String::from_utf8(
-        std::process::Command::new("git")
-            .arg("rev-parse")
-            .arg("--abbrev-ref")
-            .arg("HEAD")
-            .current_dir(repo)
-            .output()
-            .map_err(io_error)?
-            .stdout,
-    )
-    .map_err(|error| ContractError::internal(error.to_string()))?
-    .trim()
-    .to_string();
-    let revision = String::from_utf8(
-        std::process::Command::new("git")
-            .arg("rev-parse")
-            .arg("HEAD")
-            .current_dir(repo)
-            .output()
-            .map_err(io_error)?
-            .stdout,
-    )
-    .map_err(|error| ContractError::internal(error.to_string()))?
-    .trim()
-    .to_string();
+    let repository_id = repository_id(repo)?;
+    let branch = git_branch(repo)?;
+    let revision = git_revision(repo)?;
     let manifest = crate::store::manifest(
-        repo,
-        repository_id,
+        &repo.join(".kin"),
+        &repository_id,
         &branch,
         &revision,
         &crate::time::now_rfc3339_millis(),
     )
     .map_err(io_error)?;
-    if json {
-        println!("{}", serde_json::to_string(&manifest).unwrap_or_default());
-    } else {
-        println!("branch: {branch}");
-        println!("revision: {revision}");
-        println!(
-            "event_count: {}",
-            manifest
-                .get("event_count")
-                .and_then(|v| v.as_u64())
-                .unwrap_or_default()
-        );
-    }
+    print_value(&manifest, json);
     Ok(())
 }
 
 pub fn status(repo: &Path, json: bool) -> Result<(), ContractError> {
-    let config_path = repo.join(".kin/config");
-    let status = if config_path.exists() {
-        json!({"status":"initialized","path":repo.to_string_lossy()})
+    let config_path = repo.join(".kin").join("config");
+    let result = if config_path.exists() {
+        let repository_id = repository_id(repo)?;
+        let count = crate::store::read_events(&repo.join(".kin"))
+            .map(|events| events.len())
+            .unwrap_or(0);
+        json!({
+            "status": "initialized",
+            "repository_uuid": repository_id,
+            "event_count": count,
+            "personal_mounted": false
+        })
     } else {
-        json!({"status":"uninitialized","path":repo.to_string_lossy()})
+        json!({
+            "status": "unverified",
+            "repository_uuid": Value::Null,
+            "event_count": 0,
+            "personal_mounted": false,
+            "remediation": "Run guildhall repo issue and repo init with an out-of-tree certificate."
+        })
     };
-    if json {
-        println!("{}", serde_json::to_string(&status).unwrap_or_default());
-    } else {
-        println!(
-            "status: {}",
-            status
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-        );
-    }
+    print_value(&result, json);
     Ok(())
 }
 
 pub fn doctor(repo: &Path, host: Option<crate::HostKind>, json: bool) -> Result<(), ContractError> {
+    let reservations = std::env::current_dir()
+        .ok()
+        .and_then(|current| crate::store::read_records(crate::StoreKind::Personal, &current, "prompt-reservations.jsonl").ok())
+        .unwrap_or_default();
     let result = json!({
-        "path": repo.to_string_lossy(),
-        "personal": {"granted":false},
-        "company": {"granted":true},
-        "codebase": {"granted": true},
+        "capabilities": ["company", "codebase"],
+        "personal": {
+            "granted": false,
+            "environment_variable_present": std::env::var_os("GUILDHALL_PERSONAL_ROOT").is_some()
+        },
+        "company": {"granted": crate::store::store_root(crate::StoreKind::Company, repo).exists()},
+        "codebase": {"granted": repo.join(".kin").join("config").exists()},
         "host": host.map(|host| if host == crate::HostKind::Codex { "codex" } else { "claude" }),
+        "host_version_supported": true,
+        "prompt_budget": {
+            "reserved_count": reservations.len(),
+            "sliding_window": "60m",
+            "total_limit": 4,
+            "consecutive_limit": 3,
+            "global_cross_machine_total_known": false
+        }
     });
-    if json {
-        println!("{}", serde_json::to_string(&result).unwrap_or_default());
-    } else {
-        println!("path: {}", repo.to_string_lossy());
-        println!("personal: denied");
-        println!("company: granted");
-        println!("codebase: granted");
-    }
+    print_value(&result, json);
     Ok(())
 }
 
 pub fn fsck(repo: &Path, full: bool, json: bool) -> Result<(), ContractError> {
-    let events_dir = repo.join(".kin/events");
-    let mut count = 0;
-    if events_dir.exists() {
-        count = count_files(&events_dir).map_err(io_error)?;
+    let kin = repo.join(".kin");
+    if !kin.join("config").exists() {
+        let result = json!({"status":"unverified", "event_count":0, "full":full, "reason":"repo-uninitialized"});
+        print_value(&result, json);
+        return Ok(());
     }
-    let result = json!({"status":"ok","event_count":count,"full":full});
-    if json {
-        println!("{}", serde_json::to_string(&result).unwrap_or_default());
-    } else {
-        println!("status: ok");
-        println!("event_count: {count}");
+    let repository_id = repository_id(repo)?;
+    let event_files = collect_event_paths(&kin.join("events"))?;
+    if event_files.len() > 10_000 {
+        return Err(ContractError::new(
+            "LIMIT_EXCEEDED",
+            "Codebase event count exceeds 10,000",
+            "Split the repository history or raise only through a new schema version.",
+            false,
+            ExitCode::Refused,
+        ));
+    }
+    let public_key = kin.join("local").join("keys").join("ed25519.pub");
+    let mut event_count = 0;
+    for path in event_files {
+        let bytes = std::fs::read(&path).map_err(io_error)?;
+        if bytes.len() > 64 * 1024 {
+            return Err(ContractError::new("LIMIT_EXCEEDED", "event exceeds 64 KiB", "Use a smaller atom or new schema version.", false, ExitCode::Refused));
+        }
+        let event = crate::store::parse_event(&bytes)
+            .map_err(|error| ContractError::new("SIGNATURE_INVALID", error, "Quarantine the malformed event and rerun full fsck.", false, ExitCode::IntegrityFailure))?;
+        let canonical = canonical_bytes(&serde_json::to_value(&event).map_err(|error| ContractError::internal(error.to_string()))?);
+        let digest = sha256_bytes(&canonical);
+        let expected = kin
+            .join("events")
+            .join(format!("{}{}{}", &digest[0..2], &digest[2..4], &digest[4..]))
+            .with_extension("json");
+        if path != expected || !is_sha256(&digest) {
+            return Err(ContractError::new(
+                "DIGEST_MISMATCH",
+                format!("event path does not match canonical digest: {}", event.event_id),
+                "Run full fsck and repair the content-addressed event tree.",
+                false,
+                ExitCode::IntegrityFailure,
+            ));
+        }
+        if event.store_kind != "codebase"
+            || event.repository_id.as_deref() != Some(repository_id.as_str())
+        {
+            return Err(ContractError::new(
+                "FOREIGN_REPO_EVENTS",
+                format!("event {} binds another repository or store", event.event_id),
+                "Remove foreign events or obtain signed lineage.",
+                false,
+                ExitCode::Refused,
+            ));
+        }
+        if !public_key.exists()
+            || !crate::store::verify_event_signature(&event, &public_key)
+                .map_err(|error| ContractError::new("SIGNATURE_INVALID", error, "Quarantine the event and rerun full fsck.", false, ExitCode::IntegrityFailure))?
+        {
+            return Err(ContractError::new(
+                "SIGNATURE_INVALID",
+                format!("event {} signature failed", event.event_id),
+                "Quarantine the event and repair its named owner key.",
+                false,
+                ExitCode::IntegrityFailure,
+            ));
+        }
+        event_count += 1;
+    }
+    let manifests = collect_event_paths(&kin.join("manifests"))?;
+    for path in &manifests {
+        let bytes = std::fs::read(path).map_err(io_error)?;
+        let map = parse_strict_object(&bytes)
+            .map_err(|error| ContractError::new("SIGNATURE_INVALID", error, "Quarantine the malformed manifest.", false, ExitCode::IntegrityFailure))?;
+        if map.get("schema").and_then(Value::as_str) != Some("guildhall-manifest/1") {
+            return Err(ContractError::new("SIGNATURE_INVALID", "unsupported manifest schema", "Quarantine the manifest.", false, ExitCode::IntegrityFailure));
+        }
+        let digest = sha256_bytes(&canonical_bytes(&Value::Object(map)));
+        let expected = kin
+            .join("manifests")
+            .join(format!("{}{}{}", &digest[0..2], &digest[2..4], &digest[4..]))
+            .with_extension("json");
+        if *path != expected {
+            return Err(ContractError::new("DIGEST_MISMATCH", "manifest path does not match canonical bytes", "Republish the manifest from verified events.", false, ExitCode::IntegrityFailure));
+        }
+    }
+    let result = json!({"status":"ok", "event_count":event_count, "manifest_count":manifests.len(), "full":full});
+    print_value(&result, json);
+    Ok(())
+}
+
+fn collect_event_paths(path: &Path) -> Result<Vec<PathBuf>, ContractError> {
+    let mut output = Vec::new();
+    collect_paths(path, &mut output)?;
+    output.sort();
+    Ok(output)
+}
+
+fn collect_paths(path: &Path, output: &mut Vec<PathBuf>) -> Result<(), ContractError> {
+    if path.is_dir() {
+        for entry in std::fs::read_dir(path).map_err(io_error)? {
+            collect_paths(&entry.map_err(io_error)?.path(), output)?;
+        }
+    } else if path.is_file() {
+        output.push(path.to_path_buf());
     }
     Ok(())
 }
 
-fn count_files(path: &Path) -> std::io::Result<usize> {
-    let mut count = 0;
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
-        if entry.path().is_dir() {
-            count += count_files(&entry.path())?;
-        } else {
-            count += 1;
+pub fn repository_id(repo: &Path) -> Result<String, ContractError> {
+    let config_path = repo.join(".kin").join("config");
+    let bytes = std::fs::read(&config_path).map_err(io_error)?;
+    let map: Map<String, Value> = parse_strict_object(&bytes)
+        .map_err(|error| ContractError::new("CONFIG_INVARIANT", error, "Run repo init first.", false, ExitCode::Refused))?;
+    map.get("repository_uuid")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| ContractError::new("CONFIG_INVARIANT", "repository UUID missing", "Run repo init.", false, ExitCode::Refused))
+}
+
+fn repository_uuid_from_git(repo: &Path) -> Result<String, ContractError> {
+    let remote = git_output(repo, &["remote", "get-url", "origin"]).unwrap_or_default();
+    if remote.is_empty() {
+        return Ok(Uuid::new_v4().to_string());
+    }
+    Ok(format!("repo_{remote}"))
+}
+
+pub fn git_revision(repo: &Path) -> Result<String, ContractError> {
+    git_output(repo, &["rev-parse", "HEAD"])
+}
+
+pub fn git_branch(repo: &Path) -> Result<String, ContractError> {
+    git_output(repo, &["rev-parse", "--abbrev-ref", "HEAD"])
+}
+
+fn git_output(repo: &Path, args: &[&str]) -> Result<String, ContractError> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .map_err(io_error)?;
+    if !output.status.success() {
+        return Err(ContractError::new(
+            "COMPANY_UNREACHABLE",
+            String::from_utf8_lossy(&output.stderr).trim().to_owned(),
+            "Run the command inside a Git worktree or repair Git.",
+            true,
+            ExitCode::DependencyUnavailable,
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn print_value(value: &Value, json: bool) {
+    if json {
+        println!("{}", serde_json::to_string(value).unwrap_or_default());
+    } else {
+        println!(
+            "status: {}",
+            value.get("status").and_then(Value::as_str).unwrap_or("recorded")
+        );
+        if let Some(count) = value.get("event_count").and_then(Value::as_u64) {
+            println!("event_count: {count}");
         }
     }
-    Ok(count)
 }
 
 fn io_error(error: std::io::Error) -> ContractError {
@@ -219,52 +347,4 @@ fn io_error(error: std::io::Error) -> ContractError {
         false,
         ExitCode::InternalFailure,
     )
-}
-
-pub fn repository_id(repo: &Path) -> Result<String, ContractError> {
-    let config_path = repo.join(".kin/config");
-    let text = std::fs::read_to_string(config_path).map_err(io_error)?;
-    let value: serde_json::Value = serde_json::from_str(&text).map_err(|error| {
-        ContractError::new(
-            "CONFIG_INVARIANT",
-            error.to_string(),
-            "Run repo init first.",
-            false,
-            ExitCode::Refused,
-        )
-    })?;
-    value
-        .get("repository_uuid_hint")
-        .and_then(|v| v.as_str())
-        .map(|v| v.to_owned())
-        .ok_or_else(|| {
-            ContractError::new(
-                "CONFIG_INVARIANT",
-                "repository UUID missing",
-                "Run repo init.",
-                false,
-                ExitCode::Refused,
-            )
-        })
-}
-
-pub fn git_revision(repo: &Path) -> Result<String, ContractError> {
-    let output = std::process::Command::new("git")
-        .arg("rev-parse")
-        .arg("HEAD")
-        .current_dir(repo)
-        .output()
-        .map_err(io_error)?;
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-}
-
-pub fn git_branch(repo: &Path) -> Result<String, ContractError> {
-    let output = std::process::Command::new("git")
-        .arg("rev-parse")
-        .arg("--abbrev-ref")
-        .arg("HEAD")
-        .current_dir(repo)
-        .output()
-        .map_err(io_error)?;
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
