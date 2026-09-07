@@ -101,9 +101,7 @@ pub fn validate_text(value: &str) -> Result<(), String> {
         {
             return Err("bidirectional formatting controls are forbidden".to_owned());
         }
-        if (0xfdd0..=0xfdef).contains(&code)
-            || ((code & 0xfffe) == 0xfffe && code <= 0x10fffe)
-        {
+        if (0xfdd0..=0xfdef).contains(&code) || ((code & 0xfffe) == 0xfffe && code <= 0x10fffe) {
             return Err("Unicode noncharacters are forbidden".to_owned());
         }
     }

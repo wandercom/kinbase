@@ -15,7 +15,13 @@ pub struct ProjectionTrace {
     pub unknown_ids: Vec<String>,
 }
 
-pub fn project(facts: &[CurrentFact], working_set: &[String], task: &str, decision: &str, unknown_ids: &[String]) -> ProjectionTrace {
+pub fn project(
+    facts: &[CurrentFact],
+    working_set: &[String],
+    task: &str,
+    decision: &str,
+    unknown_ids: &[String],
+) -> ProjectionTrace {
     let known: BTreeSet<&str> = working_set.iter().map(String::as_str).collect();
     let task_terms = terms(task);
     let decision_terms = terms(decision);
@@ -62,13 +68,25 @@ pub fn project(facts: &[CurrentFact], working_set: &[String], task: &str, decisi
         let statement_terms = terms(&fact.statement);
         let task_overlap = statement_terms.intersection(&task_terms).count() as u16;
         let decision_overlap = statement_terms.intersection(&decision_terms).count() as u16;
-        let relevance = 4_000 + (task_overlap.saturating_mul(1_000)).min(3_000)
+        let relevance = 4_000
+            + (task_overlap.saturating_mul(1_000)).min(3_000)
             + (decision_overlap.saturating_mul(1_000)).min(2_000);
-        let authority_gain = if fact.authority_scope.starts_with("architecture") { 1_000 } else { 300 };
-        let complementarity = if selected_kinds.insert(fact.atom_kind.clone()) { 700 } else { 0 };
+        let authority_gain = if fact.authority_scope.starts_with("architecture") {
+            1_000
+        } else {
+            300
+        };
+        let complementarity = if selected_kinds.insert(fact.atom_kind.clone()) {
+            700
+        } else {
+            0
+        };
         let redundancy = if selected.is_empty() { 0 } else { 150 };
         let cost = 200;
-        let marginal = fact.loss_if_absent.saturating_mul(relevance).saturating_div(10_000)
+        let marginal = fact
+            .loss_if_absent
+            .saturating_mul(relevance)
+            .saturating_div(10_000)
             + authority_gain
             + complementarity
             - redundancy
@@ -128,7 +146,8 @@ pub fn run(
         if let Ok(text) = std::fs::read_to_string(&view_path) {
             if let Ok(view) = serde_json::from_str::<Value>(&text) {
                 if let Some(view_facts) = view.get("facts").cloned() {
-                    if let Ok(store_facts) = serde_json::from_value::<Vec<CurrentFact>>(view_facts) {
+                    if let Ok(store_facts) = serde_json::from_value::<Vec<CurrentFact>>(view_facts)
+                    {
                         facts.extend(store_facts);
                     }
                 }

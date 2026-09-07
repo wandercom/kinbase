@@ -133,10 +133,9 @@ pub fn write_content_addressed_event(
     root: &Path,
     event: &FactEvent,
 ) -> std::io::Result<(PathBuf, String)> {
-    let map: Map<String, Value> = serde_json::from_value(
-        serde_json::to_value(event).expect("event serializes"),
-    )
-    .expect("event is an object");
+    let map: Map<String, Value> =
+        serde_json::from_value(serde_json::to_value(event).expect("event serializes"))
+            .expect("event is an object");
     let canonical = canonical_text(&Value::Object(map));
     let digest = sha256_text(&canonical);
     if !is_sha256(&digest) {
@@ -183,10 +182,7 @@ pub fn event_canonical_text(event: &FactEvent) -> String {
     canonical_text(&value)
 }
 
-pub fn verify_event_signature(
-    event: &FactEvent,
-    public_key: &Path,
-) -> Result<bool, String> {
+pub fn verify_event_signature(event: &FactEvent, public_key: &Path) -> Result<bool, String> {
     let message = event_canonical_text(event);
     crate::crypto::verify_message(
         "fact-event",
@@ -213,8 +209,7 @@ pub fn manifest(
     }
     let merkle_root = merkle_root(&leaves);
     let fresh_until = crate::time::format_rfc3339_millis(
-        crate::time::parse_rfc3339_millis(observed_at)
-            .map_err(std::io::Error::other)?
+        crate::time::parse_rfc3339_millis(observed_at).map_err(std::io::Error::other)?
             + chrono::Duration::hours(1),
     );
     let mut manifest = json!({
@@ -229,8 +224,12 @@ pub fn manifest(
         "signer": "repository-maintainer"
     });
     let private_key = root.join("local").join("keys").join("ed25519.key");
-    let signature = crate::crypto::sign_message("manifest", canonical_bytes(&manifest).as_slice(), &private_key)
-        .map_err(std::io::Error::other)?;
+    let signature = crate::crypto::sign_message(
+        "manifest",
+        canonical_bytes(&manifest).as_slice(),
+        &private_key,
+    )
+    .map_err(std::io::Error::other)?;
     manifest["signature"] = Value::String(signature);
     let canonical = canonical_bytes(&manifest);
     let manifest_digest = sha256_bytes(&canonical);

@@ -49,8 +49,15 @@ pub fn ingest(
             ExitCode::Refused,
         ));
     }
-    let records = parse_native(source_kind, &bytes)
-        .map_err(|message| ContractError::new("CONFIG_INVARIANT", message, "Use a valid native source envelope.", false, ExitCode::Refused))?;
+    let records = parse_native(source_kind, &bytes).map_err(|message| {
+        ContractError::new(
+            "CONFIG_INVARIANT",
+            message,
+            "Use a valid native source envelope.",
+            false,
+            ExitCode::Refused,
+        )
+    })?;
     if records.len() > MAX_ITEMS {
         return Err(ContractError::new(
             "LIMIT_EXCEEDED",
@@ -119,7 +126,14 @@ pub fn ingest(
         }
         let observation_value = serde_json::to_value(&observation)
             .map_err(|error| ContractError::internal(error.to_string()))?;
-        mark_changed_source(store, repo, &source_identity, &record.native_id, &digest, &now)?;
+        mark_changed_source(
+            store,
+            repo,
+            &source_identity,
+            &record.native_id,
+            &digest,
+            &now,
+        )?;
         crate::store::append_record(store, repo, "observations.jsonl", &observation_value)
             .map_err(io_error)?;
         observation_count += 1;
@@ -139,14 +153,20 @@ pub fn ingest(
         );
         let atom_value = serde_json::to_value(&atom)
             .map_err(|error| ContractError::internal(error.to_string()))?;
-        crate::store::append_record(store, repo, "atoms.jsonl", &atom_value)
-            .map_err(io_error)?;
+        crate::store::append_record(store, repo, "atoms.jsonl", &atom_value).map_err(io_error)?;
         atom_count += 1;
         let eligible = store != crate::StoreKind::Personal
             && trust_class == "merged-default"
             && record.disposition == "current";
         if eligible {
-            write_source_fact_event(store, repo, &atom, &observation, &record, repository_id.as_deref())?;
+            write_source_fact_event(
+                store,
+                repo,
+                &atom,
+                &observation,
+                &record,
+                repository_id.as_deref(),
+            )?;
             fact_count += 1;
         }
     }
@@ -178,9 +198,8 @@ pub fn ingest(
 fn parse_native(source_kind: &str, bytes: &[u8]) -> Result<Vec<NativeRecord>, String> {
     let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
     match source_kind {
-        "codex_jsonl" | "claude_jsonl" | "git_history" | "kindex" | "runtime_evidence" | "github_export" => {
-            parse_json_records(source_kind, text)
-        }
+        "codex_jsonl" | "claude_jsonl" | "git_history" | "kindex" | "runtime_evidence"
+        | "github_export" => parse_json_records(source_kind, text),
         _ => parse_text_lines(source_kind, text),
     }
 }
@@ -230,13 +249,21 @@ fn collect_json_value(
                     scope: extract_scope(map).unwrap_or_else(|| default_scope(source_kind)),
                     confidence: source_confidence(source_kind, &disposition),
                     disposition,
-                    asserted_at: time_field(map, &["asserted_at", "created_at", "timestamp", "closed_at"]),
+                    asserted_at: time_field(
+                        map,
+                        &["asserted_at", "created_at", "timestamp", "closed_at"],
+                    ),
                     effective_from: time_field(map, &["effective_from", "started_at"]),
-                    effective_until: time_field(map, &["effective_until", "expires_at", "fresh_until"]),
+                    effective_until: time_field(
+                        map,
+                        &["effective_until", "expires_at", "fresh_until"],
+                    ),
                 });
                 return Ok(());
             }
-            for key in ["payload", "message", "content", "data", "items", "events", "facts", "nodes"] {
+            for key in [
+                "payload", "message", "content", "data", "items", "events", "facts", "nodes",
+            ] {
                 if let Some(child) = map.get(key) {
                     collect_json_value(source_kind, child, records)?;
                 }
@@ -252,14 +279,36 @@ fn collect_json_value(
 }
 
 fn is_record_container(map: &Map<String, Value>) -> bool {
-    ["message", "text", "body", "statement", "summary", "title", "answer", "prompt", "output", "stdout"]
-        .iter()
-        .any(|key| map.get(*key).is_some_and(Value::is_string))
+    [
+        "message",
+        "text",
+        "body",
+        "statement",
+        "summary",
+        "title",
+        "answer",
+        "prompt",
+        "output",
+        "stdout",
+    ]
+    .iter()
+    .any(|key| map.get(*key).is_some_and(Value::is_string))
         || map.contains_key("state")
 }
 
 fn extract_statement(map: &Map<String, Value>) -> Option<String> {
-    for key in ["statement", "message", "text", "body", "summary", "title", "answer", "prompt", "output", "stdout"] {
+    for key in [
+        "statement",
+        "message",
+        "text",
+        "body",
+        "summary",
+        "title",
+        "answer",
+        "prompt",
+        "output",
+        "stdout",
+    ] {
         if let Some(Value::String(value)) = map.get(key) {
             return Some(value.clone());
         }
@@ -310,13 +359,14 @@ fn parse_text_lines(source_kind: &str, text: &str) -> Result<Vec<NativeRecord>, 
 }
 
 fn text_record(source_kind: &str, index: usize, statement: &str) -> NativeRecord {
-    let disposition = if statement.contains("STATUS: rejected") || statement.contains("STATUS: reverted") {
-        "rejected".to_owned()
-    } else if statement.contains("STATUS: draft") || statement.contains("STATUS: proposed") {
-        "draft".to_owned()
-    } else {
-        "current".to_owned()
-    };
+    let disposition =
+        if statement.contains("STATUS: rejected") || statement.contains("STATUS: reverted") {
+            "rejected".to_owned()
+        } else if statement.contains("STATUS: draft") || statement.contains("STATUS: proposed") {
+            "draft".to_owned()
+        } else {
+            "current".to_owned()
+        };
     NativeRecord {
         native_id: format!("line:{}", index + 1),
         statement: statement.trim().to_owned(),
@@ -388,10 +438,18 @@ fn mark_changed_source(
             left.get("observed_at")
                 .and_then(Value::as_str)
                 .unwrap_or_default()
-                .cmp(right.get("observed_at").and_then(Value::as_str).unwrap_or_default())
+                .cmp(
+                    right
+                        .get("observed_at")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                )
         });
     if let Some(prior) = prior {
-        let prior_digest = prior.get("content_digest").and_then(Value::as_str).unwrap_or_default();
+        let prior_digest = prior
+            .get("content_digest")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         if prior_digest != digest {
             let record = json!({
                 "schema": "guildhall-source-lifecycle/1",
@@ -420,7 +478,11 @@ fn write_source_fact_event(
     let logical_key = format!(
         "logical_{:x}",
         Sha256::digest(
-            format!("{}\0{}\0{}", atom.provenance, observation.source_identity, observation.native_id).as_bytes()
+            format!(
+                "{}\0{}\0{}",
+                atom.provenance, observation.source_identity, observation.native_id
+            )
+            .as_bytes()
         )
     );
     let old_event = crate::store::read_events(&crate::store::store_root(store, repo))
@@ -433,7 +495,13 @@ fn write_source_fact_event(
     );
     let event_id = format!(
         "event_{:x}",
-        Sha256::digest(format!("{logical_key}\0{}\0{}", atom.statement, observation.content_digest).as_bytes())
+        Sha256::digest(
+            format!(
+                "{logical_key}\0{}\0{}",
+                atom.statement, observation.content_digest
+            )
+            .as_bytes()
+        )
     );
     let authority_id = if store == crate::StoreKind::Company {
         "company-steward"
@@ -462,8 +530,16 @@ fn write_source_fact_event(
         effective_until: observation.effective_until.clone(),
         disposition: record.disposition.clone(),
         distortion: distortion_for(&atom.atom_kind),
-        parents: old_event.as_ref().map(|old| old.fact_id.clone()).into_iter().collect(),
-        supersedes: old_event.as_ref().map(|old| old.event_id.clone()).into_iter().collect(),
+        parents: old_event
+            .as_ref()
+            .map(|old| old.fact_id.clone())
+            .into_iter()
+            .collect(),
+        supersedes: old_event
+            .as_ref()
+            .map(|old| old.event_id.clone())
+            .into_iter()
+            .collect(),
         redundancy_with: Vec::new(),
         complements: Vec::new(),
         company_refs: Vec::<CompanyReference>::new(),

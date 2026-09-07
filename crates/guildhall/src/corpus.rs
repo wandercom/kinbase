@@ -17,7 +17,13 @@ pub fn rebuild(repo: &Path, store: crate::StoreKind, json: bool) -> Result<(), C
         for event in &events {
             if !public_key.exists()
                 || !crate::store::verify_event_signature(event, &public_key).map_err(|error| {
-                    ContractError::new("SIGNATURE_INVALID", error, "Quarantine the event and rerun full fsck.", false, ExitCode::IntegrityFailure)
+                    ContractError::new(
+                        "SIGNATURE_INVALID",
+                        error,
+                        "Quarantine the event and rerun full fsck.",
+                        false,
+                        ExitCode::IntegrityFailure,
+                    )
                 })?
             {
                 return Err(ContractError::new(
@@ -140,7 +146,8 @@ fn create_reducer_unknowns(
             map.remove("signature");
         }
         let unsigned = crate::json::canonical_text(&value);
-        unknown.signature = crate::crypto::sign_message("unknown-event", unsigned.as_bytes(), &private_key)?;
+        unknown.signature =
+            crate::crypto::sign_message("unknown-event", unsigned.as_bytes(), &private_key)?;
         let record = serde_json::to_value(&unknown)
             .map_err(|error| ContractError::internal(error.to_string()))?;
         crate::store::append_record(store, repo, "unknowns.jsonl", &record).map_err(io_error)?;
@@ -205,7 +212,10 @@ fn print_value(value: &Value, json: bool) {
     } else {
         println!(
             "status: {}",
-            value.get("status").and_then(Value::as_str).unwrap_or("rebuilt")
+            value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("rebuilt")
         );
         if let Some(count) = value.get("fact_count").and_then(Value::as_u64) {
             println!("fact_count: {count}");

@@ -27,17 +27,30 @@ pub fn issue_certificate(repo: &Path, company: &str, json: bool) -> Result<(), C
     )?;
     certificate["signature"] = Value::String(signature);
     if json {
-        println!("{}", serde_json::to_string(&certificate).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string(&certificate).unwrap_or_default()
+        );
     } else {
-        println!("{}", serde_json::to_string_pretty(&certificate).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&certificate).unwrap_or_default()
+        );
     }
     Ok(())
 }
 
 pub fn init(repo: &Path, certificate: &Path, json: bool) -> Result<(), ContractError> {
     let bytes = std::fs::read(certificate).map_err(io_error)?;
-    let map: Map<String, Value> = parse_strict_object(&bytes)
-        .map_err(|error| ContractError::new("CONFIG_INVARIANT", error, "Use a steward-issued repository certificate.", false, ExitCode::Refused))?;
+    let map: Map<String, Value> = parse_strict_object(&bytes).map_err(|error| {
+        ContractError::new(
+            "CONFIG_INVARIANT",
+            error,
+            "Use a steward-issued repository certificate.",
+            false,
+            ExitCode::Refused,
+        )
+    })?;
     if map.get("schema").and_then(Value::as_str) != Some("guildhall-repo-certificate/1") {
         return Err(ContractError::new(
             "CONFIG_INVARIANT",
@@ -50,7 +63,15 @@ pub fn init(repo: &Path, certificate: &Path, json: bool) -> Result<(), ContractE
     let signature = map
         .get("signature")
         .and_then(Value::as_str)
-        .ok_or_else(|| ContractError::new("SIGNATURE_INVALID", "certificate signature missing", "Ask the Company steward for a signed certificate.", false, ExitCode::IntegrityFailure))?
+        .ok_or_else(|| {
+            ContractError::new(
+                "SIGNATURE_INVALID",
+                "certificate signature missing",
+                "Ask the Company steward for a signed certificate.",
+                false,
+                ExitCode::IntegrityFailure,
+            )
+        })?
         .to_owned();
     let mut unsigned = map.clone();
     unsigned.remove("signature");
@@ -75,11 +96,24 @@ pub fn init(repo: &Path, certificate: &Path, json: bool) -> Result<(), ContractE
     let repository_id = map
         .get("repository_uuid")
         .and_then(Value::as_str)
-        .ok_or_else(|| ContractError::new("CONFIG_INVARIANT", "repository UUID missing", "Use a steward-issued certificate.", false, ExitCode::Refused))?;
-    let company = map
-        .get("company")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ContractError::new("CONFIG_INVARIANT", "company hint missing", "Use a steward-issued certificate.", false, ExitCode::Refused))?;
+        .ok_or_else(|| {
+            ContractError::new(
+                "CONFIG_INVARIANT",
+                "repository UUID missing",
+                "Use a steward-issued certificate.",
+                false,
+                ExitCode::Refused,
+            )
+        })?;
+    let company = map.get("company").and_then(Value::as_str).ok_or_else(|| {
+        ContractError::new(
+            "CONFIG_INVARIANT",
+            "company hint missing",
+            "Use a steward-issued certificate.",
+            false,
+            ExitCode::Refused,
+        )
+    })?;
     let kin = repo.join(".kin");
     std::fs::create_dir_all(kin.join("events")).map_err(io_error)?;
     std::fs::create_dir_all(kin.join("manifests")).map_err(io_error)?;
@@ -96,7 +130,8 @@ pub fn init(repo: &Path, certificate: &Path, json: bool) -> Result<(), ContractE
         if !attributes.is_empty() && !attributes.ends_with('\n') {
             attributes.push('\n');
         }
-        attributes.push_str(".kin/events/** -text -diff -merge\n.kin/manifests/** -text -diff -merge\n");
+        attributes
+            .push_str(".kin/events/** -text -diff -merge\n.kin/manifests/** -text -diff -merge\n");
         std::fs::write(&attributes_path, attributes).map_err(io_error)?;
     }
     let result = json!({"status":"repo-initialized", "repository_uuid":repository_id});
@@ -149,7 +184,14 @@ pub fn status(repo: &Path, json: bool) -> Result<(), ContractError> {
 pub fn doctor(repo: &Path, host: Option<crate::HostKind>, json: bool) -> Result<(), ContractError> {
     let reservations = std::env::current_dir()
         .ok()
-        .and_then(|current| crate::store::read_records(crate::StoreKind::Personal, &current, "prompt-reservations.jsonl").ok())
+        .and_then(|current| {
+            crate::store::read_records(
+                crate::StoreKind::Personal,
+                &current,
+                "prompt-reservations.jsonl",
+            )
+            .ok()
+        })
         .unwrap_or_default();
     let result = json!({
         "capabilities": ["company", "codebase"],
@@ -196,20 +238,44 @@ pub fn fsck(repo: &Path, full: bool, json: bool) -> Result<(), ContractError> {
     for path in event_files {
         let bytes = std::fs::read(&path).map_err(io_error)?;
         if bytes.len() > 64 * 1024 {
-            return Err(ContractError::new("LIMIT_EXCEEDED", "event exceeds 64 KiB", "Use a smaller atom or new schema version.", false, ExitCode::Refused));
+            return Err(ContractError::new(
+                "LIMIT_EXCEEDED",
+                "event exceeds 64 KiB",
+                "Use a smaller atom or new schema version.",
+                false,
+                ExitCode::Refused,
+            ));
         }
-        let event = crate::store::parse_event(&bytes)
-            .map_err(|error| ContractError::new("SIGNATURE_INVALID", error, "Quarantine the malformed event and rerun full fsck.", false, ExitCode::IntegrityFailure))?;
-        let canonical = canonical_bytes(&serde_json::to_value(&event).map_err(|error| ContractError::internal(error.to_string()))?);
+        let event = crate::store::parse_event(&bytes).map_err(|error| {
+            ContractError::new(
+                "SIGNATURE_INVALID",
+                error,
+                "Quarantine the malformed event and rerun full fsck.",
+                false,
+                ExitCode::IntegrityFailure,
+            )
+        })?;
+        let canonical = canonical_bytes(
+            &serde_json::to_value(&event)
+                .map_err(|error| ContractError::internal(error.to_string()))?,
+        );
         let digest = sha256_bytes(&canonical);
         let expected = kin
             .join("events")
-            .join(format!("{}{}{}", &digest[0..2], &digest[2..4], &digest[4..]))
+            .join(format!(
+                "{}{}{}",
+                &digest[0..2],
+                &digest[2..4],
+                &digest[4..]
+            ))
             .with_extension("json");
         if path != expected || !is_sha256(&digest) {
             return Err(ContractError::new(
                 "DIGEST_MISMATCH",
-                format!("event path does not match canonical digest: {}", event.event_id),
+                format!(
+                    "event path does not match canonical digest: {}",
+                    event.event_id
+                ),
                 "Run full fsck and repair the content-addressed event tree.",
                 false,
                 ExitCode::IntegrityFailure,
@@ -227,8 +293,15 @@ pub fn fsck(repo: &Path, full: bool, json: bool) -> Result<(), ContractError> {
             ));
         }
         if !public_key.exists()
-            || !crate::store::verify_event_signature(&event, &public_key)
-                .map_err(|error| ContractError::new("SIGNATURE_INVALID", error, "Quarantine the event and rerun full fsck.", false, ExitCode::IntegrityFailure))?
+            || !crate::store::verify_event_signature(&event, &public_key).map_err(|error| {
+                ContractError::new(
+                    "SIGNATURE_INVALID",
+                    error,
+                    "Quarantine the event and rerun full fsck.",
+                    false,
+                    ExitCode::IntegrityFailure,
+                )
+            })?
         {
             return Err(ContractError::new(
                 "SIGNATURE_INVALID",
@@ -243,18 +316,42 @@ pub fn fsck(repo: &Path, full: bool, json: bool) -> Result<(), ContractError> {
     let manifests = collect_event_paths(&kin.join("manifests"))?;
     for path in &manifests {
         let bytes = std::fs::read(path).map_err(io_error)?;
-        let map = parse_strict_object(&bytes)
-            .map_err(|error| ContractError::new("SIGNATURE_INVALID", error, "Quarantine the malformed manifest.", false, ExitCode::IntegrityFailure))?;
+        let map = parse_strict_object(&bytes).map_err(|error| {
+            ContractError::new(
+                "SIGNATURE_INVALID",
+                error,
+                "Quarantine the malformed manifest.",
+                false,
+                ExitCode::IntegrityFailure,
+            )
+        })?;
         if map.get("schema").and_then(Value::as_str) != Some("guildhall-manifest/1") {
-            return Err(ContractError::new("SIGNATURE_INVALID", "unsupported manifest schema", "Quarantine the manifest.", false, ExitCode::IntegrityFailure));
+            return Err(ContractError::new(
+                "SIGNATURE_INVALID",
+                "unsupported manifest schema",
+                "Quarantine the manifest.",
+                false,
+                ExitCode::IntegrityFailure,
+            ));
         }
         let digest = sha256_bytes(&canonical_bytes(&Value::Object(map)));
         let expected = kin
             .join("manifests")
-            .join(format!("{}{}{}", &digest[0..2], &digest[2..4], &digest[4..]))
+            .join(format!(
+                "{}{}{}",
+                &digest[0..2],
+                &digest[2..4],
+                &digest[4..]
+            ))
             .with_extension("json");
         if *path != expected {
-            return Err(ContractError::new("DIGEST_MISMATCH", "manifest path does not match canonical bytes", "Republish the manifest from verified events.", false, ExitCode::IntegrityFailure));
+            return Err(ContractError::new(
+                "DIGEST_MISMATCH",
+                "manifest path does not match canonical bytes",
+                "Republish the manifest from verified events.",
+                false,
+                ExitCode::IntegrityFailure,
+            ));
         }
     }
     let result = json!({"status":"ok", "event_count":event_count, "manifest_count":manifests.len(), "full":full});
@@ -283,12 +380,27 @@ fn collect_paths(path: &Path, output: &mut Vec<PathBuf>) -> Result<(), ContractE
 pub fn repository_id(repo: &Path) -> Result<String, ContractError> {
     let config_path = repo.join(".kin").join("config");
     let bytes = std::fs::read(&config_path).map_err(io_error)?;
-    let map: Map<String, Value> = parse_strict_object(&bytes)
-        .map_err(|error| ContractError::new("CONFIG_INVARIANT", error, "Run repo init first.", false, ExitCode::Refused))?;
+    let map: Map<String, Value> = parse_strict_object(&bytes).map_err(|error| {
+        ContractError::new(
+            "CONFIG_INVARIANT",
+            error,
+            "Run repo init first.",
+            false,
+            ExitCode::Refused,
+        )
+    })?;
     map.get("repository_uuid")
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .ok_or_else(|| ContractError::new("CONFIG_INVARIANT", "repository UUID missing", "Run repo init.", false, ExitCode::Refused))
+        .ok_or_else(|| {
+            ContractError::new(
+                "CONFIG_INVARIANT",
+                "repository UUID missing",
+                "Run repo init.",
+                false,
+                ExitCode::Refused,
+            )
+        })
 }
 
 fn repository_uuid_from_git(repo: &Path) -> Result<String, ContractError> {
@@ -331,7 +443,10 @@ fn print_value(value: &Value, json: bool) {
     } else {
         println!(
             "status: {}",
-            value.get("status").and_then(Value::as_str).unwrap_or("recorded")
+            value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("recorded")
         );
         if let Some(count) = value.get("event_count").and_then(Value::as_u64) {
             println!("event_count: {count}");

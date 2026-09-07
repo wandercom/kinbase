@@ -56,9 +56,7 @@ fn repo() -> Result<std::path::PathBuf, ContractError> {
 fn personal_records(name: &str) -> Vec<Value> {
     repo()
         .ok()
-        .and_then(|repo| {
-            crate::store::read_records(crate::StoreKind::Personal, &repo, name).ok()
-        })
+        .and_then(|repo| crate::store::read_records(crate::StoreKind::Personal, &repo, name).ok())
         .unwrap_or_default()
 }
 
@@ -128,9 +126,9 @@ fn find_candidate(candidate: &str) -> Result<Value, ContractError> {
 }
 
 fn decision_for(candidate: &str) -> Option<Value> {
-    personal_records("proposal-decisions.jsonl").into_iter().find(|record| {
-        record.get("candidate_id").and_then(Value::as_str) == Some(candidate)
-    })
+    personal_records("proposal-decisions.jsonl")
+        .into_iter()
+        .find(|record| record.get("candidate_id").and_then(Value::as_str) == Some(candidate))
 }
 
 fn expired(record: &Value) -> Result<bool, ContractError> {
@@ -138,13 +136,23 @@ fn expired(record: &Value) -> Result<bool, ContractError> {
         .get("expires_at")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let expires = parse_rfc3339_millis(expires)
-        .map_err(|error| ContractError::new("CONFIG_INVARIANT", error, "Use a valid candidate expiry.", false, ExitCode::Refused))?;
+    let expires = parse_rfc3339_millis(expires).map_err(|error| {
+        ContractError::new(
+            "CONFIG_INVARIANT",
+            error,
+            "Use a valid candidate expiry.",
+            false,
+            ExitCode::Refused,
+        )
+    })?;
     Ok(expires <= Utc::now())
 }
 
 fn reserve_prompt(record: &Value) -> Result<(), ContractError> {
-    let candidate = record.get("candidate_id").and_then(Value::as_str).unwrap_or_default();
+    let candidate = record
+        .get("candidate_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let existing = personal_records("prompt-reservations.jsonl")
         .into_iter()
         .any(|reservation| {
@@ -167,7 +175,9 @@ fn reserve_prompt(record: &Value) -> Result<(), ContractError> {
                     .get("reserved_at")
                     .and_then(Value::as_str)
                     .and_then(|time| parse_rfc3339_millis(time).ok())
-                    .is_some_and(|time| now.signed_duration_since(time).num_seconds() < PROMPT_WINDOW_SECONDS)
+                    .is_some_and(|time| {
+                        now.signed_duration_since(time).num_seconds() < PROMPT_WINDOW_SECONDS
+                    })
         })
         .collect();
     if recent.len() >= PROMPT_WINDOW_LIMIT {
@@ -248,15 +258,25 @@ fn show(candidate: &str, destination: &str, json: bool) -> Result<(), ContractEr
     if json {
         println!("{}", serde_json::to_string(&result).unwrap_or_default());
     } else {
-        let escaped = crate::json::escape_exact(canonical)
-            .map_err(|error| ContractError::new("CONFIG_INVARIANT", error, "Use valid canonical candidate bytes.", false, ExitCode::Refused))?;
+        let escaped = crate::json::escape_exact(canonical).map_err(|error| {
+            ContractError::new(
+                "CONFIG_INVARIANT",
+                error,
+                "Use valid canonical candidate bytes.",
+                false,
+                ExitCode::Refused,
+            )
+        })?;
         println!("Candidate: {candidate}");
         println!("Destination: {destination}");
         println!("Canonical UTF-8 (exact): {escaped}");
         println!("SHA-256: {digest}");
         println!(
             "Expires at: {}",
-            record.get("expires_at").and_then(Value::as_str).unwrap_or("unknown")
+            record
+                .get("expires_at")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
         );
     }
     Ok(())
@@ -325,7 +345,10 @@ fn decide(
             ));
         }
         let token = candidate_token(&record)?;
-        let signature = record.get("signature").and_then(Value::as_str).unwrap_or_default();
+        let signature = record
+            .get("signature")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let (_, public_key) = crate::crypto::ensure_keypair(crate::StoreKind::Personal, &repo()?)?;
         let valid = crate::crypto::verify_message(
             "approval-token",
@@ -367,7 +390,8 @@ fn decide(
         "receipt_id": format!("receipt_{}", Uuid::new_v4())
     });
     if decision == "approve" {
-        let (fact_id, event_id) = write_fact_event(destination_store(destination)?, &repo()?, &record)?;
+        let (fact_id, event_id) =
+            write_fact_event(destination_store(destination)?, &repo()?, &record)?;
         receipt["fact_id"] = Value::String(fact_id);
         receipt["event_id"] = Value::String(event_id);
     } else if decision == "escalate" {
@@ -395,7 +419,15 @@ fn reissue(candidate: &str, json: bool) -> Result<(), ContractError> {
         .get("created_at")
         .and_then(Value::as_str)
         .and_then(|value| parse_rfc3339_millis(value).ok())
-        .ok_or_else(|| ContractError::new("CONFIG_INVARIANT", "candidate created_at missing", "Create a new candidate.", false, ExitCode::Refused))?;
+        .ok_or_else(|| {
+            ContractError::new(
+                "CONFIG_INVARIANT",
+                "candidate created_at missing",
+                "Create a new candidate.",
+                false,
+                ExitCode::Refused,
+            )
+        })?;
     let old_revision = record
         .get("source_revision")
         .and_then(Value::as_str)
@@ -449,10 +481,12 @@ fn reset(
         crate::command_types::ResetReason::OperatorRecovery => "operator-recovery",
         crate::command_types::ResetReason::HostRestart => "host-restart",
     };
-    let event_exists = personal_records("session-events.jsonl").into_iter().any(|event| {
-        event.get("event_id").and_then(Value::as_str) == Some(after_primary_event)
-            && event.get("event_type").and_then(Value::as_str) == Some("primary-task")
-    });
+    let event_exists = personal_records("session-events.jsonl")
+        .into_iter()
+        .any(|event| {
+            event.get("event_id").and_then(Value::as_str) == Some(after_primary_event)
+                && event.get("event_type").and_then(Value::as_str) == Some("primary-task")
+        });
     if !event_exists {
         return Err(ContractError::new(
             "CONFIG_INVARIANT",
@@ -463,13 +497,18 @@ fn reset(
         ));
     }
     let now = Utc::now();
-    if personal_records("proposal-resets.jsonl").into_iter().any(|reset| {
-        reset
-            .get("reset_at")
-            .and_then(Value::as_str)
-            .and_then(|time| parse_rfc3339_millis(time).ok())
-            .is_some_and(|time| now.signed_duration_since(time).num_seconds() < PROMPT_WINDOW_SECONDS)
-    }) {
+    if personal_records("proposal-resets.jsonl")
+        .into_iter()
+        .any(|reset| {
+            reset
+                .get("reset_at")
+                .and_then(Value::as_str)
+                .and_then(|time| parse_rfc3339_millis(time).ok())
+                .is_some_and(|time| {
+                    now.signed_duration_since(time).num_seconds() < PROMPT_WINDOW_SECONDS
+                })
+        })
+    {
         return Err(ContractError::new(
             "LIMIT_EXCEEDED",
             "consecutive counter reset is limited to once per hour",
@@ -514,14 +553,35 @@ pub fn write_fact_event(
         .get("canonical")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let map: Map<String, Value> = parse_strict_object(canonical.as_bytes())
-        .map_err(|error| ContractError::new("DIGEST_MISMATCH", error, "Use the exact candidate bytes.", false, ExitCode::IntegrityFailure))?;
-    let scope = map.get("scope").and_then(Value::as_str).unwrap_or("repository");
+    let map: Map<String, Value> = parse_strict_object(canonical.as_bytes()).map_err(|error| {
+        ContractError::new(
+            "DIGEST_MISMATCH",
+            error,
+            "Use the exact candidate bytes.",
+            false,
+            ExitCode::IntegrityFailure,
+        )
+    })?;
+    let scope = map
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("repository");
     let statement = map
         .get("statement")
         .and_then(Value::as_str)
-        .ok_or_else(|| ContractError::new("DIGEST_MISMATCH", "candidate lacks statement", "Create a valid candidate.", false, ExitCode::IntegrityFailure))?;
-    let atom_kind = map.get("atom_kind").and_then(Value::as_str).unwrap_or("observation");
+        .ok_or_else(|| {
+            ContractError::new(
+                "DIGEST_MISMATCH",
+                "candidate lacks statement",
+                "Create a valid candidate.",
+                false,
+                ExitCode::IntegrityFailure,
+            )
+        })?;
+    let atom_kind = map
+        .get("atom_kind")
+        .and_then(Value::as_str)
+        .unwrap_or("observation");
     let repository_id = (store == crate::StoreKind::Codebase)
         .then(|| crate::repository::repository_id(repo))
         .transpose()?;
@@ -531,7 +591,13 @@ pub fn write_fact_event(
     );
     let event_id = format!(
         "event_{:x}",
-        Sha256::digest(record.get("payload_digest").and_then(Value::as_str).unwrap_or_default().as_bytes())
+        Sha256::digest(
+            record
+                .get("payload_digest")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .as_bytes()
+        )
     );
     let authority_id = if store == crate::StoreKind::Company {
         "company-steward"
@@ -551,11 +617,13 @@ pub fn write_fact_event(
         atom_kind: atom_kind.to_owned(),
         scope: scope.to_owned(),
         statement: statement.to_owned(),
-        evidence_refs: vec![record
-            .get("candidate_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned()],
+        evidence_refs: vec![
+            record
+                .get("candidate_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        ],
         asserted_at: now.clone(),
         effective_from: now,
         effective_until: None,
@@ -584,10 +652,20 @@ pub fn write_fact_event(
     Ok((fact_id, event_id))
 }
 
-fn create_unknown(store: crate::StoreKind, repo: &Path, record: &Value) -> Result<String, ContractError> {
+fn create_unknown(
+    store: crate::StoreKind,
+    repo: &Path,
+    record: &Value,
+) -> Result<String, ContractError> {
     let unknown_id = format!(
         "unknown_{:x}",
-        Sha256::digest(record.get("payload_digest").and_then(Value::as_str).unwrap_or_default().as_bytes())
+        Sha256::digest(
+            record
+                .get("payload_digest")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .as_bytes()
+        )
     );
     let now = now_rfc3339_millis();
     let owner_role = if store == crate::StoreKind::Company {
@@ -626,13 +704,16 @@ fn create_unknown(store: crate::StoreKind, repo: &Path, record: &Value) -> Resul
         signature: String::new(),
     };
     let (private_key, _) = crate::crypto::ensure_keypair(store, repo)?;
-    let mut value = serde_json::to_value(&unknown).map_err(|error| ContractError::internal(error.to_string()))?;
+    let mut value = serde_json::to_value(&unknown)
+        .map_err(|error| ContractError::internal(error.to_string()))?;
     if let Value::Object(map) = &mut value {
         map.remove("signature");
     }
     let unsigned = canonical_text(&value);
-    unknown.signature = crate::crypto::sign_message("unknown-event", unsigned.as_bytes(), &private_key)?;
-    let record = serde_json::to_value(&unknown).map_err(|error| ContractError::internal(error.to_string()))?;
+    unknown.signature =
+        crate::crypto::sign_message("unknown-event", unsigned.as_bytes(), &private_key)?;
+    let record = serde_json::to_value(&unknown)
+        .map_err(|error| ContractError::internal(error.to_string()))?;
     crate::store::append_record(store, repo, "unknowns.jsonl", &record).map_err(io_error)?;
     Ok(unknown_id)
 }
@@ -651,7 +732,11 @@ fn print_value(value: &Value, json: bool) {
     } else {
         println!(
             "status: {}",
-            value.get("status").or_else(|| value.get("decision")).and_then(Value::as_str).unwrap_or("recorded")
+            value
+                .get("status")
+                .or_else(|| value.get("decision"))
+                .and_then(Value::as_str)
+                .unwrap_or("recorded")
         );
         if let Some(candidate) = value.get("candidate_id").and_then(Value::as_str) {
             println!("candidate: {candidate}");

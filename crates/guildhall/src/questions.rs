@@ -73,14 +73,25 @@ fn find_unknown(question_id: &str) -> Result<Value, ContractError> {
     ))
 }
 
-fn company_or_store_unknown(store: crate::StoreKind, unknown_id: &str) -> Result<Value, ContractError> {
+fn company_or_store_unknown(
+    store: crate::StoreKind,
+    unknown_id: &str,
+) -> Result<Value, ContractError> {
     let repo = repo()?;
     let records = crate::store::read_records(store, &repo, "unknowns.jsonl").map_err(io_error)?;
     records
         .into_iter()
         .rev()
         .find(|record| record.get("unknown_id").and_then(Value::as_str) == Some(unknown_id))
-        .ok_or_else(|| ContractError::new("CONFIG_INVARIANT", "Unknown not found", "Use an existing Unknown ID.", false, ExitCode::Refused))
+        .ok_or_else(|| {
+            ContractError::new(
+                "CONFIG_INVARIANT",
+                "Unknown not found",
+                "Use an existing Unknown ID.",
+                false,
+                ExitCode::Refused,
+            )
+        })
 }
 
 fn scope_kind(scope: &str) -> &'static str {
@@ -128,7 +139,15 @@ fn verify_registry_entry(entry: &Value) -> Result<(), ContractError> {
     let signature = entry
         .get("signature")
         .and_then(Value::as_str)
-        .ok_or_else(|| ContractError::new("SIGNATURE_INVALID", "authority registry entry lacks signature", "Ask the Company steward to publish a signed registry entry.", false, ExitCode::IntegrityFailure))?;
+        .ok_or_else(|| {
+            ContractError::new(
+                "SIGNATURE_INVALID",
+                "authority registry entry lacks signature",
+                "Ask the Company steward to publish a signed registry entry.",
+                false,
+                ExitCode::IntegrityFailure,
+            )
+        })?;
     let mut unsigned = entry.clone();
     if let Value::Object(map) = &mut unsigned {
         map.remove("signature");
@@ -149,7 +168,12 @@ fn verify_registry_entry(entry: &Value) -> Result<(), ContractError> {
             ExitCode::IntegrityFailure,
         ));
     }
-    if entry.get("public_key").and_then(Value::as_str).unwrap_or_default().is_empty() {
+    if entry
+        .get("public_key")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .is_empty()
+    {
         return Err(ContractError::new(
             "CONFIG_INVARIANT",
             "authority public key missing",
@@ -163,16 +187,21 @@ fn verify_registry_entry(entry: &Value) -> Result<(), ContractError> {
 
 fn ask(question_id: &str, json: bool) -> Result<(), ContractError> {
     let unknown = find_unknown(question_id)?;
-    let scope = unknown.get("scope").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let scope = unknown
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
     let question_kind = scope_kind(&scope).to_owned();
     let authority = active_authority(&scope, &question_kind)?;
     let authority_id = authority
         .get("authority_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if company_records("questions.jsonl").into_iter().any(|question| {
-        question.get("unknown_id").and_then(Value::as_str) == Some(question_id)
-    }) {
+    if company_records("questions.jsonl")
+        .into_iter()
+        .any(|question| question.get("unknown_id").and_then(Value::as_str) == Some(question_id))
+    {
         let result = json!({"unknown_id": question_id, "status": "already-queued", "authority_id": authority_id});
         print_value(&result, json);
         return Ok(());
@@ -207,18 +236,42 @@ fn answer(
     json: bool,
 ) -> Result<(), ContractError> {
     let answer_bytes = std::fs::read(answer_file).map_err(io_error)?;
-    let map: Map<String, Value> = parse_strict_object(&answer_bytes)
-        .map_err(|error| ContractError::new("CONFIG_INVARIANT", error, "Use a canonical signed answer object.", false, ExitCode::Refused))?;
+    let map: Map<String, Value> = parse_strict_object(&answer_bytes).map_err(|error| {
+        ContractError::new(
+            "CONFIG_INVARIANT",
+            error,
+            "Use a canonical signed answer object.",
+            false,
+            ExitCode::Refused,
+        )
+    })?;
     let question = company_records("questions.jsonl")
         .into_iter()
         .find(|record| {
             record.get("question_id").and_then(Value::as_str) == Some(question_id)
                 || record.get("unknown_id").and_then(Value::as_str) == Some(question_id)
         })
-        .ok_or_else(|| ContractError::new("CONFIG_INVARIANT", "question not found", "Ask the Unknown before answering it.", false, ExitCode::Refused))?;
-    let scope = question.get("scope").and_then(Value::as_str).unwrap_or_default();
-    let authority_id = question.get("authority_id").and_then(Value::as_str).unwrap_or_default();
-    let supplied_authority = map.get("authority_id").and_then(Value::as_str).unwrap_or_default();
+        .ok_or_else(|| {
+            ContractError::new(
+                "CONFIG_INVARIANT",
+                "question not found",
+                "Ask the Unknown before answering it.",
+                false,
+                ExitCode::Refused,
+            )
+        })?;
+    let scope = question
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let authority_id = question
+        .get("authority_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let supplied_authority = map
+        .get("authority_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if supplied_authority != authority_id {
         return Err(ContractError::new(
             "AUTHORITY_WRONG_SCOPE",
@@ -228,7 +281,13 @@ fn answer(
             ExitCode::Refused,
         ));
     }
-    let authority = active_authority(scope, question.get("question_kind").and_then(Value::as_str).unwrap_or("general"))?;
+    let authority = active_authority(
+        scope,
+        question
+            .get("question_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("general"),
+    )?;
     if authority.get("authority_id").and_then(Value::as_str) != Some(authority_id) {
         return Err(ContractError::new(
             "AUTHORITY_WRONG_SCOPE",
@@ -238,10 +297,15 @@ fn answer(
             ExitCode::Refused,
         ));
     }
-    let answer_text = map
-        .get("answer")
-        .and_then(Value::as_str)
-        .ok_or_else(|| ContractError::new("CONFIG_INVARIANT", "answer text missing", "Use a canonical answer object.", false, ExitCode::Refused))?;
+    let answer_text = map.get("answer").and_then(Value::as_str).ok_or_else(|| {
+        ContractError::new(
+            "CONFIG_INVARIANT",
+            "answer text missing",
+            "Use a canonical answer object.",
+            false,
+            ExitCode::Refused,
+        )
+    })?;
     if hard_blocked(answer_text) {
         return Err(ContractError::new(
             "PERSONAL_TAINT_BLOCKED",
@@ -256,11 +320,17 @@ fn answer(
         .get("public_key")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let decoded = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        public_key_text,
-    )
-    .map_err(|error| ContractError::new("SIGNATURE_INVALID", error.to_string(), "Use a valid registered public key.", false, ExitCode::IntegrityFailure))?;
+    let decoded =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, public_key_text)
+            .map_err(|error| {
+                ContractError::new(
+                    "SIGNATURE_INVALID",
+                    error.to_string(),
+                    "Use a valid registered public key.",
+                    false,
+                    ExitCode::IntegrityFailure,
+                )
+            })?;
     let public_path = repo()?.join(".guildhall-authority.pub");
     std::fs::write(&public_path, decoded).map_err(io_error)?;
     if !crate::crypto::verify_message("answer", &answer_bytes, &signature, &public_path)? {
@@ -288,7 +358,8 @@ fn answer(
         "answered_at": now_rfc3339_millis()
     });
     append_company("answers.jsonl", &answer_record)?;
-    let (fact_id, event_id) = write_authority_fact(&question, &answer_text, &answer_id, authority_id, scope)?;
+    let (fact_id, event_id) =
+        write_authority_fact(&question, &answer_text, &answer_id, authority_id, scope)?;
     close_unknown(&question, &answer_id)?;
     let result = json!({
         "status": "answered",
@@ -332,7 +403,11 @@ fn write_authority_fact(
         scope: scope.to_owned(),
         statement: answer_text.to_owned(),
         evidence_refs: vec![
-            question.get("question_id").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            question
+                .get("question_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
             answer_id.to_owned(),
         ],
         asserted_at: now.clone(),
@@ -358,7 +433,8 @@ fn write_authority_fact(
     let (private_key, _) = crate::crypto::ensure_keypair(crate::StoreKind::Company, &repo)?;
     let unsigned = crate::store::event_canonical_text(&event);
     event.signature = crate::crypto::sign_message("fact-event", unsigned.as_bytes(), &private_key)?;
-    let root = crate::store::ensure_store_root(crate::StoreKind::Company, &repo).map_err(io_error)?;
+    let root =
+        crate::store::ensure_store_root(crate::StoreKind::Company, &repo).map_err(io_error)?;
     crate::store::write_content_addressed_event(&root, &event).map_err(io_error)?;
     Ok((fact_id, event_id))
 }
@@ -369,21 +445,51 @@ fn close_unknown(question: &Value, answer_id: &str) -> Result<(), ContractError>
         .and_then(Value::as_str)
         .unwrap_or_default();
     let prior = find_unknown(unknown_id)?;
-    let owner_role = prior.get("owner_role").and_then(Value::as_str).unwrap_or("company-steward");
-    let scope = prior.get("scope").and_then(Value::as_str).unwrap_or("architecture:company");
+    let owner_role = prior
+        .get("owner_role")
+        .and_then(Value::as_str)
+        .unwrap_or("company-steward");
+    let scope = prior
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("architecture:company");
     let mut unknown = UnknownEvent {
         schema: crate::model::UNKNOWN_SCHEMA.to_owned(),
         unknown_id: unknown_id.to_owned(),
-        store_kind: prior.get("store_kind").and_then(Value::as_str).unwrap_or("company").to_owned(),
+        store_kind: prior
+            .get("store_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("company")
+            .to_owned(),
         scope: scope.to_owned(),
-        decision_blocked: prior.get("decision_blocked").and_then(Value::as_str).unwrap_or("authority answer").to_owned(),
+        decision_blocked: prior
+            .get("decision_blocked")
+            .and_then(Value::as_str)
+            .unwrap_or("authority answer")
+            .to_owned(),
         owner_role: owner_role.to_owned(),
-        owner_identity: prior.get("owner_identity").and_then(Value::as_str).unwrap_or(owner_role).to_owned(),
-        question: prior.get("question").and_then(Value::as_str).unwrap_or_default().to_owned(),
+        owner_identity: prior
+            .get("owner_identity")
+            .and_then(Value::as_str)
+            .unwrap_or(owner_role)
+            .to_owned(),
+        question: prior
+            .get("question")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
         closure_evidence: vec![answer_id.to_owned()],
         status: "closed".to_owned(),
-        response_due_at: prior.get("response_due_at").and_then(Value::as_str).unwrap_or_default().to_owned(),
-        expiry_policy: prior.get("expiry_policy").and_then(Value::as_str).unwrap_or("block-dependent-decision").to_owned(),
+        response_due_at: prior
+            .get("response_due_at")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        expiry_policy: prior
+            .get("expiry_policy")
+            .and_then(Value::as_str)
+            .unwrap_or("block-dependent-decision")
+            .to_owned(),
         distortion: Distortion {
             trigger: "authority closure".to_owned(),
             loss_if_absent: 0,
@@ -400,7 +506,11 @@ fn close_unknown(question: &Value, answer_id: &str) -> Result<(), ContractError>
     if let Value::Object(map) = &mut value {
         map.remove("signature");
     }
-    unknown.signature = crate::crypto::sign_message("unknown-event", canonical_text(&value).as_bytes(), &private_key)?;
+    unknown.signature = crate::crypto::sign_message(
+        "unknown-event",
+        canonical_text(&value).as_bytes(),
+        &private_key,
+    )?;
     let record = serde_json::to_value(&unknown)
         .map_err(|error| ContractError::internal(error.to_string()))?;
     let store_kind = unknown.store_kind.clone();
@@ -414,10 +524,12 @@ fn close_unknown(question: &Value, answer_id: &str) -> Result<(), ContractError>
 }
 
 fn status(question_id: &str, json: bool) -> Result<(), ContractError> {
-    let question = company_records("questions.jsonl").into_iter().find(|record| {
-        record.get("question_id").and_then(Value::as_str) == Some(question_id)
-            || record.get("unknown_id").and_then(Value::as_str) == Some(question_id)
-    });
+    let question = company_records("questions.jsonl")
+        .into_iter()
+        .find(|record| {
+            record.get("question_id").and_then(Value::as_str) == Some(question_id)
+                || record.get("unknown_id").and_then(Value::as_str) == Some(question_id)
+        });
     let answer = company_records("answers.jsonl").into_iter().find(|record| {
         record.get("question_id").and_then(Value::as_str) == Some(question_id)
             || record.get("unknown_id").and_then(Value::as_str) == Some(question_id)
@@ -438,7 +550,10 @@ fn print_value(value: &Value, json: bool) {
     } else {
         println!(
             "status: {}",
-            value.get("status").and_then(Value::as_str).unwrap_or("recorded")
+            value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("recorded")
         );
     }
 }

@@ -53,7 +53,10 @@ pub fn reduce_with_trace(events: &[FactEvent], as_of: &str) -> ReductionTrace {
             expired_keys.push(event.logical_key.clone());
             continue;
         }
-        groups.entry(event.logical_key.as_str()).or_default().push(event);
+        groups
+            .entry(event.logical_key.as_str())
+            .or_default()
+            .push(event);
     }
 
     let mut facts = Vec::new();
@@ -86,7 +89,11 @@ pub fn reduce_with_trace(events: &[FactEvent], as_of: &str) -> ReductionTrace {
             atom_kind: event.atom_kind.clone(),
             scope: event.scope.clone(),
             statement: event.statement.clone(),
-            status: if conflict { "conflict".to_owned() } else { "current".to_owned() },
+            status: if conflict {
+                "conflict".to_owned()
+            } else {
+                "current".to_owned()
+            },
             disposition: event.disposition.clone(),
             authority_id: event.authority_id.clone(),
             authority_scope: event.authority_scope.clone(),

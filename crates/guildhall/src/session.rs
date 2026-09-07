@@ -37,11 +37,30 @@ pub fn observe(session: &str, event: &Path, json: bool) -> Result<(), ContractEr
     let session_record = sessions
         .into_iter()
         .find(|record| record.get("session_id").and_then(Value::as_str) == Some(session))
-        .ok_or_else(|| ContractError::new("CONFIG_INVARIANT", "session not found", "Start a session before observing events.", false, ExitCode::Refused))?;
-    let host = session_record.get("host").and_then(Value::as_str).unwrap_or("codex");
+        .ok_or_else(|| {
+            ContractError::new(
+                "CONFIG_INVARIANT",
+                "session not found",
+                "Start a session before observing events.",
+                false,
+                ExitCode::Refused,
+            )
+        })?;
+    let host = session_record
+        .get("host")
+        .and_then(Value::as_str)
+        .unwrap_or("codex");
     let bytes = std::fs::read(event).map_err(io_error)?;
-    let event_map: Map<String, Value> = crate::json::parse_strict_object(&bytes)
-        .map_err(|error| ContractError::new("UNSUPPORTED_HOST_VERSION", error, "Use a valid native host event.", false, ExitCode::DegradedSafe))?;
+    let event_map: Map<String, Value> =
+        crate::json::parse_strict_object(&bytes).map_err(|error| {
+            ContractError::new(
+                "UNSUPPORTED_HOST_VERSION",
+                error,
+                "Use a valid native host event.",
+                false,
+                ExitCode::DegradedSafe,
+            )
+        })?;
     let event_type = event_map
         .get("event_type")
         .or_else(|| event_map.get("type"))
@@ -77,7 +96,11 @@ pub fn observe(session: &str, event: &Path, json: bool) -> Result<(), ContractEr
         return Ok(());
     }
     let digest = sha256_bytes(statement.as_bytes());
-    let source_kind = if host == "claude" { "claude_jsonl" } else { "codex_jsonl" };
+    let source_kind = if host == "claude" {
+        "claude_jsonl"
+    } else {
+        "codex_jsonl"
+    };
     let observation_id = format!(
         "obs_{:x}",
         Sha256::digest(format!("{session}\0{event_id}\0{digest}").as_bytes())
@@ -108,14 +131,21 @@ pub fn observe(session: &str, event: &Path, json: bool) -> Result<(), ContractEr
         source_kind,
         &event_id,
         &statement,
-        event_map.get("scope").and_then(Value::as_str).unwrap_or("host-session"),
-        event_map.get("confidence").and_then(Value::as_u64).unwrap_or(6_000).min(10_000) as u16,
+        event_map
+            .get("scope")
+            .and_then(Value::as_str)
+            .unwrap_or("host-session"),
+        event_map
+            .get("confidence")
+            .and_then(Value::as_u64)
+            .unwrap_or(6_000)
+            .min(10_000) as u16,
         &observation_id,
         &digest,
         repository_id.as_deref(),
     );
-    let atom_record = serde_json::to_value(&atom)
-        .map_err(|error| ContractError::internal(error.to_string()))?;
+    let atom_record =
+        serde_json::to_value(&atom).map_err(|error| ContractError::internal(error.to_string()))?;
     append_personal("atoms.jsonl", &atom_record)?;
     let destination = event_map.get("destination").and_then(Value::as_str);
     let mut candidate_id = Value::Null;
@@ -140,7 +170,11 @@ pub fn observe(session: &str, event: &Path, json: bool) -> Result<(), ContractEr
     Ok(())
 }
 
-fn create_candidate(session: &str, destination: &str, atom: &crate::model::Atom) -> Result<String, ContractError> {
+fn create_candidate(
+    session: &str,
+    destination: &str,
+    atom: &crate::model::Atom,
+) -> Result<String, ContractError> {
     crate::proposals::destination_store(destination)?;
     let payload = json!({
         "atom_kind": atom.atom_kind,
@@ -210,10 +244,13 @@ pub fn end(session: &str, json: bool) -> Result<(), ContractError> {
 }
 
 fn require_session(session: &str) -> Result<(), ContractError> {
-    if personal_records("sessions.jsonl").into_iter().any(|record| {
-        record.get("session_id").and_then(Value::as_str) == Some(session)
-            && record.get("status").and_then(Value::as_str) != Some("ended")
-    }) {
+    if personal_records("sessions.jsonl")
+        .into_iter()
+        .any(|record| {
+            record.get("session_id").and_then(Value::as_str) == Some(session)
+                && record.get("status").and_then(Value::as_str) != Some("ended")
+        })
+    {
         Ok(())
     } else {
         Err(ContractError::new(
@@ -251,7 +288,10 @@ fn print_value(value: &Value, json: bool) {
     } else {
         println!(
             "status: {}",
-            value.get("status").and_then(Value::as_str).unwrap_or("recorded")
+            value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("recorded")
         );
         if let Some(session) = value.get("session_id").and_then(Value::as_str) {
             println!("session: {session}");

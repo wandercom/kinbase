@@ -51,7 +51,10 @@ fn plan(host: crate::command_types::Host, json: bool) -> Result<(), ContractErro
     if json {
         println!("{}", crate::json::canonical_text(&result));
     } else {
-        println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap_or_default()
+        );
     }
     Ok(())
 }
@@ -69,11 +72,16 @@ fn install(host_arg: crate::command_types::Host, json: bool) -> Result<(), Contr
             ExitCode::UserActionRequired,
         ));
     }
-    println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&result).unwrap_or_default()
+    );
     println!("Type 'install {host}' to approve:");
     std::io::stdout().flush().map_err(io_error)?;
     let mut approval = String::new();
-    std::io::stdin().read_line(&mut approval).map_err(io_error)?;
+    std::io::stdin()
+        .read_line(&mut approval)
+        .map_err(io_error)?;
     if approval.trim() != format!("install {host}") {
         return Err(ContractError::new(
             "HOOK_APPROVAL_REQUIRED",
@@ -128,8 +136,15 @@ fn dispatch_event(
     } else {
         event.as_bytes().to_vec()
     };
-    let map: Map<String, Value> = crate::json::parse_strict_object(&bytes)
-        .map_err(|error| ContractError::new("UNSUPPORTED_HOST_VERSION", error, "Use a valid native host envelope.", false, ExitCode::DegradedSafe))?;
+    let map: Map<String, Value> = crate::json::parse_strict_object(&bytes).map_err(|error| {
+        ContractError::new(
+            "UNSUPPORTED_HOST_VERSION",
+            error,
+            "Use a valid native host envelope.",
+            false,
+            ExitCode::DegradedSafe,
+        )
+    })?;
     let event_type = map
         .get("event_type")
         .or_else(|| map.get("type"))
