@@ -190,9 +190,17 @@ pub fn run(
         })
         .collect();
     let unknowns = unknown_outputs(&facts, &view_unknowns, &question_unknowns);
+    let roles = Roles::derive(&facts);
     let mut candidate_documents: Vec<(String, Value)> = facts
         .iter()
-        .map(|fact| (fact.fact_id.clone(), candidate_value(fact, &facts)))
+        .map(|fact| (fact.fact_id.clone(), candidate_value(fact, &roles)))
+        .collect();
+    // Byte accounting for the ceilings: each candidate's canonical size once;
+    // a JSON array of k values costs their sizes plus k-1 commas and two
+    // brackets.
+    let value_bytes: BTreeMap<String, usize> = candidate_documents
+        .iter()
+        .map(|(id, value)| (id.clone(), crate::json::canonical_text(value).len()))
         .collect();
     let mut represented_ids: BTreeSet<String> = candidate_documents
         .iter()
@@ -255,12 +263,13 @@ pub fn run(
         ));
     }
     let context_bytes = |set: &[CurrentFact], extra: Option<&CurrentFact>| -> usize {
-        let values: Vec<Value> = set
+        let count = set.len() + usize::from(extra.is_some());
+        let total: usize = set
             .iter()
             .chain(extra)
-            .map(|fact| candidate_value(fact, &facts))
-            .collect();
-        crate::json::canonical_text(&Value::Array(values)).len()
+            .map(|fact| value_bytes.get(fact.fact_id.as_str()).copied().unwrap_or(0))
+            .sum();
+        total + count.saturating_sub(1) + 2
     };
     let mut sufficiency = false;
     let mut byte_ceiling_hit = false;
@@ -289,8 +298,7 @@ pub fn run(
                 .marginal_value
                 .cmp(&left_value.marginal_value)
                 .then_with(|| {
-                    candidate_priority(candidate_role(right, &facts).0)
-                        .cmp(&candidate_priority(candidate_role(left, &facts).0))
+                    candidate_priority(roles.name(right)).cmp(&candidate_priority(roles.name(left)))
                 })
                 .then_with(|| left.fact_id.cmp(&right.fact_id))
         });
@@ -395,7 +403,7 @@ pub fn run(
         .collect();
     let invariant_selected = context
         .iter()
-        .any(|fact| candidate_role(fact, &facts).0 == "high_distortion_compatibility_invariant");
+        .any(|fact| roles.name(fact) == "high_distortion_compatibility_invariant");
     let projection_bytes = context_bytes(&selected, None);
     let resident_bytes = context_bytes(&residents, None);
     let company_reference = company_reference(&context, &facts);
@@ -468,7 +476,7 @@ pub fn run(
         json!({
             "fact_id": fact.fact_id,
             "logical_key": fact.logical_key,
-            "role": candidate_role(fact, &facts).0,
+            "role": roles.name(fact),
             "store_kind": fact.store_kind,
             "resident": resident_ids.contains(&fact.fact_id),
             "selection_reason": if resident_ids.contains(&fact.fact_id) { "working_set_resident" } else { "positive_conditional_marginal_value" }
@@ -741,7 +749,50 @@ fn event_candidate_value(
     })
 }
 
-fn candidate_role(fact: &CurrentFact, all_facts: &[CurrentFact]) -> (&'static str, String) {
+/// Every fact's derived role, computed once: the paraphrase test needs the
+/// set of statements that recur under distinct logical keys, not a scan of
+/// every other fact per call.
+struct Roles {
+    by_id: BTreeMap<String, (&'static str, String)>,
+}
+
+impl Roles {
+    fn derive(facts: &[CurrentFact]) -> Self {
+        let mut keys_by_statement: BTreeMap<String, BTreeSet<&str>> = BTreeMap::new();
+        for fact in facts {
+            keys_by_statement
+                .entry(normalized_statement(&fact.statement))
+                .or_default()
+                .insert(fact.logical_key.as_str());
+        }
+        let duplicated: BTreeSet<String> = keys_by_statement
+            .into_iter()
+            .filter(|(_, keys)| keys.len() > 1)
+            .map(|(statement, _)| statement)
+            .collect();
+        let by_id = facts
+            .iter()
+            .map(|fact| {
+                let restated = duplicated.contains(&normalized_statement(&fact.statement));
+                (fact.fact_id.clone(), candidate_role(fact, restated))
+            })
+            .collect();
+        Self { by_id }
+    }
+
+    fn of(&self, fact: &CurrentFact) -> (&'static str, String) {
+        self.by_id
+            .get(&fact.fact_id)
+            .cloned()
+            .unwrap_or_else(|| candidate_role(fact, false))
+    }
+
+    fn name(&self, fact: &CurrentFact) -> &'static str {
+        self.of(fact).0
+    }
+}
+
+fn candidate_role(fact: &CurrentFact, restated_elsewhere: bool) -> (&'static str, String) {
     if !fact.stale_reasons.is_empty() {
         return ("stale_fact", fact.stale_reasons.join(","));
     }
@@ -777,12 +828,7 @@ fn candidate_role(fact: &CurrentFact, all_facts: &[CurrentFact]) -> (&'static st
         }
         _ => {}
     }
-    let paraphrase = !fact.redundancy_with.is_empty()
-        || all_facts.iter().any(|other| {
-            other.fact_id != fact.fact_id
-                && other.logical_key != fact.logical_key
-                && normalized_statement(&other.statement) == normalized_statement(&fact.statement)
-        });
+    let paraphrase = !fact.redundancy_with.is_empty() || restated_elsewhere;
     if paraphrase {
         return (
             "high_scoring_paraphrase",
@@ -810,8 +856,8 @@ fn normalized_statement(statement: &str) -> String {
         .join(" ")
 }
 
-fn candidate_value(fact: &CurrentFact, all_facts: &[CurrentFact]) -> Value {
-    let (derived_role, reason) = candidate_role(fact, all_facts);
+fn candidate_value(fact: &CurrentFact, roles: &Roles) -> Value {
+    let (derived_role, reason) = roles.of(fact);
     let primary_role = if derived_role == "high_distortion_compatibility_invariant"
         || derived_role == "high_scoring_paraphrase"
         || derived_role == "test"

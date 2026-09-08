@@ -952,19 +952,6 @@ pub fn doctor_report(ranges: &crate::config::SharedHosts) -> Value {
     })
 }
 
-pub fn hook_approval_error(host: &str, ranges: &crate::config::SharedHosts) -> ContractError {
-    let state = hook_state(host, ranges);
-    ContractError::user_action(
-        "HOOK_APPROVAL_REQUIRED",
-        format!("host {host} lacks the planned Guildhall hook entries"),
-        format!("Run `guildhall hooks install {host}`; the host presents its own approval at its next start."),
-    )
-    .with_detail(json!({
-        "missing_planned_entries": HOOK_EVENTS,
-        "hooks": state
-    }))
-}
-
 fn hook_config_has_entries(host: &str, text: &str) -> Option<bool> {
     let has_command = |event: &str| text.contains(&format!("hooks dispatch {host} {event}"));
     if host == "claude" {

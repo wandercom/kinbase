@@ -198,11 +198,16 @@ pub struct Repository {
     pub config: Option<RepoConfig>,
 }
 
+/// The product only reads Git state. `GIT_OPTIONAL_LOCKS=0` keeps every read
+/// (notably `status --porcelain`) from opportunistically refreshing the index
+/// under `.git/index.lock`, so a background verifier never races the user's
+/// own Git operations.
 pub fn git(repo: &Path, args: &[&str]) -> Result<String, ContractError> {
     let output = Command::new("git")
         .args(args)
         .current_dir(repo)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .output()
         .map_err(|error| ContractError::io("run git", error))?;
     if !output.status.success() {
@@ -224,6 +229,7 @@ pub fn git_ok(repo: &Path, args: &[&str]) -> bool {
         .args(args)
         .current_dir(repo)
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .output()
         .is_ok_and(|output| output.status.success())
 }

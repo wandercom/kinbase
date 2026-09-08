@@ -250,6 +250,8 @@ fn git_text(repo: &Path, args: &[&str]) -> String {
     std::process::Command::new("git")
         .args(args)
         .current_dir(repo)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .output()
         .ok()
         .filter(|output| output.status.success())
@@ -707,7 +709,7 @@ impl RepoContext {
                     record["reference_resolved"] = Value::Bool(false);
                     fact.trust = "withheld".to_owned();
                     fact.stale_reasons.push(resolution.to_owned());
-                    view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, owner, "DIGEST_ALGORITHM_UNSUPPORTED: upgrade the client adapter; the steward changed nothing"));
+                    view.unknowns.push(client_unknown(&self.trust, &fact.logical_key, &reference.fact_id, owner, "DIGEST_ALGORITHM_UNSUPPORTED: upgrade the client adapter; the steward changed nothing"));
                     results.push(record);
                     continue;
                 }
@@ -822,7 +824,7 @@ impl RepoContext {
                 record["max_rule"] = Value::String("stricter of Company criticality (as relaxed for this repository) and maintainer-owned local dependence".to_owned());
                 fact.effective_dependence_class = Some(stricter.to_owned());
                 if local.is_none() {
-                    view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, "repository-maintainer", "no maintainer-owned local dependence class records what losing this Company reference costs this repository"));
+                    view.unknowns.push(client_unknown(&self.trust, &fact.logical_key, &reference.fact_id, "repository-maintainer", "no maintainer-owned local dependence class records what losing this Company reference costs this repository"));
                 }
                 match (company_fact.as_ref(), live_digest.as_deref()) {
                     (None, _) => {
@@ -841,7 +843,7 @@ impl RepoContext {
                             fact.trust = "withheld".to_owned();
                             fact.stale_reasons
                                 .push("company-reference-unresolved".to_owned());
-                            view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, "company-steward", "the referenced Company fact is no longer in the authorized current view; update or retire the reference"));
+                            view.unknowns.push(client_unknown(&self.trust, &fact.logical_key, &reference.fact_id, "company-steward", "the referenced Company fact is no longer in the authorized current view; update or retire the reference"));
                         }
                     }
                     (Some(company_value), Some(digest)) if digest == reference.semantic_digest => {
@@ -965,12 +967,14 @@ impl RepoContext {
                         record["reference_resolved"] = Value::Bool(false);
                         match owner {
                             "client" => view.unknowns.push(client_unknown(
+                                &self.trust,
                                 &fact.logical_key,
                                 &reference.fact_id,
                                 "client",
                                 "client canonicalization defect: recompute the reference from the published digest",
                             )),
                             "company-steward" => view.unknowns.push(client_unknown(
+                                &self.trust,
                                 &fact.logical_key,
                                 &reference.fact_id,
                                 "company-steward",
@@ -1237,7 +1241,25 @@ fn reference_unknown(
     }
 }
 
+/// The registered identity behind an Unknown owner role, when the trust
+/// context names exactly one: the steward for Company-owned Unknowns, the
+/// certified repository's maintainer for repository-owned ones. The local
+/// processor ("client") has no registry identity.
+fn owner_identity_for(trust: &TrustContext, owner_role: &str) -> String {
+    match owner_role {
+        "company-steward" => trust.steward_authority_id(),
+        "repository-maintainer" => trust.repository_uuid.as_ref().and_then(|uuid| {
+            trust
+                .authority_owner_by_scope()
+                .remove(&format!("codebase:{uuid}"))
+        }),
+        _ => None,
+    }
+    .unwrap_or_else(|| owner_role.to_owned())
+}
+
 fn client_unknown(
+    trust: &TrustContext,
     logical_key: &str,
     company_fact_id: &str,
     owner: &str,
@@ -1252,7 +1274,7 @@ fn client_unknown(
         scope: format!("company-reference:{company_fact_id}"),
         decision_blocked: format!("use of Company reference {company_fact_id}"),
         owner_role: owner.to_owned(),
-        owner_identity: owner.to_owned(),
+        owner_identity: owner_identity_for(trust, owner),
         question: question.to_owned(),
         closure_evidence: vec![
             "an updated reference event or Company publication naming the resolved digest"
