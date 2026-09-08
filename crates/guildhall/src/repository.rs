@@ -3270,7 +3270,13 @@ pub fn doctor(
     let now = crate::time::now_rfc3339_millis();
     let repo = Repository::discover(repo_path).ok();
     let capabilities = launcher.capability_report();
-    let mut core = launcher.core_store()?;
+    // A diagnostic reads the Core store when it exists and reports an empty
+    // one otherwise; it never creates or records state under HOME.
+    let core = if crate::private::PrivateStore::core_exists() {
+        launcher.core_store()?
+    } else {
+        crate::private::PrivateStore::open_memory("core")?
+    };
     let shard = core.budget_shard(launcher.principal_id(), launcher.host_instance_id(), &now)?;
     let shard_id = format!(
         "shard_{}",
@@ -3287,9 +3293,7 @@ pub fn doctor(
             key.sign_document("receipt", &json!({"schema": "guildhall-prompt-budget-shard/1", "shard_id": shard_id, "observed_at": now, "shard": shard})).ok()
         }
     };
-    if let Some(signed) = &signed_shard {
-        core.record_shard_observation(signed, &now)?;
-    }
+    // A diagnostic signs and shows the shard; it records nothing.
     let sweep = core.sweep(&now)?;
     let metrics = shard.get("metrics").cloned().unwrap_or(Value::Null);
     let reserved = metrics.get("reserved").and_then(Value::as_i64).unwrap_or(0);
@@ -3313,16 +3317,24 @@ pub fn doctor(
         "consecutive": shard.get("consecutive").cloned().unwrap_or(Value::from(0)),
         "warning": "no global cross-machine prompt total is known; this shard covers exactly one (principal_id, host_instance_id)"
     });
-    let hooks = host.map(|host| crate::hooks::hook_state(host, &launcher.shared.hosts));
-    if let Some(state) = hooks.as_ref() {
-        if state.get("installed").and_then(Value::as_bool) != Some(true) {
-            let host = host.unwrap_or("codex");
-            return Err(crate::hooks::hook_approval_error(
-                host,
-                &launcher.shared.hosts,
-            ));
-        }
-    }
+    // C9: doctor reports HOOK_APPROVAL_REQUIRED for every host whose
+    // user-level config lacks the planned entries. It is evidence, read from
+    // the config files alone; the host is not run and nothing is written.
+    let hooks = match host {
+        Some(host) => json!({ host: crate::hooks::hook_state(host, &launcher.shared.hosts) }),
+        None => crate::hooks::doctor_report(&launcher.shared.hosts),
+    };
+    let hooks_approval_required: Vec<Value> = hooks
+        .as_object()
+        .map(|table| {
+            table
+                .iter()
+                .filter(|(_, state)| state.get("installed").and_then(Value::as_bool) != Some(true))
+                .map(|(name, _)| Value::String(name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let hooks = Some(hooks);
     let sandbox = launcher.personal_root().map(|root| {
         let probe = crate::sandbox::denial_probe(&root, &repo.as_ref().map(|r| vec![r.root.clone()]).unwrap_or_default(), launcher.company_port());
         json!({"enforced": probe.enforced, "personal_root_readable": probe.personal_root_readable, "disabled_loudly": probe.disabled_loudly, "detail": probe.detail})
@@ -3407,6 +3419,7 @@ pub fn doctor(
         "host": host,
         "host_versions": {"codex": crate::hooks::host_version("codex"), "claude": crate::hooks::host_version("claude"), "supported_ranges": launcher.shared.hosts},
         "hooks": hooks,
+        "hooks_approval_required": hooks_approval_required,
         "prompt_budget_shard": prompt_budget_shard,
         "budget_shard": {"shard_id": shard_id, "signed": signed_shard.is_some(), "signature": signed_shard.as_ref().and_then(|s| s.get("signature").cloned()), "shard": shard},
         "unknown_global_total_warning": true,

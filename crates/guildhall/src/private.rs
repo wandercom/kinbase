@@ -55,6 +55,29 @@ impl PrivateStore {
         Self::open_at(&root, "core.sqlite3", "core")
     }
 
+    /// Whether the host-wide Core store exists yet. A diagnostic that finds
+    /// none reports an empty store instead of creating one.
+    pub fn core_exists() -> bool {
+        state_dir().join("core.sqlite3").is_file()
+    }
+
+    /// An empty store in memory: the shape of every report when no durable
+    /// store exists, without writing one.
+    pub fn open_memory(kind: &'static str) -> Result<Self, ContractError> {
+        let connection = Connection::open_in_memory()
+            .map_err(|error| ContractError::internal(format!("open memory store: {error}")))?;
+        connection
+            .execute_batch("PRAGMA foreign_keys=ON;")
+            .map_err(sqlite_error("pragma"))?;
+        let store = Self {
+            root: state_dir(),
+            connection,
+            kind,
+        };
+        store.migrate()?;
+        Ok(store)
+    }
+
     fn open_at(root: &Path, file: &str, kind: &'static str) -> Result<Self, ContractError> {
         let path = root.join(file);
         paths::reject_symlink(&path, "private store")?;

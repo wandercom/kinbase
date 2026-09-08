@@ -596,6 +596,16 @@ struct StoreView {
     references: Vec<Value>,
 }
 
+/// The Company store's current view from the verified cache alone (no
+/// network): what a host start may project as trusted Company context.
+pub(crate) fn company_view(
+    launcher: &Launcher,
+    repo: &Path,
+    as_of: &crate::time::AsOf,
+) -> Result<CurrentView, ContractError> {
+    load_view(launcher, repo, crate::StoreKind::Company, as_of).map(|store| store.view)
+}
+
 fn load_view(
     launcher: &Launcher,
     repo: &Path,
