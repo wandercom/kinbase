@@ -187,26 +187,28 @@ impl Cache {
         }
     }
 
-    /// Install a steward certificate into the cache (C2): verified against
-    /// the root key; a UUID already pinned to a different certificate blocks.
-    pub fn install_certificate(&self, document: &Value, root: Option<&PublicKey>, now: &str) -> Result<Value, ContractError> {
-        if crate::json::get_str(document, "schema") != Some(crate::model::CERTIFICATE_SCHEMA) {
-            return Err(ContractError::integrity("DIGEST_MISMATCH", "certificate schema is not guildhall-repo-certificate/1", "Use a steward-issued certificate; malformed certificates are quarantined."));
-        }
+    /// Install a steward certificate into the cache (C2): verify the closed
+    /// certificate shape and root signature, then copy the supplied bytes
+    /// verbatim to the UUID-keyed path. The SQLite row remains an index, but
+    /// trust resolution reads only the cache file.
+    pub fn install_certificate(
+        &self,
+        document: &Value,
+        certificate_bytes: &[u8],
+        root: Option<&PublicKey>,
+        now: &str,
+    ) -> Result<Value, ContractError> {
+        validate_certificate(document)?;
         let signer = PublicKey::verify_document("repo-certificate", document).ok_or_else(|| {
             ContractError::integrity("SIGNATURE_INVALID", "repository certificate signature failed", "Quarantine the certificate and ask the Company steward for a valid one; no trust-on-first-use fallback exists.")
         })?;
-        if let Some(root) = root {
-            if signer != *root {
-                return Err(ContractError::integrity("SIGNATURE_INVALID", "certificate is not signed by the configured Company root", "Only the configured steward root may issue repository certificates."));
-            }
-        } else {
+        let Some(root) = root else {
             return Err(ContractError::user_action("REPO_UNCERTIFIED", "no Company root public key is configured to verify the certificate", "Create the launcher user config with [company] root_public_key_file before installing a certificate."));
+        };
+        if signer != *root {
+            return Err(ContractError::integrity("SIGNATURE_INVALID", "certificate is not signed by the configured Company root", "Only the configured steward root may issue repository certificates."));
         }
         let uuid = crate::json::get_str(document, "repository_uuid").unwrap_or_default().to_owned();
-        if uuid::Uuid::parse_str(&uuid).is_err() {
-            return Err(ContractError::integrity("DIGEST_MISMATCH", "certificate repository_uuid is not a UUID", "Ask the steward for a valid certificate."));
-        }
         let digest = crate::json::digest(document);
         let connection = self.connection()?;
         let existing: Option<String> = connection
@@ -222,26 +224,64 @@ impl Cache {
                 ));
             }
         }
+
+        let repositories = self.root.join("repositories");
+        crate::paths::ensure_private_dir(&repositories, "Company repositories cache")?;
+        let repository_dir = repositories.join(&uuid);
+        crate::paths::ensure_private_dir(&repository_dir, "Company repository cache")?;
+        let path = repository_dir.join("certificate.json");
+        let relative = format!("repositories/{uuid}/certificate.json");
+        if path.exists() {
+            let existing_bytes = crate::paths::read_bounded(&path, 64 * 1024, "cached certificate")?;
+            let existing_document = crate::json::parse_strict_value(&existing_bytes).map_err(|error| {
+                ContractError::integrity("DIGEST_MISMATCH", format!("cached certificate is corrupt ({error})"), "Delete the corrupt certificate cache entry and reinstall the steward certificate.")
+            })?;
+            if crate::json::digest(&existing_document) != digest {
+                return Err(ContractError::refused(
+                    "FOREIGN_REPO_EVENTS",
+                    "a different certificate is already installed for this repository UUID",
+                    "Obtain a signed Company lineage/move event; the binding never silently repins.",
+                ));
+            }
+            enforce_certificate_file_mode(&path)?;
+        } else {
+            crate::paths::write_atomic(&path, certificate_bytes, 0o600, true)
+                .map_err(|error| if error.code == "DIGEST_MISMATCH" { ContractError::integrity("DIGEST_MISMATCH", "the certificate cache path changed concurrently", "Retry repo init; the UUID-keyed certificate path is never overwritten.") } else { error })?;
+        }
         connection
             .execute(
                 "INSERT OR IGNORE INTO certificates(repository_uuid, document, digest, installed_at) VALUES (?1, ?2, ?3, ?4)",
                 params![uuid, crate::json::canonical_text(document), digest, now],
             )
             .map_err(sqlite_error("install certificate"))?;
-        Ok(json!({"repository_uuid": uuid, "certificate_digest": digest, "signer": signer.to_hex()}))
+        Ok(json!({
+            "repository_uuid": uuid,
+            "certificate_digest": digest,
+            "signer": signer.to_hex(),
+            "certificate_cached_path": relative
+        }))
     }
 
+    /// Resolve a certificate only from its UUID-keyed cache file. The SQLite
+    /// index is deliberately not a trust source.
     pub fn certificate(&self, repository_uuid: &str) -> Result<Option<(Value, String)>, ContractError> {
-        let Some(connection) = self.connection.as_ref() else { return Ok(None) };
-        let row: Option<(String, String)> = connection
-            .query_row(
-                "SELECT document, digest FROM certificates WHERE repository_uuid=?1",
-                params![repository_uuid],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()
-            .map_err(sqlite_error("certificate"))?;
-        Ok(row.and_then(|(document, digest)| serde_json::from_str(&document).ok().map(|value| (value, digest))))
+        let path = self.certificate_file(repository_uuid)?;
+        if !path.exists() {
+            return Ok(None);
+        }
+        let bytes = crate::paths::read_bounded(&path, 64 * 1024, "cached certificate")?;
+        let document = crate::json::parse_strict_value(&bytes).map_err(|error| {
+            ContractError::integrity("DIGEST_MISMATCH", format!("cached certificate is corrupt ({error})"), "Delete the corrupt certificate cache entry and reinstall the steward certificate.")
+        })?;
+        let digest = crate::json::digest(&document);
+        Ok(Some((document, digest)))
+    }
+
+    fn certificate_file(&self, repository_uuid: &str) -> Result<PathBuf, ContractError> {
+        if uuid::Uuid::parse_str(repository_uuid).is_err() {
+            return Err(ContractError::integrity("DIGEST_MISMATCH", "repository UUID is malformed", "Reinstall the steward-issued certificate."));
+        }
+        Ok(self.root.join("repositories").join(repository_uuid).join("certificate.json"))
     }
 
     pub fn pin(&self, hint: &str, repository_uuid: &str, digest: &str, cursor: &str, now: &str) -> Result<PinOutcome, ContractError> {
@@ -314,6 +354,56 @@ impl Cache {
             .map(|rows| rows.filter_map(Result::ok).filter_map(|text| serde_json::from_str(&text).ok()).collect())
             .unwrap_or_default()
     }
+}
+
+fn validate_certificate(document: &Value) -> Result<(), ContractError> {
+    let malformed = |message: &str| {
+        ContractError::integrity("DIGEST_MISMATCH", message.to_owned(), "Use a steward-issued certificate; malformed certificates are quarantined.")
+    };
+    if crate::json::get_str(document, "schema") != Some(crate::model::CERTIFICATE_SCHEMA) {
+        return Err(malformed("certificate schema is not guildhall-repo-certificate/1"));
+    }
+    let uuid = crate::json::get_str(document, "repository_uuid").unwrap_or_default();
+    if uuid::Uuid::parse_str(uuid).is_err() {
+        return Err(malformed("certificate repository_uuid is not a UUID"));
+    }
+    let issued_at = crate::json::get_str(document, "issued_at").unwrap_or_default();
+    if crate::time::parse_rfc3339_millis(issued_at).is_err() {
+        return Err(malformed("certificate issued_at is not RFC 3339 UTC millisecond time"));
+    }
+    if crate::json::get_str(document, "company_id").unwrap_or_default().is_empty() {
+        return Err(malformed("certificate company_id is missing"));
+    }
+    if document.get("lineage_parent_uuid").is_some() {
+        let parent = crate::json::get_str(document, "lineage_parent_uuid")
+            .ok_or_else(|| malformed("certificate lineage_parent_uuid is not a string UUID"))?;
+        if uuid::Uuid::parse_str(parent).is_err() {
+            return Err(malformed("certificate lineage_parent_uuid is not a UUID"));
+        }
+    }
+    let signer = crate::json::get_str(document, "signer").unwrap_or_default();
+    if !crate::hash::is_sha256(signer) {
+        return Err(ContractError::integrity("SIGNATURE_INVALID", "certificate signer is not 64-hex", "Quarantine the certificate and ask the Company steward for a valid one."));
+    }
+    let signature = crate::json::get_str(document, "signature").unwrap_or_default();
+    if signature.len() != 128 || !signature.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
+        return Err(ContractError::integrity("SIGNATURE_INVALID", "certificate signature is not 128-hex", "Quarantine the certificate and ask the Company steward for a valid one."));
+    }
+    Ok(())
+}
+
+fn enforce_certificate_file_mode(path: &Path) -> Result<(), ContractError> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = std::fs::metadata(path).map_err(|error| ContractError::io("stat cached certificate", error))?;
+    if !metadata.is_file() {
+        return Err(ContractError::refused("CONFIG_INVARIANT", "cached certificate path is not a regular file", "Delete the path and reinstall the steward certificate."));
+    }
+    let mode = metadata.permissions().mode() & 0o777;
+    if mode != 0o600 {
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .map_err(|error| ContractError::io("chmod cached certificate", error))?;
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -330,7 +330,7 @@ impl RepoContext {
             authority_cursor: cursor,
             revocation_fresh: true,
             fact_valid_until: None,
-            certificate_valid: true,
+            certificate_valid: self.trust.certificate_valid,
         };
         let mut view = crate::reducer::reduce(&input);
         let references = self.resolve_company_references(&mut view, &dependence_events, as_of);
@@ -730,14 +730,31 @@ pub fn init(launcher: Launcher, repo_path: &Path, certificate_path: &Path, json_
     let Some((cache, root)) = launcher.company_cache()? else {
         return Err(ContractError::user_action("REPO_UNCERTIFIED", "no Company root or cache is configured to verify and install the certificate", "Create the launcher user config with [company] root_public_key_file and cache_root first."));
     };
-    let installed = cache.install_certificate(&document, Some(&root), &crate::time::now_rfc3339_millis())?;
+    let installed = cache.install_certificate(&document, &bytes, Some(&root), &crate::time::now_rfc3339_millis())?;
     let uuid = crate::json::get_str(&installed, "repository_uuid").unwrap_or_default().to_owned();
-    // Now the additive worktree changes.
-    crate::paths::ensure_dir(&repo.kin.join("events"), ".kin/events")?;
-    crate::paths::ensure_dir(&repo.kin.join("manifests"), ".kin/manifests")?;
+    // Now the additive worktree changes. Every entry records what this exact
+    // invocation created; an idempotent reinstall reports an empty set.
+    let mut worktree_paths_written = Vec::new();
+    let events_path = repo.kin.join("events");
+    let events_existed = events_path.exists();
+    crate::paths::ensure_dir(&events_path, ".kin/events")?;
+    if !events_existed {
+        worktree_paths_written.push(".kin/events/".to_owned());
+    }
+    let manifests_path = repo.kin.join("manifests");
+    let manifests_existed = manifests_path.exists();
+    crate::paths::ensure_dir(&manifests_path, ".kin/manifests")?;
+    if !manifests_existed {
+        worktree_paths_written.push(".kin/manifests/".to_owned());
+    }
+    let local_existed = repo.local_dir().exists();
     repo.ensure_local()?;
+    if !local_existed {
+        worktree_paths_written.push(".kin/local/".to_owned());
+    }
     let config_path = repo.kin.join("config");
-    if !config_path.exists() {
+    let config_existed = config_path.exists();
+    if !config_existed {
         let safe_name = repo
             .root
             .file_name()
@@ -752,16 +769,23 @@ pub fn init(launcher: Launcher, repo_path: &Path, certificate_path: &Path, json_
             local_policy: BTreeMap::new(),
         };
         crate::paths::write_atomic(&config_path, config.to_toml().as_bytes(), 0o644, false)?;
+        worktree_paths_written.push(".kin/config".to_owned());
     }
+    let attributes_existed = repo.root.join(".gitattributes").exists();
     let attributes_added = repo.ensure_git_attributes()?;
-    repo.ensure_local_excluded()?;
+    if !attributes_existed || !attributes_added.is_empty() {
+        worktree_paths_written.push(".gitattributes".to_owned());
+    }
+    worktree_paths_written.sort();
     let result = json!({
         "status": "repo-initialized",
         "repository_uuid": uuid,
         "certificate_digest": installed.get("certificate_digest").cloned().unwrap_or(Value::Null),
+        "certificate_cached_path": installed.get("certificate_cached_path").cloned().unwrap_or(Value::Null),
         "certificate_location": "company-cache",
         "planned_paths": planned,
-        "gitattributes_added": attributes_added,
+        "worktree_paths_written": worktree_paths_written,
+        "gitattributes_lines_added": attributes_added,
         "commit_only": [".kin/config", ".kin/events/", ".kin/manifests/", ".gitattributes"],
         "trust_on_first_use": false
     });
@@ -774,9 +798,8 @@ fn planned_init_paths(repo: &Repository) -> Vec<String> {
         format!("{}/.kin/config", repo.root.display()),
         format!("{}/.kin/events/", repo.root.display()),
         format!("{}/.kin/manifests/", repo.root.display()),
-        format!("{}/.kin/local/ (ignored)", repo.root.display()),
+        format!("{}/.kin/local/", repo.root.display()),
         format!("{}/.gitattributes (additive)", repo.root.display()),
-        format!("{}/info/exclude (additive)", repo.common_dir.display()),
     ]
 }
 
@@ -1103,7 +1126,15 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
         let _ = company;
     }
     if !context.trust.certificate_valid && context.repo.config.is_some() {
-        result["remediation"] = Value::String("Install the steward-issued certificate with `guildhall repo init --certificate <outside-worktree-file>`; event bodies never enter a host projection until then.".to_owned());
+        let error = ContractError::user_action(
+            "REPO_UNCERTIFIED",
+            "the repository has no valid out-of-worktree certificate",
+            format!("Run `guildhall repo init --repo {} --certificate <outside-worktree-file>`.", context.repo.root.display()),
+        );
+        result["remediation"] = Value::String(error.remediation.clone());
+        result["error"] = crate::output::error_document(&error)["error"].clone();
+        crate::output::emit(&result, json_output);
+        return Err(error);
     }
     if context.trust.company_reachable == Some(false) {
         let error = ContractError::unreachable("Company endpoint did not answer within the connection budget; cached state was used and affected facts are withheld").degraded_variant();

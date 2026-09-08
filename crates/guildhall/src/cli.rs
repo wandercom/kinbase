@@ -44,7 +44,7 @@ pub fn run(json: bool, command: Command) {
 fn print_error(json: bool, error: &ContractError) {
     if json {
         let document = crate::output::error_document(error);
-        println!("{}", crate::json::canonical_text(&document));
+        eprintln!("{}", crate::json::canonical_text(&document));
     } else {
         println!("{}: {}", error.code, error.message);
         println!("remediation: {}", error.remediation);
