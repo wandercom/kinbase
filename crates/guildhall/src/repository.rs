@@ -935,15 +935,22 @@ impl RepoContext {
                         });
                     }
                     (Some(_), _) => {
-                        // Known mismatch: consult the historical digest for the
-                        // reference's exact fact version and Company's head.
-                        let version = reference
-                            .fact_version
-                            .clone()
-                            .unwrap_or_else(|| "1".to_owned());
-                        let historical = versions.iter().find(|item| {
-                            crate::json::get_str(item, "version") == Some(version.as_str())
-                        });
+                        // Known mismatch: consult Company's retained digest for
+                        // the reference's exact historical fact version and its
+                        // current head. A reference names its version explicitly
+                        // or, in the ratified field set, by the digest it copied.
+                        let historical = match reference.fact_version.as_deref() {
+                            Some(version) => versions.iter().find(|item| {
+                                crate::json::get_str(item, "version") == Some(version)
+                            }),
+                            None => versions
+                                .iter()
+                                .find(|item| {
+                                    crate::json::get_str(item, "semantic_content_digest")
+                                        == Some(reference.semantic_digest.as_str())
+                                })
+                                .or_else(|| versions.first()),
+                        };
                         let (resolution, owner, reason) = digest_mismatch_attribution(
                             reference,
                             historical,
@@ -3557,13 +3564,39 @@ pub fn fsck(
         crate::hash::sha256_text(&local_digests.iter().cloned().collect::<Vec<_>>().join("\n"));
     let certificate_conflict = repo.kin.join("certificate.json").exists()
         && repo.kin.join("certificate-second.json").exists();
-    let digest_attribution = if context.trust.company_reachable == Some(false) {
-        "none"
-    } else if counts.signature_invalid > 0 || counts.malformed > 0 {
-        "client"
-    } else {
-        "none"
-    };
+    // P-8: resolve every Company reference in the store and attribute any
+    // digest mismatch to its owner (steward, client, or nobody when Company
+    // is unavailable) exactly as the projection does.
+    let (reference_view, _, company_references) = context.current_view(&as_of.as_of, None)?;
+    let mismatch = company_references.iter().find(|record| {
+        crate::json::get_str(record, "resolution").is_some_and(|value| value != "resolved")
+    });
+    let digest_attribution = mismatch
+        .and_then(|record| record.get("digest_attribution").cloned())
+        .unwrap_or_else(|| {
+            json!({
+                "owner_role": if context.trust.company_reachable != Some(false)
+                    && (counts.signature_invalid > 0 || counts.malformed > 0)
+                {
+                    "client"
+                } else {
+                    "none"
+                },
+                "reason": if counts.signature_invalid > 0 || counts.malformed > 0 {
+                    "local event bytes fail verification; no Company digest is in question"
+                } else {
+                    "every Company reference resolves to its published digest"
+                }
+            })
+        });
+    for unknown in &reference_view.unknowns {
+        unknowns.push(json!({
+            "kind": unknown.kind,
+            "owner_role": unknown.owner_role,
+            "owner_identity": unknown.owner_identity,
+            "logical_key": unknown.logical_key
+        }));
+    }
     let lock_path = repo.common_dir.join(format!("guildhall-{uuid}.lock"));
     crate::paths::write_atomic(
         &cache_checkpoint,
@@ -3601,7 +3634,8 @@ pub fn fsck(
         "cascade_seconds": elapsed.as_secs_f64(),
         "admission_lock_path": lock_path.to_string_lossy(),
         "store_digest": store_digest,
-        "digest_attribution": {"owner_role": digest_attribution},
+        "digest_attribution": digest_attribution,
+        "company_references": company_references,
         "company_query_attempted": context.trust.company_query_attempted,
         "unknowns": unknowns,
         "sparse_checkout": sparse,
