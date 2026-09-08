@@ -32,24 +32,20 @@ pub fn atomize(
 ) -> Atom {
     let scan: ScanResult = scanner(statement);
     let hard_block = scan.taints.iter().any(|taint| taint.hard_block());
+    let mut taints: Vec<String> = scan.taints.iter().map(|taint| taint.as_str().to_owned()).collect();
+    if let Some(provenance) = provenance_taint(source_kind) {
+        let value = provenance.as_str().to_owned();
+        if !taints.contains(&value) {
+            taints.push(value);
+        }
+    }
     let mut destinations = Vec::new();
     match source_kind {
+        // Host-session bytes are Personal by provenance. A paraphrase is still
+        // Personal even when no canary string matches; it is never a shared
+        // candidate without a separately derived Codebase observation.
         "codex_jsonl" | "claude_jsonl" => {
             destinations.push("personal".to_owned());
-            if !hard_block && confidence >= 600 {
-                let lower = statement.to_lowercase();
-                if lower.contains("architecture") || lower.contains("company policy") {
-                    destinations.push("company".to_owned());
-                }
-                if let Some(repository_id) = repository_id {
-                    if lower.contains("repository")
-                        || lower.contains("codebase")
-                        || lower.contains("test")
-                    {
-                        destinations.push(format!("codebase:{repository_id}"));
-                    }
-                }
-            }
         }
         "company" | "authority_answer" => {
             if !hard_block {
@@ -85,11 +81,7 @@ pub fn atomize(
         scope: scope.to_owned(),
         confidence,
         provenance: source_kind.to_owned(),
-        taints: scan
-            .taints
-            .iter()
-            .map(|taint| taint.as_str().to_owned())
-            .collect(),
+        taints,
         hard_blocked: hard_block,
         proposed_destinations: destinations.clone(),
         eligible_destinations: destinations,

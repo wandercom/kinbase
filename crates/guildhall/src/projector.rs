@@ -63,10 +63,12 @@ pub fn run(
 ) -> Result<(), ContractError> {
     let mut facts = Vec::new();
     let mut view_unknowns = Vec::new();
+    let mut references = Vec::new();
     for store in [crate::StoreKind::Company, crate::StoreKind::Codebase] {
-        let view = load_view(launcher, repo, store, as_of)?;
+        let (view, store_references) = load_view(launcher, repo, store, as_of)?;
         facts.extend(view.facts);
         view_unknowns.extend(view.unknowns);
+        references.extend(store_references);
     }
     // A closure record is authoritative across stores: the original Unknown
     // remains in append-only history, but no later projection may treat it as
@@ -222,7 +224,28 @@ pub fn run(
         .collect();
     let selected_values: Vec<Value> = selected.iter().map(candidate_value).collect();
     let projection_bytes = crate::json::canonical_text(&Value::Array(selected_values.clone())).len();
-    let company_reference = company_reference(&selected, &facts);
+    let selected_ids: BTreeSet<&str> = selected.iter().map(|fact| fact.fact_id.as_str()).collect();
+    let selected_reference = references
+        .iter()
+        .filter(|record| crate::json::get_str(record, "fact_id").is_some_and(|fact_id| selected_ids.contains(fact_id)))
+        .find(|record| crate::json::get_str(record, "resolution") == Some("resolved"))
+        .cloned();
+    let effective_reference = selected_reference.clone().or_else(|| references.first().cloned());
+    let company_owner = effective_reference
+        .as_ref()
+        .and_then(|record| crate::json::get_str(record, "company_owner").map(str::to_owned));
+    let local_owner = effective_reference
+        .as_ref()
+        .and_then(|record| crate::json::get_str(record, "local_owner").map(str::to_owned));
+    let effective_criticality = effective_reference
+        .as_ref()
+        .and_then(|record| crate::json::get_str(record, "effective_dependence_class").map(str::to_owned));
+    let dominating_input = effective_reference
+        .as_ref()
+        .and_then(|record| crate::json::get_str(record, "dominating_input").map(str::to_owned));
+    let cache_state_constructed = launcher
+        .company_cache()?
+        .is_some_and(|(cache, _root)| cache.state == crate::company::cache::CacheState::Warm);
     let recommendation = if open_unknowns.is_empty() {
         selected
             .iter()
@@ -231,9 +254,18 @@ pub fn run(
     } else {
         None
     };
-    let degraded_policy = if open_unknowns.is_empty() {
+    let safety_is_degraded = facts.iter().any(|fact| {
+        crate::model::criticality_is_safety(fact.effective_dependence_class.as_deref().unwrap_or(&fact.criticality))
+            && fact.trust != "trusted"
+            && fact.stale_reasons.iter().any(|reason| reason == "CACHE_EXPIRED" || reason == "REVOCATION_STALE")
+    });
+    let advisory_is_degraded = facts.iter().any(|fact| {
+        !crate::model::criticality_is_safety(fact.effective_dependence_class.as_deref().unwrap_or(&fact.criticality))
+            && fact.trust == "excluded"
+    });
+    let degraded_policy = if safety_is_degraded || open_unknowns.iter().any(|unknown| unknown.loss_if_absent >= 7_500) {
         "block_dependent_decision"
-    } else if open_unknowns.iter().any(|unknown| unknown.loss_if_absent >= 7_500) {
+    } else if open_unknowns.is_empty() && !advisory_is_degraded {
         "block_dependent_decision"
     } else {
         "reversible_sandbox_only_experiment"
@@ -253,8 +285,19 @@ pub fn run(
         "voi_approximation": "additive deterministic basis-point approximation over conditional distortion, authority, complementarity, uncertainty, redundancy, retrieval, and staleness",
         "trusted_recommendation": recommendation,
         "degraded_policy": degraded_policy,
-        "company_reference_resolved": company_reference.is_some(),
-        "company_statement": company_reference.unwrap_or_default(),
+        "cache_state_constructed": cache_state_constructed,
+        "company_reference_resolved": selected_reference.is_some(),
+        "company_statement": selected_reference
+            .as_ref()
+            .and_then(|record| crate::json::get_str(record, "company_statement"))
+            .unwrap_or_default(),
+        "effective_criticality": effective_criticality,
+        "company_owner": company_owner,
+        "local_owner": local_owner,
+        "max_rule": effective_reference
+            .as_ref()
+            .and_then(|record| crate::json::get_str(record, "max_rule")),
+        "dominating_input": dominating_input,
         "projection_state": if open_unknowns.is_empty() { "projected" } else { "withheld" },
         "omitted_count": omitted_count
     });
@@ -290,26 +333,24 @@ fn load_view(
     repo: &Path,
     store: crate::StoreKind,
     as_of: &crate::time::AsOf,
-) -> Result<CurrentView, ContractError> {
-    let mut data = crate::corpus::load_store(launcher, repo, store)?;
+) -> Result<(CurrentView, Vec<Value>), ContractError> {
     if store == crate::StoreKind::Codebase {
-        if let Ok(repository) = crate::codebase::Repository::discover(repo) {
-            let repository_uuid = repository.uuid_hint().map(str::to_owned);
-            data.events.retain(|admitted| {
-                admitted
-                    .event
-                    .repository_id
-                    .as_deref()
-                    .map(|bound| repository_uuid.as_deref().is_some_and(|uuid| bound == uuid))
-                    .unwrap_or(true)
-            });
+        if crate::codebase::Repository::discover(repo).is_ok() {
+            let context = crate::repository::RepoContext::load(crate::launcher::Launcher::load()?, repo, true)?;
+            let (view, _counts, references) = context.current_view(&as_of.as_of, None)?;
+            return Ok((view, references));
         }
     }
+
+    let data = crate::corpus::load_store(launcher, repo, store)?;
     let store_name_value = match store {
         crate::StoreKind::Company => "company",
         crate::StoreKind::Personal => "personal",
         crate::StoreKind::Codebase => "codebase",
     };
+    let cache_freshness = launcher
+        .company_cache()?
+        .map(|(cache, _root)| cache.freshness(&as_of.as_of));
     let input = ReducerInput {
         store_kind: store_name_value.to_owned(),
         events: data.events,
@@ -318,11 +359,11 @@ fn load_view(
         revocations: data.revocations,
         as_of: as_of.as_of.clone(),
         authority_cursor: data.authority_cursor,
-        revocation_fresh: true,
-        fact_valid_until: None,
+        revocation_fresh: cache_freshness.as_ref().map(|freshness| freshness.revocation_fresh).unwrap_or(true),
+        fact_valid_until: cache_freshness.and_then(|freshness| freshness.fact_valid_until),
         certificate_valid: data.certificate_valid,
     };
-    Ok(crate::reducer::reduce(&input))
+    Ok((crate::reducer::reduce(&input), Vec::new()))
 }
 
 fn candidate_value(fact: &CurrentFact) -> Value {
@@ -509,22 +550,6 @@ fn is_authority_answer(fact: &CurrentFact) -> bool {
     fact.store_kind == "company"
         && fact.atom_kind == "decision"
         && fact.evidence_refs.iter().any(|reference| reference.starts_with("answer_"))
-}
-
-fn company_reference(selected: &[CurrentFact], all_facts: &[CurrentFact]) -> Option<String> {
-    let company_facts: BTreeMap<&str, &CurrentFact> = all_facts
-        .iter()
-        .filter(|fact| fact.store_kind == "company")
-        .map(|fact| (fact.fact_id.as_str(), fact))
-        .collect();
-    for fact in selected {
-        for reference in &fact.company_refs {
-            if let Some(company_fact) = company_facts.get(reference.fact_id.as_str()) {
-                return Some(company_fact.statement.clone());
-            }
-        }
-    }
-    None
 }
 
 fn terms(value: &str) -> BTreeSet<String> {

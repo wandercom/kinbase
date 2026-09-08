@@ -676,6 +676,22 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
         ));
     }
     let verification = trust_state.verify_fact_signer(&event);
+    // A repository maintainer may request an exception, but only a Company
+    // steward may relax Company-owned architecture. Signature failures retain
+    // their integrity attribution.
+    if crate::model::action_of(&event) == Some("relaxation")
+        && verification == Verification::Verified
+        && !trust_state.is_steward(&event.signer)
+    {
+        return Err(refuse(
+            403,
+            ContractError::refused(
+                "AUTHORITY_WRONG_SCOPE",
+                "a relaxation is Company-owned; a repository maintainer may submit an exception_request but cannot mint it",
+                "Ask the Company steward to admit a relaxation scoped to this repository.",
+            ),
+        ));
+    }
     let (status_code, admission_status, verification_text) = match verification {
         Verification::Verified => (201, "committed", "verified"),
         Verification::SignatureInvalid => {

@@ -143,9 +143,29 @@ pub fn explain(
     };
     let store_name_value = if mixed { "mixed".to_owned() } else { store_name(store).to_owned() };
     let view = reduce(data, &store_name_value, as_of, None, authority_cursor.map(|cursor| cursor.to_string()))?;
-    let trace = view.traces.iter().find(|trace| trace.logical_key == logical_key);
-    let current = view.facts.first();
-    let unknown = view.unknowns.iter().find(|unknown| unknown.logical_key == logical_key);
+    let mut references = Vec::new();
+    let mut resolved_current: Option<crate::model::CurrentFact> = None;
+    let mut resolved_unknowns: Vec<crate::reducer::DerivedUnknown> = Vec::new();
+    let mut resolved_trace: Option<crate::reducer::KeyTrace> = None;
+    if has_codebase {
+        if let Ok(repository) = Repository::discover(repo) {
+            let _ = repository;
+            if let Ok(context) = crate::repository::RepoContext::load(crate::launcher::Launcher::load()?, repo, true) {
+                if let Ok((resolved_view, _counts, company_references)) = context.current_view(&as_of.as_of, authority_cursor.map(|cursor| cursor.to_string()).as_deref()) {
+                    resolved_current = resolved_view.facts.first().cloned();
+                    resolved_unknowns = resolved_view.unknowns.iter().filter(|unknown| unknown.logical_key == logical_key).cloned().collect();
+                    resolved_trace = resolved_view.traces.iter().find(|trace| trace.logical_key == logical_key).cloned();
+                    references = company_references;
+                }
+            }
+        }
+    }
+    let trace = resolved_trace.as_ref().or_else(|| view.traces.iter().find(|trace| trace.logical_key == logical_key));
+    let current = resolved_current.as_ref().or_else(|| view.facts.first());
+    let unknown = resolved_unknowns
+        .iter()
+        .find(|unknown| unknown.logical_key == logical_key)
+        .or_else(|| view.unknowns.iter().find(|unknown| unknown.logical_key == logical_key));
     let trace_state = trace.map(|trace| trace.state.as_str()).unwrap_or("missing");
     let state = if current.is_some_and(|fact| fact.status == "current") && trace_state == "current" {
         "current"
@@ -221,15 +241,29 @@ pub fn explain(
         "selected_by": "guildhall-reducer/2",
         "current_statement": current.map(|fact| fact.statement.clone()).unwrap_or_default(),
         "current": current,
+        "projection": current.map(|fact| fact.trust.clone()),
+        "projection_state": if current.is_some_and(|fact| fact.trust == "trusted") { "projected" } else { "withheld" },
+        "stale_reasons": current.map(|fact| fact.stale_reasons.clone()).unwrap_or_default(),
         "selection_trace": selection_trace,
         "independent_corroboration_count": current.map(|fact| fact.independent_support_count).unwrap_or(0),
-        "unknowns": view.unknowns,
+        "unknowns": view.unknowns.iter().chain(resolved_unknowns.iter()).cloned().collect::<Vec<_>>(),
         "trusted": current.is_some_and(|fact| fact.status == "current" && fact.trust == "trusted") && unknown.is_none(),
         "authority_scope": current.map(|fact| fact.authority_scope.clone()).or_else(|| unknown.map(|unknown| unknown.scope.clone())).unwrap_or_default(),
         "environment_owner": current.filter(|fact| fact.authority_scope.starts_with("environment:")).map(|fact| fact.authority_id.clone()),
-        "effective_criticality": current.map(|fact| fact.criticality.clone()).or_else(|| unknown.map(|unknown| if unknown.loss_if_absent >= 7_500 { "safety_critical".to_owned() } else { "advisory".to_owned() })),
-        "company_owner": current.filter(|fact| fact.store_kind == "company").map(|fact| fact.authority_id.clone()),
-        "local_owner": current.filter(|fact| fact.store_kind == "codebase").map(|fact| fact.authority_id.clone()),
+        "effective_criticality": current
+            .and_then(|fact| fact.effective_dependence_class.clone())
+            .or_else(|| current.map(|fact| fact.criticality.clone()))
+            .or_else(|| unknown.map(|unknown| if unknown.loss_if_absent >= 7_500 { "safety_critical".to_owned() } else { "advisory".to_owned() })),
+        "company_owner": current
+            .and_then(|fact| fact.company_refs.first().map(|reference| reference.authority.clone()))
+            .or_else(|| current.filter(|fact| fact.store_kind == "company").map(|fact| fact.authority_id.clone())),
+        "local_owner": current
+            .filter(|fact| fact.store_kind == "codebase" && fact.company_refs.is_empty())
+            .map(|fact| fact.authority_id.clone())
+            .or_else(|| references.first().and_then(|record| crate::json::get_str(record, "local_owner").map(str::to_owned))),
+        "company_references": references,
+        "max_rule": references.first().and_then(|record| crate::json::get_str(record, "max_rule").map(str::to_owned)),
+        "dominating_input": references.first().and_then(|record| crate::json::get_str(record, "dominating_input").map(str::to_owned)),
         "query_log": query_log
     });
     crate::output::emit(&result, json);
