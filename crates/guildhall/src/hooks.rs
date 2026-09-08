@@ -526,11 +526,15 @@ fn dispatch_event(
             }
         }
     }
-    let degraded = !repository_initialized || start.degraded || canonical_facts.is_empty();
+    // `status` speaks for the canonical Codebase context (verified by the
+    // out-of-worktree certificate); `degraded` speaks for the Company context,
+    // which a cold, invalid, stale or unverifiable cache withholds loudly.
+    let context_verified = repository_initialized && start.certified && !canonical_facts.is_empty();
+    let degraded = !context_verified || start.degraded;
     let mut response = json!({
         "hook": host,
         "event_type": event_type,
-        "status": if degraded { "degraded" } else { "verified" },
+        "status": if context_verified { "verified" } else { "degraded" },
         "repository_root": cwd.to_string_lossy(),
         "repository_uuid": start.repository_uuid,
         "company_state": start.company_state,
@@ -542,6 +546,7 @@ fn dispatch_event(
         "company_refresh": start.refresh,
         "degraded": degraded,
         "degraded_reasons": start.degraded_reasons,
+        "notices": start.notices,
         "start_path": start.start_path,
         "full_fsck_performed": false,
         "background_verification_started": start.background_started,
@@ -631,6 +636,7 @@ struct StartState {
     start_path: &'static str,
     degraded: bool,
     degraded_reasons: Vec<String>,
+    notices: Vec<String>,
     company_connect_seconds: Option<f64>,
     refresh: Value,
     background_started: bool,
@@ -648,6 +654,7 @@ impl Default for StartState {
             start_path: "cold-unverified",
             degraded: true,
             degraded_reasons: Vec::new(),
+            notices: Vec::new(),
             company_connect_seconds: None,
             refresh: Value::Null,
             background_started: false,
@@ -790,8 +797,11 @@ fn session_start(
         _ => (None, false),
     };
     state.company_connect_seconds = connect_seconds;
+    // A warm, fresh, verified cache projects even when the endpoint is down
+    // (architecture §9: warm may project verified cache); the unreachable
+    // endpoint is still said loudly. Without such a cache it degrades.
     if connect_seconds.is_some() && !reachable {
-        state.degraded_reasons.push("COMPANY_UNREACHABLE: the configured endpoint did not accept a connection within 250 ms".to_owned());
+        state.notices.push("COMPANY_UNREACHABLE: the configured endpoint did not accept a connection within the 250 ms budget".to_owned());
     }
     // Verification and refresh run detached; the host is never held open.
     // An endpoint that did not accept the probe gets no worker now: the
@@ -839,8 +849,10 @@ fn session_start(
         || state.cache_state != "warm"
         || !revocation_fresh
         || !fact_fresh
-        || full_fsck_required
-        || (connect_seconds.is_some() && !reachable);
+        || full_fsck_required;
+    if state.degraded {
+        state.degraded_reasons.extend(state.notices.iter().cloned());
+    }
     state
 }
 
