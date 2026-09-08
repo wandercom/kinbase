@@ -118,16 +118,30 @@ pub fn rebuild(
         }))
         .as_slice(),
     );
+    let private = launcher.private_store()?;
+    let last_view_key = format!("corpus_last_view_digest:{}", store_name(store));
+    let previous_view_digest = private.meta(&last_view_key)?;
+    let state_changed = previous_view_digest.as_deref() != Some(current_view_digest.as_str());
+    private.set_meta(&last_view_key, &current_view_digest)?;
+    let manifest_publication =
+        if state_changed && crate::repository::committed_event_count(repo)? > 0 {
+            Some(crate::repository::publish_manifest_value(launcher, repo)?)
+        } else {
+            None
+        };
+    let manifest_lineages = Repository::discover(repo)?.manifest_heads()?.len();
     let result = json!({
         "status": "rebuilt",
-        "state_changed": true,
-        "observed_effect": true,
+        "state_changed": state_changed,
+        "observed_effect": state_changed,
         "as_of": view.as_of,
         "as_of_source": as_of.as_of_source,
         "ambient_clock_read": false,
         "reducer_version": view.reducer_version,
         "authority_cursor": view.authority_cursor,
         "store": store_name(store),
+        "manifest_publication": manifest_publication,
+        "manifest_lineages": manifest_lineages,
         "build_manifest": {
             "observation_ids": observation_ids,
             "source_revisions": source_revisions,
@@ -341,6 +355,7 @@ pub fn explain(
         .map(|event| event.statement.clone());
     let operational_value = operational_statement
         .map(|statement| last_numeric_token(&statement).unwrap_or(statement))
+        .or_else(|| current.map(|fact| fact.statement.clone()))
         .unwrap_or_default();
     let architecture_rewritten = key_events.iter().any(|event| {
         event

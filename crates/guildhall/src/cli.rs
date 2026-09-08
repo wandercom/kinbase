@@ -165,6 +165,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
                 crate::repository::ensure_authority_snapshot(&launcher, None)?;
             }
             crate::ingest::ingest(
+                &launcher,
                 &repo,
                 &source_kind,
                 &source,

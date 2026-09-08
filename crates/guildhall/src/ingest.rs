@@ -1,7 +1,8 @@
 use crate::classify::{EXTRACTION_VERSION, atomize, source_kind_is_supported};
 use crate::error::{ContractError, ExitCode};
 use crate::hash::sha256_bytes;
-use crate::model::{Atom, CompanyReference, Distortion, FactEvent, Observation};
+use crate::launcher::Launcher;
+use crate::model::{Atom, CompanyReference, Distortion, FactEvent, Observation, UnknownEvent};
 use crate::scanner::hard_blocked;
 use crate::time::{now_rfc3339_millis, parse_rfc3339_millis};
 use rusqlite::Connection;
@@ -28,9 +29,12 @@ struct NativeRecord {
     receipt_expires_at: Option<String>,
     environment_id: Option<String>,
     owner_id: Option<String>,
+    logical_key: Option<String>,
+    signer: Option<String>,
 }
 
 pub fn ingest(
+    launcher: &Launcher,
     repo: &Path,
     source_kind: &str,
     source: &Path,
@@ -112,6 +116,25 @@ pub fn ingest(
         crate::StoreKind::Codebase => repository_trust_class(repo, source, source_kind, &bytes),
     };
     let prior_observations = private.observations_for_source(&source_identity)?;
+    // Kindex quarantine records are parser receipts, not observations. Split
+    // them before observation ids are derived so no malformed line can be
+    // represented as admitted or current.
+    let quarantine_records: Vec<NativeRecord> = records
+        .iter()
+        .filter(|record| {
+            matches!(
+                record.disposition.as_str(),
+                "MALFORMED_KINDEX_EVENT" | "INVALID_KINDEX_SIGNATURE"
+            )
+        })
+        .cloned()
+        .collect();
+    records.retain(|record| {
+        !matches!(
+            record.disposition.as_str(),
+            "MALFORMED_KINDEX_EVENT" | "INVALID_KINDEX_SIGNATURE"
+        )
+    });
     let present_native_ids = records
         .iter()
         .map(|record| record.native_id.clone())
@@ -158,7 +181,35 @@ pub fn ingest(
     let mut quarantined_count = 0;
     let mut quarantined_observations = Vec::new();
     let mut skew_dispositions = Vec::new();
+    let mut historical_receipts = Vec::new();
+    let mut revocation_observed_count = 0;
+    let trust = if source_kind == "kindex" {
+        crate::repository::RepoContext::load(launcher.clone(), repo, false)
+            .ok()
+            .map(|context| context.trust)
+    } else {
+        None
+    };
     let prepared_manifest = prepared.clone();
+    for record in quarantine_records {
+        let code = if record.disposition == "MALFORMED_KINDEX_EVENT" {
+            "DIGEST_MISMATCH"
+        } else {
+            "SIGNATURE_INVALID"
+        };
+        let record_value = json!({
+            "source_kind": source_kind,
+            "source_identity": source_identity,
+            "native_id": record.native_id,
+            "reason": record.disposition,
+            "disposition": record.disposition,
+            "remediation": "Quarantine the non-conforming event; valid events in the same source are admitted.",
+            "proof_clock": now
+        });
+        private.quarantine(code, &record_value)?;
+        quarantined_observations.push(record_value);
+        quarantined_count += 1;
+    }
     for (record, observation_id, digest) in prepared {
         if let Some((field, direction, seconds)) = receipt_clock_skew(&record, &now) {
             let disposition = "CLOCK_SKEW".to_owned();
@@ -205,6 +256,28 @@ pub fn ingest(
             owner_id: record.owner_id.clone(),
             lifecycle: "observed".to_owned(),
         };
+        let revocation_observed = record
+            .signer
+            .as_deref()
+            .is_some_and(|signer| trust.as_ref().is_some_and(|trust| trust.is_revoked(signer)));
+        if revocation_observed {
+            historical_receipts.push(json!({
+                "event_id": record.native_id,
+                "observation_id": observation_id,
+                "content_digest": digest,
+                "logical_key": record.logical_key,
+                "historical_receipt": true,
+                "readmitted": false,
+                "revocation_observed": true,
+                "support_withdrawn": true,
+                "projection_state": "support_withdrawn",
+                "receipt_scope_restricted": true,
+                "state_changed": false,
+                "observed_effect": false
+            }));
+            revocation_observed_count += 1;
+            continue;
+        }
         let existing = prior_observations
             .iter()
             .find(|prior| prior.observation_id == observation_id);
@@ -330,9 +403,34 @@ pub fn ingest(
             }
         }
     }
+    let manifest_publication = if source_kind == "kindex"
+        && observation_count > 0
+        && crate::repository::committed_event_count(repo)? > 0
+    {
+        Some(crate::repository::publish_manifest_value(launcher, repo)?)
+    } else {
+        None
+    };
+    let manifest_lineages = if source_kind == "kindex" {
+        crate::codebase::Repository::discover(repo)?
+            .manifest_heads()?
+            .len()
+    } else {
+        0
+    };
     let result = json!({
         "status": "ingested",
         "adapter": source_kind,
+        "state_changed": observation_count > 0,
+        "observed_effect": observation_count > 0,
+        "historical_receipt": !historical_receipts.is_empty(),
+        "historical_receipts": historical_receipts,
+        "readmitted": false,
+        "receipt_scope_restricted": !historical_receipts.is_empty(),
+        "revocation_observed": revocation_observed_count > 0,
+        "revocation_observed_count": revocation_observed_count,
+        "manifest_publication": manifest_publication,
+        "manifest_lineages": manifest_lineages,
         "source_identity": source_identity,
         "observations": reported_observations,
         "derived_facts": derived_facts,
@@ -870,6 +968,29 @@ fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError>
         if line.trim().is_empty() {
             continue;
         }
+        if let Ok(unknown) = UnknownEvent::parse(line.as_bytes()) {
+            if unknown.verify_signature().is_none() {
+                invalid_signatures.push(index + 1);
+            } else {
+                records.push(NativeRecord {
+                    native_id: unknown.event_id.clone(),
+                    statement: unknown.question.clone(),
+                    scope: unknown.scope.clone(),
+                    confidence: 0,
+                    disposition: unknown.status.clone(),
+                    asserted_at: Some(unknown.asserted_at.clone()),
+                    effective_from: Some(unknown.asserted_at.clone()),
+                    effective_until: Some(unknown.response_due_at.clone()),
+                    receipt_observed_at: None,
+                    receipt_expires_at: None,
+                    environment_id: None,
+                    owner_id: Some(unknown.owner_identity.clone()),
+                    logical_key: Some(unknown.logical_key.clone()),
+                    signer: Some(unknown.signer.clone()),
+                });
+            }
+            continue;
+        }
         match FactEvent::parse(line.as_bytes()) {
             Ok(event) => {
                 if event.verify_signature().is_none() {
@@ -889,29 +1010,50 @@ fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError>
                     receipt_expires_at: None,
                     environment_id: None,
                     owner_id: None,
+                    logical_key: Some(event.logical_key.clone()),
+                    signer: Some(event.signer.clone()),
                 });
             }
-            Err(_) => malformed.push(index + 1),
+            Err(_) => {
+                malformed.push(index + 1);
+                records.push(NativeRecord {
+                    native_id: format!("malformed-kindex-line-{}", index + 1),
+                    statement: String::new(),
+                    scope: "repository".to_owned(),
+                    confidence: 0,
+                    disposition: "MALFORMED_KINDEX_EVENT".to_owned(),
+                    asserted_at: None,
+                    effective_from: None,
+                    effective_until: None,
+                    receipt_observed_at: None,
+                    receipt_expires_at: None,
+                    environment_id: None,
+                    owner_id: None,
+                    logical_key: None,
+                    signer: None,
+                });
+            }
         }
     }
-    if !malformed.is_empty() {
-        return Err(ContractError::integrity(
-            "DIGEST_MISMATCH",
-            format!(
-                "{} kindex event(s) violate the FactEvent data model",
-                malformed.len()
-            ),
-            "Quarantine the malformed events; no bytes were admitted.",
-        )
-        .with_detail(json!({"malformed_count": malformed.len(), "line_numbers": malformed})));
-    }
     if !invalid_signatures.is_empty() {
-        return Err(ContractError::integrity(
-            "SIGNATURE_INVALID",
-            format!("{} kindex event(s) have invalid signatures", invalid_signatures.len()),
-            "Quarantine the unsigned or forged events; no bytes were admitted.",
-        )
-        .with_detail(json!({"signature_invalid_count": invalid_signatures.len(), "line_numbers": invalid_signatures})));
+        for line_number in invalid_signatures {
+            records.push(NativeRecord {
+                native_id: format!("invalid-kindex-signature-line-{line_number}"),
+                statement: String::new(),
+                scope: "repository".to_owned(),
+                confidence: 0,
+                disposition: "INVALID_KINDEX_SIGNATURE".to_owned(),
+                asserted_at: None,
+                effective_from: None,
+                effective_until: None,
+                receipt_observed_at: None,
+                receipt_expires_at: None,
+                environment_id: None,
+                owner_id: None,
+                logical_key: None,
+                signer: None,
+            });
+        }
     }
     if records.is_empty() {
         return Err(ContractError::integrity(
@@ -970,6 +1112,8 @@ fn native_record(
         receipt_expires_at,
         environment_id,
         owner_id,
+        logical_key: None,
+        signer: None,
     }
 }
 

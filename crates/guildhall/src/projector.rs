@@ -151,6 +151,15 @@ pub fn run(
 
     let mut selected: Vec<CurrentFact> = Vec::new();
     let mut selection_trace = Vec::new();
+    // The caller-declared working set is already resident at the dependent
+    // edit. It is the initial selected context even though it incurs no new
+    // retrieval cost in this invocation.
+    selected.extend(
+        candidates
+            .iter()
+            .filter(|fact| working.contains(fact.fact_id.as_str()))
+            .map(|fact| (*fact).clone()),
+    );
     let mut sufficiency = false;
     let mut byte_ceiling_hit = false;
     while selected.len() < PROJECTION_LIMIT {
@@ -402,6 +411,7 @@ pub fn run(
         "resident_at_dependent_edit": working_set,
         "declared_use": decision,
         "stopping_reason": stopping_reason,
+        "outcome": stopping_reason,
         "question_id": question_id,
         "task_outcome": "pending",
         "cost": TIERS.iter().map(|(_, _, cost)| *cost).sum::<i64>(),

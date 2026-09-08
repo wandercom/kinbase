@@ -13,6 +13,7 @@ use crate::private::PrivateStore;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 
+#[derive(Clone)]
 pub struct Launcher {
     pub mode: Mode,
     pub user: Option<UserConfig>,
