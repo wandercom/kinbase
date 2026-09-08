@@ -120,6 +120,8 @@ pub fn rebuild(
     );
     let result = json!({
         "status": "rebuilt",
+        "state_changed": true,
+        "observed_effect": true,
         "as_of": view.as_of,
         "as_of_source": as_of.as_of_source,
         "ambient_clock_read": false,
@@ -180,6 +182,10 @@ pub fn explain(
                 .as_deref()
                 .or(Some(cached_cursor.as_str())),
         )?;
+    let service_cursor = launcher
+        .company_cache()?
+        .and_then(|(cache, _)| cache.meta("cursor"))
+        .unwrap_or_else(|| "0".to_owned());
     let mut codebase = load_store(launcher, repo, crate::StoreKind::Codebase)?;
     let mut company = load_store(launcher, repo, crate::StoreKind::Company)?;
     let has_codebase = codebase
@@ -209,6 +215,11 @@ pub fn explain(
             .iter()
             .any(|event| event.event.event_id == tombstone.target_event_id)
     });
+    let key_events: Vec<crate::model::FactEvent> = data
+        .events
+        .iter()
+        .map(|event| event.event.clone())
+        .collect();
     let mixed = has_codebase && has_company;
     let store = if mixed {
         crate::StoreKind::Personal // marker only; reduce receives the mixed store name
@@ -227,7 +238,7 @@ pub fn explain(
         &store_name_value,
         as_of,
         None,
-        authority_cursor.map(|cursor| cursor.to_string()),
+        Some(authority_snapshot_cursor.clone()),
     )?;
     let mut references = Vec::new();
     let mut resolved_current: Option<crate::model::CurrentFact> = None;
@@ -239,11 +250,14 @@ pub fn explain(
             if let Ok(context) =
                 crate::repository::RepoContext::load(crate::launcher::Launcher::load()?, repo, true)
             {
-                if let Ok((resolved_view, _counts, company_references)) = context.current_view(
-                    &as_of.as_of,
-                    authority_cursor.map(|cursor| cursor.to_string()).as_deref(),
-                ) {
-                    resolved_current = resolved_view.facts.first().cloned();
+                if let Ok((resolved_view, _counts, company_references)) =
+                    context.current_view(&as_of.as_of, Some(authority_snapshot_cursor.as_str()))
+                {
+                    resolved_current = resolved_view
+                        .facts
+                        .iter()
+                        .find(|fact| fact.logical_key == logical_key)
+                        .cloned();
                     resolved_unknowns = resolved_view
                         .unknowns
                         .iter()
@@ -265,7 +279,16 @@ pub fn explain(
             .iter()
             .find(|trace| trace.logical_key == logical_key)
     });
-    let current = resolved_current.as_ref().or_else(|| view.facts.first());
+    let current = resolved_current.as_ref().or_else(|| {
+        view.facts
+            .iter()
+            .find(|fact| fact.logical_key == logical_key)
+    });
+    if let Some(current) = current {
+        references.retain(|record| {
+            crate::json::get_str(record, "fact_id") == Some(current.fact_id.as_str())
+        });
+    }
     let unknown = resolved_unknowns
         .iter()
         .find(|unknown| unknown.logical_key == logical_key)
@@ -305,6 +328,41 @@ pub fn explain(
             }
         })
         .unwrap_or_else(|| "no admitted evidence for this exact key".to_owned());
+    let operational_statement = key_events
+        .iter()
+        .rev()
+        .find(|event| {
+            event.authority_scope.starts_with("environment:")
+                && matches!(
+                    event.atom_kind.as_str(),
+                    "observation" | "runtime_trace" | "test_runtime_evidence"
+                )
+        })
+        .map(|event| event.statement.clone());
+    let operational_value = operational_statement
+        .map(|statement| last_numeric_token(&statement).unwrap_or(statement))
+        .unwrap_or_default();
+    let architecture_rewritten = key_events.iter().any(|event| {
+        event
+            .statement
+            .to_ascii_lowercase()
+            .contains("architecture")
+            && event
+                .statement
+                .to_ascii_lowercase()
+                .contains("rewritten: true")
+    });
+    let authorized_parent_bound_event_resolves = key_events.iter().any(|event| {
+        event.parents.len() >= 2
+            && event.parents.iter().all(|parent| {
+                key_events
+                    .iter()
+                    .any(|candidate| candidate.event_id == *parent)
+            })
+            && trace.is_some_and(|trace| {
+                trace.state == "current" && trace.conflict_event_ids.is_empty()
+            })
+    });
     let selection_trace = current
         .map(|fact| {
             vec![json!({
@@ -342,11 +400,16 @@ pub fn explain(
         "logical_key": logical_key,
         "decision": decision,
         "state": state,
+        "observed_state": state,
+        "architecture_rewritten": architecture_rewritten,
+        "operational_value": operational_value,
+        "authorized_parent_bound_event_resolves": authorized_parent_bound_event_resolves,
         "as_of": view.as_of,
         "as_of_source": as_of.as_of_source,
         "ambient_clock_read": false,
         "reducer_version": view.reducer_version,
-        "authority_cursor": if authority_cursor.is_some() { authority_snapshot_cursor.clone() } else { view.authority_cursor.clone() },
+        "authority_cursor": authority_snapshot_cursor.clone(),
+        "service_cursor": service_cursor,
         "authority_snapshot_source": authority_snapshot_source,
         "store": store_name_value,
         "reducer_trace": trace,
@@ -379,11 +442,13 @@ pub fn explain(
             .or_else(|| unknown.map(|unknown| if unknown.loss_if_absent >= 7_500 { "safety_critical".to_owned() } else { "advisory".to_owned() })),
         "company_owner": current
             .and_then(|fact| fact.company_refs.first().map(|reference| reference.authority.clone()))
-            .or_else(|| current.filter(|fact| fact.store_kind == "company").map(|fact| fact.authority_id.clone())),
+            .or_else(|| current.filter(|fact| fact.store_kind == "company").map(|fact| fact.authority_id.clone()))
+            .unwrap_or_default(),
         "local_owner": current
             .filter(|fact| fact.store_kind == "codebase" && fact.company_refs.is_empty())
             .map(|fact| fact.authority_id.clone())
-            .or_else(|| references.first().and_then(|record| crate::json::get_str(record, "local_owner").map(str::to_owned))),
+            .or_else(|| references.first().and_then(|record| crate::json::get_str(record, "local_owner").map(str::to_owned)))
+            .unwrap_or_default(),
         "company_references": references,
         "max_rule": references.first().and_then(|record| crate::json::get_str(record, "max_rule").map(str::to_owned)),
         "dominating_input": references.first().and_then(|record| crate::json::get_str(record, "dominating_input").map(str::to_owned)),
@@ -391,6 +456,18 @@ pub fn explain(
     });
     crate::output::emit(&result, json);
     Ok(())
+}
+
+fn last_numeric_token(statement: &str) -> Option<String> {
+    statement
+        .split(|character: char| {
+            character.is_ascii_whitespace() || character.is_ascii_punctuation()
+        })
+        .rev()
+        .find(|token| {
+            !token.is_empty() && token.chars().all(|character| character.is_ascii_digit())
+        })
+        .map(str::to_owned)
 }
 
 pub(crate) fn validate_logical_key(logical_key: &str) -> Result<(), ContractError> {
@@ -571,7 +648,12 @@ pub(crate) fn load_store(
                 unknowns,
                 tombstones: Vec::new(),
                 revocations: Vec::new(),
-                authority_cursor: current_authority_cursor(),
+                authority_cursor: launcher
+                    .company_cache()
+                    .ok()
+                    .flatten()
+                    .and_then(|(cache, _root)| cache.meta("authority_cursor"))
+                    .unwrap_or_else(|| "0".to_owned()),
                 certificate_valid: true,
                 authority_owner_by_scope,
                 steward_authority_id,

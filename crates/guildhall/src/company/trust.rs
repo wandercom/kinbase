@@ -15,6 +15,9 @@ pub struct TrustState {
     pub steward_keys: BTreeSet<String>,
     pub revocations: Vec<Revocation>,
     pub registry: Vec<Value>,
+    /// Steward-published opaque registry cursor. This is deliberately not the
+    /// service's internal event row counter.
+    pub authority_cursor: String,
     pub cursor: i64,
 }
 
@@ -51,11 +54,26 @@ pub fn load(db: &CompanyDb, root: &PublicKey) -> Result<TrustState, ContractErro
             steward_keys.remove(key);
         }
     }
+    let mut authority_cursor = String::new();
+    let mut latest_registry_row = None;
+    for (row_cursor, payload, verification) in db.events_of_kind("registry")? {
+        if verification != "verified"
+            || latest_registry_row.is_some_and(|latest| row_cursor <= latest)
+        {
+            continue;
+        }
+        latest_registry_row = Some(row_cursor);
+        let published = crate::json::get_str(&payload, "authority_cursor").unwrap_or_default();
+        if !published.is_empty() {
+            authority_cursor = published.to_owned();
+        }
+    }
     Ok(TrustState {
         root: root.clone(),
         steward_keys,
         revocations,
         registry: db.registry_entries()?,
+        authority_cursor,
         cursor: db.cursor()?,
     })
 }

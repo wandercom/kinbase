@@ -414,6 +414,7 @@ fn freeze(manifest_path: &Path, budget_path: &Path, json: bool) -> Result<(), Co
         "frozen_manifest": frozen_artifact_path.to_string_lossy(),
         "frozen_manifest_digest": frozen_digest,
         "ceiling_reserved_atomically": true,
+        "reserved_atomically": true,
         "aggregate_usd_ceiling": aggregate,
         "human_bytes_after_freeze": 0
     });
@@ -870,11 +871,12 @@ fn verdict(run_path: &Path, json: bool) -> Result<(), ContractError> {
             (_, _) => "INVALID_RUN",
         }
     };
+    let licensed_template = "On the digest-identified task population, repositories, model/provider fingerprint, budgets, authority service, and finite threat model in this run, Guildhall met P-1 through P-9 and raised blinded brownfield quality to the preregistered P-10 equivalence band.";
     let published_conclusion = if terminal == "PROVEN" {
-        "On the digest-identified task population, repositories, model/provider fingerprint, budgets, authority service, and finite threat model in this run, Guildhall met P-1 through P-9 and raised blinded brownfield quality to the preregistered P-10 equivalence band.".to_owned()
+        licensed_template.to_owned()
     } else {
         format!(
-            "On the digest-identified run evidence, the composed terminal product verdict is {terminal}."
+            "On the digest-identified task population, repositories, model/provider fingerprint, budgets, authority service, and finite threat model in this run, Guildhall did not meet the preregistered P-10 equivalence band; the actual terminal product verdict is {terminal}."
         )
     };
     let mut gate_vector = json!({});
@@ -913,6 +915,7 @@ fn verdict(run_path: &Path, json: bool) -> Result<(), ContractError> {
         "schema": "guildhall-experiment-verdict/1",
         "status": "verdict-complete",
         "published_conclusion": published_conclusion,
+        "uses_licensed_template": terminal == "PROVEN",
         "run_digest": run_digest,
         "terminal_product_verdict": terminal,
         "gate_result": gate_result,

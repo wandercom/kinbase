@@ -704,7 +704,8 @@ fn status(
             "company_id": state.config.company_id,
             "bind": state.config.bind.to_string(),
             "cursor": cursor.to_string(),
-            "authority_cursor": cursor.to_string(),
+            "authority_cursor": trust_state.authority_cursor.clone(),
+            "service_cursor": cursor.to_string(),
             "revocation_cursor": db.revocation_cursor().map_err(|error| refuse(500, error))?,
             "token_role": auth.token.role,
             "token_scopes": auth.token.scopes,
@@ -1150,7 +1151,9 @@ fn admit_fact(
             db.resolve_steward_queue(&event.event_id)
                 .map_err(|error| refuse(500, error))?;
         }
-        let receipt = receipt_for(&event, &digest, cursor, admission_status, "new");
+        let mut receipt = receipt_for(&event, &digest, cursor, admission_status, "new");
+        receipt["state_changed"] = Value::Bool(admission_status == "committed");
+        receipt["ambient_clock_read"] = Value::Bool(false);
         db.connection
             .execute(
                 "UPDATE nonces SET receipt=?2 WHERE destination='company' AND nonce=?1",
@@ -1432,7 +1435,8 @@ fn snapshot(
         "schema": "guildhall-snapshot/1",
         "company_id": state.config.company_id,
         "cursor": trust_state.cursor.to_string(),
-        "authority_cursor": trust_state.cursor.to_string(),
+        "authority_cursor": trust_state.authority_cursor.clone(),
+        "service_cursor": trust_state.cursor.to_string(),
         "revocation_cursor": db.revocation_cursor().map_err(|error| refuse(500, error))?,
         "client_nonce": client_nonce,
         "issued_at": now,
@@ -2488,7 +2492,7 @@ fn maintenance(db: &CompanyDb, state: &ServiceState, now: &str) -> Result<(), Co
         let repository = crate::json::get_str(&expired, "repository_uuid").unwrap_or_default();
         let event = json!({
             "schema": crate::model::EVENT_SCHEMA,
-            "event_id": format!("evt_obsexp_{}", &crate::hash::sha256_text(&format!("{repository}\0{now}"))[..24]),
+            "event_id": format!("evt_obsexp_{}", &crate::hash::sha256_text(&format!("{repository}\0{}", expired.get("observation_id").and_then(Value::as_i64).unwrap_or(0)))[..24]),
             "store_kind": "company",
             "authority_id": "company-service",
             "authority_scope": "company:root",

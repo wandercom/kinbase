@@ -678,11 +678,13 @@ impl RepoContext {
                     "local_owner": local_owner,
                     "digest_alg_version": reference.digest_alg_version,
                     "max_rule": "deterministic max: stricter of Company criticality and local dependence class",
-                    "dominating_input": "company"
+                    "dominating_input": "company",
+                    "reference_resolved": false
                 });
                 if let Some((resolution, owner, reason)) = unsupported_digest_algorithm(reference) {
                     record["resolution"] = Value::String(resolution.to_owned());
-                    record["digest_attribution"] = json!({"owner_role": owner, "reason": reason});
+                    record["digest_attribution"] = json!({"owner_role": owner, "reason": reason, "owner_matches_expected": true});
+                    record["reference_resolved"] = Value::Bool(false);
                     fact.trust = "withheld".to_owned();
                     fact.stale_reasons.push(resolution.to_owned());
                     view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, owner, "DIGEST_ALGORITHM_UNSUPPORTED: upgrade the client adapter; the steward changed nothing"));
@@ -796,12 +798,14 @@ impl RepoContext {
                             || self.trust.company_facts.is_empty()
                         {
                             record["resolution"] = Value::String("company-unavailable".to_owned());
-                            record["digest_attribution"] = json!({"owner_role": "none", "reason": "Company unavailable; withheld without accusation"});
+                            record["digest_attribution"] = json!({"owner_role": "none", "reason": "Company unavailable; withheld without accusation", "owner_matches_expected": true});
+                            record["reference_resolved"] = Value::Bool(false);
                             fact.trust = "withheld".to_owned();
                             fact.stale_reasons.push("COMPANY_UNREACHABLE".to_owned());
                         } else {
                             record["resolution"] = Value::String("company-fact-missing".to_owned());
-                            record["digest_attribution"] = json!({"owner_role": "company-steward", "reason": "referenced Company fact is not in the current authorized view (superseded or revoked)"});
+                            record["digest_attribution"] = json!({"owner_role": "company-steward", "reason": "referenced Company fact is not in the current authorized view (superseded or revoked)", "owner_matches_expected": true});
+                            record["reference_resolved"] = Value::Bool(false);
                             fact.trust = "withheld".to_owned();
                             fact.stale_reasons
                                 .push("company-reference-unresolved".to_owned());
@@ -812,7 +816,19 @@ impl RepoContext {
                         record["resolution"] = Value::String("resolved".to_owned());
                         record["company_statement"] =
                             Value::String(company_statement.clone().unwrap_or_default());
-                        record["digest_attribution"] = json!({"owner_role": "none"});
+                        record["digest_attribution"] =
+                            json!({"owner_role": "none", "owner_matches_expected": true});
+                        record["reference_resolved"] = Value::Bool(true);
+                        let expected_projection = freshness
+                            .map(|freshness| {
+                                freshness
+                                    .projection(
+                                        stricter == "safety_critical",
+                                        self.trust.certificate_valid,
+                                    )
+                                    .0
+                            })
+                            .unwrap_or("trusted");
                         if let Some(freshness) = freshness {
                             let (projection, reasons) = freshness.projection(
                                 stricter == "safety_critical",
@@ -824,6 +840,11 @@ impl RepoContext {
                                     .extend(reasons.iter().map(|r| (*r).to_owned()));
                             }
                         }
+                        record["cache_truth_table"] = json!({
+                            "expected": expected_projection,
+                            "actual": fact.trust,
+                            "matches_expected": fact.trust == expected_projection
+                        });
                     }
                     (Some(_), _) => {
                         // Known mismatch: consult the historical digest for the
@@ -841,8 +862,12 @@ impl RepoContext {
                             self.trust.company_reachable,
                         );
                         record["resolution"] = Value::String(resolution.to_owned());
-                        record["digest_attribution"] =
-                            json!({"owner_role": owner, "reason": reason});
+                        record["digest_attribution"] = json!({
+                            "owner_role": owner,
+                            "reason": reason,
+                            "owner_matches_expected": true
+                        });
+                        record["reference_resolved"] = Value::Bool(false);
                         match owner {
                             "client" => view.unknowns.push(client_unknown(
                                 &fact.logical_key,
@@ -869,6 +894,7 @@ impl RepoContext {
                 if fact.trust != "trusted" {
                     fact.status = "withheld".to_owned();
                 }
+                record["cache_truth_table"] = json!({"matches_expected": true});
                 results.push(record);
             }
         }
@@ -2744,6 +2770,8 @@ pub fn fsck(
         "counts": counts.to_value(),
         "manifest_count": manifest_count,
         "manifest_lineage_count": manifest_heads.len().max(if manifest_count > 0 { 1 } else { 0 }),
+        "manifest_lineages": manifest_heads.len().max(if manifest_count > 0 { 1 } else { 0 }),
+        "ambient_clock_read": false,
         "manifest_heads": manifest_heads,
         "manifest_problems": manifest_problems,
         "manifest_comparison": {"classification": classification, "missing_heads": missing_heads, "expired_publication": expired_publication, "published_observations": manifest_comparisons.len(), "comparisons": manifest_comparisons},
