@@ -90,7 +90,7 @@ pub fn record_hook_observation(
         effective_until: None,
         body_ref: format!("sha256:{digest}"),
         extraction_version: crate::classify::EXTRACTION_VERSION.to_owned(),
-        origin_trust: None,
+        origin_trust: Some("uncommitted-worktree".to_owned()),
         environment_id: None,
         owner_id: None,
         lifecycle: "observed".to_owned(),
@@ -174,7 +174,7 @@ pub fn observe(
             effective_until: None,
             body_ref: format!("sha256:{digest}"),
             extraction_version: crate::classify::EXTRACTION_VERSION.to_owned(),
-            origin_trust: None,
+            origin_trust: Some("uncommitted-worktree".to_owned()),
             environment_id: None,
             owner_id: None,
             lifecycle: "observed".to_owned(),
@@ -470,16 +470,20 @@ fn pinned_classifier_atoms(
     classifier: Option<&crate::config::SharedClassifier>,
     input: &Value,
 ) -> Result<BTreeMap<String, Vec<Value>>, ContractError> {
-    let Some(classifier) = classifier else {
-        return Ok(BTreeMap::new());
+    let bytes = if let Some(classifier) = classifier {
+        crate::sandbox::run_verified_executable(
+            &classifier.executable,
+            &classifier.executable_sha256,
+            &classifier.args,
+            &crate::json::canonical_bytes(input),
+            std::time::Duration::from_secs(classifier.timeout_seconds),
+        )?
+    } else {
+        // No pinned executable means the product-owned deterministic provider
+        // from `classifier --json`; it is replayable and has the same strict
+        // output contract as an external provider.
+        crate::json::canonical_bytes(&crate::classifier::deterministic(input)?)
     };
-    let bytes = crate::sandbox::run_verified_executable(
-        &classifier.executable,
-        &classifier.executable_sha256,
-        &classifier.args,
-        &crate::json::canonical_bytes(input),
-        std::time::Duration::from_secs(classifier.timeout_seconds),
-    )?;
     let output = crate::json::parse_strict_value(&bytes).map_err(|error| {
         ContractError::integrity(
             "PROCESSOR_UNAUTHORIZED",
@@ -602,7 +606,7 @@ fn atom_from_classifier(
         .get("proposed_destinations")
         .and_then(Value::as_array)
     {
-        let mut destinations = values
+        let proposed_destinations = values
             .iter()
             .filter_map(Value::as_str)
             .map(|value| match value {
@@ -612,34 +616,46 @@ fn atom_from_classifier(
                 other => other.to_owned(),
             })
             .collect::<Vec<_>>();
-        if atom.hard_blocked
-            || external_taints.iter().any(|taint| {
-                taint.hard_block()
-                    || matches!(
-                        taint,
-                        crate::scanner::Taint::PersonalSession
-                            | crate::scanner::Taint::CompanyConfidential
-                    )
-            })
-        {
-            destinations.retain(|destination| destination == "personal");
-            if destinations.is_empty() {
-                destinations.push("none".to_owned());
-            }
+        let taint_boundary = external_taints.iter().any(|taint| {
+            taint.hard_block()
+                || matches!(
+                    taint,
+                    crate::scanner::Taint::PersonalSession
+                        | crate::scanner::Taint::CompanyConfidential
+                )
+        });
+        let mut proposed_destinations = proposed_destinations;
+        let eligible_destinations = if atom.hard_blocked {
+            Vec::new()
+        } else if taint_boundary {
+            vec!["personal".to_owned()]
         } else if atom.confidence < 6_000 {
-            destinations.retain(|destination| destination == "personal");
-            if !destinations.contains(&"none".to_owned()) {
-                destinations.push("none".to_owned());
+            Vec::new()
+        } else {
+            proposed_destinations.clone()
+        };
+        if !atom.hard_blocked && atom.confidence >= 6_000 && taint_boundary {
+            // Predictions can carry both the semantic shared destination and
+            // the Personal label that privacy eligibility preserves.  Candidate
+            // fan-out below uses only `eligible_destinations`.
+            if !proposed_destinations
+                .iter()
+                .any(|value| value == "personal")
+            {
+                proposed_destinations.push("personal".to_owned());
             }
         }
-        if destinations.is_empty() {
-            destinations.push("none".to_owned());
+        if atom.hard_blocked || atom.confidence < 6_000 {
+            proposed_destinations = vec!["none".to_owned()];
         }
-        atom.proposed_destinations = destinations.clone();
-        atom.eligible_destinations = destinations
-            .into_iter()
-            .filter(|destination| destination != "none")
-            .collect();
+        if proposed_destinations.is_empty() {
+            proposed_destinations.push("none".to_owned());
+        }
+        // Predictions may name several P-2 destinations, while eligibility is
+        // the privacy boundary: provenance-tainted session bytes never leave
+        // Personal even after deidentification.
+        atom.proposed_destinations = proposed_destinations;
+        atom.eligible_destinations = eligible_destinations;
     }
     if let Some(values) = external.get("taint").and_then(Value::as_array) {
         atom.taints = values

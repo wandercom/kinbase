@@ -89,7 +89,7 @@ pub fn run(
     Ok(())
 }
 
-fn deterministic(document: &Value) -> Result<Value, ContractError> {
+pub(crate) fn deterministic(document: &Value) -> Result<Value, ContractError> {
     let observations = observations(document)?;
     let mut atoms = Vec::new();
     for observation in observations {
@@ -437,7 +437,11 @@ fn atom_from_observation(map: &Map<String, Value>, text: &str, confidence: &str)
             taints.push(value);
         }
     }
-    let mut destinations = destination_boundary(source_kind);
+    // The classifier reports semantic destinations only.  Session promotion
+    // separately records the privacy-eligible host boundary, so a Personal
+    // source can yield a multi-destination prediction without claiming that
+    // the raw classifier itself emitted the boundary label.
+    let mut destinations: Vec<String> = Vec::new();
     let lower = text.to_lowercase();
     if !hard_block && confidence != "low" {
         if is_personal_statement(&lower) {
@@ -490,18 +494,6 @@ fn is_personal_statement(lower: &str) -> bool {
     .iter()
     .any(|token| lower.starts_with(token.trim_start()) || lower.contains(token))
         || lower.starts_with("i ")
-}
-
-fn destination_boundary(source_kind: &str) -> Vec<String> {
-    match source_kind {
-        "codex_jsonl" | "claude_jsonl" => Vec::new(),
-        "company" | "authority_answer" => vec!["company".to_owned()],
-        "repo_code" | "repo_tests" | "git_history" | "docs_adr" | "github_export"
-        | "runtime_evidence" | "kindex" => {
-            vec!["codebase".to_owned()]
-        }
-        _ => Vec::new(),
-    }
 }
 
 fn infer_kind(text: &str) -> &'static str {

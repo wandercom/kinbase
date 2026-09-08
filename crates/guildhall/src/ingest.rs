@@ -48,6 +48,22 @@ pub fn ingest(
         ));
     }
     let repo_canonical = repo.canonicalize().map_err(io_error)?;
+    // The ratified fixture places repository tests at `<repo>/tests`, while the
+    // native-source invocation may name the conventional `<repo>/sources/tests`
+    // location. Resolve only that documented fallback, and only when the named
+    // path is lexically inside the same repository.
+    let resolved_source =
+        if source_kind == "repo_tests" && !source.exists() && source.starts_with(repo) {
+            let tests = repo.join("tests");
+            if tests.exists() {
+                tests
+            } else {
+                source.to_path_buf()
+            }
+        } else {
+            source.to_path_buf()
+        };
+    let source: &Path = &resolved_source;
     let source_canonical = source.canonicalize().map_err(|error| {
         ContractError::refused(
             "CONFIG_INVARIANT",
@@ -57,13 +73,15 @@ pub fn ingest(
             ),
             "Pass a source contained by the repository.",
         )
+        .with_detail(serde_json::json!({"omitted_count": 1}))
     })?;
     if !source_canonical.starts_with(&repo_canonical) {
         return Err(ContractError::refused(
             "CONFIG_INVARIANT",
             "source escapes the repository root",
             "Pass a source contained by the repository.",
-        ));
+        )
+        .with_detail(serde_json::json!({"omitted_count": 1})));
     }
     let bytes = read_source(source_kind, source)?;
     let mut records = if source_kind == "kindex" {
@@ -391,13 +409,15 @@ fn read_source(source_kind: &str, source: &Path) -> Result<Vec<u8>, ContractErro
                 "CONFIG_INVARIANT",
                 "source symlink escapes the source root",
                 "Pass a regular file or a directory contained by the source root.",
-            ));
+            )
+            .with_detail(json!({"omitted_count": 1})));
         }
         return Err(ContractError::refused(
             "CONFIG_INVARIANT",
             "source symlink traversal is refused",
             "Pass the regular file or directory target directly.",
-        ));
+        )
+        .with_detail(json!({"omitted_count": 1})));
     }
     if metadata.is_file() {
         let bytes = read_bounded_file(source, MAX_FILE_BYTES)?;
@@ -408,7 +428,8 @@ fn read_source(source_kind: &str, source: &Path) -> Result<Vec<u8>, ContractErro
             "CONFIG_INVARIANT",
             "source is neither a regular file nor a directory",
             "Pass a regular file or directory.",
-        ));
+        )
+        .with_detail(json!({"omitted_count": 1})));
     }
     if source_kind == "git_history" && source.join(".git").exists() {
         return git_history_bytes(source);
@@ -420,6 +441,17 @@ fn read_source(source_kind: &str, source: &Path) -> Result<Vec<u8>, ContractErro
     let root_canonical = root.canonicalize().map_err(io_error)?;
     let mut paths = Vec::new();
     collect_regular_files(&root, &root_canonical, &mut paths)?;
+    if source_kind == "repo_tests" {
+        // The ratified repo-test native source is a command-result JSON
+        // envelope.  A test directory may also contain source or logs; those
+        // are not command results and must not turn malformed JSON into a
+        // silently admitted partial read.
+        paths.retain(|path| {
+            path.extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension == "json" || extension == "jsonl")
+        });
+    }
     paths.sort();
     let mut bytes = Vec::new();
     for path in paths {
@@ -462,7 +494,8 @@ fn collect_regular_files(
                     "CONFIG_INVARIANT",
                     "directory source contains a symlink that escapes the source root",
                     "Remove the escaping symlink or pass only contained regular files.",
-                ));
+                )
+                .with_detail(json!({"omitted_count": 1})));
             }
             continue;
         }
@@ -931,14 +964,7 @@ fn parse_native(source_kind: &str, bytes: &[u8]) -> Result<Vec<NativeRecord>, St
         "github_export" => parse_github_export(text),
         "docs_adr" => parse_docs_adr(text),
         "repo_code" => parse_code_text(text),
-        "repo_tests" => {
-            let records = parse_json_records(source_kind, text)?;
-            if records.is_empty() {
-                parse_code_text(text)
-            } else {
-                Ok(records)
-            }
-        }
+        "repo_tests" => parse_repo_tests(text),
         _ => parse_json_records(source_kind, text),
     }
 }
@@ -1059,11 +1085,33 @@ fn parse_host_jsonl(source_kind: &str, text: &str) -> Result<Vec<NativeRecord>, 
 }
 
 fn parse_github_export(text: &str) -> Result<Vec<NativeRecord>, String> {
-    let value: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
-    let map = value
-        .as_object()
-        .ok_or_else(|| "GitHub export must be one JSON object".to_owned())?;
+    // A directory adapter reads a concatenation of pretty-printed native
+    // export files. Parse a strict JSON stream so every bounded document
+    // contributes observations without inventing a foreign envelope.
     let mut records = Vec::new();
+    let mut document_count = 0usize;
+    let stream = serde_json::Deserializer::from_str(text).into_iter::<Value>();
+    for value in stream {
+        let value = value.map_err(|error| error.to_string())?;
+        document_count += 1;
+        let map = value
+            .as_object()
+            .ok_or_else(|| "GitHub export must be one JSON object".to_owned())?;
+        parse_github_export_object(map, &mut records)?;
+    }
+    if document_count == 0 {
+        return Err("GitHub export contains no JSON object".to_owned());
+    }
+    if records.is_empty() {
+        return Err("GitHub export contains no issues, pull requests, or reviews".to_owned());
+    }
+    Ok(records)
+}
+
+fn parse_github_export_object(
+    map: &Map<String, Value>,
+    records: &mut Vec<NativeRecord>,
+) -> Result<(), String> {
     for (key, prefix) in [("issues", "issue"), ("pullRequests", "pull-request")] {
         let Some(items) = map.get(key).and_then(Value::as_array) else {
             continue;
@@ -1136,22 +1184,62 @@ fn parse_github_export(text: &str) -> Result<Vec<NativeRecord>, String> {
             }
         }
     }
+    Ok(())
+}
+
+fn parse_docs_adr(text: &str) -> Result<Vec<NativeRecord>, String> {
+    // Native fixtures may carry a UTF-8 BOM and macOS may check out CRLF;
+    // normalize line endings before parsing the declared front matter. A
+    // directory source is a concatenation of complete ADR documents, so parse
+    // every front-matter block rather than silently treating later files as
+    // prose in the first ADR.
+    let normalized = text
+        .trim_start_matches('\u{feff}')
+        .replace("\r\n", "\n")
+        .replace('\r', "\n");
+    let mut rest = normalized.trim_start();
+    let mut records = Vec::new();
+    while let Some(after_front) = rest.strip_prefix("---\n") {
+        let Some(end) = after_front.find("\n---") else {
+            return Err("ADR Markdown front matter is not closed".to_owned());
+        };
+        let front = &after_front[..end];
+        let body_start = end + 4;
+        let mut body = after_front[body_start..].trim_start();
+        let next = next_adr_document(body).unwrap_or(body.len());
+        let document_body = &body[..next];
+        records.push(parse_adr_document(front, document_body)?);
+        body = &body[next..];
+        if body.is_empty() {
+            break;
+        }
+        rest = body.trim_start();
+    }
     if records.is_empty() {
-        return Err("GitHub export contains no issues, pull requests, or reviews".to_owned());
+        return Err("ADR Markdown must begin with YAML front matter".to_owned());
     }
     Ok(records)
 }
 
-fn parse_docs_adr(text: &str) -> Result<Vec<NativeRecord>, String> {
-    let trimmed = text.trim_start();
-    let Some(after_front) = trimmed.strip_prefix("---\n") else {
-        return Err("ADR Markdown must begin with YAML front matter".to_owned());
-    };
-    let Some(end) = after_front.find("\n---") else {
-        return Err("ADR Markdown front matter is not closed".to_owned());
-    };
-    let front = &after_front[..end];
-    let body = after_front[end + 4..].trim_start();
+fn next_adr_document(body: &str) -> Option<usize> {
+    let mut offset = 0usize;
+    while let Some(found) = body[offset..].find("\n---\n") {
+        let index = offset + found;
+        let after = &body[index + 5..];
+        if let Some(close) = after.find("\n---") {
+            if after[..close]
+                .lines()
+                .any(|line| line.trim_start().starts_with("adr:"))
+            {
+                return Some(index + 1);
+            }
+        }
+        offset = index + 5;
+    }
+    None
+}
+
+fn parse_adr_document(front: &str, body: &str) -> Result<NativeRecord, String> {
     let mut adr = None;
     let mut title = String::new();
     let mut status = "current".to_owned();
@@ -1172,6 +1260,7 @@ fn parse_docs_adr(text: &str) -> Result<Vec<NativeRecord>, String> {
     if title.is_empty() {
         return Err("ADR front matter must name title".to_owned());
     }
+    let body = body.trim();
     let mut statement = format!("# {title}\n{body}");
     if let Some(supersedes) = supersedes {
         statement = format!("{statement}\nSupersedes ADR {supersedes}.");
@@ -1183,7 +1272,7 @@ fn parse_docs_adr(text: &str) -> Result<Vec<NativeRecord>, String> {
         "superseded" => "superseded",
         other => other,
     };
-    Ok(vec![native_record(
+    Ok(native_record(
         format!("adr:{adr}"),
         statement,
         "repository",
@@ -1196,7 +1285,7 @@ fn parse_docs_adr(text: &str) -> Result<Vec<NativeRecord>, String> {
         None,
         None,
         None,
-    )])
+    ))
 }
 
 fn parse_code_text(text: &str) -> Result<Vec<NativeRecord>, String> {
@@ -1237,6 +1326,27 @@ fn parse_code_text(text: &str) -> Result<Vec<NativeRecord>, String> {
     }
     if records.is_empty() {
         return Err("source contains no Python or TypeScript declaration".to_owned());
+    }
+    Ok(records)
+}
+
+fn parse_repo_tests(text: &str) -> Result<Vec<NativeRecord>, String> {
+    // The repo-test source class reads strict command-result JSON documents.
+    // Concatenated directory files are parsed as a JSON stream so pretty-printed
+    // envelopes contribute without introducing a foreign envelope.
+    let mut records = Vec::new();
+    let mut document_count = 0usize;
+    let stream = serde_json::Deserializer::from_str(text).into_iter::<Value>();
+    for value in stream {
+        let value = value.map_err(|error| error.to_string())?;
+        document_count += 1;
+        collect_json_value("repo_tests", &value, &mut records)?;
+    }
+    if document_count == 0 {
+        return Err("repo_tests source contains no command-result envelope".to_owned());
+    }
+    if records.is_empty() {
+        return Err("repo_tests source contains no command-result envelope".to_owned());
     }
     Ok(records)
 }

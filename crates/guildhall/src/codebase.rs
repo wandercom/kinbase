@@ -259,8 +259,13 @@ impl Repository {
         paths::reject_symlink(&kin, ".kin")?;
         let config = if kin.join("config").exists() {
             paths::reject_symlink(&kin.join("config"), ".kin/config")?;
-            let text = std::fs::read_to_string(kin.join("config"))
-                .map_err(|error| ContractError::unreadable(".kin/config", &error))?;
+            let text = std::fs::read_to_string(kin.join("config")).map_err(|error| {
+                ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    format!(".kin/config bytes are unreadable ({})", error.kind()),
+                    "Quarantine the malformed config; contents are never printed and no fallback exists.",
+                )
+            })?;
             Some(RepoConfig::parse(&text)?)
         } else {
             None

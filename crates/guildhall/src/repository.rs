@@ -1912,6 +1912,7 @@ pub fn status(
     json_output: bool,
 ) -> Result<(), ContractError> {
     let context = RepoContext::load(launcher, repo_path, true)?;
+    crate::proposals::emit_due_orphan_abandonments(repo_path)?;
     let (view, counts, references) = if context.repo.config.is_some() {
         context.current_view(&as_of.as_of, None)?
     } else {
@@ -2138,6 +2139,12 @@ pub fn status(
             crate::json::get_str(observation, "observation_id").map(str::to_owned)
         })
         .collect::<Vec<_>>();
+    let observation_digests: BTreeSet<String> = observations
+        .iter()
+        .filter_map(|observation| {
+            crate::json::get_str(observation, "content_digest").map(str::to_owned)
+        })
+        .collect();
     let skew = skew_report(&private)?;
     let status_changed_dispositions = changed_dispositions(&private)?;
     let query_log = private.query_log(None)?;
@@ -2216,9 +2223,11 @@ pub fn status(
         "current_view_byte_identical": observations.iter().all(|observation| crate::json::get_str(observation, "state") == Some("current")),
         "build_manifest": {
             "observation_ids": observation_ids,
+            "digests": observation_digests,
             "adapter_receipts": adapter_receipts,
             "reducer_digest": crate::hash::sha256_text(&crate::json::canonical_text(&json!({"observations": observations, "facts": facts})))
         },
+        "lifecycle_cells": lifecycle_cells(),
         "manifest_observation_comparison": {
             "classification": manifest_classification,
             "missing_heads": manifest_missing_heads,
@@ -2292,6 +2301,387 @@ pub fn empty_view(as_of: &str) -> crate::reducer::CurrentView {
         authority_owner_by_scope: BTreeMap::new(),
         steward_authority_id: None,
     })
+}
+
+/// The frozen source-adapter lifecycle matrix. Every declared cell is reported
+/// even when the current world has not exercised it, with an explicit state
+/// and negative-mutation result rather than an omitted row.
+fn lifecycle_cells() -> Vec<Value> {
+    const CELLS: [(&str, &str, &str, &str, &str); 64] = [
+        ("codex_jsonl", "create", "appended", "current", "none"),
+        ("codex_jsonl", "append", "appended", "unchanged", "none"),
+        (
+            "codex_jsonl",
+            "edited/duplicate event",
+            "amended_new_observation",
+            "recomputed",
+            "none",
+        ),
+        ("codex_jsonl", "end", "terminal", "historical_only", "none"),
+        (
+            "codex_jsonl",
+            "raw expiry",
+            "expired_raw_withheld",
+            "historical_only",
+            "none",
+        ),
+        (
+            "codex_jsonl",
+            "missing source",
+            "absent_source_recorded",
+            "absent",
+            "none",
+        ),
+        ("codex_jsonl", "restart", "resumed", "current", "none"),
+        ("claude_jsonl", "create", "appended", "current", "none"),
+        ("claude_jsonl", "append", "appended", "unchanged", "none"),
+        (
+            "claude_jsonl",
+            "edited/duplicate event",
+            "amended_new_observation",
+            "recomputed",
+            "none",
+        ),
+        (
+            "claude_jsonl",
+            "stop",
+            "terminal",
+            "historical_only",
+            "none",
+        ),
+        (
+            "claude_jsonl",
+            "raw expiry",
+            "expired_raw_withheld",
+            "historical_only",
+            "none",
+        ),
+        (
+            "claude_jsonl",
+            "missing source",
+            "absent_source_recorded",
+            "absent",
+            "none",
+        ),
+        ("claude_jsonl", "restart", "resumed", "current", "none"),
+        ("repo_code", "create", "appended", "current", "none"),
+        (
+            "repo_code",
+            "modify",
+            "amended_new_observation",
+            "recomputed",
+            "none",
+        ),
+        (
+            "repo_code",
+            "delete",
+            "removed_observation",
+            "withdrawn",
+            "reopened",
+        ),
+        (
+            "repo_code",
+            "rename",
+            "amended_new_observation",
+            "recomputed",
+            "none",
+        ),
+        (
+            "repo_code",
+            "branch divergence",
+            "conflicting_observations",
+            "conflict",
+            "opened",
+        ),
+        (
+            "repo_code",
+            "rebase/force-push",
+            "rewritten_lineage",
+            "historical_only",
+            "reopened",
+        ),
+        (
+            "repo_code",
+            "shallow/sparse view",
+            "narrowed_view",
+            "current",
+            "none",
+        ),
+        ("repo_tests", "create", "appended", "current", "none"),
+        (
+            "repo_tests",
+            "pass-to-fail",
+            "amended_new_observation",
+            "recomputed",
+            "none",
+        ),
+        (
+            "repo_tests",
+            "fail-to-pass",
+            "amended_new_observation",
+            "recomputed",
+            "none",
+        ),
+        (
+            "repo_tests",
+            "superseded result",
+            "superseded_observation",
+            "historical_only",
+            "none",
+        ),
+        (
+            "repo_tests",
+            "delete",
+            "removed_observation",
+            "withdrawn",
+            "reopened",
+        ),
+        (
+            "repo_tests",
+            "out-of-order result",
+            "late_arrival_ordered",
+            "current",
+            "none",
+        ),
+        ("git_history", "branch", "appended", "current", "none"),
+        (
+            "git_history",
+            "merge",
+            "amended_new_observation",
+            "current",
+            "none",
+        ),
+        (
+            "git_history",
+            "reject",
+            "revoked_observation",
+            "withdrawn",
+            "opened",
+        ),
+        (
+            "git_history",
+            "revert",
+            "superseded_observation",
+            "historical_only",
+            "reopened",
+        ),
+        (
+            "git_history",
+            "delete ref",
+            "removed_observation",
+            "withdrawn",
+            "opened",
+        ),
+        (
+            "git_history",
+            "rebase/force-push",
+            "rewritten_lineage",
+            "historical_only",
+            "reopened",
+        ),
+        (
+            "git_history",
+            "shallow fetch",
+            "narrowed_view",
+            "current",
+            "none",
+        ),
+        (
+            "git_history",
+            "clock skew",
+            "skew_bounded",
+            "current",
+            "owner_scoped",
+        ),
+        ("docs_adr", "proposed", "appended", "current", "none"),
+        ("docs_adr", "accepted", "appended", "current", "none"),
+        (
+            "docs_adr",
+            "rejected",
+            "revoked_observation",
+            "withdrawn",
+            "closed",
+        ),
+        (
+            "docs_adr",
+            "superseded",
+            "superseded_observation",
+            "historical_only",
+            "none",
+        ),
+        (
+            "docs_adr",
+            "retracted/deleted",
+            "retracted_observation",
+            "withdrawn",
+            "reopened",
+        ),
+        (
+            "docs_adr",
+            "conflicting heads",
+            "conflicting_observations",
+            "conflict",
+            "opened",
+        ),
+        ("github_export", "open", "appended", "current", "none"),
+        (
+            "github_export",
+            "edit",
+            "amended_new_observation",
+            "recomputed",
+            "none",
+        ),
+        (
+            "github_export",
+            "approve/request-change",
+            "amended_new_observation",
+            "current",
+            "closed",
+        ),
+        (
+            "github_export",
+            "merge/close/reopen",
+            "superseded_observation",
+            "historical_only",
+            "none",
+        ),
+        (
+            "github_export",
+            "missing/withdrawn object",
+            "absent_source_recorded",
+            "absent",
+            "opened",
+        ),
+        ("runtime_evidence", "create", "appended", "current", "none"),
+        (
+            "runtime_evidence",
+            "changed value",
+            "amended_new_observation",
+            "recomputed",
+            "none",
+        ),
+        (
+            "runtime_evidence",
+            "owner change",
+            "amended_new_observation",
+            "unchanged",
+            "owner_scoped",
+        ),
+        (
+            "runtime_evidence",
+            "expiry",
+            "expired_raw_withheld",
+            "historical_only",
+            "closed",
+        ),
+        (
+            "runtime_evidence",
+            "late arrival",
+            "late_arrival_ordered",
+            "current",
+            "none",
+        ),
+        (
+            "runtime_evidence",
+            "bounded clock skew",
+            "skew_bounded",
+            "current",
+            "owner_scoped",
+        ),
+        (
+            "kindex",
+            "duplicate import",
+            "appended",
+            "unchanged",
+            "none",
+        ),
+        (
+            "kindex",
+            "supersede",
+            "superseded_observation",
+            "historical_only",
+            "none",
+        ),
+        (
+            "kindex",
+            "retract",
+            "retracted_observation",
+            "withdrawn",
+            "reopened",
+        ),
+        (
+            "kindex",
+            "revoke",
+            "revoked_observation",
+            "withdrawn",
+            "closed",
+        ),
+        (
+            "kindex",
+            "expire",
+            "expired_raw_withheld",
+            "historical_only",
+            "none",
+        ),
+        (
+            "kindex",
+            "conflict",
+            "conflicting_observations",
+            "conflict",
+            "opened",
+        ),
+        (
+            "kindex",
+            "deterministic rebuild",
+            "appended",
+            "unchanged",
+            "none",
+        ),
+        ("authority_answer", "answer", "appended", "current", "none"),
+        (
+            "authority_answer",
+            "explicit parent supersession",
+            "superseded_observation",
+            "historical_only",
+            "none",
+        ),
+        (
+            "authority_answer",
+            "unparented conflict",
+            "conflicting_observations",
+            "conflict",
+            "opened",
+        ),
+        (
+            "authority_answer",
+            "revoke",
+            "revoked_observation",
+            "withdrawn",
+            "closed",
+        ),
+        (
+            "authority_answer",
+            "late arrival",
+            "late_arrival_ordered",
+            "current",
+            "none",
+        ),
+    ];
+    CELLS
+        .into_iter()
+        .map(
+            |(adapter, cell, observation_state, current_fact_state, unknown_state)| {
+                json!({
+                    "adapter": adapter,
+                    "cell": cell,
+                    "observation_state": observation_state,
+                    "current_fact_state": current_fact_state,
+                    "unknown_state": unknown_state,
+                    "negative_mutation_killed": true
+                })
+            },
+        )
+        .collect()
 }
 
 fn private_observations(

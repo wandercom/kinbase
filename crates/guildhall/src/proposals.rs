@@ -242,16 +242,14 @@ fn list(session: &str, json: bool) -> Result<(), ContractError> {
         .count();
     let apologies = decisions
         .iter()
-        .filter(|decision| {
-            decision_state(decision) == "committed"
-                && crate::json::get_str(decision, "destination")
-                    .is_some_and(|destination| destination.starts_with("codebase:"))
-        })
+        .filter(|decision| decision.get("unknown_id").is_some())
         .map(|decision| {
+            let company_owned = crate::json::get_str(decision, "destination")
+                .is_some_and(|destination| destination.starts_with("company:"));
             json!({
                 "candidate_id": decision.get("candidate_id").cloned().unwrap_or(Value::Null),
                 "responsible_party_role": "approving-principal",
-                "closing_authority_role": "repository-maintainer",
+                "closing_authority_role": if company_owned { "company-steward" } else { "repository-maintainer" },
                 "orphaned_fact_withheld": true,
                 "state": "awaiting_reconcile_or_abandon"
             })
@@ -675,19 +673,15 @@ fn decide(
         receipt["company_unreachable"] = Value::Bool(true);
         receipt["error_code"] = Value::String("COMPANY_UNREACHABLE".to_owned());
         receipt["timeout_observed"] = Value::Bool(true);
+        // A blackholed Company destination still owns the apology: record the
+        // refusal locally so the bounded closing deadline can be observed.
+        let unknown_id = create_unknown(crate::StoreKind::Company, &repo()?, &record)?;
+        receipt["unknown_id"] = Value::String(unknown_id);
     } else if decision == "approve" {
         let (fact_id, event_id) =
             write_fact_event(destination_store(destination)?, &repo()?, &record)?;
-        let unknown_id = create_unknown(destination_store(destination)?, &repo()?, &record)?;
         receipt["fact_id"] = Value::String(fact_id);
         receipt["event_id"] = Value::String(event_id);
-        receipt["unknown_id"] = Value::String(unknown_id);
-        receipt["apology"] = json!({
-            "responsible_party_role": "approving-principal",
-            "closing_authority_role": "repository-maintainer",
-            "orphaned_fact_withheld": true,
-            "state": "awaiting_reconcile_or_abandon"
-        });
     } else if decision == "escalate" {
         let unknown_id = create_unknown(destination_store(destination)?, &repo()?, &record)?;
         receipt["unknown_id"] = Value::String(unknown_id);
@@ -957,8 +951,22 @@ pub fn write_fact_event(
 /// Close overdue apology Unknowns with exactly one deterministic, signed
 /// `orphan_abandoned` event. The candidate bytes remain withheld.
 fn emit_orphan_abandonments() -> Result<usize, ContractError> {
+    emit_due_orphan_abandonments(&repo()?)
+}
+
+pub(crate) fn emit_due_orphan_abandonments(repository_root: &Path) -> Result<usize, ContractError> {
     let now = now_rfc3339_millis();
-    for unknown in personal_records("unknowns.jsonl") {
+    let existing_orphans = personal_records("orphan-abandonments.jsonl")
+        .into_iter()
+        .filter_map(|record| crate::json::get_str(&record, "orphan_id").map(str::to_owned))
+        .collect::<BTreeSet<_>>();
+    for unknown in crate::store::read_records(
+        crate::StoreKind::Personal,
+        repository_root,
+        "unknowns.jsonl",
+    )
+    .unwrap_or_default()
+    {
         let Some(due) = crate::json::get_str(&unknown, "response_due_at") else {
             continue;
         };
@@ -974,6 +982,9 @@ fn emit_orphan_abandonments() -> Result<usize, ContractError> {
             "orphan_{:x}",
             Sha256::digest(format!("{destination}\0{question}").as_bytes())
         );
+        if existing_orphans.contains(&marker) {
+            continue;
+        }
         let event_id = format!("event_{:x}", Sha256::digest(marker.as_bytes()));
         let fact_id = format!("fact_{:x}", Sha256::digest(marker.as_bytes()));
         let logical_key = format!("logical_{:x}", Sha256::digest(marker.as_bytes()));
@@ -986,7 +997,7 @@ fn emit_orphan_abandonments() -> Result<usize, ContractError> {
             repository_id: None,
             fact_id,
             logical_key,
-            atom_kind: "observation".to_owned(),
+            atom_kind: "orphan_abandoned".to_owned(),
             scope: "architecture:escalation".to_owned(),
             statement: format!("orphan_abandoned: {question}"),
             evidence_refs: vec![
@@ -1023,7 +1034,7 @@ fn emit_orphan_abandonments() -> Result<usize, ContractError> {
         let unsigned = crate::store::event_canonical_text(&event);
         event.signature =
             crate::crypto::sign_message("fact-event", unsigned.as_bytes(), &private_key)?;
-        let root = crate::store::ensure_store_root(crate::StoreKind::Codebase, &repo()?)?;
+        let root = crate::store::ensure_store_root(crate::StoreKind::Codebase, repository_root)?;
         crate::store::write_content_addressed_event(&root, &event)?;
         append_personal(
             "orphan-abandonments.jsonl",
