@@ -1729,18 +1729,35 @@ pub fn init(
         )
         .with_detail(json!({"collisions": collisions, "planned_paths": planned})));
     }
+    let init_clock = crate::time::proof_clock().as_of;
     if let Some(existing) = &repo.config {
-        if crate::json::get_str(&document, "repository_uuid")
-            != Some(existing.repository_uuid_hint.as_str())
-        {
+        let offered = crate::json::get_str(&document, "repository_uuid").unwrap_or_default();
+        if offered != existing.repository_uuid_hint.as_str() {
+            // A hint resolving to a different UUID after pinning never
+            // silently repins (architecture §2): the binding stays, and a
+            // steward-owned identity Unknown is opened in the cache so every
+            // later status reports it until a signed lineage/move event.
+            let pinned = existing.repository_uuid_hint.clone();
+            if let Ok(Some((cache, _root))) = launcher.company_cache() {
+                let _ = cache.set_meta(
+                    &format!("certificate_identity_conflict:{pinned}"),
+                    &format!("{offered}:{}", crate::json::digest(&document)),
+                );
+            }
+            let unknown = identity_unknown(&pinned, &init_clock);
             return Err(ContractError::refused(
                 "FOREIGN_REPO_EVENTS",
                 ".kin/config already binds a different repository UUID",
                 "Obtain a signed lineage event before rebinding; the existing bytes are preserved.",
-            ));
+            )
+            .with_detail(json!({
+                "pinned_repository_uuid": pinned,
+                "offered_repository_uuid": offered,
+                "repository_uuid": pinned,
+                "unknowns": [unknown]
+            })));
         }
     }
-    let init_clock = crate::time::proof_clock().as_of;
     let authority_snapshot = ensure_authority_snapshot(&launcher, None, &init_clock);
     let Some((cache, root)) = launcher.company_cache()? else {
         return Err(ContractError::user_action(
