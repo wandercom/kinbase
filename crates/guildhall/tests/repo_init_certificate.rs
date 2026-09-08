@@ -1,10 +1,12 @@
 use guildhall::crypto::PrivateKey;
 use serde_json::{Value, json};
 use std::fs::{self, OpenOptions};
-use std::io::Write as _;
+use std::io::{Read as _, Write as _};
+use std::net::TcpListener;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::process::Command;
+use std::thread;
 use std::time::SystemTime;
 use tempfile::TempDir;
 
@@ -292,6 +294,24 @@ fn repo_init_caches_certificate_outside_worktree() {
         serde_json::from_slice(&replacement.stderr).expect("replacement error is JSON");
     assert_eq!(replacement_error["error"]["code"], "FOREIGN_REPO_EVENTS");
     assert_eq!(fs::read(&cached_certificate).unwrap(), certificate_bytes);
+    let identity_status_output = run_status(&home, &config_home, &repo);
+    // This fixture deliberately points Company at an unreachable endpoint. Status
+    // still publishes the degraded certified document and the identity Unknown.
+    assert!(
+        !identity_status_output.status.success(),
+        "offline status unexpectedly succeeded without a Company refresh"
+    );
+    let identity_status: Value = serde_json::from_slice(&identity_status_output.stdout)
+        .expect("identity-conflict status is JSON");
+    let identity_unknown = identity_status["unknowns"]
+        .as_array()
+        .expect("status unknowns")
+        .iter()
+        .find(|unknown| unknown["kind"] == "identity")
+        .expect("identity Unknown remains open after refused repin");
+    assert_eq!(identity_unknown["owner_role"], "company-steward");
+    assert_eq!(identity_unknown["repository_uuid"], repository_uuid);
+    assert_eq!(identity_unknown["repin_blocked"], true);
 
     let foreign_uuid = "fedcba98-7654-3210-fedc-ba9876543210";
     let foreign_file = root.path().join("certificate-foreign.json");
@@ -561,6 +581,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
     fs::create_dir_all(&personal_root).expect("create personal root");
 
     let root_key = PrivateKey::generate();
+    let maintainer_key = PrivateKey::generate();
     private_write(
         &guildhall_config.join("root-public.key"),
         format!("{}\n", root_key.public().to_hex()).as_bytes(),
@@ -624,8 +645,15 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
             {
                 "authority_id": "repository-maintainer",
                 "scope": format!("codebase:{repository_uuid}"),
-                "public_key": root_key.public().to_hex(),
+                "public_key": maintainer_key.public().to_hex(),
                 "status": "active"
+            },
+            {
+                "authority_id": "chief-architect",
+                "scope": "architecture:scheduler",
+                "public_key": root_key.public().to_hex(),
+                "status": "active",
+                "question_kind": "architecture"
             }
         ],
         "revocations": [],
@@ -730,15 +758,15 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
     let mut unknown = guildhall::model::UnknownEvent::new(
         "codebase",
         Some(repository_uuid),
-        "root-steward",
-        &format!("codebase:{repository_uuid}"),
-        "logical_packet11_unknown",
-        "packet 11 projector corpus",
-        "packet 11 planted unknown must be visible",
-        "repository-maintainer",
-        "root-steward",
-        "Which packet 11 residue still blocks the projector proof?",
-        7000,
+        "chief-architect",
+        "architecture:scheduler/diagnosis",
+        "architecture_scheduler_diagnosis",
+        "architecture:scheduler/diagnosis",
+        "which compatibility invariant constrains the change",
+        "chief-architect",
+        "chief-architect",
+        "Which compatibility invariant constrains extending the scheduler diagnosis path?",
+        9000,
         "2026-09-08T12:00:00.000Z",
         "2026-09-09T12:00:00.000Z",
         "24h",
@@ -748,7 +776,12 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
 
     let mut relative_paths = Vec::new();
     for fact in &mut facts {
-        fact.sign(&root_key).expect("sign packet 11 fact");
+        let signing_key = if fact.fact_id == "fact_packet11_invariant" {
+            &maintainer_key
+        } else {
+            &root_key
+        };
+        fact.sign(signing_key).expect("sign packet 11 fact");
         let bytes = guildhall::json::canonical_bytes(&fact.document());
         let digest = guildhall::hash::sha256_bytes(&bytes);
         let relative = format!("{}/{}/{}.json", &digest[..2], &digest[2..4], &digest[4..]);
@@ -796,9 +829,9 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
             "--repo",
             &repo.display().to_string(),
             "--task",
-            "prove classifier termination and projector transparency",
+            "extend the scheduler diagnosis path",
             "--decision",
-            "packet 11 projector release",
+            "which compatibility invariant constrains the change",
             "--as-of",
             "2026-09-08T12:00:00.000Z",
             "--json",
@@ -814,6 +847,127 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         String::from_utf8_lossy(&project.stderr)
     );
     let result: Value = serde_json::from_slice(&project.stdout).expect("project receipt is JSON");
+
+    // V-6: tier exhaustion raises a targeted architect question before the
+    // blocked decision can be credited, and a signed answer closes the loop.
+    let questions_output = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+        .current_dir(&repo)
+        .args(["questions", "list", "--json"])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env_remove("GUILDHALL_COMPANY_URL")
+        .output()
+        .expect("run guildhall questions list");
+    assert!(
+        questions_output.status.success(),
+        "questions list failed: {}",
+        String::from_utf8_lossy(&questions_output.stderr)
+    );
+    let questions: Value =
+        serde_json::from_slice(&questions_output.stdout).expect("questions list is JSON");
+    let question = questions["questions"]
+        .as_array()
+        .expect("questions array")
+        .first()
+        .expect("scheduler architect question")
+        .clone();
+    let question_id = question["question_id"].as_str().expect("question ID");
+    assert_eq!(question["status"], "open");
+    assert_eq!(
+        question["decision"],
+        "which compatibility invariant constrains the change"
+    );
+    assert_eq!(
+        question["blocked_decision"],
+        "which compatibility invariant constrains the change"
+    );
+    assert_eq!(question["authority_id"], "chief-architect");
+    assert_eq!(question["architect_identity"], "chief-architect");
+    assert_eq!(question["owner_identity"], "chief-architect");
+    assert_eq!(question["owner_role"], "chief-architect");
+    assert!(
+        question["closure_evidence"]
+            .as_array()
+            .is_some_and(|evidence| !evidence.is_empty())
+    );
+
+    let answer_text = "The scheduler diagnosis path must preserve the single-writer lookahead-owner compatibility invariant.";
+    let unsigned_answer = json!({
+        "answer": answer_text,
+        "answered_at": "2026-09-08T12:00:01.000Z",
+        "authority_id": "chief-architect",
+        "authority_scope": "architecture:scheduler/diagnosis"
+    });
+    let signed_answer = root_key
+        .sign_document("answer", &unsigned_answer)
+        .expect("sign architect answer");
+    let answer_file = root.path().join("architect-answer.json");
+    private_write(
+        &answer_file,
+        &guildhall::json::canonical_bytes(&signed_answer),
+    );
+    let answer_key_file = root.path().join("architect-answer.key");
+    private_write(
+        &answer_key_file,
+        format!(
+            "{}
+",
+            root_key.public().to_hex()
+        )
+        .as_bytes(),
+    );
+    let answered = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+        .current_dir(&repo)
+        .args([
+            "questions",
+            "answer",
+            question_id,
+            "--answer-file",
+            &answer_file.display().to_string(),
+            "--key-file",
+            &answer_key_file.display().to_string(),
+            "--json",
+        ])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env_remove("GUILDHALL_COMPANY_URL")
+        .output()
+        .expect("run guildhall questions answer");
+    assert!(
+        answered.status.success(),
+        "questions answer failed: {}",
+        String::from_utf8_lossy(&answered.stderr)
+    );
+    let answered: Value =
+        serde_json::from_slice(&answered.stdout).expect("questions answer receipt is JSON");
+    assert_eq!(answered["status"], "closed");
+    assert!(answered["closure_event_id"].is_string());
+
+    let resolved = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+        .current_dir(&repo)
+        .args([
+            "project",
+            "--repo",
+            &repo.display().to_string(),
+            "--task",
+            "extend the scheduler diagnosis path",
+            "--decision",
+            "which compatibility invariant constrains the change",
+            "--json",
+        ])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env_remove("GUILDHALL_COMPANY_URL")
+        .output()
+        .expect("run resolved guildhall project");
+    assert!(
+        resolved.status.success(),
+        "resolved project failed: {}",
+        String::from_utf8_lossy(&resolved.stderr)
+    );
+    let resolved: Value =
+        serde_json::from_slice(&resolved.stdout).expect("resolved project receipt is JSON");
+    assert_eq!(resolved["trusted_recommendation"], answer_text);
 
     let selected_ids: Vec<&str> = result["selected"]
         .as_array()
@@ -863,8 +1017,10 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
     let query_log = status["query_log"].as_array().expect("query log array");
     let selected_query = query_log
         .iter()
-        .rev()
-        .find(|row| row["declared_use"].as_str() == Some("packet 11 projector release"))
+        .find(|row| {
+            row["declared_use"].as_str()
+                == Some("which compatibility invariant constrains the change")
+        })
         .expect("project query log row");
     let logged_selected_ids: Vec<&str> = selected_query["selected_ids"]
         .as_array()

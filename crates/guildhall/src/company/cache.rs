@@ -288,6 +288,7 @@ impl Cache {
             .map_err(sqlite_error("certificate lookup"))?;
         if let Some(existing) = existing {
             if existing != digest {
+                let _ = self.set_meta(&format!("certificate_identity_conflict:{uuid}"), &digest);
                 return Err(ContractError::refused(
                     "FOREIGN_REPO_EVENTS",
                     "a different certificate is already installed for this repository UUID",
@@ -309,6 +310,7 @@ impl Cache {
                 ContractError::integrity("DIGEST_MISMATCH", format!("cached certificate is corrupt ({error})"), "Delete the corrupt certificate cache entry and reinstall the steward certificate.")
             })?;
             if crate::json::digest(&existing_document) != digest {
+                let _ = self.set_meta(&format!("certificate_identity_conflict:{uuid}"), &digest);
                 return Err(ContractError::refused(
                     "FOREIGN_REPO_EVENTS",
                     "a different certificate is already installed for this repository UUID",

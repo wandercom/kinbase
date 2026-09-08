@@ -1152,9 +1152,11 @@ pub fn build_trust(
         .and_then(|access| access.maintainer_key().ok())
         .map(|key| BTreeSet::from([key.public().to_hex()]))
         .unwrap_or_default();
-    if online && company.cache.state != crate::company::cache::CacheState::Warm
-        || online && cache_needs_refresh(&company.cache, &now)
-    {
+    if online {
+        // An online status read observes the published authority state. A
+        // still-fresh old cache is not an authority boundary; refresh and
+        // retain the cache only if the service is unavailable.
+
         let started = std::time::Instant::now();
         trust.company_query_attempted = true;
         match company.client.snapshot() {
@@ -1205,6 +1207,14 @@ pub fn build_trust(
     // Certificate: only from the cache, keyed by the config hint.
     if let Some(uuid) = hint_uuid {
         trust.repository_uuid = Some(uuid.clone());
+        if company
+            .cache
+            .meta(&format!("certificate_identity_conflict:{uuid}"))
+            .is_some()
+        {
+            trust.pin_state = "conflict".to_owned();
+            trust.unknowns.push(identity_unknown(&uuid, &now));
+        }
         match company.cache.certificate(&uuid)? {
             Some((certificate, digest)) => {
                 let signer = PublicKey::verify_document("repo-certificate", &certificate);
@@ -1360,6 +1370,21 @@ pub fn normalize_hint(remote: &str) -> String {
         .trim_end_matches(".git")
         .to_owned();
     hint
+}
+
+fn identity_unknown(uuid: &str, now: &str) -> Value {
+    json!({
+        "kind": "identity",
+        "unknown_id": format!("unknown_identity_{}", &crate::hash::sha256_text(uuid)[..24]),
+        "owner_role": "company-steward",
+        "owner_identity": "company-steward",
+        "repository_uuid": uuid,
+        "repin_blocked": true,
+        "response_due_at": crate::time::plus_seconds(now, 24 * 3600).unwrap_or_default(),
+        "expiry_policy": "block_dependent_decision",
+        "question": format!("A second certificate was refused for repository UUID {uuid}; only a signed Company lineage/move event may rebind the pinned certificate."),
+        "status": "open"
+    })
 }
 
 pub fn certificate_unknown(uuid: &str, now: &str) -> Value {

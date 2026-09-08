@@ -9,7 +9,7 @@ use crate::error::{ContractError, ExitCode};
 use crate::scanner::{ScanResult, scanner};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
@@ -196,8 +196,15 @@ pub(crate) fn deterministic(document: &Value) -> Result<Value, ContractError> {
 }
 
 fn ollama(model: &str, document: &Value) -> Result<Value, ContractError> {
-    observations(document)?;
-    let instruction = r#"Classify each observation into minimal atoms. Return exactly one JSON object with keys classifier_version, provider, atoms. atoms items have exactly atom_id, observation_id, text, atom_kind, scope, confidence, proposed_destinations, taint, provenance, unresolved_uncertainty. One atom is exactly one claim, question, decision, constraint, rationale, or observation. Split mixed-scope messages into separate atoms. Destinations: personal means the principal's private conversational memory; company means organization-wide direction owned by a steward or named authority; codebase means repository-scoped knowledge; none means ambiguous non-facts, temporary suggestions, questions, or hedges. Use confidence low for ambiguity and never guess a shared destination. No markdown or extra keys."#;
+    let input_observations = observations(document)?;
+    for observation in input_observations {
+        require_observation(
+            observation
+                .as_object()
+                .ok_or_else(|| invariant("each observation must be an object"))?,
+        )?;
+    }
+    let instruction = "Classify conversational observations for Guildhall. Return exactly one JSON object with keys classifier_version, provider, atoms. atoms items have exactly atom_id, observation_id, text, atom_kind, scope, confidence, proposed_destinations, taint, provenance, unresolved_uncertainty. Make exactly one atom per independent claim; split mixed sentences containing separate claims. Use only proposed_destinations values personal, company, codebase, none. personal means the principal's private conversational memory; company means organization-wide direction owned by a steward or named authority; codebase means repository-scoped knowledge; none means ambiguous non-facts, temporary suggestions, questions, or hedges. Do not invent shared labels: choose one destination per atom, and use none when confidence is low or ownership is ambiguous. Do not add markdown or extra keys.";
     let request = json!({
         "model": model,
         "stream": false,
@@ -222,107 +229,194 @@ fn ollama(model: &str, document: &Value) -> Result<Value, ContractError> {
         serde_json::from_str(content)
             .map_err(|error| unauthorized(format!("Ollama message is not JSON: {error}")))?
     };
-    validate_output(&candidate)?;
-    Ok(normalize_ollama_output(&candidate, document))
+    let normalized = normalize_ollama_output(document, &candidate)?;
+    validate_output(&normalized)?;
+    Ok(normalized)
 }
 
-fn normalize_ollama_output(candidate: &Value, document: &Value) -> Value {
-    let mut model_atoms_by_observation: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
-    if let Some(atoms) = candidate.get("atoms").and_then(Value::as_array) {
-        for atom in atoms {
-            if let Some(observation_id) = atom.get("observation_id").and_then(Value::as_str) {
-                model_atoms_by_observation
-                    .entry(observation_id.to_owned())
-                    .or_default()
-                    .push(atom);
+fn normalize_ollama_output(input: &Value, candidate: &Value) -> Result<Value, ContractError> {
+    let model_atoms = candidate
+        .get("atoms")
+        .and_then(Value::as_array)
+        .ok_or_else(|| unauthorized("Ollama output must contain an atoms array"))?;
+    let inputs = observations(input)?;
+    let mut normalized_atoms = Vec::new();
+    for model_atom in model_atoms {
+        let observation_id = model_atom
+            .get("observation_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| unauthorized("Ollama atom is missing observation_id"))?;
+        let observation = inputs
+            .iter()
+            .find(|observation| {
+                observation.get("observation_id").and_then(Value::as_str) == Some(observation_id)
+            })
+            .and_then(Value::as_object)
+            .ok_or_else(|| unauthorized("Ollama atom refers to an unknown observation"))?;
+        let model_text = model_atom
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        for text in claim_atoms(model_text) {
+            let confidence = normalized_atom_confidence(model_atom, &text);
+            let mut atom = atom_from_observation(observation, &text, confidence, None);
+            let model_kind = model_atom.get("atom_kind").and_then(Value::as_str);
+            if ALLOWED_KINDS.contains(&model_kind.unwrap_or_default()) {
+                atom["atom_kind"] = Value::String(model_kind.unwrap_or_default().to_owned());
             }
+            if let Some(model_scope) = model_atom.get("scope").and_then(Value::as_str) {
+                if !model_scope.is_empty()
+                    && observation.get("scope").and_then(Value::as_str) == Some("unscoped")
+                {
+                    atom["scope"] = Value::String(model_scope.to_owned());
+                }
+            }
+            if let Some(model_uncertainty) = model_atom
+                .get("unresolved_uncertainty")
+                .and_then(Value::as_str)
+            {
+                if !model_uncertainty.is_empty() {
+                    atom["unresolved_uncertainty"] = Value::String(model_uncertainty.to_owned());
+                }
+            }
+            atom["proposed_destinations"] = Value::Array(
+                normalized_destinations(model_atom, &atom, confidence)
+                    .into_iter()
+                    .map(Value::String)
+                    .collect(),
+            );
+            normalized_atoms.push(atom);
         }
     }
-
-    let mut atoms = Vec::new();
-    let Ok(observations) = observations(document) else {
-        return candidate.clone();
-    };
-    for observation in observations {
+    let covered: BTreeSet<String> = model_atoms
+        .iter()
+        .filter_map(|atom| atom.get("observation_id").and_then(Value::as_str))
+        .map(str::to_owned)
+        .collect();
+    for observation in inputs {
         let Some(map) = observation.as_object() else {
             continue;
         };
         let observation_id = map
             .get("observation_id")
             .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
+            .unwrap_or_default();
+        if covered.contains(observation_id) {
+            continue;
+        }
+        let Some(body) = map.get("body").and_then(Value::as_str) else {
+            continue;
+        };
         let mut emitted: BTreeSet<String> = BTreeSet::new();
-        let model_atoms = model_atoms_by_observation.get(&observation_id);
-        let source_atoms: Vec<(String, &str, Vec<String>)> = model_atoms
-            .map(|model_atoms| {
-                model_atoms
-                    .iter()
-                    .filter_map(|atom| {
-                        let text = atom.get("text").and_then(Value::as_str)?;
-                        let confidence = atom
-                            .get("confidence")
-                            .and_then(Value::as_str)
-                            .unwrap_or("medium");
-                        let destinations = atom
-                            .get("proposed_destinations")
-                            .and_then(Value::as_array)
-                            .map(|values| {
-                                values
-                                    .iter()
-                                    .filter_map(Value::as_str)
-                                    .filter(|destination| {
-                                        ALLOWED_DESTINATIONS.contains(destination)
-                                    })
-                                    .map(str::to_owned)
-                                    .collect::<Vec<_>>()
-                            })
-                            .unwrap_or_default();
-                        Some((text.to_owned(), confidence, destinations))
-                    })
-                    .collect()
-            })
-            .unwrap_or_else(|| {
-                map.get("body")
-                    .and_then(Value::as_str)
-                    .map(|body| {
-                        sentences(body)
-                            .into_iter()
-                            .map(|text| (text, "medium", Vec::new()))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            });
-        for (source_text, model_confidence, model_destinations) in source_atoms {
-            for sentence in sentences(&source_text) {
-                if !emitted.insert(sentence.clone()) {
-                    continue;
-                }
-                let sentence_confidence = sentence_confidence(&sentence);
-                let confidence = if model_confidence == "low" || is_nonfact_statement(&sentence) {
-                    "low"
-                } else if model_confidence == "high" {
-                    "high"
-                } else {
-                    sentence_confidence
-                };
-                let model_destinations: Vec<&str> =
-                    model_destinations.iter().map(String::as_str).collect();
-                atoms.push(atom_from_observation(
-                    map,
-                    &sentence,
-                    confidence,
-                    Some(&model_destinations),
-                ));
+        for text in claim_atoms(body) {
+            if !emitted.insert(text.clone()) {
+                continue;
             }
+            let confidence = sentence_confidence(&text);
+            let confidence = if is_nonfact_statement(&text) {
+                "low"
+            } else {
+                confidence
+            };
+            normalized_atoms.push(atom_from_observation(map, &text, confidence, None));
         }
     }
-
-    json!({
-        "classifier_version": candidate.get("classifier_version").cloned().unwrap_or_else(|| json!(CLASSIFIER_VERSION)),
+    Ok(json!({
+        "classifier_version": CLASSIFIER_VERSION,
         "provider": "ollama",
-        "atoms": atoms
-    })
+        "atoms": normalized_atoms
+    }))
+}
+
+fn normalized_atom_confidence(model_atom: &Value, text: &str) -> &'static str {
+    let value = model_atom.get("confidence");
+    let mut confidence = match value {
+        Some(Value::String(value)) => match value.as_str() {
+            "high" => "high",
+            "medium" => "medium",
+            "low" => "low",
+            _ => "medium",
+        },
+        Some(Value::Number(number)) => {
+            let number = number.as_f64().unwrap_or_default();
+            if number >= 7_000.0 || (number > 0.0 && number <= 1.0 && number >= 0.7) {
+                "high"
+            } else if number >= 4_000.0 || (number > 0.0 && number <= 1.0 && number >= 0.4) {
+                "medium"
+            } else {
+                "low"
+            }
+        }
+        _ => "medium",
+    };
+    if confidence != "low" && sentence_confidence(text) == "low" {
+        confidence = "low";
+    }
+    confidence
+}
+
+fn normalized_destinations(
+    model_atom: &Value,
+    canonical_atom: &Value,
+    confidence: &str,
+) -> Vec<String> {
+    let model_labels = model_atom
+        .get("proposed_destinations")
+        .and_then(Value::as_array)
+        .map(|labels| {
+            labels
+                .iter()
+                .filter_map(Value::as_str)
+                .filter(|label| ALLOWED_DESTINATIONS.contains(label))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut labels = model_labels;
+    labels.sort_unstable();
+    labels.dedup();
+    if labels.is_empty() {
+        labels = canonical_atom
+            .get("proposed_destinations")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+    if confidence == "low" || labels.contains(&"none".to_owned()) || labels.len() > 1 {
+        return vec!["none".to_owned()];
+    }
+    labels.into_iter().take(1).collect()
+}
+
+fn claim_atoms(text: &str) -> Vec<String> {
+    let mut atoms = sentences(text);
+    for boundary in ["; ", ", and ", ", but ", ", or ", " while "] {
+        atoms = atoms
+            .into_iter()
+            .flat_map(|atom| split_claim(atom, boundary))
+            .collect();
+    }
+    atoms
+}
+
+fn split_claim(text: String, boundary: &str) -> Vec<String> {
+    let lower = text.to_lowercase();
+    let Some(index) = lower.find(boundary) else {
+        return vec![text];
+    };
+    let left = text[..index].trim();
+    let right = text[index + boundary.len()..].trim();
+    if left.chars().any(char::is_alphabetic) && right.chars().any(char::is_alphabetic) {
+        vec![left.to_owned(), right.to_owned()]
+    } else {
+        vec![text]
+    }
 }
 
 fn post_ollama(request: &Value) -> Result<Vec<u8>, ContractError> {
@@ -959,5 +1053,117 @@ mod tests {
                 .iter()
                 .any(|atom| atom.get("confidence") == Some(&Value::String("low".to_owned())))
         );
+    }
+
+    #[test]
+    fn ollama_post_processing_is_self_consistent_across_thirty_sentences() {
+        let cases: [(&str, &str); 30] = [
+            ("I kept my private note from last night.", "personal"),
+            ("My personal reminder is due tomorrow.", "personal"),
+            ("I remembered my own login preference.", "personal"),
+            ("The company policy requires signed releases.", "company"),
+            (
+                "Every team must follow the architecture standard.",
+                "company",
+            ),
+            ("The organization roadmap prioritizes safety.", "company"),
+            ("Company governance owns this release policy.", "company"),
+            (
+                "The corporate standard defines review authority.",
+                "company",
+            ),
+            (
+                "The repository scheduler must preserve single ownership.",
+                "codebase",
+            ),
+            (
+                "The codebase has a regression test for the queue.",
+                "codebase",
+            ),
+            ("The service schema forbids breaking changes.", "codebase"),
+            ("This module dependency is pinned.", "codebase"),
+            ("The build configuration compiles offline.", "codebase"),
+            ("The function signature changed in commit abc.", "codebase"),
+            ("The compiler error came from the API.", "codebase"),
+            ("Maybe we should try another approach.", "none"),
+            ("Could you explain this?", "none"),
+            ("Perhaps the option is unclear.", "none"),
+            ("I think this might be temporary.", "none"),
+            ("Should we ask the architect?", "none"),
+            ("This might be a suggestion.", "none"),
+            ("Is the current direction certain?", "none"),
+            ("That seems possibly true.", "none"),
+            ("We may revisit it later.", "none"),
+            ("What if the rollout changes?", "none"),
+            ("The queue worker retries failed jobs.", "codebase"),
+            ("The migration updates the database schema.", "codebase"),
+            ("The branch commit failed the test.", "codebase"),
+            (
+                "The library interface remains backward compatible.",
+                "codebase",
+            ),
+            (
+                "The deployment configuration names the service.",
+                "codebase",
+            ),
+        ];
+        let observations: Vec<Value> = cases
+            .iter()
+            .enumerate()
+            .map(|(index, (text, _))| {
+                json!({
+                    "observation_id": format!("obs-{index}"),
+                    "source_kind": "codex_jsonl",
+                    "source_identity": "source:test",
+                    "content_digest": format!("digest-{index}"),
+                    "observed_at": "2026-09-08T10:00:00.000Z",
+                    "disposition": "current",
+                    "extraction_version": "1",
+                    "scope": "unscoped",
+                    "body": text
+                })
+            })
+            .collect();
+        let model_atoms: Vec<Value> = cases
+            .iter()
+            .enumerate()
+            .map(|(index, (text, _))| {
+                json!({
+                    "observation_id": format!("obs-{index}"),
+                    "text": text,
+                    "confidence": "high",
+                    "proposed_destinations": []
+                })
+            })
+            .collect();
+        let input = json!({"observations": observations});
+        let candidate = json!({
+            "classifier_version": "model-version",
+            "provider": "model",
+            "atoms": model_atoms
+        });
+        let output = normalize_ollama_output(&input, &candidate).expect("normalized Ollama output");
+        validate_output(&output).expect("normalized output satisfies strict contract");
+        let atoms = output
+            .get("atoms")
+            .and_then(Value::as_array)
+            .expect("atoms");
+        assert_eq!(atoms.len(), cases.len());
+        assert_eq!(output.get("provider").unwrap(), "ollama");
+        for (atom, (text, expected)) in atoms.iter().zip(cases) {
+            let atom_text = atom.get("text").and_then(Value::as_str).unwrap_or_default();
+            let expected_text = text.trim_end_matches(['.', '!', '?']);
+            assert_eq!(atom_text.trim_end_matches(['.', '!', '?']), expected_text);
+            assert_eq!(
+                atom.get("proposed_destinations").unwrap(),
+                &json!([expected])
+            );
+            assert!(
+                atom.get("atom_id")
+                    .and_then(Value::as_str)
+                    .unwrap()
+                    .starts_with("atom_")
+            );
+        }
     }
 }

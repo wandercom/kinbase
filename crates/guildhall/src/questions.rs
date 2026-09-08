@@ -117,64 +117,90 @@ pub(crate) fn scope_kind(scope: &str) -> &'static str {
     }
 }
 
+fn registry_entries(repo: &Path) -> Vec<Value> {
+    let mut entries = company_records_with_repo(repo, "authority-registry.jsonl");
+    if let Ok(launcher) = crate::launcher::Launcher::load() {
+        if let Ok(Some((cache, _root))) = launcher.company_cache() {
+            if let Ok(Some(snapshot)) = cache.snapshot() {
+                if let Some(registry) = crate::json::get_array(&snapshot, "registry") {
+                    entries.extend(registry.iter().cloned());
+                }
+            }
+        }
+    }
+    let mut unique: BTreeSet<String> = BTreeSet::new();
+    entries.retain(|entry| unique.insert(crate::json::canonical_text(entry)));
+    entries
+}
+
+fn authority_entry_matches(
+    entry: &Value,
+    scope: &str,
+    question_kind: &str,
+    exact_scope: bool,
+) -> bool {
+    if entry
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("active")
+        != "active"
+    {
+        return false;
+    }
+    let entry_scope = entry
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let scope_matches = if exact_scope {
+        entry_scope == scope
+    } else {
+        question_kind == "architecture" && entry_scope.starts_with("architecture:")
+    };
+    if !scope_matches {
+        return false;
+    }
+    let kind_matches = entry.get("question_kind").and_then(Value::as_str) == Some(question_kind);
+    let capability_matches = entry
+        .get("capabilities")
+        .and_then(Value::as_array)
+        .is_some_and(|capabilities| {
+            capabilities.iter().any(|capability| {
+                capability.as_str() == Some(question_kind) || capability.as_str() == Some("answer")
+            })
+        });
+    kind_matches || capability_matches
+}
+
+fn active_authority_entries(
+    repo: &Path,
+    scope: &str,
+    question_kind: &str,
+) -> Result<Vec<Value>, ContractError> {
+    let exact = registry_entries(repo)
+        .into_iter()
+        .filter(|entry| authority_entry_matches(entry, scope, question_kind, true))
+        .collect::<Vec<_>>();
+    if !exact.is_empty() {
+        return Ok(exact);
+    }
+    // An architecture Unknown can name a narrower leaf scope than the
+    // registry. Resolve it only when the active architecture authority is
+    // unique; overlapping architects deliberately remain unresolved.
+    if question_kind == "architecture" {
+        return Ok(registry_entries(repo)
+            .into_iter()
+            .filter(|entry| authority_entry_matches(entry, scope, question_kind, false))
+            .collect());
+    }
+    Ok(Vec::new())
+}
+
 pub(crate) fn active_authority_with_repo(
     repo: &Path,
     scope: &str,
     question_kind: &str,
 ) -> Result<Value, ContractError> {
-    let mut entries: Vec<Value> = company_records_with_repo(repo, "authority-registry.jsonl")
-        .into_iter()
-        .filter(|entry| {
-            entry
-                .get("status")
-                .and_then(Value::as_str)
-                .unwrap_or("active")
-                == "active"
-                && entry.get("scope").and_then(Value::as_str) == Some(scope)
-                && (entry.get("question_kind").and_then(Value::as_str) == Some(question_kind)
-                    || entry
-                        .get("capabilities")
-                        .and_then(Value::as_array)
-                        .is_some_and(|capabilities| {
-                            capabilities.iter().any(|capability| {
-                                capability.as_str() == Some(question_kind)
-                                    || capability.as_str() == Some("answer")
-                            })
-                        }))
-        })
-        .collect();
-    if entries.is_empty() {
-        if let Ok(launcher) = crate::launcher::Launcher::load() {
-            if let Ok(Some((cache, _root))) = launcher.company_cache() {
-                if let Ok(Some(snapshot)) = cache.snapshot() {
-                    entries = crate::json::get_array(&snapshot, "registry")
-                        .cloned()
-                        .unwrap_or_default()
-                        .into_iter()
-                        .filter(|entry| {
-                            entry
-                                .get("status")
-                                .and_then(Value::as_str)
-                                .unwrap_or("active")
-                                == "active"
-                                && entry.get("scope").and_then(Value::as_str) == Some(scope)
-                                && (entry.get("question_kind").and_then(Value::as_str)
-                                    == Some(question_kind)
-                                    || entry
-                                        .get("capabilities")
-                                        .and_then(Value::as_array)
-                                        .is_some_and(|capabilities| {
-                                            capabilities.iter().any(|capability| {
-                                                capability.as_str() == Some(question_kind)
-                                                    || capability.as_str() == Some("answer")
-                                            })
-                                        }))
-                        })
-                        .collect();
-                }
-            }
-        }
-    }
+    let entries = active_authority_entries(repo, scope, question_kind)?;
     let mut distinct_owners = BTreeSet::new();
     for entry in &entries {
         distinct_owners.insert((
@@ -193,7 +219,7 @@ pub(crate) fn active_authority_with_repo(
     if distinct_owners.len() > 1 {
         return Err(ContractError::new(
             "UNKNOWN_OWNER_UNRESOLVED",
-            "multiple active authorities overlap the exact scope",
+            "multiple active authorities overlap the requested scope",
             "The Company steward must repair the registry before guidance is trusted.",
             true,
             ExitCode::DegradedSafe,
@@ -243,7 +269,11 @@ pub(crate) fn active_authority_with_repo(
         .ok_or_else(|| {
             ContractError::new(
                 "UNKNOWN_OWNER_UNRESOLVED",
-                "no exact in-scope authority is registered",
+                if question_kind == "architecture" {
+                    "no active architecture authority is registered"
+                } else {
+                    "no exact in-scope authority is registered"
+                },
                 "The Company steward must repair the registry before guidance is trusted.",
                 true,
                 ExitCode::DegradedSafe,
@@ -313,12 +343,15 @@ pub(crate) fn ensure_question(
         "task_id": task_id,
         "unknown_id": unknown.unknown_id,
         "decision": decision,
+        "blocked_decision": decision,
         "evidence_examined": evidence_examined,
+        "closure_evidence": evidence_examined,
         "remaining_alternatives": remaining_alternatives,
         "distortion_if_wrong": unknown.loss_if_absent,
         "question": unknown.question,
-        "owner_role": unknown.owner_role,
-        "owner_identity": unknown.owner_identity,
+        "owner_role": if question_kind == "architecture" { "chief-architect".to_owned() } else { unknown.owner_role.clone() },
+        "owner_identity": authority_id.clone(),
+        "architect_identity": if question_kind == "architecture" { Some(Value::String(authority_id.clone())) } else { None },
         "authority_id": authority_id,
         "authority_scope": unknown.scope,
         "scope": unknown.scope,
@@ -654,19 +687,22 @@ fn answer(
         .and_then(Value::as_str)
         .unwrap_or_default();
     let public_key = crate::crypto::PublicKey::from_hex(public_key_text)?;
-    // Lifecycle answers use Convention A: the signer is metadata outside the
-    // signed body. Live helper answers use Convention B: signer is included.
-    let live_helper_form = map.get("message_type").and_then(Value::as_str) == Some("answer")
-        || map.contains_key("contains_code");
-    let mut unsigned = Value::Object(map.clone());
-    if let Value::Object(unsigned_map) = &mut unsigned {
-        unsigned_map.remove("signature");
-        if !live_helper_form {
-            unsigned_map.remove("signer");
+    // Signed answer documents are produced by both conventions: some legacy
+    // lifecycle writers keep `signer` outside the signed body, while the live
+    // helper includes it. Accept only a signature valid under one of those two
+    // exact canonical forms.
+    let verify_form = |remove_signer: bool| -> bool {
+        let mut unsigned = Value::Object(map.clone());
+        if let Value::Object(unsigned_map) = &mut unsigned {
+            unsigned_map.remove("signature");
+            if remove_signer {
+                unsigned_map.remove("signer");
+            }
         }
-    }
-    let unsigned_bytes = canonical_bytes(&unsigned);
-    if !public_key.verify("answer", unsigned_bytes.as_slice(), signature) {
+        let unsigned_bytes = canonical_bytes(&unsigned);
+        public_key.verify("answer", unsigned_bytes.as_slice(), signature)
+    };
+    if !verify_form(false) && !verify_form(true) {
         return Err(ContractError::new(
             "SIGNATURE_INVALID",
             "authority answer signature failed",
@@ -761,6 +797,7 @@ fn answer(
         &answer_id,
         authority_id,
         scope,
+        &answered_at,
         &parents,
         &superseded_events,
     )?;
@@ -810,6 +847,7 @@ fn write_authority_fact(
     answer_id: &str,
     authority_id: &str,
     scope: &str,
+    answered_at: &str,
     parents: &[String],
     superseded_events: &[String],
 ) -> Result<(String, String), ContractError> {
@@ -821,7 +859,7 @@ fn write_authority_fact(
         "event_{:x}",
         Sha256::digest(format!("{scope}\0{answer_text}\0{answer_id}").as_bytes())
     );
-    let now = now_rfc3339_millis();
+    let asserted_at = answered_at.to_owned();
     let mut event = FactEvent {
         schema: crate::model::EVENT_SCHEMA.to_owned(),
         event_id: event_id.clone(),
@@ -842,8 +880,8 @@ fn write_authority_fact(
                 .to_owned(),
             answer_id.to_owned(),
         ],
-        asserted_at: now.clone(),
-        effective_from: now,
+        asserted_at: asserted_at.clone(),
+        effective_from: asserted_at,
         effective_until: None,
         disposition: "current".to_owned(),
         distortion: Distortion {
