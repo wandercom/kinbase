@@ -108,6 +108,11 @@ pub struct ContractError {
     /// file contents, secrets, or transcript bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<serde_json::Value>,
+    /// Command-owned JSON document to emit at the top-level error boundary.
+    /// This preserves richer command envelopes (status/fsck diagnostics) while
+    /// keeping stdout to exactly one JSON line on failure.
+    #[serde(skip)]
+    pub output_document: Option<serde_json::Value>,
 }
 
 impl ContractError {
@@ -146,7 +151,14 @@ impl ContractError {
             evidence_id,
             exit_override: None,
             detail: None,
+            output_document: None,
         }
+    }
+
+    /// Attach the complete command document for the top-level boundary.
+    pub fn with_output_document(mut self, document: serde_json::Value) -> Self {
+        self.output_document = Some(document);
+        self
     }
 
     /// Attach structured detail (ids, counts). The caller is responsible for

@@ -123,9 +123,9 @@ pub fn publish(config_path: &Path, endpoint: &str, document_path: &Path, json_ou
     if response.status >= 400 {
         result["error"] = response.body.get("error").cloned().unwrap_or(Value::Null);
     }
-    crate::output::emit(&result, json_output);
     if response.status >= 400 {
-        return Err(client::error_from_response(&response));
+        return Err(client::error_from_response(&response).with_output_document(result));
     }
+    crate::output::emit(&result, json_output);
     Ok(())
 }

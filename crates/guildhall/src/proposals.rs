@@ -143,18 +143,20 @@ fn list(session: &str, json: bool) -> Result<(), ContractError> {
         .iter()
         .map(|record| {
             let candidate_id = record.get("candidate_id").and_then(Value::as_str).unwrap_or_default();
-            let rendered = decisions
-                .iter()
-                .any(|decision| decision.get("candidate_id").and_then(Value::as_str) == Some(candidate_id));
+            let rendered = record.get("rendered").and_then(Value::as_bool).unwrap_or_else(|| {
+                decisions
+                    .iter()
+                    .any(|decision| decision.get("candidate_id").and_then(Value::as_str) == Some(candidate_id))
+            });
             json!({
                 "candidate_id": candidate_id,
                 "payload_digest": record.get("payload_digest").cloned().unwrap_or(Value::Null),
                 "destination": record.get("destination").cloned().unwrap_or(Value::Null),
                 "message_id": record.get("message_id").cloned().unwrap_or(Value::String(candidate_id.to_owned())),
                 "rendered": rendered,
-                "suppressed": false,
-                "taint_cleared": false,
-                "hard_block_respected": true
+                "suppressed": record.get("suppressed").and_then(Value::as_bool).unwrap_or(false),
+                "taint_cleared": record.get("taint_cleared").and_then(Value::as_bool).unwrap_or(false),
+                "hard_block_respected": record.get("hard_block_respected").and_then(Value::as_bool).unwrap_or(true)
             })
         })
         .collect::<Vec<_>>();
@@ -350,8 +352,39 @@ fn reserve_prompt(record: &Value) -> Result<(), ContractError> {
     append_personal("prompt-reservations.jsonl", &reservation)
 }
 
+/// Whether the current prompt-budget shard still permits a candidate to be
+/// rendered. This is a display/render gate; it never mints an approval.
+pub fn prompt_budget_allows() -> bool {
+    let now = Utc::now();
+    let principal = principal_id();
+    let host_instance = host_instance_id();
+    let recent: Vec<Value> = personal_records("prompt-reservations.jsonl")
+        .into_iter()
+        .filter(|reservation| {
+            reservation.get("principal").and_then(Value::as_str) == Some(principal.as_str())
+                && reservation.get("host_instance_id").and_then(Value::as_str)
+                    == Some(host_instance.as_str())
+                && reservation
+                    .get("reserved_at")
+                    .and_then(Value::as_str)
+                    .and_then(|time| parse_rfc3339_millis(time).ok())
+                    .is_some_and(|time| {
+                        now.signed_duration_since(time).num_seconds() < PROMPT_WINDOW_SECONDS
+                    })
+        })
+        .collect();
+    recent.len() < PROMPT_WINDOW_LIMIT && recent.len() < CONSECUTIVE_LIMIT
+}
+
 fn show(candidate: &str, destination: &str, json: bool) -> Result<(), ContractError> {
     let record = find_candidate(candidate)?;
+    if record.get("suppressed").and_then(Value::as_bool).unwrap_or(false) {
+        return Err(ContractError::integrity(
+            "PERSONAL_TAINT_BLOCKED",
+            "hard-blocked session material cannot be promoted",
+            "Keep the material in the Personal store and create a candidate from shareable facts only.",
+        ));
+    }
     let record_destination = record
         .get("destination")
         .and_then(Value::as_str)
@@ -463,6 +496,8 @@ fn decide(
                 ExitCode::Refused,
             ));
         }
+        let mut previous = previous;
+        previous["retry_after_token_expiry"] = Value::Bool(expired(&record).unwrap_or(false));
         print_value(&previous, json);
         return Ok(());
     }
@@ -528,7 +563,8 @@ fn decide(
         "decision": decision,
         "digest": digest,
         "decided_at": now_rfc3339_millis(),
-        "receipt_id": format!("receipt_{}", Uuid::new_v4())
+        "receipt_id": format!("receipt_{}", Uuid::new_v4()),
+        "retry_after_token_expiry": false
     });
     if decision == "approve" {
         let (fact_id, event_id) =
@@ -622,11 +658,10 @@ fn reset(
         crate::command_types::ResetReason::OperatorRecovery => "operator-recovery",
         crate::command_types::ResetReason::HostRestart => "host-restart",
     };
-    let event_exists = personal_records("session-events.jsonl")
+    let event_exists = personal_records("observations.jsonl")
         .into_iter()
-        .any(|event| {
-            event.get("event_id").and_then(Value::as_str) == Some(after_primary_event)
-                && event.get("event_type").and_then(Value::as_str) == Some("primary-task")
+        .any(|observation| {
+            observation.get("native_id").and_then(Value::as_str) == Some(after_primary_event)
         });
     if !event_exists {
         return Err(ContractError::new(
@@ -670,7 +705,7 @@ fn reset(
 }
 
 pub fn destination_store(destination: &str) -> Result<crate::StoreKind, ContractError> {
-    if destination == "company" {
+    if destination == "company" || destination == "company:root" {
         Ok(crate::StoreKind::Company)
     } else if destination.starts_with("codebase:") && destination.len() > "codebase:".len() {
         Ok(crate::StoreKind::Codebase)

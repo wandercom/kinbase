@@ -386,6 +386,9 @@ fn dispatch_event(
             "Use a ratified Codex or Claude native envelope.",
         ));
     }
+    if event_type == "UserPromptSubmit" {
+        crate::session::record_hook_observation(host, &map)?;
+    }
     let cwd = map
         .get("cwd")
         .and_then(Value::as_str)

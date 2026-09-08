@@ -43,8 +43,17 @@ pub fn run(json: bool, command: Command) {
 
 fn print_error(json: bool, error: &ContractError) {
     if json {
-        let document = crate::output::error_document(error);
-        eprintln!("{}", crate::json::canonical_text(&document));
+        let document = error
+            .output_document
+            .clone()
+            .unwrap_or_else(|| crate::output::error_document(error));
+        // R-15: the top-level error boundary owns JSON output.  stdout is
+        // therefore never empty for a typed error, while stderr remains free
+        // for optional JSON-line diagnostics.  Rich command envelopes may
+        // contain non-record floats, so use the same renderer as output emit.
+        let line = crate::output::single_line(&document);
+        println!("{}", line);
+        eprintln!("{}", line);
     } else {
         println!("{}: {}", error.code, error.message);
         println!("remediation: {}", error.remediation);
@@ -216,7 +225,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             crate::session::start(&repo, host_kind(host), json).map_err(internal)?;
         }
         Command::Session(SessionCommand::Observe { session, event }) => {
-            crate::session::observe(&session, &event, json).map_err(internal)?;
+            crate::session::observe(launcher.shared.classifier.as_ref(), &session, &event, json).map_err(internal)?;
         }
         Command::Session(SessionCommand::Checkpoint { session }) => {
             crate::session::checkpoint(&session, json).map_err(internal)?;

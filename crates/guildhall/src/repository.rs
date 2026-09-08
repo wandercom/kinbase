@@ -837,6 +837,125 @@ fn kindex_collisions(repo: &Repository) -> Result<Vec<String>, ContractError> {
     Ok(collisions)
 }
 
+/// Enumerate `.kin/events` files committed at the checked-out revision.
+/// Worktree-only events are intentionally invisible to manifest publication.
+fn committed_event_files(repo: &Repository) -> Result<Vec<StoredFile>, ContractError> {
+    use std::io::{Cursor, Read, Write};
+
+    let revision = repo.revision()?;
+    let tree = std::process::Command::new("git")
+        .args(["ls-tree", "-r", "-z", &revision, "--", ".kin/events"])
+        .current_dir(&repo.root)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|error| ContractError::io("run git ls-tree", error))?;
+    if !tree.status.success() {
+        return Err(ContractError::user_action(
+            "REPO_UNCERTIFIED",
+            format!("git ls-tree failed: {}", String::from_utf8_lossy(&tree.stderr).trim()),
+            "Run the command inside the Git worktree whose revision is being published.",
+        ));
+    }
+    let tree_text = String::from_utf8_lossy(&tree.stdout).into_owned();
+    let mut objects = Vec::new();
+    for entry in tree_text.split('\0') {
+        if entry.is_empty() {
+            continue;
+        }
+        let Some((metadata, path)) = entry.split_once('\t') else {
+            continue;
+        };
+        let fields: Vec<&str> = metadata.split_whitespace().collect();
+        if fields.len() == 3 && fields[1] == "blob" && path.starts_with(".kin/events/") {
+            objects.push((fields[2].to_owned(), std::path::PathBuf::from(path)));
+        }
+    }
+    if objects.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let request = objects
+        .iter()
+        .map(|(oid, _)| format!("{oid}\n"))
+        .collect::<Vec<_>>()
+        .concat()
+        .into_bytes();
+    let mut child = std::process::Command::new("git")
+        .args(["cat-file", "--batch"])
+        .current_dir(&repo.root)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|error| ContractError::io("run git cat-file", error))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| ContractError::internal("git cat-file stdin was unavailable"))?;
+    let writer = std::thread::spawn(move || {
+        let _ = stdin.write_all(&request);
+    });
+    let output = child
+        .wait_with_output()
+        .map_err(|error| ContractError::io("read git cat-file", error))?;
+    let _ = writer.join();
+    if !output.status.success() {
+        return Err(ContractError::user_action(
+            "REPO_UNCERTIFIED",
+            format!("git cat-file failed: {}", String::from_utf8_lossy(&output.stderr).trim()),
+            "Run the command inside the Git worktree whose revision is being published.",
+        ));
+    }
+
+    let mut cursor = Cursor::new(output.stdout);
+    let mut files = Vec::new();
+    for (oid, relative) in objects {
+        let mut header = Vec::new();
+        loop {
+            let mut byte = [0_u8; 1];
+            cursor
+                .read_exact(&mut byte)
+                .map_err(|error| ContractError::io("read git object header", error))?;
+            if byte[0] == b'\n' {
+                break;
+            }
+            header.push(byte[0]);
+        }
+        let header = String::from_utf8_lossy(&header).into_owned();
+        let fields: Vec<&str> = header.split_whitespace().collect();
+        if fields.len() != 3 || fields[0] != oid || fields[1] != "blob" {
+            return Err(ContractError::internal("git cat-file returned an unexpected object"));
+        }
+        let size: usize = fields[2]
+            .parse()
+            .map_err(|_| ContractError::internal("git object size is malformed"))?;
+        let mut bytes = vec![0_u8; size];
+        cursor
+            .read_exact(&mut bytes)
+            .map_err(|error| ContractError::io("read committed event", error))?;
+        let mut newline = [0_u8; 1];
+        cursor
+            .read_exact(&mut newline)
+            .map_err(|error| ContractError::io("read committed event delimiter", error))?;
+        if newline[0] != b'\n' {
+            return Err(ContractError::internal("git object framing is malformed"));
+        }
+        let digest = crate::hash::sha256_bytes(&bytes);
+        let path_digest = relative
+            .strip_prefix(".kin/events")
+            .ok()
+            .and_then(crate::paths::digest_from_sharded);
+        files.push(StoredFile {
+            relative,
+            digest: digest.clone(),
+            bytes,
+            path_alias: path_digest.as_deref() != Some(digest.as_str()),
+        });
+    }
+    files.sort_by(|left, right| left.relative.cmp(&right.relative));
+    Ok(files)
+}
+
 pub fn publish_manifest(launcher: Launcher, repo_path: &Path, json_output: bool) -> Result<(), ContractError> {
     let context = RepoContext::load(launcher, repo_path, true)?;
     let uuid = context.repository_uuid()?;
@@ -846,11 +965,16 @@ pub fn publish_manifest(launcher: Launcher, repo_path: &Path, json_output: bool)
     let maintainer = access.maintainer_key()?;
     let now = crate::time::now_rfc3339_millis();
     // Head regression check against the latest published observation (local or Company).
-    let local_count = context.repo.stored_events()?.len() as i64;
-    let (events, _) = context.load_events()?;
-    let rollback_exception = events.iter().any(|item| match &item.parsed {
-        ParsedEvent::Fact(event) => event.atom_kind == "rollback_exception" && item.verification == Some(Verification::Verified),
-        _ => false,
+    let committed_events = committed_event_files(&context.repo)?;
+    let local_count = committed_events.len() as i64;
+    let rollback_exception = committed_events.iter().any(|file| {
+        !file.path_alias
+            && matches!(
+                parse_stored(&file.bytes),
+                ParsedEvent::Fact(event)
+                    if (event.atom_kind == "rollback_exception" || event.disposition == "rollback_exception")
+                        && context.trust.verify(&event) == Verification::Verified
+            )
     });
     let published = published_observations(&context.repo);
     if let Some(prior) = published.iter().filter_map(|item| item.get("count").and_then(Value::as_i64)).max() {
@@ -862,7 +986,7 @@ pub fn publish_manifest(launcher: Launcher, repo_path: &Path, json_output: bool)
             ));
         }
     }
-    let manifest = context.repo.publish_manifest(&uuid, &maintainer, &now, 3600)?;
+    let manifest = context.repo.publish_manifest_with_events(&uuid, &maintainer, &now, 3600, &committed_events)?;
     let mut result = json!({
         "status": "published",
         "repository_uuid": uuid,
@@ -1133,14 +1257,12 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
         );
         result["remediation"] = Value::String(error.remediation.clone());
         result["error"] = crate::output::error_document(&error)["error"].clone();
-        crate::output::emit(&result, json_output);
-        return Err(error);
+        return Err(error.with_output_document(result));
     }
     if context.trust.company_reachable == Some(false) {
         let error = ContractError::unreachable("Company endpoint did not answer within the connection budget; cached state was used and affected facts are withheld").degraded_variant();
         result["error"] = crate::output::error_document(&error)["error"].clone();
-        crate::output::emit(&result, json_output);
-        return Err(error);
+        return Err(error.with_output_document(result));
     }
     crate::output::emit(&result, json_output);
     Ok(())
@@ -1300,7 +1422,7 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
         }
     }
     let apology_quarantine = core.quarantine_count("apology-unwritable")?;
-    let result = json!({
+    let mut result = json!({
         "status": if apology_quarantine > 0 { "quarantined" } else { "ok" },
         "processes": capabilities["processes"],
         "mode": launcher.mode,
@@ -1328,10 +1450,13 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
         "apology_quarantine_count": apology_quarantine,
         "observed_at": now
     });
-    crate::output::emit(&result, json_output);
     if apology_quarantine > 0 {
-        return Err(ContractError::integrity("PERSONAL_TAINT_BLOCKED", "an apology Unknown could not be written; the orphan is blocked locally", "Repair the destination journal; local orphan blocking requires no Company round trip."));
+        let error = ContractError::integrity("PERSONAL_TAINT_BLOCKED", "an apology Unknown could not be written; the orphan is blocked locally", "Repair the destination journal; local orphan blocking requires no Company round trip.");
+        result["status"] = Value::String("quarantined".to_owned());
+        result["error"] = crate::output::error_document(&error)["error"].clone();
+        return Err(error.with_output_document(result));
     }
+    crate::output::emit(&result, json_output);
     Ok(())
 }
 
@@ -1505,8 +1630,7 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
     if let Some(error) = typed_failure {
         result["status"] = Value::String("failed".to_owned());
         result["error"] = crate::output::error_document(&error)["error"].clone();
-        crate::output::emit(&result, json_output);
-        return Err(error);
+        return Err(error.with_output_document(result));
     }
     if !context.trust.certificate_valid {
         result["status"] = Value::String("unverified".to_owned());

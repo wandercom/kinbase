@@ -1234,8 +1234,10 @@ fn issue_certificate(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, t
     Ok((201, json!({"status": "issued", "certificate": signed, "certificate_digest": crate::json::digest(&signed), "cursor": cursor.to_string()})))
 }
 
-fn post_manifest(db: &CompanyDb, auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
-    require_scope(auth, "facts:read")?;
+fn post_manifest(db: &CompanyDb, _auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
+    // Ruling C6: a manifest observation is authorized by its maintainer
+    // signature. Authentication above still requires a valid token and signed
+    // request, but no token scope is demanded for this route.
     let document = body.ok_or_else(|| refuse(400, ContractError::invariant("a manifest document is required")))?;
     if crate::json::get_str(&document, "schema") != Some(crate::model::MANIFEST_SCHEMA) {
         return Err(refuse(400, ContractError::invariant("manifest schema must be guildhall-manifest/1")));

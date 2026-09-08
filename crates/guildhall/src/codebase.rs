@@ -587,6 +587,20 @@ impl Repository {
         fresh_seconds: i64,
     ) -> Result<Value, ContractError> {
         let events = self.stored_events()?;
+        self.publish_manifest_with_events(repository_uuid, signer, observed_at, fresh_seconds, &events)
+    }
+
+    /// Build, sign, and store a manifest over an explicitly supplied event
+    /// set. The repository command uses the files committed at the checked-out
+    /// revision rather than mutable worktree contents.
+    pub fn publish_manifest_with_events(
+        &self,
+        repository_uuid: &str,
+        signer: &crate::crypto::PrivateKey,
+        observed_at: &str,
+        fresh_seconds: i64,
+        events: &[StoredFile],
+    ) -> Result<Value, ContractError> {
         let leaves: Vec<Vec<u8>> = events.iter().map(|file| file.bytes.clone()).collect();
         let heads = self.manifest_heads()?;
         let branch = self.branch()?;
