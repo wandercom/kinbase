@@ -253,7 +253,8 @@ def test_every_permitted_fault_schedule_declares_a_witness() -> None:
     unwitnessed = [
         control.name
         for control in PERMITTED.values()
-        if control.classification == "fault_schedule" and not control.witness_required
+        if control.classification in ("fault_schedule", "attack_input")
+        and not control.witness_required
     ]
     assert not unwitnessed, (
         "a fault schedule the instrument cannot independently witness is a work "

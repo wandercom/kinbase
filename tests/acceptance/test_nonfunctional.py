@@ -36,10 +36,26 @@ from ._harness.requirements import (
     VERIFY,
     spec_ref,
 )
+from ._harness import trust
 from ._harness.roots import ProofRoots
-from ._harness.worldbuilder import SignedWorld
+from ._harness.worldbuilder import SignedWorld, start_session
 
 pytestmark = [pytest.mark.nonfunctional, pytest.mark.requires_product]
+
+
+@pytest.fixture()
+def anchored(roots: ProofRoots, guildhall: Guildhall):
+    """A world whose trust anchors are in place (Validator ruling C3).
+
+    Every nonfunctional world that expects a trusted result --- a rebuild, a
+    diagnostic over planted facts, a candidate, a token check --- establishes
+    the service, root key, user config, registry and certificate exactly as
+    the numbered gates do; without them the ratified behaviour is
+    ``UNVERIFIED`` and an empty trusted projection.
+    """
+    world = SignedWorld.create(roots.repo_root)
+    anchors = trust.establish(guildhall, roots, world)
+    return world, anchors
 
 
 @spec_ref(
@@ -134,14 +150,16 @@ def test_roots_are_explicit_modes_restrictive_and_escapes_fail_closed(
 )
 
 def test_schema_validation_and_rebuild_are_deterministic(
-    guildhall: Guildhall, roots: ProofRoots
+    guildhall: Guildhall, roots: ProofRoots, anchored
 ) -> None:
-    world = SignedWorld.create(roots.repo_root)
+    world, anchors = anchored
     world.plant_event(
         world.architect, store_kind="company",
         logical_key="architecture/scheduler/determinism",
         statement="the rebuild is a pure function of its inputs",
     )
+    # ``--as-of`` is optional on every reducer-invoking command (Validator
+    # ruling C12); it is passed here so both rebuilds share one proof clock.
     as_of = synth._stamp(day=2, hour=6)
     first = guildhall.run("corpus", "rebuild", "--store", "company", "--repo",
                           str(roots.repo_root), "--as-of", as_of, "--json",
@@ -219,23 +237,24 @@ def test_logs_are_structured_and_carry_no_raw_private_messages(
 )
 
 def test_external_calls_have_timeouts_and_failed_writes_are_not_admitted(
-    guildhall: Guildhall, roots: ProofRoots
+    guildhall: Guildhall, roots: ProofRoots, anchored
 ) -> None:
     import socket as _socket
 
-    SignedWorld.create(roots.repo_root)
+    world, anchors = anchored
+    # A listener that accepts and never answers. Validator ruling C28: the
+    # endpoint reaches the product only through the user config, never the
+    # environment.
     listener = _socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)
     port = listener.getsockname()[1]
     try:
-        result = guildhall.run(
-            "status", "--repo", str(roots.repo_root), "--json",
-            cwd=roots.repo_root, check=False, timeout=180,
-            env=guildhall.base_env({
-                "GUILDHALL_COMPANY_URL": "http://127.0.0.1:" + str(port),
-            }),
-        )
+        with anchors.company_endpoint("http://127.0.0.1:" + str(port)):
+            result = guildhall.run(
+                "status", "--repo", str(roots.repo_root), "--json",
+                cwd=roots.repo_root, check=False, timeout=180,
+            )
     finally:
         listener.close()
     payload = result.json if isinstance(result.json, dict) else {}
@@ -280,13 +299,18 @@ def test_external_calls_have_timeouts_and_failed_writes_are_not_admitted(
 )
 
 def test_diagnostics_are_executable_and_useful_after_restart(
-    guildhall: Guildhall, roots: ProofRoots
+    guildhall: Guildhall, roots: ProofRoots, anchored
 ) -> None:
-    world = SignedWorld.create(roots.repo_root)
+    world, anchors = anchored
     world.plant_event(
         world.architect, store_kind="company",
         logical_key="architecture/scheduler/diagnostics",
         statement="diagnostics remain useful after a restart",
+    )
+    world.plant_event(
+        world.maintainer, store_kind="codebase",
+        logical_key="architecture/scheduler/diagnostics",
+        statement="this repository applies the diagnostics rule",
     )
     guildhall.run("ingest", "kindex", str(roots.repo_root / ".kin"), "--repo",
                   str(roots.repo_root), "--json", cwd=roots.repo_root, check=False)
@@ -437,9 +461,10 @@ def test_acceptance_suite_declares_all_its_dependencies() -> None:
 )
 
 def test_every_operational_ceiling_refuses_with_an_omitted_count(
-    guildhall: Guildhall, roots: ProofRoots, tmp_path: Path
+    guildhall: Guildhall, roots: ProofRoots, tmp_path: Path, anchored
 ) -> None:
-    SignedWorld.create(roots.repo_root)
+    world, anchors = anchored
+    session = start_session(guildhall, roots.repo_root)
     ceilings = []
 
     oversize = tmp_path / "oversize.txt"
@@ -462,9 +487,12 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
     )
     ceilings.append(_ceiling_probe(
         guildhall, roots, "observation_batch",
-        ("session", "observe", "s0", "--event", str(batch), "--json"),
+        ("session", "observe", session, "--event", str(batch), "--json"),
         constructed=True))
 
+    # Validator ruling C24: a malformed or oversized file inside .kin/events/
+    # is a typed integrity failure with counts, never a crash. It is written at
+    # a non-reserved name so it is also a foreign path.
     big_event = roots.repo_root / ".kin" / "events" / "oversized.json"
     big_event.parent.mkdir(parents=True, exist_ok=True)
     big_event.write_text(json.dumps({"statement": "y" * (SHARED_EVENT_CEILING + 64)}),
@@ -510,21 +538,21 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
 )
 
 def test_candidate_lifetime_and_private_retention_are_enforced(
-    guildhall: Guildhall, roots: ProofRoots
+    guildhall: Guildhall, roots: ProofRoots, anchored
 ) -> None:
-    SignedWorld.create(roots.repo_root)
-    session = "s" + os.urandom(6).hex()
+    world, anchors = anchored
+    trust.classifier_pinned(anchors, what="candidate lifetime probe")
     corpus = roots.run_root / "lifetime.jsonl"
     corpus.parent.mkdir(parents=True, exist_ok=True)
     corpus.write_text(
-        json.dumps({"id": session, "role": "user",
+        json.dumps({"id": "m" + os.urandom(6).hex(), "role": "user",
                     "text": "the retry ceiling is four attempts per hour",
                     "observed_at": "2026-03-01T00:00:00.000Z",
                     "source_kind": "codex_jsonl"}) + "\n",
         encoding="utf-8",
     )
-    guildhall.run("session", "start", "--host", "codex", "--repo",
-                  str(roots.repo_root), "--json", cwd=roots.repo_root, check=False)
+    # Validator ruling C8: SESSION is the id `session start --json` issued.
+    session = start_session(guildhall, roots.repo_root)
     guildhall.run("session", "observe", session, "--event", str(corpus), "--json",
                   cwd=roots.repo_root, check=False)
     listing = guildhall.run("proposals", "list", "--session", session, "--json",
@@ -658,7 +686,7 @@ def _boundary_observation(channel: str, result, *, must_refuse: bool) -> dict:
     ),
 )
 def test_hostile_bytes_never_escape_the_exception_boundary(
-    guildhall: Guildhall, roots: ProofRoots
+    guildhall: Guildhall, roots: ProofRoots, anchored
 ) -> None:
     """Frozen injection bytes, delivered on channels the product really reads.
 
@@ -669,7 +697,7 @@ def test_hostile_bytes_never_escape_the_exception_boundary(
     conforming product, so it is not demanded; a product that answers a
     hostile ``.kin/config`` with anything but the table's exit 5 fails here.
     """
-    world = SignedWorld.create(roots.repo_root)
+    world, anchors = anchored
     repo = world.repo.path
     probes = []
 
@@ -767,13 +795,19 @@ def test_first_run_failure_table_is_transcribed(spec_root: Path) -> None:
 )
 
 def test_broad_token_mode_is_refused_with_chmod_remediation(
-    guildhall: Guildhall, roots: ProofRoots, tmp_path: Path
+    guildhall: Guildhall, roots: ProofRoots, anchored
 ) -> None:
-    token = roots.write_secret("facts.token", b"facts-broad-mode-probe")
+    world, anchors = anchored
+    # The token the user config names (Validator ruling C1), widened to 0644.
+    token = anchors.facts_token_path
+    secret = token.read_bytes().decode("utf-8")
     os.chmod(token, 0o644)
     observed = stat.S_IMODE(token.stat().st_mode)
-    result = guildhall.run("status", "--repo", str(roots.repo_root), "--json",
-                           cwd=roots.repo_root, check=False)
+    try:
+        result = guildhall.run("status", "--repo", str(roots.repo_root), "--json",
+                               cwd=roots.repo_root, check=False)
+    finally:
+        os.chmod(token, 0o600)
     combined = (result.stdout + result.stderr).lower()
     O.check(
         "NF.token-mode",
@@ -781,7 +815,7 @@ def test_broad_token_mode_is_refused_with_chmod_remediation(
             "exit_code": result.returncode,
             "remediation_names_chmod": "chmod" in combined,
             "mode_observed_broad": observed > 0o600,
-            "secret_bytes_leaked": combined.count("facts-broad-mode-probe"),
+            "secret_bytes_leaked": combined.count(secret.lower()),
         },
         label="a broad token mode is refused with chmod remediation",
     )

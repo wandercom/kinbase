@@ -29,6 +29,7 @@ The ten source classes, from ``spec/product.md`` P-1:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import uuid
@@ -154,7 +155,8 @@ ORIGIN_TRUST_CLASSES: tuple[str, ...] = (
 #: Destination vocabulary, ``spec/product.md`` P-2.
 DESTINATIONS: tuple[str, ...] = ("personal", "company", "codebase", "none")
 
-#: Atom kinds, ``spec/product.md`` P-2.
+#: Atom kinds, ``spec/product.md`` P-2. Closed: Validator ruling C13 --
+#: ``atom_kind`` is exactly one of these six; lifecycle actions are dispositions.
 ATOM_KINDS: tuple[str, ...] = (
     "claim",
     "question",
@@ -163,6 +165,38 @@ ATOM_KINDS: tuple[str, ...] = (
     "rationale",
     "observation",
 )
+
+#: Lifecycle actions the spec names but omits from the message-type enum.
+#: Validator ruling C13: each is a ``FactEvent`` signed as ``fact-event`` whose
+#: ``disposition`` is the action name and whose ``parents``/``supersedes`` name
+#: the affected events.
+LIFECYCLE_ACTIONS: tuple[str, ...] = (
+    "misextraction",
+    "never_true",
+    "support_withdrawn",
+    "orphan_abandoned",
+    "manifest_observation_expired",
+    "relaxation",
+    "exception_request",
+    "unreachable_clone_residual",
+)
+
+#: Closed disposition vocabulary, Validator ruling C13.
+DISPOSITIONS: tuple[str, ...] = (
+    "draft",
+    "proposed",
+    "accepted",
+    "approved",
+    "merged",
+    "rejected",
+    "reverted",
+    "deployed",
+    "retracted",
+    "superseded",
+) + LIFECYCLE_ACTIONS
+
+#: ``distortion`` is exactly this field set (``spec/architecture.md`` section 3).
+DISTORTION_FIELDS: tuple[str, ...] = ("trigger", "loss_if_absent", "rationale")
 
 #: Closed approval decision vocabulary, ``spec/architecture.md`` section 5.
 DECISIONS: tuple[str, ...] = ("approve", "reject", "defer", "escalate")
@@ -532,28 +566,51 @@ class Signer:
         return ed25519_pure.public_key(self.seed).hex()
 
     def sign_message(self, message_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-        body = dict(payload)
-        body.pop("signature", None)
-        jcs_bytes = canonical.jcs(body)
-        digest = canonical.signing_digest(message_type, jcs_bytes)
-        signed = dict(body)
-        signed["signer"] = self.public_hex
-        signed["signature"] = ed25519_pure.sign(self.seed, digest).hex()
-        return signed
+        """Sign under the one instrument-wide convention (Validator ruling C4).
+
+        The signed bytes are the JCS of the document with ``signature`` removed
+        and ``signer`` (the 64-hex Ed25519 public key) present; ``signature`` is
+        128 hex over ``signing_digest(message_type, jcs_bytes)``.
+        """
+        return signed_document(self.seed, message_type, payload)
 
     def sign_over_other_type(
         self, sign_as: str, claim_as: str, payload: Mapping[str, Any]
     ) -> dict[str, Any]:
         """Deliberately cross-domain signature for attack family 12."""
         body = dict(payload)
-        body.pop("signature", None)
-        jcs_bytes = canonical.jcs(body)
-        digest = canonical.signing_digest(sign_as, jcs_bytes)
-        signed = dict(body)
-        signed["claimed_message_type"] = claim_as
-        signed["signer"] = self.public_hex
-        signed["signature"] = ed25519_pure.sign(self.seed, digest).hex()
-        return signed
+        body["claimed_message_type"] = claim_as
+        return signed_document(self.seed, sign_as, body)
+
+
+def signed_bytes(document: Mapping[str, Any]) -> bytes:
+    """The exact bytes every signer signs and every verifier checks (C4)."""
+    body = {k: v for k, v in document.items() if k != "signature"}
+    if "signer" not in body:
+        raise ValueError("a signed document carries its signer inside the signed bytes")
+    return canonical.jcs(body)
+
+
+def signed_document(seed: bytes, message_type: str, payload: Mapping[str, Any]) -> dict[str, Any]:
+    body = dict(payload)
+    body.pop("signature", None)
+    body["signer"] = ed25519_pure.public_key(seed).hex()
+    digest = canonical.signing_digest(message_type, signed_bytes(body))
+    body["signature"] = ed25519_pure.sign(seed, digest).hex()
+    return body
+
+
+def verify_document(message_type: str, document: Mapping[str, Any]) -> bool:
+    """Verify a document under the one convention. False on any malformation."""
+    try:
+        signature = bytes.fromhex(str(document["signature"]))
+        public = bytes.fromhex(str(document["signer"]))
+        digest = canonical.signing_digest(message_type, signed_bytes(document))
+    except (KeyError, ValueError, TypeError, canonical.CanonicalisationError):
+        return False
+    if len(signature) != 64 or len(public) != 32:
+        return False
+    return ed25519_pure.verify(public, digest, signature)
 
 
 def make_signer(authority_id: str, scope: str, *, seed_byte: int = 7) -> Signer:
@@ -581,11 +638,33 @@ def fact_event(
     authority_snapshot_cursor: str = "1",
     confidence: str = "high",
     unresolved_uncertainty: str = "",
+    unchecked: bool = False,
 ) -> dict[str, Any]:
-    """A ``FactEvent`` shaped exactly as ``spec/architecture.md`` section 3 lists."""
+    """A ``FactEvent`` shaped exactly as ``spec/architecture.md`` section 3 lists.
+
+    ``event_id`` is derived from the event's own content (Validator ruling C14),
+    so two events with different bytes never share an id and a retraction or
+    supersession never collides with the event it retires. ``atom_kind`` and
+    ``disposition`` are checked against the closed vocabularies (C13) unless
+    ``unchecked`` is set, which only an explicit malformed-input probe may do.
+    """
+    if not unchecked:
+        if atom_kind not in ATOM_KINDS:
+            raise ValueError(
+                f"atom_kind {atom_kind!r} is not one of the closed {ATOM_KINDS}"
+            )
+        if disposition not in DISPOSITIONS:
+            raise ValueError(
+                f"disposition {disposition!r} is not in the closed vocabulary"
+            )
+        if distortion is not None and tuple(sorted(distortion)) != tuple(
+            sorted(DISTORTION_FIELDS)
+        ):
+            raise ValueError(
+                f"distortion must be exactly {DISTORTION_FIELDS}, got {sorted(distortion)}"
+            )
     payload: dict[str, Any] = {
         "schema": "guildhall-event/1",
-        "event_id": f"evt_{abs(hash((logical_key, statement))) % (10**12):012d}",
         "store_kind": store_kind,
         "authority_id": authority_id,
         "authority_scope": authority_scope,
@@ -619,7 +698,17 @@ def fact_event(
         payload["repository_id"] = repository_id
     if effective_until is not None:
         payload["effective_until"] = effective_until
+    payload["event_id"] = content_event_id("evt", payload)
     return payload
+
+
+def content_event_id(prefix: str, payload: Mapping[str, Any]) -> str:
+    """``<prefix>_<sha256 of the JCS body without id, signer, signature>``."""
+    body = {
+        k: v for k, v in payload.items()
+        if k not in ("event_id", "signer", "signature")
+    }
+    return prefix + "_" + hashlib.sha256(canonical.jcs(body)).hexdigest()
 
 
 def unknown_event(
@@ -631,16 +720,42 @@ def unknown_event(
     owner_identity: str,
     question: str,
     closure_evidence: str,
+    authority_id: str = "",
+    authority_scope: str = "",
+    repository_id: str | None = None,
+    statement: str | None = None,
+    parents: Sequence[str] = (),
     status: str = "open",
     response_due_at: str | None = None,
     expiry_policy: str = "block",
+    distortion: Mapping[str, Any] | None = None,
+    authority_snapshot_cursor: str = "1",
 ) -> dict[str, Any]:
-    """An ``UnknownEvent``; ``spec/architecture.md`` section 3."""
-    return {
-        "schema": "guildhall-unknown/1",
-        "event_id": f"unk_{abs(hash(logical_key)) % (10**12):012d}",
-        "store_kind": store_kind,
-        "logical_key": logical_key,
+    """An ``UnknownEvent``; ``spec/architecture.md`` section 3.
+
+    "``UnknownEvent`` adds ``decision_blocked``, ``owner_role``,
+    ``owner_identity``, ``question``, ``closure_evidence``, ``status``,
+    ``response_due_at``, and ``expiry_policy``" to the ``FactEvent`` field set,
+    so the body is a question-kind fact event plus those eight fields.
+    """
+    payload = fact_event(
+        store_kind=store_kind,
+        authority_id=authority_id,
+        authority_scope=authority_scope,
+        logical_key=logical_key,
+        statement=statement or question,
+        atom_kind="question",
+        repository_id=repository_id,
+        disposition="proposed",
+        parents=parents,
+        distortion=distortion,
+        authority_snapshot_cursor=authority_snapshot_cursor,
+        confidence="low",
+        unresolved_uncertainty=question,
+    )
+    payload.pop("event_id")
+    payload["schema"] = "guildhall-unknown/1"
+    payload.update({
         "decision_blocked": decision_blocked,
         "owner_role": owner_role,
         "owner_identity": owner_identity,
@@ -649,7 +764,9 @@ def unknown_event(
         "status": status,
         "response_due_at": response_due_at or _stamp(day=5),
         "expiry_policy": expiry_policy,
-    }
+    })
+    payload["event_id"] = content_event_id("unk", payload)
+    return payload
 
 
 def company_reference(

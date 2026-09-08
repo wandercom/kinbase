@@ -85,6 +85,7 @@ def build_event_corpus(
     count: int,
     *,
     logical_prefix: str,
+    repository_id: str,
     dense: bool = False,
     seed: int = 20260907,
 ) -> CorpusBuild:
@@ -114,17 +115,22 @@ def build_event_corpus(
             second = previous[max(0, len(previous) - 1 - rng.randrange(1, 8))] \
                 if len(previous) > 8 else previous[0]
             parents = (first, second)
+        # Validator ruling C7: only Codebase events live under ``.kin/events/``;
+        # a bulk corpus planted in the work tree is therefore a Codebase corpus
+        # bound to the certified repository UUID.
         body = synth.fact_event(
-            store_kind="company",
+            store_kind="codebase",
             authority_id=signer.authority_id,
             authority_scope=signer.scope,
+            repository_id=repository_id,
             logical_key=logical_prefix + "/" + format(index, "06d"),
             statement="bulk corpus entry " + format(index, "06d"),
             parents=parents,
         )
+        # One signing convention (Validator ruling C4): ``signer`` inside the
+        # signed bytes, ``signature`` outside.
         body["signer"] = public
-        body["message_type"] = "fact-event"
-        raw_body = canonical.jcs({k: v for k, v in body.items() if k != "signature"})
+        raw_body = synth.signed_bytes(body)
         digest = canonical.signing_digest("fact-event", raw_body)
         signature = key.sign(digest)
         if index in sample_indices:

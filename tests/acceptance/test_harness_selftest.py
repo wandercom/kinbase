@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from ._harness import canonical, canaries, crypto_box, ed25519_pure, stats
+from ._harness import canonical, canaries, crypto_box, ed25519_pure, stats, synth
 from ._harness.detectors import (
     DECLARED_VIEW_CLASSES,
     DETECTOR_MUTATIONS,
@@ -1003,17 +1003,43 @@ def test_trust_installers_run_without_the_product(roots) -> None:
         "the Company root key must be installed outside the repository work tree"
     )
 
-    certificate = trust.install_repository_certificate(
-        world, world.steward, repository_uuid=REPO_UUID
+    # Validator ruling C2: the certificate file is written outside the work
+    # tree; only ``repo init --certificate`` (a product command, not run here)
+    # may move it into the Company cache.
+    certificate = trust.write_certificate_file(
+        roots, world.steward, repository_uuid=REPO_UUID
     )
+    assert roots.repo_root.resolve() not in certificate.resolve().parents
+    assert not (roots.repo_root / ".kin" / "certificate.json").exists()
     payload = json.loads(certificate.read_bytes().decode("utf-8"))
     assert payload["repository_uuid"] == REPO_UUID
     assert payload["signer"] == world.steward.public_hex
-    signature = bytes.fromhex(payload.pop("signature"))
-    body = dict(payload)
-    body.pop("signer")
-    digest = canonical.signing_digest("repo-certificate", canonical.jcs(body))
-    assert ed25519_pure.verify(bytes.fromhex(world.steward.public_hex), digest, signature)
+    # One signing convention (Validator ruling C4): the signer is inside the
+    # signed bytes and the signature outside them.
+    assert synth.verify_document("repo-certificate", payload)
+    tampered = dict(payload)
+    tampered["repository_uuid"] = REPO_UUID[:-1] + "2"
+    assert not synth.verify_document("repo-certificate", tampered)
+
+    # Validator ruling C1: the launcher user config is written with exactly
+    # the spec/cli.md keys, mode 0600, under the isolated XDG root.
+    classifier = trust.resolve_classifier(roots)
+    config, token = trust.write_user_config(
+        roots, company_url="http://127.0.0.1:1", facts_token="facts-selftest",
+        root_key=root_key, classifier=classifier,
+    )
+    assert config == roots.xdg_config_home / "guildhall" / "config.toml"
+    assert oct(config.stat().st_mode & 0o777) == "0o600"
+    assert oct(token.stat().st_mode & 0o777) == "0o600"
+    body = config.read_text(encoding="utf-8")
+    for key in ("schema_version", "[personal]", "data_root", "[company]", "url",
+                "facts_token_file", "root_public_key_file", "cache_root",
+                "[classifier]", "executable", "executable_sha256", "args",
+                "timeout_seconds", "[hosts]", "codex_version", "claude_version"):
+        assert key in body, key
+    assert str(roots.personal_root) in body
+    rewritten = roots.rewrite_user_config(company_url="http://127.0.0.1:2")
+    assert "http://127.0.0.1:2" in rewritten.read_text(encoding="utf-8")
 
     registry = trust.AuthorityRegistry(steward=world.steward)
     registry.register(world.steward, channel="company:root", capabilities=("publish",))
@@ -1085,8 +1111,17 @@ def test_planted_events_are_witnessed_at_their_content_path_before_any_product_c
 
     planters.reset()
     world = SignedWorld.create(roots.repo_root)
+    # Validator ruling C7: only Codebase events are planted under .kin/; a
+    # Company fact without a live service and a Personal fact anywhere are
+    # both instrument errors, never silent writes.
+    with pytest.raises(HarnessInvalid):
+        world.plant_event(world.architect, store_kind="company",
+                          logical_key="k", statement="s")
+    with pytest.raises(HarnessInvalid):
+        world.plant_event(world.maintainer, store_kind="personal",
+                          logical_key="k", statement="s")
     record = world.plant_event(
-        world.architect, store_kind="company",
+        world.maintainer, store_kind="codebase",
         logical_key="architecture/scheduler/witness",
         statement="the witness precedes the product",
     )

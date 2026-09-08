@@ -16,7 +16,7 @@ import os
 import shutil
 import socket
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -82,10 +82,19 @@ class ProofRoots:
     personal_root: Path
     company_root: Path
     company_cache: Path
+    #: Client-side (launcher) secrets and certificates: the facts-token copy the
+    #: user config names and the out-of-worktree certificate file handed to
+    #: ``repo init --certificate``. Outside every repository and outside the
+    #: service root, so neither side reads the other's bytes.
+    client_root: Path
     repo_root: Path
     run_root: Path
     evidence_root: Path
     company_port: int
+    #: The keyword arguments of the last ``write_user_config`` call, retained so
+    #: a probe can re-render the same config with one value changed (for
+    #: example a blackholed Company URL, Validator ruling C28).
+    user_config_kwargs: dict = field(default_factory=dict)
 
     @classmethod
     def create(cls, base: Path) -> "ProofRoots":
@@ -95,13 +104,15 @@ class ProofRoots:
         personal = base / "private" / "kindex-personal"
         company = base / "company"
         cache = base / "company-cache"
+        client = base / "client"
         repo = base / "workspace" / "example-service"
         run = base / "run"
         evidence = base / "evidence"
-        for path in (home, xdg, personal, company, cache, repo, run, evidence):
+        for path in (home, xdg, personal, company, cache, client, repo, run, evidence):
             path.mkdir(parents=True, exist_ok=True)
         os.chmod(personal, 0o700)
         os.chmod(cache, 0o700)
+        os.chmod(client, 0o700)
         os.chmod(run, 0o700)
         os.chmod(evidence, 0o700)
         return cls(
@@ -111,11 +122,29 @@ class ProofRoots:
             personal_root=personal,
             company_root=company,
             company_cache=cache,
+            client_root=client,
             repo_root=repo,
             run_root=run,
             evidence_root=evidence,
             company_port=free_loopback_port(),
         )
+
+    def uncertified_environment(self, name: str) -> tuple[Path, Path]:
+        """A fresh ``HOME``/``XDG_CONFIG_HOME`` pair carrying no user config.
+
+        Validator ruling C2: "uncertified" is constructed by withholding the
+        cache and config, never by deleting a tracked file. A product invoked
+        with these roots has no Company URL, no root key, no cache and no
+        certificate, so ``spec/cli.md`` "no user config" applies: Codebase-only,
+        zero trusted facts.
+        """
+        base = self.base / "uncertified" / name
+        home = base / "home"
+        xdg = base / "config"
+        for path in (home, xdg):
+            path.mkdir(parents=True, exist_ok=True)
+        os.chmod(base, 0o700)
+        return home, xdg
 
     # -- config files -----------------------------------------------------
 
@@ -146,7 +175,26 @@ class ProofRoots:
         personal_data_root: Path | None = None,
         company_url: str | None = None,
     ) -> Path:
-        """Write the launcher-only user config exactly as ``spec/cli.md`` frames it."""
+        """Write the launcher-only user config exactly as ``spec/cli.md`` frames it.
+
+        Validator ruling C1: the config lives at
+        ``${XDG_CONFIG_HOME:-$HOME/.config}/guildhall/config.toml`` (0600) with
+        exactly the ``spec/cli.md`` keys, under an isolated ``HOME`` /
+        ``XDG_CONFIG_HOME`` per world, and is written before any command that
+        needs Company, cache, certificate or Personal.
+        """
+        self.user_config_kwargs = {
+            "classifier_path": Path(classifier_path),
+            "classifier_sha256": classifier_sha256,
+            "facts_token_file": Path(facts_token_file),
+            "root_public_key_file": Path(root_public_key_file),
+            "classifier_args": tuple(classifier_args),
+            "classifier_timeout": classifier_timeout,
+            "codex_version": codex_version,
+            "claude_version": claude_version,
+            "personal_data_root": personal_data_root,
+            "company_url": company_url,
+        }
         path = self.user_config_path
         path.parent.mkdir(parents=True, exist_ok=True)
         # Detector Reviewer finding 7: the configuration a shared process loads
@@ -202,6 +250,16 @@ class ProofRoots:
         os.chmod(path, 0o600)
         planters.witness_path(path)
         return path
+
+    def rewrite_user_config(self, **changes) -> Path:
+        """Re-render the last user config with ``changes`` applied."""
+        if not self.user_config_kwargs:
+            raise HarnessInvalid(
+                "rewrite_user_config called before any user config was written"
+            )
+        kwargs = dict(self.user_config_kwargs)
+        kwargs.update(changes)
+        return self.write_user_config(**kwargs)
 
     def write_service_config(
         self,
@@ -266,6 +324,7 @@ class ProofRoots:
         return (
             self.company_root,
             self.company_cache,
+            self.client_root,
             self.repo_root,
             self.evidence_root,
             self.home,

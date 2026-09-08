@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 
 from ._harness import obligations as O
+from ._harness import trust
 from ._harness.cli import Guildhall
 from ._harness.evidence_model import Origin, require_all, require_nonempty
 from ._harness.hosts import PROJECTION_BYTES
@@ -64,8 +65,14 @@ MARGINAL_TERMS: tuple[str, ...] = (
 
 @pytest.fixture()
 def ingested(roots: ProofRoots, guildhall: Guildhall):
-    """The frozen candidate set, really planted and really ingested."""
+    """The frozen candidate set, really planted and really ingested.
+
+    Validator ruling C3: the world establishes every trust anchor first, so the
+    Company-store candidates are admitted through the service and the Codebase
+    candidates are signed by a registered maintainer under a certified UUID.
+    """
     world = SignedWorld.create(roots.repo_root)
+    anchors = trust.establish(guildhall, roots, world)
     planted = plant_v7_corpus(world)
     world.verify_planted()
     if len(planted) != len(V7_CANDIDATES):
@@ -79,7 +86,7 @@ def ingested(roots: ProofRoots, guildhall: Guildhall):
     )
     if result.returncode == 1:
         raise ProductFailure("`ingest kindex` returned the reserved ambiguous exit 1")
-    return world, planted
+    return world, planted, anchors
 
 
 def _project(guildhall: Guildhall, repo: Path, working_set: tuple[str, ...] = ()) -> dict:
@@ -166,7 +173,7 @@ def _terms(step: dict) -> dict:
 def test_frozen_candidate_set_contains_every_declared_role(
     guildhall: Guildhall, ingested
 ) -> None:
-    world, planted = ingested
+    world, planted, _anchors = ingested
     payload = _project(guildhall, world.repo.path)
     candidates = payload.get("candidates")
     require_nonempty(
@@ -202,7 +209,7 @@ def test_frozen_candidate_set_contains_every_declared_role(
 def test_selection_changes_when_working_set_ids_change(
     guildhall: Guildhall, ingested
 ) -> None:
-    world, _ = ingested
+    world, _, _anchors = ingested
     cold = _project(guildhall, world.repo.path)
     cold_selected = cold.get("selected")
     require_nonempty(
@@ -253,7 +260,7 @@ def test_selection_changes_when_working_set_ids_change(
 def test_duplicates_do_not_crowd_out_the_high_distortion_invariant(
     guildhall: Guildhall, ingested
 ) -> None:
-    world, _ = ingested
+    world, _, _anchors = ingested
     payload = _project(guildhall, world.repo.path)
     selected = _list(payload, "selected")
     roles = _roles(selected)
@@ -292,7 +299,7 @@ def test_duplicates_do_not_crowd_out_the_high_distortion_invariant(
 def test_marginal_value_is_recomputed_against_the_current_set(
     guildhall: Guildhall, ingested
 ) -> None:
-    world, _ = ingested
+    world, _, _anchors = ingested
     payload = _project(guildhall, world.repo.path)
     trace = payload.get("selection_trace")
     require_nonempty(
@@ -319,7 +326,7 @@ def test_marginal_value_is_recomputed_against_the_current_set(
 def test_complementarity_is_visible_and_redundancy_is_penalised(
     guildhall: Guildhall, ingested
 ) -> None:
-    world, _ = ingested
+    world, _, _anchors = ingested
     payload = _project(guildhall, world.repo.path)
     selected = _list(payload, "selected")
     trace = _list(payload, "selection_trace")
@@ -376,7 +383,7 @@ def test_complementarity_is_visible_and_redundancy_is_penalised(
 def test_loop_stops_on_net_marginal_value_not_a_filled_window(
     guildhall: Guildhall, ingested
 ) -> None:
-    world, _ = ingested
+    world, _, _anchors = ingested
     payload = _project(guildhall, world.repo.path)
     escalation = payload.get("tier_escalation")
     require_nonempty(
@@ -430,7 +437,7 @@ def test_loop_stops_on_net_marginal_value_not_a_filled_window(
     ),
 )
 def test_query_log_records_every_declared_field(guildhall: Guildhall, ingested) -> None:
-    world, _ = ingested
+    world, _, _anchors = ingested
     _project(guildhall, world.repo.path)
     result = guildhall.run(
         "status", "--repo", str(world.repo.path), "--json",
@@ -467,7 +474,7 @@ def test_query_log_records_every_declared_field(guildhall: Guildhall, ingested) 
 def test_stale_fact_is_withheld_and_produces_an_owned_unknown(
     guildhall: Guildhall, ingested
 ) -> None:
-    world, _ = ingested
+    world, _, _anchors = ingested
     payload = _project(guildhall, world.repo.path)
     roles = _roles(_list(payload, "selected"))
     unknowns = _list(payload, "unknowns")
@@ -504,7 +511,7 @@ def test_stale_fact_is_withheld_and_produces_an_owned_unknown(
     ),
 )
 def test_no_calibrated_causal_voi_claim_is_made(guildhall: Guildhall, ingested) -> None:
-    world, _ = ingested
+    world, _, _anchors = ingested
     payload = _project(guildhall, world.repo.path)
     rendered = json.dumps(payload).lower()
     found = [f for f in FORBIDDEN_VOI_CLAIMS if f in rendered]

@@ -36,15 +36,16 @@ class PermittedControl:
     """One environment name the suite may pass to the product."""
 
     name: str
-    classification: str          # "environment" | "fault_schedule"
+    classification: str          # "environment" | "fault_schedule" | "attack_input"
     rationale: str
     witness_required: bool
 
     def __post_init__(self) -> None:
-        if self.classification not in ("environment", "fault_schedule"):
+        if self.classification not in ("environment", "fault_schedule", "attack_input"):
             raise HarnessInvalid(
-                f"{self.name}: classification must be environment or fault_schedule; "
-                "result_selector and work_substitute are forbidden outright"
+                f"{self.name}: classification must be environment, fault_schedule "
+                "or attack_input; result_selector and work_substitute are "
+                "forbidden outright"
             )
 
 
@@ -76,9 +77,18 @@ _ENVIRONMENT = (
     ("GIT_AUTHOR_DATE",
      "deterministic fixture commit time; consumed by git when the instrument\n      builds repository topology, carries no expected outcome"),
     ("GIT_COMMITTER_DATE", "deterministic fixture commit time"),
+)
+
+#: Hostile inputs the instrument deliberately injects. They are not controls:
+#: the product must *refuse* them, and the refusal is witnessed independently
+#: (an observed connection count). Validator ruling C28: the product never
+#: reads a Company endpoint from the environment; an env-supplied endpoint
+#: yields ``PROCESSOR_UNAUTHORIZED`` with zero connections.
+_ATTACK_INPUT = (
     ("GUILDHALL_COMPANY_URL",
-     "the Company endpoint, an ordinary ratified configuration input; a live "
-     "service, a closed port or a blackhole is a real deployment condition"),
+     "an environment-supplied Company endpoint, threat-model family 14; the "
+     "product must refuse it without connecting, witnessed by the listener's "
+     "observed connection count"),
 )
 
 #: Perturbation schedules. Permitted only with an independent witness proving the
@@ -96,6 +106,9 @@ PERMITTED: Mapping[str, PermittedControl] = {
 } | {
     name: PermittedControl(name, "fault_schedule", why, witness_required=True)
     for name, why in _FAULT_SCHEDULE
+} | {
+    name: PermittedControl(name, "attack_input", why, witness_required=True)
+    for name, why in _ATTACK_INPUT
 }
 
 #: Name shapes that always indicate a semantic control, whatever the value.

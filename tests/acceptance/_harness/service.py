@@ -43,9 +43,20 @@ TOKEN_CAPABILITIES: tuple[str, ...] = (
     "admin:issue",
 )
 
-#: ``spec/architecture.md`` HTTP API surface, section 7.
+#: ``spec/architecture.md`` HTTP API surface, section 7, completed by Validator
+#: ruling C6: ``POST /v1/authority-registry``, ``POST /facts`` (aliases
+#: ``/v1/facts``, ``/v1/company/facts``), ``GET|POST /questions``,
+#: ``POST /answers``, ``GET /status``, ``GET /facts``.
 QUESTION_PATH = "/questions"
 ANSWER_PATH = "/answers"
+FACTS_PATH = "/facts"
+FACTS_PATH_ALIASES: tuple[str, ...] = ("/facts", "/v1/facts", "/v1/company/facts")
+REGISTRY_PATH = "/v1/authority-registry"
+STATUS_PATH = "/status"
+
+#: Validator ruling C6: the closed token scope sets.
+FACTS_TOKEN_SCOPES: tuple[str, ...] = ("facts:read", "questions:write")
+DIRECTORY_TOKEN_SCOPES: tuple[str, ...] = ("directory:read", "admin:issue")
 
 #: ``spec/verification.md`` "Nonfunctional proof gates": "Guildhall HTTP rejects
 #: unauthenticated reads, non-loopback Host, Origin-bearing requests, and
@@ -136,7 +147,12 @@ class ServiceClient:
         nonce: str,
         expires_at: str,
     ) -> str:
-        """Domain-separated signature over method, path, body digest, nonce, expiry."""
+        """Domain-separated signature over method, path, body digest, nonce, expiry.
+
+        Validator ruling C5 (R-4 stands): request signatures use message type
+        ``receipt`` over ``{"method","path","body_sha256","nonce","expires_at"}``;
+        the client key binds on first successful use per token.
+        """
         payload = {
             "method": method,
             "path": path,

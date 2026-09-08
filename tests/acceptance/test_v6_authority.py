@@ -25,7 +25,7 @@ from pathlib import Path
 
 import pytest
 
-from ._harness import authority, canonical, ed25519_pure
+from ._harness import authority, canonical
 from ._harness import obligations as O
 from ._harness import prereq, synth, trust
 from ._harness.cli import Guildhall
@@ -101,17 +101,26 @@ def _json(result) -> dict:
 
 def _plant_ambiguity(world: SignedWorld) -> dict:
     """Exhaust the corpus tiers, leaving a high-distortion open Unknown."""
+    # Validator ruling C13: distortion is exactly {trigger, loss_if_absent,
+    # rationale}; an open Unknown is an UnknownEvent, not an atom kind.
+    distortion = {
+        "trigger": "extending the scheduler diagnosis path",
+        "loss_if_absent": "high",
+        "rationale": "an irreversible wire-format break for deployed consumers",
+    }
     world.plant_event(
         world.maintainer, store_kind="codebase", logical_key=LOGICAL_KEY,
         statement="the wire format version is referenced but never fixed here",
-        distortion={"severity": "high", "reversibility": "irreversible"},
+        distortion=distortion,
     )
-    return world.plant_event(
-        world.maintainer, store_kind="codebase",
+    return world.plant_unknown(
+        world.maintainer,
         logical_key=LOGICAL_KEY + "/unknown",
-        statement="which compatibility invariant constrains the change is open",
-        atom_kind="unknown", disposition="open",
-        distortion={"severity": "high", "reversibility": "irreversible"},
+        question="which compatibility invariant constrains the change",
+        decision_blocked="extend the scheduler diagnosis path",
+        owner_role="chief-architect",
+        owner_identity=world.architect.authority_id,
+        distortion=distortion,
     )
 
 
@@ -259,11 +268,7 @@ def _fetch_signed_answer(process: authority.AuthorityProcess, question_id: str) 
     )
     with urllib.request.urlopen(request, timeout=30) as response:
         payload = json.loads(response.read().decode("utf-8"))
-    signature = bytes.fromhex(payload["signature"])
-    signer = bytes.fromhex(payload["signer"])
-    unsigned = {k: v for k, v in payload.items() if k != "signature"}
-    digest = canonical.signing_digest("answer", canonical.jcs(unsigned))
-    if not ed25519_pure.verify(signer, digest, signature):
+    if not synth.verify_document("answer", payload):
         raise prereq.missing(
             "service", "authority answer signature",
             "the answering process returned a signature the instrument cannot "

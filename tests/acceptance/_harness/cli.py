@@ -313,6 +313,7 @@ class Guildhall:
         cwd: Path,
         extra_env: Mapping[str, str] | None = None,
         default_timeout: float = 120.0,
+        path_prefix: Sequence[Path] | None = None,
     ) -> None:
         self.entrypoint = _resolve_entrypoint()
         self.home = Path(home)
@@ -321,6 +322,10 @@ class Guildhall:
         self.extra_env = dict(extra_env or {})
         self.default_timeout = default_timeout
         self.transcript: list[Result] = []
+        #: Directories placed *first* on ``PATH`` for every invocation.
+        #: Validator ruling C16: the instrument's host wrapper must be the host
+        #: executable the product resolves, so its invocation log is evidence.
+        self.path_prefix: list[Path] = list(path_prefix or ())
 
     # -- environment ------------------------------------------------------
 
@@ -330,6 +335,10 @@ class Guildhall:
             for k in self.ENV_ALLOWLIST
             if k in os.environ
         }
+        if self.path_prefix:
+            env["PATH"] = os.pathsep.join(
+                [str(p) for p in self.path_prefix] + [env.get("PATH", "")]
+            ).rstrip(os.pathsep)
         env["HOME"] = str(self.home)
         env["XDG_CONFIG_HOME"] = str(self.xdg_config_home)
         env["XDG_DATA_HOME"] = str(self.home / ".local" / "share")

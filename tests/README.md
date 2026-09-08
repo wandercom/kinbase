@@ -28,6 +28,35 @@ closed; the mechanisms are below and each is executable without the product.
 | 8–16 per-gate vacuity | real state construction, typed evidence, total quantifiers; every bare return, permissive default and tautology removed |
 | 17 no auxiliary corpus | `tests/fixtures/auxiliary/` — CC0 sources, dictionaries, correlations, decoys, digests, rights basis |
 
+## Remediation 007 — partial (seat reassigned mid-dispatch)
+
+Validator dispatch 007 audited the instrument against the ratified spec and
+issued rulings C1–C28. This lane closed the trust-anchor core before the seat
+was reassigned; the Tester report 007 in the run scratch dir lists each ruling
+as done, partial or untouched. In short:
+
+* every anchored world now writes the launcher user config (0600, exactly the
+  `spec/cli.md` keys, isolated `HOME`/`XDG_CONFIG_HOME`), installs the steward
+  certificate from a file **outside** the worktree through
+  `repo init --repo PATH --certificate FILE`, publishes one registry document
+  signed as `authority-registry-entry`, and admits Company facts through
+  `POST /facts` as signed FactEvents; Personal material never enters `.kin/`;
+* one signing convention: `signer` inside the signed bytes, `signature`
+  outside; `event_id` is derived from the event's content;
+* `atom_kind` and `disposition` are closed vocabularies; lifecycle actions are
+  dispositions; `distortion` is exactly `{trigger, loss_if_absent, rationale}`;
+* revocation is a steward republication of the registry at a newer cursor
+  without the revoked key;
+* the Company endpoint reaches the product only through the user config; an
+  environment-supplied endpoint is an *attack input* the product must refuse;
+* "uncertified" is a launcher with no config/cache, never a deleted file.
+
+Still open from that dispatch (untouched here): the C15 lifecycle-matrix
+derivation from observable receipts, the C21 Kindex fixture repair, the C9/C10
+host-lifecycle edits (`--approve`, `.kin/manifests/`), the C16 host wrapper on
+`PATH` (the driver supports `path_prefix`; V-9 does not yet set it), and the
+remaining C8 session-id sites in V-2/V-3/V-9.
+
 ## Reviewer entrypoint
 
 ```sh
@@ -110,7 +139,7 @@ Every assertion cites an exact ratified requirement:
 | kill-ledger rows over frozen controls | 479 |
 | executable pre-execution planters | 35 |
 | detector mutations with a demonstrated escape | 6 |
-| product-independent self-tests | 122 |
+| product-independent self-tests | 123 |
 | unbackreferenced tests | 0 |
 
 Catalog digest `5fb755956f3e2cca`; kill-ledger digest `865ddcb0d58570e9`;

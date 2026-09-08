@@ -162,14 +162,14 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
         world.architect, store_kind="company", logical_key=key,
         statement="the maintenance window is eight hours",
         disposition="retracted"))
-    stage("revoke", lambda: world.plant_event(
-        world.steward, store_kind="company", logical_key=key,
-        statement="the architect key is revoked at this cursor",
-        atom_kind="revocation", authority_snapshot_cursor="1001"))
+    # Revocation is a steward-signed Company event with its own cursor
+    # (spec/architecture.md "Trust and key lifecycle"): the registry is
+    # republished at cursor 1001 without the architect's key.
+    stage("revoke", lambda: anchors.revoke(world.architect, cursor="1001"))
     stage("expire", lambda: world.plant_event(
         world.architect, store_kind="company", logical_key=key,
         statement="the interim window applies until the cycle ends",
-        effective_until=synth._stamp(day=1)))
+        effective_until=synth._stamp(day=1), may_refuse=True))
     stage("branch", lambda: (world.repo.branch("maintenance/alt"),
                              world.repo.checkout("maintenance/alt"),
                              world.repo.write("docs/alt.md", "alternate\n"),
@@ -493,7 +493,8 @@ def test_ten_times_the_admission_ceiling_refuses_writes_but_still_diagnoses(
     world, anchors = anchored
     repo = world.repo.path
     build = scale.build_event_corpus(
-        repo, world.steward, CEILING_EVENTS, logical_prefix="ceiling",
+        repo, world.maintainer, CEILING_EVENTS, logical_prefix="ceiling",
+        repository_id=anchors.repository_uuid,
     )
     prereq.witnessed(
         build.cross_check_agreed, True, what="bulk signature cross-check",
@@ -534,19 +535,17 @@ def test_revocation_cascade_completes_in_bound_or_stays_fail_closed(
 ) -> None:
     world, anchors = anchored
     repo = world.repo.path
+    # The dense Codebase graph is signed by the architect, whose key is then
+    # revoked; every fact it supports must be re-evaluated.
     build = scale.build_event_corpus(
         repo, world.architect, DENSE_GRAPH_EVENTS, logical_prefix="dense", dense=True,
+        repository_id=anchors.repository_uuid,
     )
     prereq.witnessed(
         build.cross_check_agreed, True, what="bulk signature cross-check",
         why="the dense graph must be signed by the ratified algorithm",
     )
-    revocation = world.plant_event(
-        world.steward, store_kind="company",
-        logical_key="authority/" + world.architect.authority_id,
-        statement="the architect signing key is revoked at this cursor",
-        atom_kind="revocation", authority_snapshot_cursor="2000",
-    )
+    revocation = anchors.revoke(world.architect, cursor="2000")
     started = time.monotonic()
     result = _json(_run(guildhall, "fsck", "--repo", str(repo), "--full", "--json",
                         cwd=repo))
@@ -556,7 +555,7 @@ def test_revocation_cascade_completes_in_bound_or_stays_fail_closed(
         "V-4.cascade",
         {
             "dense_graph_event_count": build.event_count,
-            "key_revoked": revocation["digest"] is not None,
+            "key_revoked": revocation["revocation_cursor"] == "2000",
             "cascade_state": state,
             "bound_respected_or_fail_closed": (
                 state == "complete" and elapsed <= FULL_FSCK_CEILING_SECONDS
@@ -584,20 +583,15 @@ def test_pre_revocation_replay_returns_history_without_readmission(
         statement="the replay window is one hour",
     )
     before = _json(_run(guildhall, "status", "--repo", str(repo), "--json", cwd=repo))
-    world.plant_event(
-        world.steward, store_kind="company",
-        logical_key="authority/" + world.architect.authority_id,
-        statement="the architect signing key is revoked at this cursor",
-        atom_kind="revocation", authority_snapshot_cursor="2100",
-    )
+    anchors.revoke(world.architect, cursor="2100")
     after = _json(_run(guildhall, "status", "--repo", str(repo), "--json", cwd=repo))
 
-    # Replay the identical pre-revocation event bytes after observing revocation.
-    replayed = (repo / original["path"]).read_bytes()
-    replay_path = repo / original["path"]
-    replay_path.write_bytes(replayed)
-    result = _json(_run(guildhall, "ingest", "kindex", str(repo / ".kin"),
-                        "--repo", str(repo), "--json", cwd=repo))
+    # Replay the identical pre-revocation event bytes, through the same
+    # admission surface, after the revocation cursor was observed.
+    result = field(anchors.admit_fact(original["document"]), "receipt")
+    result = result if isinstance(result, dict) else {}
+    _run(guildhall, "ingest", "kindex", str(repo / ".kin"),
+         "--repo", str(repo), "--json", cwd=repo)
     projected = _json(_run(guildhall, "project", "--repo", str(repo),
                            "--task", "diagnose the replay window",
                            "--decision", "which window applies", "--json", cwd=repo))
@@ -671,9 +665,16 @@ def test_linked_worktrees_serialize_on_one_common_dir_lock(
            "Guildhall reserved path and require typed no-write refusal."),
 )
 def test_legacy_kindex_bytes_preserved_and_collision_refuses(
-    guildhall: Guildhall, roots: ProofRoots, guildhall_repo=None
+    guildhall: Guildhall, roots: ProofRoots, anchored
 ) -> None:
-    repo = GitRepo.init(roots.repo_root / "legacy")
+    world, anchors = anchored
+    repo = GitRepo.init(roots.base / "workspace" / "legacy")
+    legacy_uuid = "018f0000-0000-7000-8000-00000000001e"
+    # Validator ruling C2: the certificate is a steward-signed file outside
+    # the work tree, offered through `repo init --certificate`.
+    certificate = trust.write_certificate_file(
+        roots, world.steward, repository_uuid=legacy_uuid, name="legacy",
+    )
     synth.legacy_kin_inventory(repo.path)
     legacy = prereq.collected(
         sorted(p for p in (repo.path / ".kin").rglob("*") if p.is_file()),
@@ -690,8 +691,7 @@ def test_legacy_kindex_bytes_preserved_and_collision_refuses(
         json.dumps({"legacy": True}), encoding="utf-8"
     )
     result = _run(guildhall, "repo", "init", "--repo", str(repo.path),
-                  "--certificate", str(repo.path / ".kin" / "certificate.json"),
-                  "--json", cwd=repo.path)
+                  "--certificate", str(certificate), "--json", cwd=repo.path)
     after = {p: hashlib.sha256(p.read_bytes()).hexdigest()
              for p in before if p.is_file()}
     O.check(

@@ -71,6 +71,13 @@ SOURCE_ROOTS: dict[str, str] = {
 }
 
 
+#: The approval principals V-1 misextraction / never_true range over.
+APPROVERS: tuple[synth.Signer, ...] = (
+    synth.make_signer("approver-local-1", "approver:local", seed_byte=23),
+    synth.make_signer("approver-local-2", "approver:local", seed_byte=29),
+)
+
+
 # --------------------------------------------------------------------------
 # Fixtures: trust anchors first, then raw state, then the product
 # --------------------------------------------------------------------------
@@ -80,7 +87,13 @@ SOURCE_ROOTS: dict[str, str] = {
 def anchored(roots: ProofRoots, guildhall: Guildhall):
     """A world whose external trust prerequisites are genuinely in place."""
     world = SignedWorld.create(roots.repo_root)
-    anchors = trust.establish(guildhall, roots, world)
+    # The two approvers are registered principals (approval scope) so their
+    # misextraction notice is admissible; neither is a steward/maintainer, so
+    # the never_true withdrawal from either must still be refused.
+    anchors = trust.establish(
+        guildhall, roots, world,
+        extra_authorities=tuple((a, "approver:local") for a in APPROVERS),
+    )
     sources = roots.repo_root / "sources"
     sources.mkdir(parents=True, exist_ok=True)
     ctx = L.LifecycleContext(world=world, sources=sources,
@@ -550,11 +563,13 @@ def test_misextraction_notice_is_approver_owned_and_withholds_only(
         world.architect, store_kind="company", logical_key=key,
         statement="the lookahead owner is the scheduling steward",
     )
-    approver = synth.make_signer("approver-local-1", "approver:local", seed_byte=23)
+    approver = APPROVERS[0]
+    # Validator ruling C13: misextraction is a FactEvent disposition whose
+    # parents name the misread event.
     world.plant_event(
         approver, store_kind="company", logical_key=key,
         statement="the extracted bytes do not match the cited evidence",
-        atom_kind="misextraction", disposition="notice",
+        atom_kind="claim", disposition="misextraction",
         parents=(planted["event_id"],),
     )
     world.verify_planted()
@@ -598,20 +613,25 @@ def test_never_true_requires_subject_matter_authority(
 ) -> None:
     world, anchors, ctx = anchored
     key = "architecture/scheduler/retry-window"
-    world.plant_event(
+    claim = world.plant_event(
         world.architect, store_kind="company", logical_key=key,
         statement="the retry window is five minutes",
     )
-    approver = synth.make_signer("approver-local-2", "approver:local", seed_byte=29)
+    approver = APPROVERS[1]
+    # Validator ruling C13: never_true is a FactEvent disposition naming the
+    # withdrawn event. The approver's attempt is expected to be refused.
     world.plant_event(
         approver, store_kind="company", logical_key=key,
         statement="the retry window claim was never true",
-        atom_kind="never_true",
+        atom_kind="claim", disposition="never_true",
+        parents=(claim["event_id"],), supersedes=(claim["event_id"],),
+        may_refuse=True,
     )
     world.plant_event(
         world.steward, store_kind="company", logical_key=key,
         statement="the retry window claim was never true",
-        atom_kind="never_true",
+        atom_kind="claim", disposition="never_true",
+        parents=(claim["event_id"],), supersedes=(claim["event_id"],),
     )
     world.verify_planted()
     _ingest(guildhall, world.repo.path, "kindex", world.repo.path / ".kin")

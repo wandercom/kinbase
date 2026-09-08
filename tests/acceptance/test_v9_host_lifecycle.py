@@ -494,8 +494,8 @@ def test_twenty_session_soak_warm_path_and_fsck_incidence(
     _run(guildhall, "hooks", "install", host, "--approve", "--json",
          cwd=world.repo.path)
     build = scale.build_event_corpus(
-        world.repo.path, world.steward, hosts.SHARED_EVENT_CEILING,
-        logical_prefix="soak",
+        world.repo.path, world.maintainer, hosts.SHARED_EVENT_CEILING,
+        logical_prefix="soak", repository_id=anchors.repository_uuid,
     )
     prereq.witnessed(
         build.cross_check_agreed, True, what="bulk signature cross-check",

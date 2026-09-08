@@ -5,22 +5,27 @@ no referenced fact version was inserted, the repository certificate was not
 installed, and the cache truth table hardcoded ``state_constructed``. The gate
 therefore tested reference *syntax* against an empty service.
 
-Every fixture here installs the certificate through
-:mod:`acceptance._harness.trust`, admits the referenced fact and at least one
-superseding version **through Company's own admission surface**, and constructs
-each cache-table row by really expiring or revoking state and reading the result
-back. ``state_constructed`` is now a fact about what the harness did, computed
-from the service's own response, not a literal.
+Every fixture here installs the certificate out of the worktree through
+``repo init --certificate`` (Validator ruling C2), admits the referenced fact
+and at least one superseding version **through ``POST /facts``** as signed
+FactEvents (C7, C22), and constructs each cache-table row by really expiring or
+revoking state and reading the result back. "Uncertified" is constructed by
+withholding the user config and cache, never by deleting a tracked file (C2).
 
-Where the ratified Company admission path is not fixed by ``spec/cli.md``, the
-harness tries the declared candidates and records which one the service
-accepted; if none does, that is an instrument prerequisite --- ``INVALID_HARNESS``
---- and never a product accusation.
+Two conventions this module needs and the ratified field set does not name are
+recorded as spec gaps in the Tester report rather than resolved silently:
+
+* a Company fact's criticality travels in ``distortion.loss_if_absent`` as
+  exactly ``safety_critical`` or ``advisory``, because the ``FactEvent`` field
+  set carries no other loss class and ``spec/architecture.md`` ties distortion
+  to "severity";
+* the maintainer-owned ``local_dependence_class`` is a Codebase ``constraint``
+  whose logical key is the referencing key plus ``/local_dependence_class`` and
+  whose statement is exactly the class token.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -28,7 +33,7 @@ import pytest
 
 from ._harness import canonical, matrix as MX
 from ._harness import obligations as O
-from ._harness import prereq, scanners, synth, trust
+from ._harness import hosts, scanners, synth, trust
 from ._harness.cli import Guildhall
 from ._harness.evidence_model import field, rows
 from ._harness.requirements import (
@@ -37,16 +42,11 @@ from ._harness.requirements import (
     ProductFailure,
     spec_ref,
 )
-from ._harness.roots import ProofRoots
+from ._harness.roots import ProofRoots, free_loopback_port
 from ._harness.service import Blackhole
 from ._harness.worldbuilder import REPO_UUID, OpaqueIds, SignedWorld, Witness
 
 pytestmark = [pytest.mark.v8, pytest.mark.requires_product]
-
-#: Candidate Company fact-admission paths, tried in order. `spec/architecture.md`
-#: fixes `/questions` and `/answers` explicitly; the fact surface is named only
-#: by capability, so the harness records which candidate the service accepted.
-FACT_ADMISSION_PATHS: tuple[str, ...] = ("/v1/facts", "/facts", "/v1/company/facts")
 
 #: The six rows of the revocation x validity x criticality truth table.
 CACHE_ROWS: tuple[tuple[str, str, str], ...] = (
@@ -72,7 +72,11 @@ CLASS_COMBINATIONS: tuple[tuple[str, str], ...] = (
 
 IDENTITY_SEED = b"v8-opaque-identity"
 COMPANY_ID = "company-demo"
-FACT_ID = "fact-scheduler-wire-format"
+#: The Company architecture fact every reference here points at.
+FACT_KEY = "architecture/scheduler/wire-format"
+REFERENCE_KEY = "architecture/scheduler/wire-format"
+LOCAL_CLASS_SUFFIX = "/local_dependence_class"
+CRITICALITIES: tuple[str, ...] = ("safety_critical", "advisory")
 
 
 @pytest.fixture()
@@ -111,81 +115,128 @@ def _json(result) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def _admit_fact(anchors, document: dict) -> dict:
-    """Admit one fact version through Company's own surface."""
-    attempts: list[dict] = []
-    for path in FACT_ADMISSION_PATHS:
-        response = anchors.client.post(path, body=document)
-        attempts.append({"path": path, "status": response.status})
-        if response.status in (200, 201, 202):
-            body = response.json() if response.body else {}
-            return {
-                "admitted": True,
-                "path": path,
-                "receipt": body if isinstance(body, dict) else {},
-                "attempts": attempts,
-            }
-    raise prereq.missing(
-        "service", "Company fact admission",
-        "no declared admission path was accepted (" + json.dumps(attempts)
-        + "); V-8 ranges over a Company that actually holds the referenced fact, "
-        "so an empty service is an instrument condition, not a product failure",
+def _company_fact(world, *, statement: str, criticality: str, valid_until: str,
+                  signer: synth.Signer | None = None, supersedes=(),
+                  parents=(), disposition: str = "accepted",
+                  logical_key: str = FACT_KEY) -> dict:
+    """Admit one Company FactEvent version through the live service (C7, C22)."""
+    if criticality not in CRITICALITIES:
+        raise ValueError(criticality)
+    return world.plant_event(
+        signer or world.architect, store_kind="company",
+        logical_key=logical_key, statement=statement, atom_kind="decision",
+        disposition=disposition,
+        effective_from=synth._stamp(day=1), effective_until=valid_until,
+        supersedes=tuple(supersedes), parents=tuple(parents),
+        distortion={
+            "trigger": "a dependent edit of the scheduler wire format",
+            "loss_if_absent": criticality,
+            "rationale": "the Company-owned criticality of this fact",
+        },
     )
 
 
-def _fact_document(*, version: int, statement: str, criticality: str,
-                   valid_until: str, steward: synth.Signer) -> dict:
-    body = {
-        "company_id": COMPANY_ID,
-        "fact_id": FACT_ID,
-        "version": version,
-        "statement": statement,
-        "company_criticality": criticality,
-        "valid_from": synth._stamp(day=1),
-        "valid_until": valid_until,
-        "digest_alg_version": "guildhall-digest/1",
-    }
-    body["semantic_digest"] = hashlib.sha256(
-        canonical.jcs({"statement": statement})
-    ).hexdigest()
-    return steward.sign_message("fact-event", body)
+def _published(anchors, record: dict) -> dict:
+    """Read back what Company published for one admitted fact.
+
+    ``spec/architecture.md`` section 3: "``CompanyReference`` copies the
+    Company-published Company ID, fact ID, semantic-content digest,
+    ``digest_alg_version`` ..."; the reference must therefore carry the digest
+    Company publishes, not one the instrument computes for itself.
+    """
+    receipt = record.get("admission", {}).get("receipt", {})
+    if isinstance(receipt, dict) and isinstance(receipt.get("semantic_digest"), str):
+        return {
+            "fact_id": receipt.get("fact_id") or record["document"]["fact_id"],
+            "semantic_digest": receipt["semantic_digest"],
+            "digest_alg_version": receipt.get("digest_alg_version") or "guildhall-digest/1",
+            "source": "admission-receipt",
+        }
+    listing = anchors.client.get("/facts")
+    if listing.status == 200 and listing.body:
+        payload = listing.json
+        facts = payload.get("facts") if isinstance(payload, dict) else payload
+        if isinstance(facts, list):
+            for entry in facts:
+                if not isinstance(entry, dict):
+                    continue
+                if entry.get("event_id") == record["event_id"] and isinstance(
+                    entry.get("semantic_digest"), str
+                ):
+                    return {
+                        "fact_id": entry.get("fact_id") or record["document"]["fact_id"],
+                        "semantic_digest": entry["semantic_digest"],
+                        "digest_alg_version":
+                            entry.get("digest_alg_version") or "guildhall-digest/1",
+                        "source": "GET /facts",
+                    }
+    raise ProductFailure(
+        "Company published no semantic digest for an admitted fact, neither in "
+        "the POST /facts receipt nor under GET /facts; spec/architecture.md "
+        "section 3 makes the semantic-content digest and digest_alg_version "
+        "Company-published fields a reference copies. Admission observation: "
+        + json.dumps(record.get("admission"), default=str)[:800]
+    )
 
 
 def _populate_company(anchors, world) -> dict:
     """Admit the referenced fact plus a superseding version, and retain both."""
-    first = _admit_fact(anchors, _fact_document(
-        version=1, statement="the wire format version is fixed at three",
+    first = _company_fact(
+        world, statement="the wire format version is fixed at three",
         criticality="safety_critical", valid_until=synth._stamp(day=30),
-        steward=world.steward,
-    ))
-    second = _admit_fact(anchors, _fact_document(
-        version=2, statement="the wire format version is fixed at four",
+    )
+    second = _company_fact(
+        world, statement="the wire format version is fixed at four",
         criticality="safety_critical", valid_until=synth._stamp(day=60),
-        steward=world.steward,
-    ))
-    return {"versions_admitted": 2, "first": first, "second": second}
+        supersedes=(first["event_id"],), parents=(first["event_id"],),
+    )
+    return {
+        "versions_admitted": 2,
+        "first": first,
+        "second": second,
+        "published": _published(anchors, second),
+    }
 
 
-def _plant_reference(world, *, relation: str = "applies",
+def _plant_reference(world, anchors, *, published: dict | None = None,
+                     relation: str = "applies",
                      criticality: str = "safety_critical",
-                     digest_alg_version: str = "guildhall-digest/1",
-                     semantic_digest: str | None = None) -> dict:
+                     digest_alg_version: str | None = None,
+                     semantic_digest: str | None = None,
+                     logical_key: str = REFERENCE_KEY) -> dict:
+    """Plant a Codebase event referencing the admitted Company fact."""
+    published = published or _published(anchors, world.company_records()[-1])
     reference = synth.company_reference(
-        company_id=COMPANY_ID, fact_id=FACT_ID,
-        semantic_digest=semantic_digest or hashlib.sha256(
-            canonical.jcs({"statement": "the wire format version is fixed at four"})
-        ).hexdigest(),
-        digest_alg_version=digest_alg_version,
-        authority=world.steward.authority_id,
+        company_id=COMPANY_ID, fact_id=str(published["fact_id"]),
+        semantic_digest=semantic_digest or str(published["semantic_digest"]),
+        digest_alg_version=digest_alg_version or str(published["digest_alg_version"]),
+        authority=world.architect.authority_id,
         valid_from=synth._stamp(day=1), valid_until=synth._stamp(day=60),
         company_criticality=criticality, relation=relation,
     )
     return world.plant_event(
         world.maintainer, store_kind="codebase",
-        logical_key="architecture/scheduler/wire-format",
+        logical_key=logical_key,
         statement="this repository depends on the Company wire-format decision",
         company_refs=(reference,),
     )
+
+
+def _plant_local_dependence(world, *, reference: dict, local_class: str) -> dict:
+    """The maintainer-owned local dependence class, as a Codebase constraint."""
+    if local_class not in CRITICALITIES:
+        raise ValueError(local_class)
+    return world.plant_event(
+        world.maintainer, store_kind="codebase",
+        logical_key=reference["logical_key"] + LOCAL_CLASS_SUFFIX,
+        statement=local_class, atom_kind="constraint",
+        parents=(reference["event_id"],),
+    )
+
+
+def _ingest(guildhall: Guildhall, repo: Path):
+    return _run(guildhall, "ingest", "kindex", str(repo / ".kin"),
+                "--repo", str(repo), "--json", cwd=repo)
 
 
 @spec_ref(
@@ -198,7 +249,7 @@ def test_fresh_clone_resolves_the_reference_without_copying_prose(
 ) -> None:
     world, anchors = anchored
     populated = _populate_company(anchors, world)
-    _plant_reference(world)
+    _plant_reference(world, anchors, published=populated["published"])
     clone = world.repo.clone(tmp_path / ids.token("fresh"))
 
     projected = _json(_run(guildhall, "project", "--repo", str(clone.path),
@@ -239,8 +290,8 @@ def test_reference_carries_exactly_the_company_owned_field_set(
     guildhall: Guildhall, anchored
 ) -> None:
     world, anchors = anchored
-    _populate_company(anchors, world)
-    planted = _plant_reference(world)
+    populated = _populate_company(anchors, world)
+    planted = _plant_reference(world, anchors, published=populated["published"])
     world.verify_planted()
     raw = (world.repo.path / planted["path"]).read_bytes()
     payload = json.loads(raw.decode("utf-8"))
@@ -248,7 +299,7 @@ def test_reference_carries_exactly_the_company_owned_field_set(
     O.check(
         "V-8.reference-fields",
         {
-            "event_signature_valid": True,
+            "event_signature_valid": synth.verify_document("fact-event", payload),
             "event_path_matches_digest":
                 canonical.content_digest_hex(raw) == planted["digest"],
             "reference": reference,
@@ -266,18 +317,23 @@ def test_stricter_of_company_and_local_class_controls_freshness(
     guildhall: Guildhall, anchored
 ) -> None:
     world, anchors = anchored
-    _populate_company(anchors, world)
     combinations = []
-    for company_class, local_class in CLASS_COMBINATIONS:
-        planted = _plant_reference(world, criticality=company_class)
-        world.plant_event(
-            world.maintainer, store_kind="codebase",
-            logical_key="architecture/scheduler/wire-format/dependence",
-            statement="the local dependence class is " + local_class,
-            atom_kind="dependence", parents=(planted["event_id"],),
+    for index, (company_class, local_class) in enumerate(CLASS_COMBINATIONS):
+        # Each combination is its own Company fact and its own reference, so
+        # the three rows never share state.
+        fact = _company_fact(
+            world, statement="the wire format rule " + str(index) + " holds",
+            criticality=company_class, valid_until=synth._stamp(day=60),
+            logical_key=FACT_KEY + "/" + str(index),
         )
-        observed = _json(_run(guildhall, "explain",
-                              "architecture/scheduler/wire-format",
+        key = REFERENCE_KEY + "/" + str(index)
+        planted = _plant_reference(
+            world, anchors, published=_published(anchors, fact),
+            criticality=company_class, logical_key=key,
+        )
+        _plant_local_dependence(world, reference=planted, local_class=local_class)
+        _ingest(guildhall, world.repo.path)
+        observed = _json(_run(guildhall, "explain", key,
                               "--repo", str(world.repo.path),
                               "--decision", "which freshness applies", "--json",
                               cwd=world.repo.path))
@@ -310,29 +366,36 @@ def test_only_company_steward_may_sign_a_relaxation(
     guildhall: Guildhall, anchored
 ) -> None:
     world, anchors = anchored
-    _populate_company(anchors, world)
-    _plant_reference(world, relation="exception_request")
+    populated = _populate_company(anchors, world)
+    _plant_reference(world, anchors, published=populated["published"],
+                     relation="exception_request")
+    # Validator ruling C13: exception_request and relaxation are FactEvent
+    # dispositions whose parents name the affected events.
     request = world.plant_event(
         world.maintainer, store_kind="codebase",
-        logical_key="architecture/scheduler/wire-format/exception",
-        statement="this repository requests a criticality relaxation",
-        atom_kind="exception_request",
+        logical_key=REFERENCE_KEY + "/exception",
+        statement="this repository requests an advisory relaxation of the wire "
+                  "format rule until day two",
+        atom_kind="decision", disposition="exception_request",
+        parents=(populated["second"]["event_id"],),
+        effective_until=synth._stamp(day=2),
     )
     world.plant_event(
         world.maintainer, store_kind="codebase",
-        logical_key="architecture/scheduler/wire-format/exception",
+        logical_key=REFERENCE_KEY + "/exception",
         statement="the relaxation is granted",
-        atom_kind="exception_to", parents=(request["event_id"],),
-    )
-    world.plant_event(
-        world.steward, store_kind="company",
-        logical_key="architecture/scheduler/wire-format/exception",
-        statement="the relaxation is granted for this repository uuid",
-        atom_kind="exception_to", parents=(request["event_id"],),
+        atom_kind="decision", disposition="relaxation",
+        parents=(request["event_id"],),
         effective_until=synth._stamp(day=2),
     )
-    _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
-         "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
+    _company_fact(
+        world, signer=world.steward, disposition="relaxation",
+        statement="the relaxation is granted for this repository uuid",
+        criticality="advisory", valid_until=synth._stamp(day=2),
+        parents=(request["event_id"], populated["second"]["event_id"]),
+        logical_key=REFERENCE_KEY + "/exception",
+    )
+    _ingest(guildhall, world.repo.path)
     before = _json(_run(guildhall, "status", "--repo", str(world.repo.path),
                         "--json", cwd=world.repo.path))
     after = _json(_run(
@@ -367,26 +430,32 @@ def test_maintainer_may_request_but_not_mint_an_exception(
     guildhall: Guildhall, anchored
 ) -> None:
     world, anchors = anchored
-    _populate_company(anchors, world)
+    populated = _populate_company(anchors, world)
+    _plant_reference(world, anchors, published=populated["published"])
     request = world.plant_event(
         world.maintainer, store_kind="codebase",
-        logical_key="architecture/scheduler/wire-format/request",
-        statement="this repository requests a criticality relaxation",
-        atom_kind="exception_request",
+        logical_key=REFERENCE_KEY + "/request",
+        statement="this repository requests an advisory relaxation until day two",
+        atom_kind="decision", disposition="exception_request",
+        parents=(populated["second"]["event_id"],),
+        effective_until=synth._stamp(day=2),
     )
     world.plant_event(
         world.maintainer, store_kind="codebase",
-        logical_key="architecture/scheduler/wire-format/request",
+        logical_key=REFERENCE_KEY + "/request",
         statement="the maintainer grants its own relaxation",
-        atom_kind="exception_to", parents=(request["event_id"],),
+        atom_kind="decision", disposition="relaxation",
+        parents=(request["event_id"],),
+        effective_until=synth._stamp(day=2),
     )
-    granted = _admit_fact(anchors, _fact_document(
-        version=3, statement="the steward grants the scoped relaxation",
+    granted = _company_fact(
+        world, signer=world.steward, disposition="relaxation",
+        statement="the steward grants the scoped relaxation",
         criticality="advisory", valid_until=synth._stamp(day=2),
-        steward=world.steward,
-    ))
-    _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
-         "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
+        parents=(request["event_id"], populated["second"]["event_id"]),
+        logical_key=REFERENCE_KEY + "/request",
+    )
+    _ingest(guildhall, world.repo.path)
     status = _json(_run(guildhall, "status", "--repo", str(world.repo.path),
                         "--json", cwd=world.repo.path))
     expired = _json(_run(
@@ -403,7 +472,7 @@ def test_maintainer_may_request_but_not_mint_an_exception(
                 minted, world.maintainer.authority_id, "accepted") is True,
             "refusal_code": field(
                 minted, world.maintainer.authority_id, "refusal_code"),
-            "steward_relaxation_admitted": granted["admitted"],
+            "steward_relaxation_admitted": granted["admission"]["admitted"],
             "expiry_restores_company_class":
                 field(expired, "effective_criticality") == "safety_critical",
         },
@@ -422,7 +491,7 @@ def test_digest_mismatch_attribution_truth_table(
     guildhall: Guildhall, anchored, ids: OpaqueIds, roots: ProofRoots
 ) -> None:
     world, anchors = anchored
-    _populate_company(anchors, world)
+    populated = _populate_company(anchors, world)
     expected_owner = {
         "historical_differs": "company-steward",
         "historical_matches": "client",
@@ -430,15 +499,22 @@ def test_digest_mismatch_attribution_truth_table(
         "unavailable": "none",
     }
     scenarios = []
-    for relation in DIGEST_RELATIONS:
+    dark_port = free_loopback_port()
+    dark_url = "http://127.0.0.1:" + str(dark_port)
+    for index, relation in enumerate(DIGEST_RELATIONS):
         digest_override = None
         if relation == "historical_differs":
-            digest_override = hashlib.sha256(b"a different statement").hexdigest()
+            digest_override = canonical.content_digest_hex(b"a different statement")
         if relation == "version_missing":
-            digest_override = hashlib.sha256(b"a retired version").hexdigest()
-        _plant_reference(world, semantic_digest=digest_override)
+            digest_override = canonical.content_digest_hex(b"a retired version")
+        _plant_reference(world, anchors, published=populated["published"],
+                         semantic_digest=digest_override,
+                         logical_key=REFERENCE_KEY + "/" + ids.token(relation))
         if relation == "unavailable":
-            with Blackhole(roots.company_port):
+            # Validator ruling C28: unavailability is configured through the
+            # user config, never the environment; the endpoint is a listener
+            # that never answers.
+            with Blackhole(dark_port), anchors.company_endpoint(dark_url):
                 observed = _json(_run(guildhall, "fsck", "--repo",
                                       str(world.repo.path), "--json",
                                       cwd=world.repo.path))
@@ -453,7 +529,7 @@ def test_digest_mismatch_attribution_truth_table(
             "owner_role": owner,
             "owner_matches_expected": owner == expected_owner[relation],
         })
-    with Blackhole(roots.company_port):
+    with Blackhole(dark_port), anchors.company_endpoint(dark_url):
         unavailable = _json(_run(guildhall, "fsck", "--repo", str(world.repo.path),
                                  "--json", cwd=world.repo.path))
     rendered = json.dumps(unavailable).lower()
@@ -478,25 +554,40 @@ def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
     roots: ProofRoots
 ) -> None:
     world, anchors = anchored
-    _populate_company(anchors, world)
-    _plant_reference(world)
+    populated = _populate_company(anchors, world)
+    _plant_reference(world, anchors, published=populated["published"])
 
+    # Uncertified: a fresh clone read by a launcher with no user config, no
+    # cache and no Company URL (Validator ruling C2). Nothing tracked is
+    # deleted; the trust material was never in the work tree.
     bare = world.repo.clone(tmp_path / ids.token("uncertified"))
-    (bare.path / trust.CERTIFICATE_PATH).unlink()
-    bare.run("add", "-A")
-    bare.commit("remove the certificate")
+    uncertified = anchors.uncertified_driver(ids.token("uncertified"))
+    clone_status = _json(_run(uncertified, "status", "--repo", str(bare.path),
+                              "--json", cwd=bare.path))
 
+    # Attacker fork: a clone that claims a new UUID with a self-issued
+    # certificate. The in-tree copy is inert (a foreign path); the out-of-tree
+    # copy is offered through the only installation path and must be refused
+    # because its signer is not the Company root.
+    other = "018f0000-0000-7000-8000-0000000000aa"
     fork = world.repo.clone(tmp_path / ids.token("fork"))
+    fork.write(
+        ".kin/config",
+        'schema_version = "guildhall-repo/1"\n'
+        'repository_uuid_hint = "' + other + '"\n'
+        'safe_name = "example-service"\n'
+        'domains = ["scheduling"]\n',
+    )
     attacker = synth.make_signer("attacker-steward", "company:root", seed_byte=41)
-    forged = synth.repo_certificate(attacker, repository_uuid=REPO_UUID)
-    fork.write_bytes(trust.CERTIFICATE_PATH, canonical.jcs(forged))
-    fork.commit("install a self-issued certificate")
-
-    with Blackhole(roots.company_port):
-        clone_status = _json(_run(guildhall, "status", "--repo", str(bare.path),
-                                  "--json", cwd=bare.path))
-        fork_status = _json(_run(guildhall, "status", "--repo", str(fork.path),
-                                 "--json", cwd=fork.path))
+    forged = synth.repo_certificate(attacker, repository_uuid=other)
+    fork.write_bytes(".kin/certificate.json", canonical.jcs(forged))
+    fork.commit("claim a new identity with a self-issued certificate")
+    forged_file = roots.client_root / "certificates" / "forged.json"
+    forged_file.write_bytes(canonical.jcs(forged))
+    install = _run(guildhall, "repo", "init", "--repo", str(fork.path),
+                   "--certificate", str(forged_file), "--json", cwd=fork.path)
+    fork_status = _json(_run(guildhall, "status", "--repo", str(fork.path),
+                             "--json", cwd=fork.path))
     unknowns = [
         u for u in rows(clone_status, "unknowns")
         if field(u, "kind") == "certificate"
@@ -507,6 +598,8 @@ def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
             "trusted_facts": field(clone_status, "trusted_fact_count"),
             "certificate_unknown_count": len(unknowns),
             "certificate_unknown": unknowns[0] if unknowns else {},
+            "forged_certificate_install_refused": install.returncode != 0,
+            "forged_certificate_refusal_code": field(_json(install), "error", "code"),
             "fork_trusted_facts": field(fork_status, "trusted_fact_count"),
             "fork_foreign_event_count": field(fork_status, "foreign_event_count"),
         },
@@ -520,43 +613,69 @@ def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
            "remains stable."),
 )
 def test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change(
-    guildhall: Guildhall, anchored, ids: OpaqueIds
+    guildhall: Guildhall, anchored, ids: OpaqueIds, roots: ProofRoots
 ) -> None:
     world, anchors = anchored
     _populate_company(anchors, world)
     before = _json(_run(guildhall, "status", "--repo", str(world.repo.path),
                         "--json", cwd=world.repo.path))
+    # Validator ruling C11: the discovery hint is the Git remote URL, never a
+    # `.kin/config` key (unknown keys fail closed). Change URL, protocol and
+    # ownership in one move.
+    world.repo.run("remote", "add", "origin",
+                   "https://elsewhere.example/renamed-owner/renamed-service.git")
     world.repo.write(
         ".kin/config",
         'schema_version = "guildhall-repo/1"\n'
         'repository_uuid_hint = "' + REPO_UUID + '"\n'
         'safe_name = "renamed-service"\n'
-        'domains = ["scheduling"]\n'
-        'origin = "https://elsewhere.example/renamed-service.git"\n',
+        'domains = ["scheduling"]\n',
     )
-    world.repo.commit("change the ownership hint")
+    world.repo.commit("rename the service")
     after = _json(_run(guildhall, "status", "--repo", str(world.repo.path),
                        "--json", cwd=world.repo.path))
 
+    # A hint later resolving to a different UUID: a second steward-signed
+    # certificate for another UUID offered through the installation path. It
+    # must block with a steward-owned identity Unknown, never silently repin.
     other = "018f0000-0000-7000-8000-0000000000ff"
-    second = synth.repo_certificate(world.steward, repository_uuid=other)
-    world.repo.write_bytes(".kin/certificate-second.json", canonical.jcs(second))
-    world.repo.commit("install a second certificate")
+    second = trust.write_certificate_file(
+        roots, world.steward, repository_uuid=other, name="second",
+    )
+    repin = _run(guildhall, "repo", "init", "--repo", str(world.repo.path),
+                 "--certificate", str(second), "--json", cwd=world.repo.path)
+    repinned = _json(repin)
+    # An in-tree certificate copy is inert: a foreign path, counted and never
+    # trusted (Validator rulings C2, C24).
+    world.repo.write_bytes(".kin/certificate-second.json",
+                           second.read_bytes())
+    world.repo.commit("copy a second certificate into the tree")
     fsck = _run(guildhall, "fsck", "--repo", str(world.repo.path), "--json",
                 cwd=world.repo.path)
-    repinned = _json(fsck)
+    checked = _json(fsck)
+    foreign = rows(checked, "foreign_paths")
+    final = _json(_run(guildhall, "status", "--repo", str(world.repo.path),
+                       "--json", cwd=world.repo.path))
     O.check(
         "V-8.identity",
         {
             "uuid_stable_under_hint_change":
                 field(before, "repository_uuid") == field(after, "repository_uuid")
                 and field(before, "repository_uuid") is not None,
-            "silently_repinned": field(after, "repository_uuid") == other,
+            "silently_repinned": field(final, "repository_uuid") == other,
+            "repin_refused": repin.returncode != 0,
             "repin_unknown_owner_roles": sorted(
                 {str(field(u, "owner_role")) for u in rows(repinned, "unknowns")
                  if field(u, "kind") == "identity"}
+                | {str(field(u, "owner_role")) for u in rows(final, "unknowns")
+                   if field(u, "kind") == "identity"}
             ),
-            "two_certificates_fail_fsck": fsck.returncode != 0,
+            "in_tree_certificate_counted_foreign": any(
+                ".kin/certificate-second.json" in str(f) for f in foreign
+            ),
+            "in_tree_certificate_trusted":
+                field(final, "repository_uuid") == other
+                or field(checked, "repository_uuid") == other,
         },
         label="identity is stable under hint change and blocks on UUID change",
     )
@@ -571,7 +690,7 @@ def test_publish_manifest_enforces_monotonic_counts(
 ) -> None:
     world, anchors = anchored
     _populate_company(anchors, world)
-    world.plant_event(
+    removed = world.plant_event(
         world.maintainer, store_kind="codebase",
         logical_key="architecture/scheduler/manifest",
         statement="the manifest records this head",
@@ -581,11 +700,16 @@ def test_publish_manifest_enforces_monotonic_counts(
     world.repo.run("reset", "--hard", "HEAD~1")
     regression = _run(guildhall, "repo", "publish-manifest", "--repo",
                       str(world.repo.path), "--json", cwd=world.repo.path)
+    # ``spec/cli.md``: "Supply a maintainer-signed rollback/rewrite event". A
+    # FactEvent with disposition ``reverted`` whose parents name the event the
+    # rollback removed from the published lineage.
     world.plant_event(
         world.maintainer, store_kind="codebase",
         logical_key="architecture/scheduler/manifest",
-        statement="a signed rollback exception explains the rewrite",
-        atom_kind="rollback_exception",
+        statement="the default branch was rolled back one commit; the manifest "
+                  "head set shrinks by design",
+        atom_kind="decision", disposition="reverted",
+        parents=(removed["event_id"],),
     )
     rewrite = _run(guildhall, "repo", "publish-manifest", "--repo",
                    str(world.repo.path), "--json", cwd=world.repo.path)
@@ -612,12 +736,14 @@ def test_company_emits_its_own_observation_expired_event(
     guildhall: Guildhall, anchored
 ) -> None:
     world, anchors = anchored
-    _admit_fact(anchors, _fact_document(
-        version=4, statement="this observation expires immediately",
+    fact = _company_fact(
+        world, statement="this observation expires immediately",
         criticality="advisory", valid_until=synth._stamp(day=1),
-        steward=world.steward,
-    ))
-    _plant_reference(world)
+    )
+    _plant_reference(world, anchors, published=_published(anchors, fact))
+    # The dated default-branch observation whose fresh_until Company watches.
+    _run(guildhall, "repo", "publish-manifest", "--repo", str(world.repo.path),
+         "--json", cwd=world.repo.path)
     before = anchors.client.get("/questions")
     witness = Witness(kind="company_side_expiry")
     witness.note(pre_query_status=before.status)
@@ -627,9 +753,11 @@ def test_company_emits_its_own_observation_expired_event(
         cwd=world.repo.path,
         env=guildhall.base_env({"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "604800"}),
     ))
+    # Validator ruling C13: Company's own expiry event is a FactEvent whose
+    # disposition is ``manifest_observation_expired``.
     expired = [
         e for e in rows(observed, "events")
-        if field(e, "atom_kind") == "observation_expired"
+        if field(e, "disposition") == "manifest_observation_expired"
     ]
     O.check(
         "V-8.expiry",
@@ -693,16 +821,13 @@ def test_cache_disagreement_truth_table(
 def _construct_cache_row(guildhall, anchors, world, roots, revocation, validity,
                          dependence) -> dict:
     """Really move the state this row names, then read the result back."""
-    cache = roots.company_cache
     removed = 0
     if revocation == "stale":
-        for path in sorted(cache.rglob("*")):
-            if path.is_file():
-                path.unlink()
-                removed += 1
+        removed = trust.remove_cache(roots)
     _plant_reference(
-        world,
+        world, anchors,
         criticality="safety_critical" if dependence == "safety" else "advisory",
+        logical_key=REFERENCE_KEY + "/" + revocation + "-" + validity + "-" + dependence,
     )
     offset = "604800" if validity == "stale" else "0"
     observed = _json(_run(
@@ -733,12 +858,14 @@ def test_uncertified_codebase_only_mode_emits_counts_and_status_only(
         statement="a statement that must not appear in an uncertified payload",
     )
     clone = world.repo.clone(tmp_path / ids.token("counts-only"))
-    (clone.path / trust.CERTIFICATE_PATH).unlink()
-    clone.run("add", "-A")
-    clone.commit("remove the certificate")
-
-    payload = _json(_run(guildhall, "hooks", "dispatch", "codex", "SessionStart",
-                         "--json", cwd=clone.path))
+    # Uncertified Codebase-only mode: no user config, cache or certificate
+    # reachable from this launcher (Validator ruling C2).
+    uncertified = anchors.uncertified_driver(ids.token("counts-only"))
+    envelope = hosts.envelope_for("codex", "SessionStart",
+                                  session_id=ids.token("counts-only-session"),
+                                  cwd=str(clone.path))
+    payload = _json(_run(uncertified, "hooks", "dispatch", "codex", "SessionStart",
+                         "--json", cwd=clone.path, stdin=json.dumps(envelope)))
     rendered = json.dumps(payload)
     bodies = [
         e for e in rows(payload, "events") if field(e, "statement") is not None
@@ -746,7 +873,7 @@ def test_uncertified_codebase_only_mode_emits_counts_and_status_only(
     O.check(
         "V-8.counts-only",
         {
-            "event_count_in_repository": len(world.planted),
+            "event_count_in_repository": len(world.codebase_records()),
             "event_bodies_in_payload": len(bodies),
             "counts": field(payload, "counts"),
             "no_statement_leaked":

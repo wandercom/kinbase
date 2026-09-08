@@ -148,8 +148,12 @@ def _observations_to_count(body, ctx):
 
 
 def _approver_mints_never_true(body, ctx):
-    """V-1: the approver, not the steward/maintainer, signs semantic withdrawal."""
-    out = _set(body, "atom_kind", "never_true")
+    """V-1: the approver, not the steward/maintainer, signs semantic withdrawal.
+
+    Validator ruling C13: ``never_true`` is a disposition on a FactEvent, not
+    an atom kind.
+    """
+    out = _set(body, "disposition", "never_true")
     return _set(out, "authority_scope", "approver:local")
 
 

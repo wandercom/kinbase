@@ -155,7 +155,7 @@ def test_reset_clears_only_the_consecutive_counter_once_per_hour(
         world.maintainer, store_kind="codebase",
         logical_key="task/" + ids.token("primary"),
         statement="a new primary task begins",
-        atom_kind="task_event",
+        atom_kind="observation",
     )
     first = _run(guildhall, "proposals", "reset",
                  "--after-primary-event", primary["event_id"],

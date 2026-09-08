@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from ._harness import obligations as O
+from ._harness import trust
 from ._harness.cli import Guildhall
 from ._harness.evidence_model import (
     Origin,
@@ -45,6 +46,7 @@ from ._harness.worldbuilder import (
     TEMPORAL_CASES,
     SignedWorld,
     plant_temporal_history,
+    temporal_extra_authorities,
 )
 
 pytestmark = [pytest.mark.v5, pytest.mark.requires_product]
@@ -53,8 +55,18 @@ AS_OF = "2026-03-05T00:00:00.000Z"
 AUTHORITY_CURSOR = "1500"
 
 
-def _world(roots: ProofRoots) -> SignedWorld:
-    return SignedWorld.create(roots.repo_root)
+def _world(roots: ProofRoots, guildhall: Guildhall) -> tuple[SignedWorld, trust.TrustAnchors]:
+    """A certified world with every trust anchor in place (Validator ruling C3).
+
+    The ``environment:prod-eu`` deploy owner is published through the registry
+    so rows 5 and 8 range over a *registered* runtime signer; the
+    ``environment:staging-xx`` signer of row 9 is deliberately absent.
+    """
+    world = SignedWorld.create(roots.repo_root)
+    anchors = trust.establish(
+        guildhall, roots, world, extra_authorities=temporal_extra_authorities(),
+    )
+    return world, anchors
 
 
 def _explain(guildhall: Guildhall, repo: Path, logical_key: str, decision: str) -> dict:
@@ -103,14 +115,14 @@ def _ingest_planted(guildhall: Guildhall, world: SignedWorld) -> None:
 @pytest.fixture()
 def planted_world(roots: ProofRoots, guildhall: Guildhall):
     """All nine histories planted into one repository, verified before use."""
-    world = _world(roots)
+    world, anchors = _world(roots, guildhall)
     per_case: dict[str, list[dict]] = {}
     for case in TEMPORAL_CASES:
         per_case[case.case_id] = plant_temporal_history(world, case)
     world.verify_planted()
-    if world.event_count() < 2 * len(TEMPORAL_CASES):
+    if len(world.planted) < 2 * len(TEMPORAL_CASES):
         raise HarnessInvalid(
-            f"only {world.event_count()} events were planted for "
+            f"only {len(world.planted)} events were planted for "
             f"{len(TEMPORAL_CASES)} cases; each case needs a real history"
         )
     _ingest_planted(guildhall, world)

@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from . import canonical, ed25519_pure, planters, synth
+from . import canonical, planters, synth
 from .gitfix import REQUIRED_ATTRIBUTE_LINES, GitRepo
 from .requirements import HarnessInvalid, ProductFailure
 from .roots import ProofRoots
@@ -90,13 +90,21 @@ class OpaqueIds:
 
 @dataclass
 class SignedWorld:
-    """A repository carrying genuinely signed, content-addressed events."""
+    """A repository carrying genuinely signed, content-addressed events.
+
+    Validator ruling C7: only Codebase events enter ``.kin/events/``. Company
+    facts are admitted through the live service (``company`` is the
+    :class:`~acceptance._harness.trust.TrustAnchors` that owns the client) and
+    Personal material reaches the product only through host transcripts, never
+    through this planter.
+    """
 
     repo: GitRepo
     steward: synth.Signer
     maintainer: synth.Signer
     architect: synth.Signer
     planted: list[dict[str, Any]] = field(default_factory=list)
+    company: Any = None
 
     @classmethod
     def create(cls, repo_root: Path) -> "SignedWorld":
@@ -143,8 +151,28 @@ class SignedWorld:
         authority_snapshot_cursor: str = "1000",
         confidence: str = "high",
         commit: bool = True,
+        may_refuse: bool = False,
     ) -> dict[str, Any]:
-        """Write one genuinely signed event at its computed content path."""
+        """Plant one genuinely signed event in the store its ``store_kind`` names.
+
+        ``may_refuse`` marks a Company admission whose *refusal* is the
+        expected observation (an out-of-scope signer); the record then carries
+        the admission outcome instead of raising.
+
+        ``codebase`` events are written at their computed content path under
+        ``.kin/events/``; ``company`` events are admitted through ``POST
+        /facts`` on the live Company (C7, C22); ``personal`` is refused here
+        because Personal facts never enter ``.kin/`` and the instrument plants
+        Personal material only through host transcripts.
+        """
+        if store_kind == "personal":
+            raise HarnessInvalid(
+                "Personal facts are never planted into .kin/ or Company; plant "
+                "Personal material through a host transcript instead (Validator "
+                "ruling C7)"
+            )
+        if store_kind not in ("codebase", "company"):
+            raise HarnessInvalid(f"unknown store_kind {store_kind!r}")
         body = synth.fact_event(
             store_kind=store_kind,
             authority_id=signer.authority_id,
@@ -173,6 +201,10 @@ class SignedWorld:
             "world.event_body", body, logical_key=logical_key, store_kind=store_kind
         )
         signed = signer.sign_message("fact-event", body)
+        if store_kind == "company":
+            return self._admit_company_event(
+                signer, signed, record_disposition=disposition, may_refuse=may_refuse,
+            )
         raw = canonical.jcs(signed)
         raw = planters.mutate("world.event_bytes", raw, logical_key=logical_key)
         digest = canonical.content_digest_hex(raw)
@@ -191,6 +223,8 @@ class SignedWorld:
             "event_id": signed["event_id"],
             "digest": digest,
             "path": rel,
+            "store": "codebase",
+            "message_type": "fact-event",
             "logical_key": logical_key,
             "statement": statement,
             "signer": signer.authority_id,
@@ -204,6 +238,113 @@ class SignedWorld:
         witness["head_at_witness"] = self.repo.head()
         witness["tracked_at_witness"] = self._tracked(rel)
         return record
+
+    def plant_unknown(
+        self,
+        signer: synth.Signer,
+        *,
+        logical_key: str,
+        question: str,
+        decision_blocked: str,
+        owner_role: str,
+        owner_identity: str,
+        closure_evidence: str = "",
+        parents: Sequence[str] = (),
+        distortion: Mapping[str, Any] | None = None,
+        commit: bool = True,
+    ) -> dict[str, Any]:
+        """Write one genuinely signed ``UnknownEvent`` into the Codebase store.
+
+        ``spec/architecture.md`` section 3: an ``UnknownEvent`` is a
+        ``FactEvent`` plus the eight Unknown fields, signed as ``unknown-event``.
+        """
+        body = synth.unknown_event(
+            store_kind="codebase",
+            authority_id=signer.authority_id,
+            authority_scope=signer.scope,
+            repository_id=REPO_UUID,
+            logical_key=logical_key,
+            question=question,
+            decision_blocked=decision_blocked,
+            owner_role=owner_role,
+            owner_identity=owner_identity,
+            closure_evidence=closure_evidence,
+            parents=parents,
+            distortion=distortion,
+        )
+        signed = signer.sign_message("unknown-event", body)
+        raw = canonical.jcs(signed)
+        digest = canonical.content_digest_hex(raw)
+        rel = ".kin/events/" + canonical.event_shard_path(digest)
+        target = self.repo.write_bytes(rel, raw)
+        planters.witness_path(target)
+        witness = self._witness_write(target, raw, digest)
+        record = {
+            "event_id": signed["event_id"],
+            "digest": digest,
+            "path": rel,
+            "store": "codebase",
+            "message_type": "unknown-event",
+            "logical_key": logical_key,
+            "statement": question,
+            "signer": signer.authority_id,
+            "scope": signer.scope,
+            "disposition": "proposed",
+            "witness": witness,
+        }
+        self.planted.append(record)
+        if commit:
+            self.repo.commit(f"plant {digest[:12]}")
+        witness["head_at_witness"] = self.repo.head()
+        witness["tracked_at_witness"] = self._tracked(rel)
+        return record
+
+    def _admit_company_event(self, signer: synth.Signer, signed: dict[str, Any],
+                             *, record_disposition: str,
+                             may_refuse: bool = False) -> dict[str, Any]:
+        """Admit a signed Company FactEvent through the live service (C7)."""
+        if self.company is None:
+            raise HarnessInvalid(
+                "a Company fact can only be admitted through the live service; "
+                "establish the trust anchors before planting store_kind='company'"
+            )
+        if not may_refuse and not self.company.registry.is_registered(signer.authority_id):
+            raise HarnessInvalid(
+                f"{signer.authority_id} is not in the published registry, so "
+                "the instrument cannot expect Company to admit its fact"
+            )
+        admission = self.company.admit_fact(signed)
+        raw = canonical.jcs(signed)
+        record = {
+            "event_id": signed["event_id"],
+            "digest": canonical.content_digest_hex(raw),
+            "path": None,
+            "store": "company",
+            "message_type": "fact-event",
+            "logical_key": signed["logical_key"],
+            "statement": signed["statement"],
+            "signer": signer.authority_id,
+            "scope": signer.scope,
+            "disposition": record_disposition,
+            "admission": admission,
+            "document": signed,
+        }
+        self.planted.append(record)
+        if not admission["admitted"] and not may_refuse:
+            raise ProductFailure(
+                "Company refused a FactEvent signed by a registered in-scope "
+                f"authority ({signer.authority_id}, scope {signer.scope}) with a "
+                "valid token and request signature; spec/architecture.md "
+                "'Company / Guildhall' and Validator ruling C6 make such a fact "
+                "admissible. Observation: " + json.dumps(admission, default=str)
+            )
+        return record
+
+    def company_records(self) -> list[dict[str, Any]]:
+        return [r for r in self.planted if r.get("store") == "company"]
+
+    def codebase_records(self) -> list[dict[str, Any]]:
+        return [r for r in self.planted if r.get("path")]
 
     # -- plant-time witness -------------------------------------------------
 
@@ -269,6 +410,10 @@ class SignedWorld:
             planters.require_applied()
             return
         for record in self.planted:
+            if not record.get("path"):
+                # A Company fact: admitted through the service at plant time,
+                # refusal already raised there. Nothing in the work tree to check.
+                continue
             path = self.repo.path / record["path"]
             raw = path.read_bytes() if path.is_file() else None
             observed_digest = (
@@ -277,12 +422,9 @@ class SignedWorld:
             if raw is None or observed_digest != record["digest"]:
                 self._report_planted_loss(record, observed_digest)
             payload = json.loads(raw.decode("utf-8"))
-            signature = bytes.fromhex(payload.pop("signature"))
-            public = bytes.fromhex(payload["signer"])
-            body = dict(payload)
-            body.pop("signer", None)
-            digest = canonical.signing_digest("fact-event", canonical.jcs(body))
-            if not ed25519_pure.verify(public, digest, signature):
+            message_type = "unknown-event" if payload.get(
+                "schema") == "guildhall-unknown/1" else "fact-event"
+            if not synth.verify_document(message_type, payload):
                 raise HarnessInvalid(
                     f"planted event {record['digest'][:12]} does not verify; the "
                     "instrument must not hand the product invalid state"
@@ -428,6 +570,17 @@ TEMPORAL_CASES: tuple[TemporalCase, ...] = (
 )
 
 
+#: The registered deploy owner V-5 rows 5 and 8 rely on. ``environment:prod-eu``
+#: is published through the registry (Validator ruling C3); the
+#: ``environment:staging-xx`` signer in row 9 deliberately is not.
+DEPLOY_OWNER = synth.make_signer("deploy-owner-1", "environment:prod-eu", seed_byte=23)
+DEPLOY_OWNER_CHANNEL = "environment:prod-eu"
+
+
+def temporal_extra_authorities() -> tuple[tuple[synth.Signer, str], ...]:
+    return ((DEPLOY_OWNER, DEPLOY_OWNER_CHANNEL),)
+
+
 def plant_temporal_history(world: SignedWorld, case: TemporalCase) -> list[dict]:
     """Plant the signed history that makes one V-5 row true.
 
@@ -499,7 +652,7 @@ def plant_temporal_history(world: SignedWorld, case: TemporalCase) -> list[dict]
             atom_kind="observation", disposition="accepted",
             asserted_at="2025-01-01T00:00:00.000Z", commit=False))
         planted.append(world.plant_event(
-            synth.make_signer("deploy-owner-1", "environment:prod-eu", seed_byte=23),
+            DEPLOY_OWNER,
             store_kind="codebase", logical_key=key,
             statement="The deployed lookahead is 568 minutes.",
             atom_kind="observation", disposition="accepted",
@@ -531,7 +684,7 @@ def plant_temporal_history(world: SignedWorld, case: TemporalCase) -> list[dict]
         world.repo.checkout(world.repo.default_branch)
     elif case.case_id == "runtime_freshness_lapsed":
         planted.append(world.plant_event(
-            synth.make_signer("deploy-owner-1", "environment:prod-eu", seed_byte=23),
+            DEPLOY_OWNER,
             store_kind="codebase", logical_key=key,
             statement="The observed queue depth is 12.",
             atom_kind="observation", disposition="accepted",
@@ -691,6 +844,49 @@ def start_company(guildhall, roots: ProofRoots, *, timeout: float = 30.0) -> Com
     process.terminate()
     raise ProductFailure(
         f"guildhalld did not accept a loopback connection within {timeout}s"
+    )
+
+
+# --------------------------------------------------------------------------
+# Product-issued session identity (Validator ruling C8)
+# --------------------------------------------------------------------------
+
+
+SESSION_ID_KEYS: tuple[str, ...] = ("session_id", "session", "id")
+
+
+def start_session(guildhall, repo: Path, *, host: str = "codex") -> str:
+    """``guildhall session start --host H --repo R --json`` and return its id.
+
+    ``spec/cli.md`` "Session, candidates, and approval": ``SESSION`` is the id
+    the product issued at ``session start``; the instrument never mints one.
+    """
+    result = guildhall.run(
+        "session", "start", "--host", host, "--repo", str(repo), "--json",
+        cwd=repo, check=False,
+    )
+    if result.returncode == 1:
+        raise ProductFailure("`session start` returned the reserved ambiguous exit 1")
+    if result.returncode not in (0, 3):
+        try:
+            error = result.error
+        except ProductFailure as exc:
+            error = {"unparsed": str(exc)[:400]}
+        raise ProductFailure(
+            "`session start` refused although the repository is certified and "
+            "Company is reachable; observation: " + json.dumps(error, default=str)
+        )
+    payload = result.json
+    if not isinstance(payload, dict):
+        raise ProductFailure("`session start --json` did not return an object")
+    for key in SESSION_ID_KEYS:
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    raise ProductFailure(
+        "`session start --json` returned no session identifier under any of "
+        f"{SESSION_ID_KEYS}; spec/cli.md makes SESSION the product-issued id "
+        f"every later session command takes. Payload keys: {sorted(payload)}"
     )
 
 
