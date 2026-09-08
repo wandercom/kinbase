@@ -31,6 +31,9 @@ Read in this order:
    digests whose approval opens the isolated author lanes.
 11. [`review-rubric.md`](review-rubric.md) — what every reviewer is optimizing for.
 12. [`leak-runbook.md`](leak-runbook.md) — required containment and apology process.
+13. `amendment-*.md` — candidate amendments in the append-only overlay format;
+    each is `candidate` until the founder and a distinct Validator ratify its exact
+    digest, and no Coder lane may read candidate bytes.
 
 Status vocabulary:
 

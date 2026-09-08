@@ -1,0 +1,448 @@
+{
+  "review_id": "20260908T181523-a8a11e2a",
+  "target": "/Users/jmcentire/Code/guildhall/spec/amendment-002-emission-ledger.md",
+  "target_type": "file",
+  "started_at": "2026-09-08T18:15:23.444803+00:00",
+  "completed_at": "2026-09-08T18:17:10.649050+00:00",
+  "persona_reports": [
+    {
+      "persona": "helland",
+      "findings": [
+        {
+          "persona": "helland",
+          "severity": "high",
+          "dimension": "wrong_assumptions",
+          "title": "Emission record write is a synchronous cross-boundary transaction with the projection",
+          "detail": "The design requires that the acknowledged record-path write complete before the projection is returned, and that a failed write refuse the projection. This is a distributed transaction in disguise: two effects (a durable ledger row and a delivery to a session on another host) must agree, and the design only handles one direction of failure. The undefended case is the write that is acknowledged but the projection never lands — network drop, adapter crash, session death after the row is committed. The ledger then records an emission that never happened, and the leak story over-counts the served set and issues a retraction notice to a session that never held the fact. There is no confirmation-of-delivery fact and no apology path for the over-count. The candidate names over-approximation as acceptable for the derived set but never for the served set, where it is also present.",
+          "evidence": "\"Every projection delivered to a coding session writes one emission record before the projection is returned. If the write is not acknowledged, the projection is not returned\" and O-05: \"Any served session not enumerated ... is NOT_PROVEN\" — the instrument tests only under-enumeration, never the acknowledged-but-undelivered row.",
+          "recommendation": "Make emission a two-state fact owned by the service: `recorded` on write, `delivered` on adapter acknowledgment (which the design already builds for `retraction_notice`). State that the served set is the union and is an over-approximation by construction, name that tolerance, and give the owner the same `tolerated` release path used for the derived set. Add a V-3 case: commit the emission, kill the adapter before delivery, and require the story to mark the emission `recorded, undelivered` rather than asserting the session held the fact."
+        },
+        {
+          "persona": "helland",
+          "severity": "high",
+          "dimension": "data_ownership",
+          "title": "The semantic digest recorded in the emission record is a copy promoted to authority",
+          "detail": "The emission record carries \"the fact's semantic digest at that moment.\" Retraction then rehashes the atom's bytes and keeps a digest history. Two systems now hold the same fact — the digest at time T — and the design never says which one wins on disagreement. If the emission row's stored digest does not match any entry in the atom's digest history (a bug, a mid-flight rewrite, a restore from backup), the story builder must resolve the conflict and has no rule to do so. This is exactly the copied-field-promoted-to-authority defect: the atom's digest history is the owner, the emission row holds a reference to a point in time, and the design treats them as interchangeable.",
+          "evidence": "\"`atom_refs`: the admitted atom identities served, each with the store ... and the fact's semantic digest at that moment\" versus \"the identity and the semantic-digest history are kept.\"",
+          "recommendation": "Name the atom's digest history as the sole authority for what bytes an identity had at a time. State that the emission record's digest is a *reference into* that history, not an independent fact, and that a mismatch is a `missing[]` entry with reason `inconsistent` and an `open` story — never silently resolved in favor of either side."
+        },
+        {
+          "persona": "helland",
+          "severity": "high",
+          "dimension": "data_ownership",
+          "title": "Ownership of a leak story's disposition is unnamed when a fact spans stores or principals",
+          "detail": "The design names one owner per store: security steward for `company`, maintainer for `codebase:<repo-id>`, the principal for their own material. But the derived set is defined by session provenance and explicitly spans stores, principals, and host kinds — the V-3 instrument requires two principals and two host kinds. When a Company atom is served into a session and a derived atom lands in a codebase store belonging to a different maintainer, two owners can set contradictory dispositions on overlapping reference sets, and \"stories may reference stories\" gives no precedence rule. There is no single authority for the disposition of a fact that crosses the boundary the amendment exists to police.",
+          "evidence": "`owner`: \"the Company security steward for `company`, the codebase maintainer for `codebase:<repo-id>`, the principal for their own material\" alongside \"serve it into at least twenty sessions across both host kinds and two principals, extract at least five derived atoms.\"",
+          "recommendation": "Make the story's owner a function of the *trigger's* store, not of the members' stores, and state it explicitly: the owner of the source atom owns the story and every disposition on it. Where a derived atom sits in a store with a different owner, the story spawns a child story owned by that store's owner, and the parent records the child by reference. Forbid a story from carrying members whose disposition it cannot set."
+        },
+        {
+          "persona": "helland",
+          "severity": "medium",
+          "dimension": "reconciliation",
+          "title": "The staleness bound has no apology path when a story raises `open` and stays there",
+          "detail": "The staleness bound is the right instinct — two captures are not contemporaneous, so assert only inside the ratified window and raise otherwise. But raising is not a business mechanism. A story raised `open` because two records fall outside the window has no stated resolution: no re-capture, no escalation deadline, no rule for what the responder is to do while the fact remains served to sessions. The amendment states that every hour reconstructing distribution is an hour sessions keep acting on the fact; an `open` story pinned by a staleness bound reintroduces exactly that hour with no clock on it.",
+          "evidence": "\"outside it the story is raised as `open` with the bound named\" — and no clause anywhere states what closes an `open` story raised for staleness.",
+          "recommendation": "Give the staleness `open` state a deadline and a default. Name a bound after which an unresolved staleness `open` escalates to a precautionary retraction (withhold first, release by `tolerated` after) rather than remaining `open` indefinitely. Record the escalation as an event so the guess and its apology are both facts."
+        },
+        {
+          "persona": "helland",
+          "severity": "medium",
+          "dimension": "wrong_assumptions",
+          "title": "Retraction notice at 'next projection' assumes a next projection will occur",
+          "detail": "Retraction reach depends entirely on the session coming back for another projection. A session that received the tainted atom and then went idle, or ended, or whose host died, never receives its notice. The design records `retraction_notice` emission records as confirmation, and O-03 says \"Confirm each notice by its `retraction_notice` emission record\" — but never says what the responder does about a served session for which no such record will ever arrive. This is a guess (the session will return) with no apology path. Meanwhile the V-3 instrument only exercises sessions that *do* take a next projection, so the gap is unproven in both directions.",
+          "evidence": "\"every session in the served set is told at its next projection\" and \"the retraction must withhold the atom and the derived set from the next projection of every session, deliver a `retraction_notice` to each\" — the instrument presumes all twenty sessions project again.",
+          "recommendation": "Add a third terminal state for retraction reach: `unreachable`, entered when a served session has no projection within a ratified bound or is known-ended. Require the story to carry the count of unreachable sessions in `impact`, and state the runbook consequence — an unreachable served session is a retained copy, treated as the runbook already treats an unknown Git clone. Add a V-3 case where one served session never projects again."
+        },
+        {
+          "persona": "helland",
+          "severity": "medium",
+          "dimension": "design",
+          "title": "Commit-time taint recheck is a check-then-act across a boundary with no stated ordering authority",
+          "detail": "O-02 requires taint be checked at proposal and again at commit, refusing a candidate whose source acquired taint between the two. But taint registration and commit are independent record-path events with no stated ordering rule relative to each other. A taint registered concurrently with the commit — after the recheck reads, before the commit lands — passes both checks and admits a tainted atom. The design has the mechanism to close this (the authority cursor) but never applies it here: it does not say the commit records the taint cursor it observed, nor that a taint event with an earlier cursor than a commit retroactively opens a story against it.",
+          "evidence": "\"Taint is checked at proposal and again at commit; a candidate whose source acquired taint between the two is refused with a story, not admitted.\" No cursor is named for either check.",
+          "recommendation": "Make the commit attempt the operation rather than check-then-act: require the commit to record the taint cursor it observed, and require the reducer to open a leak story automatically for any commit whose recorded taint cursor precedes a taint event naming its source. State that a taint event is always authoritative over a later-cursored commit — the taint owner gets the vote, and the commit gets an apology Unknown."
+        },
+        {
+          "persona": "helland",
+          "severity": "low",
+          "dimension": "data_ownership",
+          "title": "Owner of the `missing[]` reason vocabulary and of the 'defective rule' judgment is unnamed",
+          "detail": "Two derived facts have no named authority. First, `missing[]` reasons (`evicted`, `unreachable`, `forbidden`) determine whether the runbook treats an entry as a retained copy — a consequential classification with no stated writer. `forbidden` in particular is a boundary judgment. Second, \"a rule refuted repeatedly is reported as defective\" names no threshold, no party who sets it, and no party who receives the report and may retire the rule. A judgment with no owner is a judgment nobody makes.",
+          "evidence": "\"an explicit `missing[]` entry with the reason (`evicted`, `unreachable`, `forbidden`)\" and \"a rule refuted repeatedly is reported as defective; the O-ring rule applies.\"",
+          "recommendation": "State that the story builder is the sole writer of `missing[]` reasons and that the vocabulary is closed and ratified. For rule defectiveness, name the threshold, name the party the report routes to, and state whether that party may retire the rule or only recommend retirement — and record the retirement as an event either way."
+        }
+      ],
+      "summary": "The mechanism is sound in its instincts — references not copies, redact not delete, one story builder, an explicit `missing[]`, over-approximate the derived set in the safe direction — and the derived-set `tolerated` release is a genuine apology path. My concerns are all at the seams: the emission write is treated as if service and session commit together when they cannot, the served set can over-count with no apology path where the derived set has one, the digest is copied into the emission row without a stated authority on mismatch, and story ownership is defined per-store for a fact whose whole purpose is to cross stores. The commit-time recheck and the \"next projection\" reach are both guesses missing the cursor and the terminal state that would make them honest.",
+      "ok": true,
+      "error": null,
+      "duration_ms": 54989.61758398218,
+      "input_tokens": 9595,
+      "output_tokens": 3602,
+      "estimated_cost_usd": 0.138025
+    },
+    {
+      "persona": "red_team",
+      "findings": [
+        {
+          "persona": "red_team",
+          "severity": "critical",
+          "dimension": "security",
+          "title": "Emission ledger read authorization is unsatisfiable as written, and its stated rule leaks by construction",
+          "detail": "The spec says emission records are \"readable only under a facts token whose authority scopes could read every atom they reference.\" But an emission record is a set of atom_refs across potentially many atoms and stores. In practice: (a) the leak responder — the party who most needs the query — almost never holds a token scoping every referenced atom, so the runbook's step-3 query is refusable exactly when it matters; (b) worse, the check itself is an oracle. An attacker with a narrow token can binary-search the ledger: issue reads against candidate emission_ids and learn from ACCESS_DENIED vs. success whether a given emission referenced an atom outside their scope. Existence and co-occurrence of atoms is inferable without ever reading a body. The failure-mode section hand-waves this as \"would reveal that a fact was served, not the fact\", which ignores that *which* facts were served together, to whom, at what cursor, is itself the disclosure P-3 exists to prevent.",
+          "evidence": "\"Emission records are readable only under a facts token whose authority scopes could read every atom they reference\" (O-01) and \"A record that leaked would reveal that a fact was served, not the fact.\" (§3) and V-3: \"Attempt to read emission records with a facts token lacking one referenced atom's authority scope; the read must refuse with the bounded typed body.\"",
+          "recommendation": "Split reads into two typed operations with distinct authorization: (1) a per-atom lineage query authorized by scope on *that* atom, returning session/host/principal identifiers only, redacting co-served atom_refs the caller cannot scope; (2) a whole-record read requiring full scope. Define an explicit incident-responder capability, issued as a signed, time-boxed, single-story-scoped grant recorded as a record-path event, so the runbook query is authorized without ambient superuser. Make refusal indistinguishable from not-found (uniform typed body, constant-time) for probe attempts, and put ledger read attempts under the volume ceiling with alerting on scope-miss rates."
+        },
+        {
+          "persona": "red_team",
+          "severity": "critical",
+          "dimension": "race_conditions",
+          "title": "TOCTOU between emission record write and projection return — the ledger can be exactly wrong in the direction that matters",
+          "detail": "The spec fixes the order (\"written before any projection is returned\") but never fixes atomicity, nor does it say what happens when the write is acknowledged and the return then fails, or when revocation/taint lands between the ack and the return. Two exploitable holes: (1) *Under-recording is impossible but over-recording is unbounded* — a crash after ack yields a phantom emission; harmless-ish. (2) The dangerous inverse: the atom set is selected at cursor C, the emission is written naming digests at C, and delivery happens at C+k. If a retraction commits in that window, the reducer's withhold decision was computed against a snapshot that no longer holds, yet the session receives the bytes anyway and the emission record asserts it was served under the pre-retraction cursor. The retraction notice then fires \"at next projection\" — a session that never takes another turn is never told, and the ledger shows a clean served-set entry. The staleness bound is defined for *stories* asserting discrepancies, not for the emission/projection window itself.",
+          "evidence": "\"Every projection delivered to a coding session writes one emission record before the projection is returned.\" — no atomicity, no re-check after ack. §2.4: \"every session in the served set is told at its next projection\" with no bound on \"next\". Open question 2 explicitly leaves notice delivery semantics unratified.",
+          "recommendation": "Require the emission write and the retraction/revocation-cursor read to be a single serializable transaction on the record path, and require a post-ack, pre-return re-validation of revocation_cursor: if it advanced past any served atom's retraction, discard the projection and refuse (`REVOCATION_RACE`) rather than deliver. Record the phantom emission with an explicit `delivered: false` terminal state so the served set is provably a superset. Add a session liveness/expiry rule: a session with an undelivered retraction_notice past a ratified deadline is force-terminated and reported, so \"next projection\" cannot be never. Add a V-3 case that commits a retraction inside the ack→return window and asserts no delivery."
+        },
+        {
+          "persona": "red_team",
+          "severity": "high",
+          "dimension": "exploitation",
+          "title": "Idempotency key is client-influenceable, enabling ledger forgery and replay-driven under-recording",
+          "detail": "`emission_id = (session_id, projection_seq)` is called the \"producer-declared idempotency key\" and \"a retried write returns the original receipt.\" Only `principal_id`, `host_instance_id`, and `host_kind` are stated to be service-stamped; `projection_seq` (and by implication its provenance) is not. If a compromised or malicious host adapter — the very component P-3 treats as semi-trusted — can choose `projection_seq`, it can replay an already-acknowledged key to obtain the *original* receipt for a *different* atom set. The service returns the stored receipt, the adapter proceeds to deliver, and the ledger now records the first (benign) atom set while the second (tainted) set was actually served. That is a silent hole in the served set precisely at the enumeration step the whole amendment exists to guarantee. Additionally, monotonic per-session `projection_seq` is predictable, so pre-claiming future sequence numbers with benign atom sets poisons the ledger ahead of the exfiltration.",
+          "evidence": "\"`emission_id`: `(session_id, projection_seq)`, which is also the producer-declared idempotency key, so a retried write returns the original receipt\" versus \"`principal_id`, `host_instance_id`, and `host_kind` ... stamped by the service from the authenticated client identity, never taken from the payload\" — projection_seq is conspicuously absent from the stamped list.",
+          "recommendation": "Make `projection_seq` service-assigned and strictly monotonic per session, or bind the idempotency key to a hash of the full request (session, seq, ordered atom_refs, cursors). On a key collision with a non-matching request digest, do not return the original receipt: refuse with `EMISSION_KEY_CONFLICT` and raise a leak-story trigger, because a mismatched replay is itself evidence of a compromised adapter. Add a V-3 case: replay an emission key with a different atom set; the projection must be refused and a story opened."
+        },
+        {
+          "persona": "red_team",
+          "severity": "high",
+          "dimension": "data_corruption",
+          "title": "Retraction rehashes bytes while keeping identity — content-addressed integrity and signature verification are silently broken",
+          "detail": "\"the atom's bytes are redacted and rehashed while its identity and digest history are kept, so every reference still resolves.\" But emission records store \"the fact's semantic digest at that moment\", approval receipts carry a digest, and store commits are presumably digest-bearing. After retraction, every one of those recorded digests no longer matches the atom's current bytes. Any verifier that checks digest-vs-content — including the Validator, byte-identical rebuild in §6, and signature verification over receipts — will now see a mismatch and cannot distinguish legitimate redaction from tampering. This is an attacker's dream: redact-and-rehash is an authorized mutation of content under a stable identity, so an adversary who can forge or coerce a retraction event gets arbitrary content substitution that all references dutifully resolve to, with prior digests rendered unverifiable-by-design. The spec says the retraction is \"signed\" but names no key, no signer authority, no verification rule, and no replay window.",
+          "evidence": "O-01: \"The atom's bytes are redacted and rehashed while its identity and digest history are kept, so every reference still resolves, to redacted content\" combined with emission records holding \"the fact's semantic digest at that moment\" and the base clause \"Byte-identical rebuild applies only to reduction/current-view and selection over a frozen admitted event set.\"",
+          "recommendation": "Specify that redaction never mutates a stored atom version: append a new `retracted` version with its own digest, and make identity resolution return the latest version plus the full digest chain, so historical digests remain verifiable against their original (now withheld) content. Constrain redaction content to a fixed canonical tombstone form (fully determined by the retraction event) so no attacker-chosen bytes can be substituted. Specify the retraction signing authority, key, nonce, validity interval, and a per-atom monotonic retraction sequence to block replay/rollback of a retraction. Add a V-3 case: attempt to replay an old retraction event, and attempt a retraction whose redacted content is caller-supplied — both must refuse."
+        },
+        {
+          "persona": "red_team",
+          "severity": "high",
+          "dimension": "exploitation",
+          "title": "EMISSION_UNRECORDED refusal is a weaponizable denial-of-service and censorship channel",
+          "detail": "The amendment makes the record path a hard dependency of every projection: \"a session that cannot be recorded cannot be served.\" This converts any availability attack on the event table — or on the single-writer story builder's upstream queue sharing it — into a total shutdown of all coding work, and there is no fallback, no rate limit on emission writes, and no distinction between a transient write failure and a targeted one. Worse, it is a selective-censorship primitive: an attacker with the ability to induce write failures for specific keys (e.g., by pre-claiming `projection_seq` values, per the idempotency finding, or by flooding the writer) can suppress delivery of specific facts to specific sessions while leaving the system looking healthy. The spec's answer — \"the answer is a faster record path\" — is a performance answer to a security problem.",
+          "evidence": "\"If the write is not acknowledged, the projection is not returned; the session receives the typed `EMISSION_UNRECORDED` refusal.\" and §3: \"If that cost is unacceptable in practice the answer is a faster record path, not an unrecorded projection.\"",
+          "recommendation": "Keep fail-closed (correct) but add: per-principal and per-session write rate ceilings so one actor cannot exhaust the record path; a monitored `EMISSION_UNRECORDED` rate threshold that itself becomes a leak-story trigger (sustained refusals are indistinguishable from an attack and must be owned); and an explicit statement that the record path's availability is a Critical dependency with its own verification instrument, so it is not left as a performance footnote. Add a V-3 case: sustain induced emission-write failures and assert an alarm with an owner fires within a bounded time."
+        },
+        {
+          "persona": "red_team",
+          "severity": "high",
+          "dimension": "security",
+          "title": "Derived-set definition is manipulable — an attacker controls taint propagation by controlling session composition",
+          "detail": "The derived set is \"every atom whose extraction provenance names a session that held the tainted atom in its projection at the time.\" Propagation is one hop and is defined over *sessions*, not over content. Two attacks: (1) *Laundering* — extract an atom from session A (which held the tainted atom), then in a fresh session B that never held the tainted atom, re-extract or paraphrase from that derived atom. The re-extraction's provenance names B, B never held the tainted source, so the launder-through-one-hop atom is outside the derived set and is never withheld. The spec never states that the derived relation is transitively closed. (2) *Poisoning* — because the relation is session-scoped rather than content-scoped, an attacker who can get a tainted atom into a widely-shared session's projection causes mass withholding of unrelated clean atoms (§3 admits this) and thereby forces the owner into bulk `tolerated` releases — a fatigue attack whose end state is an owner rubber-stamping releases, at which point the real leak rides through on a `tolerated` disposition.",
+          "evidence": "\"the derived set: every atom whose extraction provenance names a session that held the tainted atom in its projection at the time\" (O-01), plus §3: \"'Every atom extracted from a session that held the tainted atom' will withhold clean atoms ... the owner releases clean atoms by setting the story to `tolerated` for each\".",
+          "recommendation": "State explicitly that the derived relation is the transitive closure over extraction provenance, computed to a fixed point, and add a V-3 case with a two-hop launder that must still be withheld. Bound the `tolerated` escape: per-atom release must be individually attributed and digest-signed, bulk release above a ratified count must be refused, and a story whose impact count exceeds a threshold must escalate rather than route to the routine Unknown channel. Add an instrument that measures owner release rate as an approval-fatigue signal."
+        },
+        {
+          "persona": "red_team",
+          "severity": "medium",
+          "dimension": "injection",
+          "title": "Story fields carry free-form attacker-influenced strings into an owner-facing rendering channel with no encoding rule",
+          "detail": "Stories are routed to human owners \"through the existing Unknown channel\" and carry fields whose values derive from attacker-influenceable sources: `missing[]` reasons, atom identities, `store` values of the form `codebase:<repo-id>`, host kinds, and canary/forbidden-identifier registrations that come from principals. `repo-id` in particular is not constrained to a character class anywhere in the amendment. A repo named to include control characters, ANSI escapes, markdown, or newlines can forge additional lines in a rendered story, spoof a `disposition: refuted` line, or hide `missing[]` entries from the responder's view. The amendment insists impact be \"reported as counts and never as prose\" — good instinct — but applies no such discipline to identifiers or reasons.",
+          "evidence": "\"`impact`: the count of distinct sessions, hosts, and principals ... reported as counts and never as prose\" while `store` is \"`company` or `codebase:<repo-id>`\" and `missing[]` entries carry \"the reason (`evicted`, `unreachable`, `forbidden`)\" with no stated grammar or output-encoding rule for identifiers.",
+          "recommendation": "Constrain every identifier appearing in a story or emission record to an explicit character class (e.g., `[A-Za-z0-9._-]{1,64}` for repo-id, opaque ULIDs for session/host/principal), reject at admission rather than escape at render, and restrict `missing[]` reason to the closed enum only (no free text). State that story rendering to any human channel is structured (typed fields, no interpolation into markup) and that the renderer must reject rather than escape out-of-class bytes, so a malformed story is a refusal with an alarm, not a silently mangled display."
+        },
+        {
+          "persona": "red_team",
+          "severity": "medium",
+          "dimension": "race_conditions",
+          "title": "Commit-time taint recheck is another TOCTOU window with no serialization against taint registration",
+          "detail": "O-02 requires taint \"checked at proposal and again at commit\" — a bookend. But nothing serializes the commit-time check against concurrent taint registration. The window between reading the taint set and appending the commit event is exploitable: register the taint one instant after the recheck read and the atom commits clean, with no story, and the retroactive-taint trigger must then catch it — but the retroactive trigger fires on taint *registration*, which already happened before the commit existed. A taint registered at T and an atom committed at T+ε may be missed by both directions: the recheck read pre-dates the registration, and the registration's story assembly pre-dates the commit event.",
+          "evidence": "O-02: \"Taint is checked at proposal and again at commit; a candidate whose source acquired taint between the two is refused with a story, not admitted.\" V-3 tests only the sequential case: \"Propose a candidate, then register taint on its source before commit; the commit recheck must refuse it and open a story.\"",
+          "recommendation": "Require the commit-time taint check and the commit append to be one serializable transaction against a monotonic taint cursor, and require the commit event to record the taint cursor it was validated against. Make taint registration re-scan all commits whose recorded taint cursor precedes the registration, so the two triggers provably overlap with no gap. Add a V-3 case that interleaves taint registration and commit concurrently and asserts one of the two paths catches it, every run."
+        },
+        {
+          "persona": "red_team",
+          "severity": "medium",
+          "dimension": "security",
+          "title": "Retraction notice delivery is self-attested by the host adapter, so 'reach' is unverified",
+          "detail": "\"the host adapter records that delivery as an emission record of kind `retraction_notice`\" and the runbook says \"Confirm each notice by its `retraction_notice` emission record.\" The confirming record is written by the same semi-trusted adapter that is supposed to perform the delivery. A compromised or buggy adapter can write the record without delivering, and the runbook — and V-3 — will read the record as proof of reach. The amendment's central claim of \"retraction reach\" therefore rests on adapter self-report with no independent evidence.",
+          "evidence": "O-01: \"the host adapter records that delivery as an emission record of kind `retraction_notice`\"; O-03: \"Confirm each notice by its `retraction_notice` emission record\"; V-3: \"deliver a `retraction_notice` to each with a matching emission record\".",
+          "recommendation": "Require the notice to be service-issued with a nonce, and require the adapter's `retraction_notice` record to include a session-side acknowledgement bound to that nonce, so the record cannot be fabricated without the nonce. Treat an unacknowledged notice past a ratified deadline as an unreached session listed in the story's `missing[]` with reason `unreachable`, and require V-3 to include an adapter that writes the record without delivering — that case must be detected, not passed."
+        },
+        {
+          "persona": "red_team",
+          "severity": "medium",
+          "dimension": "data_corruption",
+          "title": "No bound on emission record size or atom_refs cardinality; ledger is an unbounded amplification target",
+          "detail": "Nothing bounds `atom_refs` length, per-session emission rate, or total ledger growth. A projection naming ten thousand atoms writes one 'small acknowledged row' that is not small. Since the emission write is synchronous on the hot path and the story builder must scan every emission referencing an atom, an attacker who inflates atom_refs on cheap projections both degrades the record path (feeding the EMISSION_UNRECORDED DoS above) and inflates story-assembly cost until the sixty-second query bound in O-02 and V-3 is unmeetable — which, per the runbook, is exactly when responders fall back to manual investigation.",
+          "evidence": "§3: \"The write is one small acknowledged row per projection, not per token\" — asserted, not enforced. O-02 asserts \"a single query completing in under sixty seconds on the proof corpus\", bounding only the proof corpus, not production.",
+          "recommendation": "Ratify explicit ceilings: max atom_refs per emission, max emissions per session per interval, max ledger bytes per principal per interval, each with a typed refusal. State that the sixty-second bound must hold at a ratified production scale, not only on the proof corpus, and require an index on (atom_identity, cursor) so lineage queries are not full scans. Add a V-3 case at the ceiling that asserts the bound still holds."
+        },
+        {
+          "persona": "red_team",
+          "severity": "low",
+          "dimension": "security",
+          "title": "Disposition is attributed but not authenticated; 'tolerated' and 'refuted' are unauthorized-write targets",
+          "detail": "Disposition is \"attributed to the party that set it\" and owners are named by role, but no authorization rule, signature, or ownership check is specified for setting it. Setting a story to `refuted` or `tolerated` is the act that releases withheld atoms back into trusted projection — i.e. the single highest-value write in the whole mechanism — and it is the only record-path write in this amendment not described as signed. A principal who can set dispositions on stories they do not own can un-withhold a leaked fact and mark the leak refuted, and since \"a rule refuted repeatedly is reported as defective\", repeated forged refutations can also get a working detection rule disabled.",
+          "evidence": "\"`disposition`: `open`, `confirmed`, `refuted`, or `tolerated`, attributed to the party that set it\" — contrast with \"A **retraction** is a signed record-path event\". No signature, no owner check on disposition writes. Plus \"a rule refuted repeatedly is reported as defective.\"",
+          "recommendation": "Make disposition changes signed record-path events authorized only by the story's recorded `owner`, with the full attribution chain retained (no in-place mutation). Require two-party authorization for `tolerated` on any story whose impact exceeds a ratified count. Gate rule-defect reporting on distinct-owner refutations rather than raw refutation count, so a single actor cannot disable a detector."
+        }
+      ],
+      "summary": "The mechanism's instincts are right — fail-closed emission, references not copies, no deletion, over-approximate the derived set — but the specification leaves the load-bearing security details unstated, and each gap is concretely exploitable: a client-influenceable idempotency key that forges the served set, a rehash-under-stable-identity rule that breaks every recorded digest and hands an attacker authorized content substitution, an unsatisfiable read-authorization rule that doubles as an existence oracle, and three unserialized TOCTOU windows (emission→return, taint-check→commit, retraction→next-projection) in exactly the paths whose completeness is the amendment's entire claim. The single most urgent fixes before ratification are: service-assign `projection_seq` and bind the idempotency key to the request digest; make redaction append a new version rather than mutate one; specify the retraction signer, nonce, and replay window; and define an explicit, time-boxed incident-responder read capability so the runbook query is authorized without an ambient superuser or a probe oracle.",
+      "ok": true,
+      "error": null,
+      "duration_ms": 107138.7995419791,
+      "input_tokens": 9300,
+      "output_tokens": 7485,
+      "estimated_cost_usd": 0.233625
+    },
+    {
+      "persona": "sme",
+      "findings": [
+        {
+          "persona": "sme",
+          "severity": "high",
+          "dimension": "wrong_assumptions",
+          "title": "Redact-and-rehash contradicts the append-only, hash-addressed immutability the spec relies on elsewhere",
+          "detail": "The amendment asserts the atom 'keeps its identity' while 'its bytes are redacted and rehashed'. In a content-addressed store, identity *is* the hash; in an append-only event log, prior events are not mutable. The candidate is quietly introducing a mutable-content, stable-identity layer (an identity distinct from the content digest, plus a digest history) over a system that the reader summary describes as 'immutable events' with 'byte-identical rebuild ... over a frozen admitted event set' (the O-01 anchor block itself is about byte-identical rebuild). Rehashing an admitted atom breaks byte-identical rebuild for any replay that includes pre-retraction state, and it makes the 'semantic digest at that moment' recorded in emission records permanently unresolvable against the store. Either the atom identity was never the digest (in which case that must be stated as a precondition, and the emission record's 'semantic digest at that moment' has no resolvable referent post-retraction), or this is a mutation of an immutable record.",
+          "evidence": "\"the atom's bytes are redacted and rehashed; the identity and the semantic-digest history are kept, so every story and emission that referenced it still resolves\" (§2.4) and the O-01 anchor \"Byte-identical rebuild applies only to reduction/current-view and selection over a frozen admitted event set.\"",
+          "recommendation": "State explicitly, as a normative precondition, that admitted atoms have a stable identity independent of content digest, and that content is stored behind an indirection. Then specify retraction as an *append* of a new content version plus a redaction event, with the reducer resolving identity→latest version, rather than 'rehashing' in place. Add a clause on what byte-identical rebuild means across a retraction boundary (proposal: rebuild is byte-identical over the event set *including* the retraction event; pre-retraction rebuild is explicitly not reproducible and that is intentional)."
+        },
+        {
+          "persona": "sme",
+          "severity": "high",
+          "dimension": "wrong_assumptions",
+          "title": "Derived-set definition is unbounded and non-transitive as written, and the closure is not specified",
+          "detail": "The derived set is defined as 'every atom whose extraction provenance names a session that had the tainted atom in its projection at the time'. This is one hop. But a derived atom is itself an admitted atom that gets served into other sessions, producing second-generation derived atoms. Retraction withholds 'the atom and its derived set' — if the derived set is not transitively closed, retraction leaks through generation 2. If it *is* transitively closed, the impact count is unbounded and on any mature corpus the closure plausibly approaches 'everything', making retraction a system-wide outage rather than a containment. Neither reading is stated, and the V-3 instrument (five derived atoms, one generation) does not exercise the distinction at all.",
+          "evidence": "\"the derived set: every atom whose extraction provenance names a session that held the tainted atom in its projection at the time\" (O-01); V-3: \"extract at least five derived atoms from those sessions\" — single generation only.",
+          "recommendation": "Define the derived set as the transitive closure and specify a bound: a generation depth cap, a fanout ceiling, or a rule that a derived atom re-approved by its owner terminates the closure. Add a V-3 sub-case with two generations and assert the second-generation atom is withheld. Add an impact-ceiling failure mode: what happens when the closure exceeds N atoms (proposal: story raises `open` with the ceiling named, owner must ratify a mass retraction)."
+        },
+        {
+          "persona": "sme",
+          "severity": "high",
+          "dimension": "wrong_assumptions",
+          "title": "\"Had the tainted atom in its projection at the time\" requires session-level temporal state the emission record does not capture",
+          "detail": "Derived-set membership turns on whether a session 'held' the tainted atom 'in its projection at the time' of extraction. Emission records capture that a projection containing atom X was *delivered* at time T. They do not capture how long the session retained it, whether the model's context window evicted it, or whether the extraction at T' > T actually had X in scope. §5 asserts 'the derived set is a query over that, not a new capture' — but the query 'was X in scope at T'' is not answerable from delivery events alone unless the rule is redefined as the coarser 'any extraction from a session that ever received X'. That coarser rule is defensible (it is the safe direction) but it is a different rule, and the wording implies a precision the data cannot support.",
+          "evidence": "§2.3 \"every atom whose extraction provenance names a session that had the tainted atom in its projection at the time\"; §5 \"the derived set is a query over that, not a new capture.\"",
+          "recommendation": "Restate the derived-set predicate in terms the ledger can actually decide: 'every atom whose extraction provenance names a session for which an emission record referencing the tainted atom exists with receipt time at or before the extraction'. Drop 'in its projection at the time'. Note in §6 that context-window eviction means this over-approximates, consistent with the over-approximation failure mode already listed."
+        },
+        {
+          "persona": "sme",
+          "severity": "high",
+          "dimension": "design",
+          "title": "Synchronous acknowledged write in the projection path has no availability or ordering analysis",
+          "detail": "The candidate makes every projection strictly dependent on a durable acknowledged write, and says the answer to cost is 'a faster record path, not an unrecorded projection'. That is a defensible policy, but the design consequence is unaddressed: the emission ledger's availability is now a strict upper bound on the whole system's availability for reads. The failure-mode section treats this as a latency question ('one small acknowledged row per projection'), not an availability question. There is also no statement of what happens under partition, under ledger degraded-write mode, or whether `EMISSION_UNRECORDED` is retryable. Contrast with the story builder, which is explicitly allowed to lag ('triggers queue on the record path and stories are assembled late, never lost') — the asymmetry is correct but should be argued.",
+          "evidence": "§2.2 \"If the write is not acknowledged, the projection is not returned\"; §3 \"If that cost is unacceptable in practice the answer is a faster record path, not an unrecorded projection.\"",
+          "recommendation": "Add an availability clause: state the ledger's required durability level (single-node fsync? quorum?), state that ledger unavailability is a total read outage and that this is accepted, and specify whether `EMISSION_UNRECORDED` is retryable and with what backoff. Given the idempotency key `(session_id, projection_seq)` is producer-declared, retry semantics should be trivially safe — say so."
+        },
+        {
+          "persona": "sme",
+          "severity": "medium",
+          "dimension": "wrong_assumptions",
+          "title": "`(session_id, projection_seq)` idempotency key assumes a client-monotonic sequence with no stated allocation or collision rule",
+          "detail": "The key is described as 'producer-declared'. That means the client (host adapter) allocates `projection_seq`. Nothing states that it must be strictly increasing per session, what happens on adapter restart with lost sequence state, or what happens if two adapter processes share a `session_id`. A collision with *different* `atom_refs` is a correctness bug — the retry path would return the original receipt for a different projection, silently under-recording an emission. That is exactly the boundary failure the amendment exists to prevent.",
+          "evidence": "\"`emission_id`: `(session_id, projection_seq)`, which is also the producer-declared idempotency key, so a retried write returns the original receipt.\"",
+          "recommendation": "Specify: `projection_seq` is strictly increasing per `session_id`; a duplicate key whose payload digest differs from the stored record is a typed refusal (`EMISSION_KEY_CONFLICT`), not a silent idempotent return. Idempotent return applies only on payload-digest match — this is the standard idempotency-key contract (cf. Stripe's Idempotency-Key semantics, and the IETF `Idempotency-Key` header draft, which both require conflict detection on mismatched request bodies). Add a V-3 sub-case."
+        },
+        {
+          "persona": "sme",
+          "severity": "medium",
+          "dimension": "design",
+          "title": "Emission-record read authorization rule is stricter than necessary and creates an enumeration dead-zone in the incident path",
+          "detail": "Reads require 'a facts token whose authority scopes could read every atom they reference' (all-of). During a leak response, the responder is by construction interested in an atom that has just been tainted — and taint may well have narrowed or revoked its authority scope. Under an all-of rule, the responder's token may no longer satisfy the scope for the very atom under investigation, making the ledger unreadable exactly when it is needed. There is also no stated break-glass or incident-role read path, and no audit event for ledger reads (which are themselves privacy-sensitive: they reveal who received what).",
+          "evidence": "§2.2 \"readable only under the same scoped facts token that could have read the atoms they reference\"; O-01 \"readable only under a facts token whose authority scopes could read every atom they reference\"; V-3 tests only the refusal direction.",
+          "recommendation": "Either (a) define an explicit incident-responder scope that reads emission *references and counts* without resolving atom content, or (b) state that retraction/taint does not narrow read scope on the ledger for the atom's own owner and the security steward. Also add: every emission-ledger read is itself a record-path event with principal and query predicate, so the oracle is auditable. This is standard for audit-log access (cf. NIST SP 800-53 AU-9, protection of audit information)."
+        },
+        {
+          "persona": "sme",
+          "severity": "medium",
+          "dimension": "wrong_assumptions",
+          "title": "\"Every session is told at its next projection\" has no termination guarantee for sessions that never project again",
+          "detail": "Retraction reach is defined as notification 'at its next projection'. A session that has ended, crashed, or simply idles forever never has a next projection — and is therefore never notified, while remaining in the served set. §2.4(3) and O-02 both state the obligation unconditionally ('reaches every recorded session by its next projection'), which is vacuously satisfiable and therefore unfalsifiable for dead sessions. V-3 tests only live sessions. This matters: the whole point is that sessions 'keep acting on it' — a session holding tainted context that is dormant for a week is precisely the dangerous case.",
+          "evidence": "§2.4(3) \"every session in the served set is told at its next projection\"; V-3 \"the retraction must ... deliver a `retraction_notice` to each with a matching emission record\" (all twenty sessions assumed live).",
+          "recommendation": "Add a session lifecycle clause: sessions have a liveness state; a retraction targeting a session with no projection within a ratified window escalates to the story's `missing[]` with reason `unreachable` and to the owner. Add a V-3 sub-case: terminate one of the twenty sessions before retraction; the story must list it as unreachable rather than reporting full reach."
+        },
+        {
+          "persona": "sme",
+          "severity": "medium",
+          "dimension": "concept",
+          "title": "Commit-time taint recheck is introduced as a new obligation but is not an operation in the O-table",
+          "detail": "O-02 adds normatively: 'Taint is checked at proposal and again at commit; a candidate whose source acquired taint between the two is refused with a story, not admitted.' This is a real new gate on the admission path — it changes what may be admitted, it requires a taint registry queryable at commit, and it creates a new refusal class. But there is no operation amending the admission/approval section of architecture.md, no glossary term for the recheck, and the reader summary's enumerated list of what the amendment does (items 1–6) does not mention it. It arrives only as a clause inside the P-3 product block and as a passing reference in the trigger list. That is the wrong home for a change to the admission pipeline, and it makes the amendment's blast radius larger than its own summary claims.",
+          "evidence": "O-02 block: \"Taint is checked at proposal and again at commit\"; reader summary items 1–6 do not include it; O-table has no operation against an admission/approval heading.",
+          "recommendation": "Either split the commit-time recheck into its own operation against the admission section of architecture.md (with the anchor block), or drop it from this candidate and file it as a sibling. As written it is a normative change without a materialization site, which the Validator will either miss or reject."
+        },
+        {
+          "persona": "sme",
+          "severity": "medium",
+          "dimension": "design",
+          "title": "O-03 replacement drops the mandatory Git-side enumeration semantics into an optional-sounding second sentence",
+          "detail": "The original step 3 is a flat imperative list ending 'Treat unknown clones as retained copies.' The replacement front-loads the ledger and relegates Git to 'For what Git distributed, enumerate ...'. In an incident runbook, ordering is behavior: responders under time pressure do step 3 top-to-bottom and may stop when the ledger query returns clean. The ledger query is fast and satisfying; the Git enumeration is slow and unbounded. Putting the fast comforting one first, in a document about the founder's named Type 1 failure where Git is the *irreversible* channel, inverts the risk ordering.",
+          "evidence": "O-03 new block: \"For what the system served, query the emission ledger ... For what Git distributed, enumerate Company replicas/caches; ...\"",
+          "recommendation": "Split into 3a (ledger, system-served) and 3b (Git-distributed), both mandatory, with an explicit 'both substeps are required; a clean ledger result does not close step 3' sentence. This costs nothing and removes a foreseeable incident-time failure."
+        },
+        {
+          "persona": "sme",
+          "severity": "medium",
+          "dimension": "wrong_assumptions",
+          "title": "\"Personal is never projected into coding sessions\" is asserted as the reason no Personal emission records exist — but that is the invariant under attack",
+          "detail": "§4 states: 'Emission records for Personal projections do not exist because Personal is never projected into coding sessions.' The entire premise of the amendment (§0, SRC-4) is that Personal bytes *do* reach shared stores and sessions — that is the Type 1 failure being contained. Deriving 'no record needed' from the invariant that the mechanism exists to police is circular. Concretely: if a Personal-origin fact is minimized and admitted to `company`, then served, the emission record exists (correctly) but nothing distinguishes it as Personal-derived, so the erasure trigger cannot find it by principal — it can only find it by atom identity, which requires already knowing which atom it is.",
+          "evidence": "§4 \"Emission records for Personal projections do not exist because Personal is never projected into coding sessions\"; §2.3 trigger 4 \"erasure request from a principal for material that reached a shared store as a minimized projection.\"",
+          "recommendation": "Rewrite the constraint as: 'Emission records are written for every projection regardless of the atom's origin; there is no separate Personal emission path and no new read into Personal.' Then add to the emission record a `subject_principal_refs` field (references only) populated at admission for minimized Personal-derived atoms, so trigger 4 is answerable by principal without a full scan. Without it, the erasure trigger has no index."
+        },
+        {
+          "persona": "sme",
+          "severity": "low",
+          "dimension": "backward_compatibility",
+          "title": "Retraction events are not carried in `.kin/`, so Git clones of the Codebase store diverge silently and permanently",
+          "detail": "Open question 3 defers Git-carried retraction to a follow-up 'since it changes the `.kin/` event schema'. The consequence is worth stating as a limitation, not only as an open question: after this amendment ships, a cloned Codebase store contains admitted atoms and *no* retraction events, so a clone's reducer will project a retracted atom as trusted indefinitely, with no signal that it is stale. That is a new class of divergence created by this amendment (before it, revocation was published to 'every reachable client'), and the O-03 replacement removes the phrase 'so every reachable client withholds the leaked fact' from step 5.",
+          "evidence": "O-03 old block: \"Publish signed revocation/apology events so every reachable client withholds the leaked fact and its dependents\"; new block omits 'every reachable client'; §8 open question 3 defers `.kin/` retraction.",
+          "recommendation": "Add to §6 Limitations: 'Until `.kin/` carries retraction events, Codebase-store clones will continue to project retracted atoms as trusted; this is a known regression against the prior step-5 wording and is tracked as open question 3.' Consider a minimal forward-compatible measure now: a monotonically increasing `retraction_epoch` in `.kin/` metadata that a clone can compare against the server to detect staleness without a schema change to events."
+        },
+        {
+          "persona": "sme",
+          "severity": "low",
+          "dimension": "design",
+          "title": "`tolerated` disposition is overloaded to mean both 'accepted risk on the story' and 'release this specific derived atom'",
+          "detail": "§2.3 defines disposition as a property of the *story* (`open`/`confirmed`/`refuted`/`tolerated`). §3 then uses it per-atom: 'the owner releases clean atoms by setting the story to `tolerated` for each'. A story-level enum cannot be set 'for each' atom. This is either a per-atom override list that needs its own name and record, or the sentence is wrong.",
+          "evidence": "§2.3 \"`disposition`: `open`, `confirmed`, `refuted`, or `tolerated`\" vs §3 \"the owner releases clean atoms by setting the story to `tolerated` for each, which is a recorded act.\"",
+          "recommendation": "Introduce a distinct record-path event, e.g. `derived_release`, naming the story, the atom identity, and the owner, and state that it re-admits that atom to trusted projection. Keep `disposition` story-scoped. Add it to the glossary and to V-3."
+        },
+        {
+          "persona": "sme",
+          "severity": "low",
+          "dimension": "wrong_assumptions",
+          "title": "Sixty-second query bound is stated without a corpus scale, making it unfalsifiable",
+          "detail": "'a single query completing in under sixty seconds on the proof corpus' appears in normative product text (O-02). 'The proof corpus' is presumably defined elsewhere, but a latency SLO is meaningless without the cardinality it is measured against — and this amendment specifically creates a table whose row count grows with *every projection*, i.e. the fastest-growing table in the system. A bound that holds at 10^5 emissions and fails at 10^8 is a bound that will be met at ratification and broken in production.",
+          "evidence": "O-02 \"as a single query completing in under sixty seconds on the proof corpus\"; §8 item 1 flags the number but not the scale.",
+          "recommendation": "State the bound against a named cardinality (e.g. 'at 10^7 emission records and 10^6 atoms') and add it to §8 for ratification alongside the number itself. Add a retention/compaction clause for emission records — currently §4 forbids deletion of emissions, so the table is unbounded forever; that needs either an explicit acceptance or an archival tier that still answers the enumeration query."
+        }
+      ],
+      "summary": "The core concept is right and the Event-service framing (lossy observation path vs. acknowledged record path, single-writer story builder, erasure by reference) is a good fit for the problem — \"what else got through?\" genuinely should be a query, and choosing exactly one thing to make acknowledged is disciplined. My blocking concerns are three: the redact-and-rehash story is in tension with the append-only/byte-identical-rebuild invariants the amendment inserts itself next to and needs an explicit identity-vs-digest indirection; the derived set is neither transitively closed nor bounded nor actually decidable from the data the emission record captures; and the commit-time taint recheck is a real change to the admission pipeline that has no operation in the O-table.\n\nThe rest are tractable: idempotency-key conflict semantics, ledger read authorization during an incident, dead-session notification reach, the Personal-origin circularity in §4, and the runbook step-3 ordering. Fix the three high items and split or site the commit recheck, and I'd sign off.",
+      "ok": true,
+      "error": null,
+      "duration_ms": 97732.15975001222,
+      "input_tokens": 9315,
+      "output_tokens": 6974,
+      "estimated_cost_usd": 0.220925
+    },
+    {
+      "persona": "adversarial",
+      "findings": [
+        {
+          "persona": "adversarial",
+          "severity": "critical",
+          "dimension": "wrong_assumptions",
+          "title": "Emission-write-before-return creates an unrecoverable ambiguity: recorded-but-not-delivered",
+          "detail": "The design orders the record write strictly before the projection return, and treats the record as the authoritative answer to \"who received this fact.\" But the write succeeding does not imply the projection was delivered. If the service crashes, the connection drops, the adapter dies, or the client times out after the acknowledged write but before the bytes land, the ledger asserts a session received a fact that it never saw. The whole amendment's value proposition — \"the system should already know\" — is then a claim about intent, not receipt. Worse, this is the *safe* direction only for withholding; it is the *wrong* direction for the V-3 assertion that the query enumerates \"every serving session ... with an empty missing[]\", and for the impact counts routed to an owner under a fatigue budget. Over-counting inflates impact, drives false apology Unknowns into sessions that never got the fact, and burns the fatigue budget the amendment claims to respect. There is no 'delivered' state, no second-phase confirmation, no reconciliation event anywhere in the text.",
+          "evidence": "§2.2: \"Every projection delivered to a coding session writes one emission record before the projection is returned. If the write is not acknowledged, the projection is not returned\"; O-05 requires enumeration of \"every serving session\" with \"an empty `missing[]`\"; §2.3 `impact` is \"the count of distinct sessions, hosts, and principals in the served set\".",
+          "recommendation": "Rename the record to what it is: an *intent-to-serve* record. Add a distinct acknowledged delivery-confirmation event (or an explicit `delivery: intended|confirmed|unknown` field), require the story to partition the served set into confirmed/unconfirmed, and require `impact` to report both counts. State explicitly that the enumeration is an over-approximation and that V-3's `missing[]` emptiness applies only to records, not receipts."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "critical",
+          "dimension": "wrong_assumptions",
+          "title": "The derived set is defined by a temporal predicate over data the amendment admits is lossy and unbounded",
+          "detail": "The derived set is \"every atom whose extraction provenance names a session that had the tainted atom in its projection at the time.\" Three unvalidated assumptions are stacked here. (a) \"at the time\" requires a total order between emission receipt times and extraction times across hosts — exactly the contemporaneity problem §2.3 concedes with its staleness bound, yet the derived set is computed without any staleness qualifier. (b) The relation is transitive: an atom derived from a tainted atom is itself tainted, so its own derived set must be withheld. The text never says the closure is transitive, never bounds its depth, and O-05 tests exactly one hop with five atoms. A transitive closure over a long-lived corpus can withhold an arbitrary fraction of the store. (c) The predicate is unfalsifiable in the withheld direction: an atom extracted from a session whose emission record was written but whose projection was never delivered (see prior finding) is falsely tainted. §3 waves this away as \"the correct direction of error,\" but the release valve is per-atom manual `tolerated` marking routed through a fatigue-budgeted channel — which does not scale with a transitive closure.",
+          "evidence": "§2.3 derived set definition; §2.3 staleness bound applies only to \"a discrepancy ... between records\"; §3 \"Derived-set over-approximation ... the owner releases clean atoms by setting the story to `tolerated` for each, which is a recorded act.\"; O-05 tests \"at least five derived atoms\".",
+          "recommendation": "State whether derived-set computation is transitive and, if so, bound the closure depth or the withheld fraction with a refusal-to-retract-and-escalate path when the bound is exceeded. Apply the staleness bound to derived-set membership explicitly and place uncertain-window atoms in `missing[]` rather than silently in or out. Replace per-atom `tolerated` with a bulk, scoped release primitive, or acknowledge in §6 that mass retraction is an operational denial-of-service on the corpus."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "high",
+          "dimension": "failure_modes",
+          "title": "Emission write failure is a total availability kill-switch, and §3 dismisses it with an assertion rather than a bound",
+          "detail": "Making the acknowledged record path a hard precondition for every projection means the event table becomes a single, unreplicated availability dependency for all coding work. §3 answers this with \"It is, by design ... If that cost is unacceptable in practice the answer is a faster record path, not an unrecorded projection.\" That is a restatement of the choice, not a defense. It ignores: disk-full on the event store, replication quorum loss, index bloat, an unbounded retry storm from twenty sessions each retrying a failed idempotent write, and the interaction with the durability requirement (does 'acknowledged' mean fsync? replicated to N? The text never says). It also creates a perverse escalation path: a leak incident generates retraction notices, which are themselves emission records, which increases record-path load exactly when the record path must not fail.",
+          "evidence": "§2.2 \"If the write is not acknowledged, the projection is not returned\"; §3 \"It is, by design ... the answer is a faster record path, not an unrecorded projection.\"; §2.4(3) \"the host adapter records that delivery as an emission record of kind `retraction_notice`\".",
+          "recommendation": "Define what 'acknowledged' means (durability level, replication factor) and state a required availability/latency budget for the record path with a monitored breach disposition. Add a bounded degraded mode — e.g. refuse only projections containing atoms above a taint-risk class, or serve from a local durable write-ahead log with a hard replay deadline — or explicitly ratify that total record-path unavailability equals total work stoppage, and record that as a named availability threat with an owner."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "high",
+          "dimension": "backward_compatibility",
+          "title": "Atom identity is decoupled from its bytes, silently breaking every existing content-addressed consumer",
+          "detail": "\"The atom's bytes are redacted and rehashed while its identity and digest history are kept, so every reference still resolves.\" This assumes atom identity was never the content hash. If any existing store, integrity check, `.kin/` Git-carried event, byte-identical-rebuild proof, or client cache validates an atom by comparing its digest to a recorded digest, retraction turns every such check into a spurious integrity failure — indistinguishable from tampering. The base text anchored in O-01 is literally about \"Byte-identical rebuild ... over a frozen admitted event set\": retraction mutates bytes inside a supposedly frozen set. The amendment does not say how a verifier distinguishes 'legitimately redacted' from 'corrupted', nor whether the retraction event must be signed *and* reachable by every verifier before it can validate the new digest. Offline clones (open question 3, deferred) will see hash mismatches with no explanation.",
+          "evidence": "§2.4(1) and O-01: \"bytes are redacted and rehashed while its identity and digest history are kept\"; O-01 anchor: \"Byte-identical rebuild applies only to reduction/current-view and selection over a frozen admitted event set.\"; Open question 3 defers `.kin/` retraction carriage.",
+          "recommendation": "State explicitly that atom identity is not a content hash and enumerate every existing consumer of atom digests, with a migration or compatibility statement for each. Require that byte-identical rebuild be defined over (event set, retraction set) jointly, and that a digest mismatch without a reachable signed retraction event remains an integrity failure. Do not defer question 3 — an unamended `.kin/` schema means clones cannot distinguish redaction from corruption from the moment this ships."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "high",
+          "dimension": "edge_cases",
+          "title": "Idempotency key (session_id, projection_seq) is client-influenced and has no stated uniqueness guarantee",
+          "detail": "The key doubles as the producer-declared idempotency key, and a retried write \"returns the original receipt.\" But `projection_seq` is not listed among the fields \"stamped by the service from the authenticated client identity\" — only principal, host instance, and host kind are. So a client (or a buggy adapter, or a replayed request) can present a `projection_seq` it has already used with *different* `atom_refs`, and the service will return the original receipt and serve the new atoms, producing an emission record that names the wrong atoms. That is a silent hole in the ledger of exactly the kind the amendment exists to eliminate, and it is reachable by a non-malicious retry across a session-ID collision or an adapter restart that resets its counter. Nothing states that `session_id` is unforgeable, monotonic, or unique across host restarts.",
+          "evidence": "§2.2: \"`emission_id`: `(session_id, projection_seq)`, which is also the producer-declared idempotency key, so a retried write returns the original receipt\" — and the immediately following bullet stamps only `principal_id`, `host_instance_id`, `host_kind` service-side.",
+          "recommendation": "Require the service to derive or validate `session_id` and monotonicity of `projection_seq`, and to reject (not deduplicate) any repeat key whose payload digest differs, with a typed error and a story trigger. Define uniqueness of `session_id` across host restarts and across host kinds."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "high",
+          "dimension": "wrong_assumptions",
+          "title": "The emission-read authorization rule is unsatisfiable in the exact case that matters: after retraction",
+          "detail": "\"Emission records are readable only under a facts token whose authority scopes could read every atom they reference.\" Retraction withholds the atom from trusted projection and, for erasure, redacts it on a subject's request. A leak responder — or the story builder itself, or the auditor verifying V-3 — must read emission records referencing atoms they are now, by construction, not authorized to read (or whose authority scope was revoked, which is the trigger). The rule is at its most restrictive precisely when access is most necessary. Additionally \"every atom they reference\" makes a single high-scope atom in a multi-atom projection poison the readability of the whole record, so a responder with partial scope sees nothing rather than a redacted partial view. O-05 tests only the refusal direction, never that a legitimate responder can complete the query.",
+          "evidence": "§2.2 and O-01 authorization rule; O-05: \"Attempt to read emission records with a facts token lacking one referenced atom's authority scope; the read must refuse with the bounded typed body.\" No instrument tests the responder's successful path under revoked/retracted scope.",
+          "recommendation": "Define an explicit break-glass or steward capability for leak response, scoped, logged as a record-path event, and owner-attributed. Specify that emission reads degrade to per-atom redaction rather than whole-record refusal, and add a V-3 instrument asserting a responder with the steward capability completes the enumeration after retraction."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "edge_cases",
+          "title": "`missing[]` reasons are a closed three-value set that cannot express the common cases",
+          "detail": "The enumerated reasons are `evicted`, `unreachable`, `forbidden`. Missing from the set: never-written (the record path was down and the projection was correctly refused — nothing exists to find, which is not eviction), corrupt/undecodable, ambiguous-window (the staleness bound could not resolve inclusion), pending (a queued trigger the single-writer builder has not yet reached), and superseded/rehashed-mismatch. Forcing these into `evicted` or `unreachable` destroys exactly the diagnostic distinction the story exists to provide, and O-05 tests only `evicted`. It also collides with the V-3 requirement of an *empty* `missing[]`: any legitimately never-written gap makes the instrument fail for a reason that is not a defect.",
+          "evidence": "§2.3: \"an explicit entry in `missing[]` with the reason (`evicted`, `unreachable`, `forbidden`)\"; O-05 requires \"an empty `missing[]`\" and tests only the `evicted` reason.",
+          "recommendation": "Either make the reason set open with a required free-form cause plus a stable code, or extend it to cover never-written, ambiguous-window, pending, and corrupt. Reconcile the empty-`missing[]` requirement with the possibility of a legitimate never-written gap by scoping the emptiness requirement to the instrument's controlled conditions only."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "failure_modes",
+          "title": "Story-builder queueing is asserted lossless without stating where the queue lives or what happens when it fills",
+          "detail": "\"if it is down, triggers queue on the record path and stories are assembled late, never lost.\" This assumes the record path has unbounded capacity and that trigger enqueue is itself acknowledged and durable. But the record path is the same table that every projection now hard-depends on. A prolonged story-builder outage during an active incident produces a growing backlog of triggers competing with emission writes for the one resource that, if it fails, stops all work. The 'never lost' claim also has no retention statement — the observation-path notes the builder needs are explicitly \"ephemeral,\" so a late-assembled story is systematically less complete than a timely one, and the amendment does not require the story to record its own assembly lag or that its `missing[]` entries are a consequence of that lag.",
+          "evidence": "§3 \"triggers queue on the record path and stories are assembled late, never lost\"; §2.1 observation notes are \"ephemeral\"; §2.2 the same record path gates every projection.",
+          "recommendation": "State the trigger-queue durability and capacity, the behavior at capacity, and the interaction with emission-write priority. Require every story to carry its trigger time, assembly time, and a flag when assembly occurred after the observation-note retention window, so a stale story is not mistaken for a complete one."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "backward_compatibility",
+          "title": "Runbook step replacement narrows an unconditional instruction into a conditional one",
+          "detail": "The old step 3 said, unconditionally, enumerate replicas, forks, PRs, mirrors, CI artifacts, archives, clone owners. The new step splits into \"For what the system served ... For what Git distributed ...\". A responder now has to classify the leak before enumerating, and a fact that reached a shared surface by a path that is neither a served projection nor Git distribution (a manual paste, a CI log, an ops export, an operator's screenshot) falls into neither branch. The reader summary claims the rewrite keeps \"every step that the ledger cannot cover,\" but the rewrite's structure invites the responder to stop after the branch they believe applies. This is a regression in a Type-1-failure runbook.",
+          "evidence": "O-03 new block: \"For what the system served, query the emission ledger ... For what Git distributed, enumerate Company replicas/caches; ...\"; reader summary item 4 claims it keeps every step the ledger cannot cover.",
+          "recommendation": "Make the Git/replica enumeration unconditional and additive rather than a branch, and add an explicit third clause: \"For any other path, treat the surface as unenumerable and its copies as retained.\" Preserve the original imperative verbatim and append the ledger query as a new sub-step."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "edge_cases",
+          "title": "Retraction notice delivery depends on a next projection that may never occur, and the confirmation loop is circular",
+          "detail": "\"every session in the served set is told at its next projection\" and step 5 requires \"Confirm each notice by its `retraction_notice` emission record.\" A session that has ended, is idle indefinitely, whose host crashed, or whose adapter was uninstalled will never request another projection — so no notice, no `retraction_notice` record, and step 5's confirmation is unsatisfiable for exactly the sessions most likely to have exfiltrated the fact. There is no timeout, no unreachable-session disposition, and no requirement that unreached sessions appear in the story. Additionally, the confirmation record is itself an emission record, so if the record path is failing during an incident the notice cannot be delivered at all (§2.2's rule refuses projections whose emission write is unacknowledged) — the retraction mechanism inherits the availability dependency it is trying to remediate.",
+          "evidence": "§2.4(3); O-03 step 5 \"Confirm each notice by its `retraction_notice` emission record.\"; O-05 requires the retraction \"withhold ... from the next projection of every session\".",
+          "recommendation": "Add a notice deadline and an explicit `unreached[]` set on the story with a per-session disposition (ended, idle-past-deadline, host-gone), require unreached sessions to be counted in `impact`, and state that unreached sessions are treated as retained copies exactly as unknown Git clones are."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "wrong_assumptions",
+          "title": "Assumptions section states two load-bearing dependencies as facts without any verification hook",
+          "detail": "§5 asserts that host adapters can deliver a retraction notice through the existing apology channel \"without a new protocol surface,\" and that extraction provenance \"already names the session.\" The entire derived set and the entire notification obligation rest on these. Neither is cited to a base clause with an anchor (unlike every operation in §2.5), neither has a V-3 instrument that fails if the assumption is false, and §5 offers no fallback. If extraction provenance names only a principal or a repo rather than a session, the derived set is uncomputable and O-01/O-02 are unimplementable as written; the amendment would ship a normative obligation with no substrate.",
+          "evidence": "§5: \"The host adapters can deliver ...\", \"Extraction provenance already names the session, which architecture section 5 requires\" — no anchor block, no exact heading, no instrument.",
+          "recommendation": "Promote both to resolution gates in §8 requiring the Validator to cite the exact base clause that guarantees session-level extraction provenance and the exact apology-channel surface, and add a V-3 precondition check that fails NOT_PROVEN if either substrate is absent, rather than discovering it at implementation."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "low",
+          "dimension": "edge_cases",
+          "title": "Dual-base materialization claim is asserted but not verifiable from these bytes",
+          "detail": "The amendment claims every anchor \"still occurs exactly once in the named base files\" whether or not Amendment 001 has been materialized, and offloads a glossary-heading correction to the Validator. But O-01's anchor sits in the section Amendment 001 also touches per the reader summary's framing, and the claim of exactly-once occurrence under two different bases is precisely the sort of thing that silently fails on whitespace, line-wrap, or a heading rename — and the fallback is a Validator patch to a table row, which is a mutation of the amendment's own operation table rather than a refusal. A base-dependent anchor that resolves differently under the two bases would apply the block in the wrong place with no failure signal.",
+          "evidence": "Preamble: \"if the Validator materializes it against the unamended manifest instead, every anchor below still occurs exactly once ... the Validator records which base was used.\"; \"If the glossary's top-level heading differs from `# Glossary`, the Validator corrects the table row from the base file and records the correction\".",
+          "recommendation": "Pin the base by digest rather than by name, and require the Validator to refuse rather than correct on any anchor or heading mismatch. Add the dual-base occurrence check as an explicit gate in §8 with the two base digests named."
+        }
+      ],
+      "summary": "The amendment is well-argued prose sitting on top of at least two structural defects that break its central promise: an emission record written before delivery cannot answer \"who received this\" (it answers \"who was intended to\"), and a derived set defined by an untimed, possibly-transitive predicate over admittedly-lossy provenance is both uncomputable at scale and unfalsifiable in the withholding direction. Two further items are load-bearing but undefended: decoupling atom identity from bytes silently breaks every existing digest consumer including the byte-identical-rebuild clause the O-01 anchor itself sits in, and the emission-read authorization rule is most restrictive exactly when a leak responder needs it. The failure-modes section repeatedly answers \"this is a single point of failure\" with \"yes, by design,\" which is a restatement rather than a bound — no durability level, availability budget, or degraded mode is specified anywhere.",
+      "ok": true,
+      "error": null,
+      "duration_ms": 103709.76437494392,
+      "input_tokens": 9290,
+      "output_tokens": 7291,
+      "estimated_cost_usd": 0.228725
+    }
+  ],
+  "disagreements": [],
+  "total_findings": 43,
+  "total_cost_usd": 0.8213,
+  "cost_partial": false
+}

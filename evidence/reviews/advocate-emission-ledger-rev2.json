@@ -1,0 +1,226 @@
+{
+  "review_id": "20260908T182318-0aefca04",
+  "target": "/Users/jmcentire/Code/guildhall/spec/amendment-002-emission-ledger.md",
+  "target_type": "file",
+  "started_at": "2026-09-08T18:23:18.805457+00:00",
+  "completed_at": "2026-09-08T18:24:58.306618+00:00",
+  "persona_reports": [
+    {
+      "persona": "helland",
+      "findings": [
+        {
+          "persona": "helland",
+          "severity": "high",
+          "dimension": "wrong_assumptions",
+          "title": "Emission write and revocation-cursor read demanded as one serializable transaction with an out-of-process host adapter in the loop",
+          "detail": "The design says 'The write and the read of the current revocation cursor are one serializable transaction on the record path' and then, 'After the acknowledgment and before the return, the service re-reads the revocation cursor.' The re-read is outside the transaction — that is correct and honest — but the text then claims the race is 'Closed by the serializable transaction and the post-acknowledgment cursor re-read; the losing projection is refused, never served.' It is not closed. A withhold can commit after the re-read and before the bytes reach the session's context. The window is smaller, not zero. The design already has the correct answer for this window (the retraction_notice) but describes the race as eliminated rather than bounded and apologized for. Claiming a race is closed when it is only narrowed is the classic distributed-transaction assumption, and it will be relied upon by later readers.",
+          "evidence": "§3 Failure modes: 'Write-versus-revocation race. Closed by the serializable transaction and the post-acknowledgment cursor re-read; the losing projection is refused, never served.'",
+          "recommendation": "Restate as: the transaction plus re-read bounds the window to the transit time between service return and adapter acknowledgment; any withhold committed in that window is handled by the retraction_notice path, not by refusal. Name the notice as the apology for this specific residual race in §3 and in O-01, so no reader infers that a delivered projection can never be stale-at-delivery."
+        },
+        {
+          "persona": "helland",
+          "severity": "high",
+          "dimension": "data_ownership",
+          "title": "Delivery state `delivered` is authoritative but is asserted by the host adapter, which the design elsewhere declares untrustworthy",
+          "detail": "The emission's `state` transitions to `delivered` on the host adapter's acknowledgment. Everywhere else the spec is careful to stamp facts from the authenticated identity and 'never taken from the payload' — principal, host, receipt time. But `delivered` is a claim from the adapter, and it has consequences: it moves an emission from the unconfirmed count to the confirmed count, and V-3 requires a `retraction_notice` emission 'to each with a matching emission' as a pass condition. A compromised or buggy adapter can therefore inflate confidence in the confirmed count and, worse, produce retraction_notice acknowledgments for notices never shown. The service owns the emission record; it does not own the fact of delivery, and the design does not say so.",
+          "evidence": "'The host adapter posts a delivery acknowledgment after the projection is in the session's context; the service records `delivered`.' Contrast: '`principal_id`, `host_instance_id`, and `host_kind`, stamped by the service from the authenticated client identity, never taken from the payload.'",
+          "recommendation": "Name the authority explicitly: the service owns the emission record; the adapter owns only its own claim. Record the acknowledgment as an attributed adapter assertion (`delivery_claimed_by`, with the adapter's authenticated identity and its own sequence), not as a service-owned truth. State in O-01 and P-3 that `confirmed` means 'an adapter claimed delivery', not 'delivery occurred', and that response procedure treats confirmed and unconfirmed identically for containment purposes — the split is for reporting, never for skipping a notice."
+        },
+        {
+          "persona": "helland",
+          "severity": "high",
+          "dimension": "reconciliation",
+          "title": "`missing[]` reason `inconsistent` names a disagreement between two authorities with no adjudication owner and no apology",
+          "detail": "An atom_ref that does not resolve in the version history is recorded as `missing[]` with reason `inconsistent` and 'an open story, never resolved silently in favor of either side.' Refusing to resolve silently is right. But the design then stops: no owner is named for adjudicating an inconsistent reference, no tolerance is stated, and no business mechanism is defined for what the responder does when the ledger and the version history disagree about whether an atom-version ever existed. That is precisely the case where the responder needs an answer and the design hands them an open story with no disposition path. 'Open a story' is cleanup code wearing a business mechanism's coat unless someone is named who must dispose of it and within what bound.",
+          "evidence": "'a reference that does not resolve there is a `missing[]` entry with reason `inconsistent` and an open story, never resolved silently in favor of either side'",
+          "recommendation": "For reason `inconsistent`, name the adjudicating owner (the store owner of the referenced atom, or the Company security steward if the store is indeterminate), state the containment default while adjudication is pending (treat as served and withhold the identity), and give the disposition path — the story cannot leave `open` without an attributed ruling. Add an instrument to V-3 that forges an unresolvable atom_ref and asserts the default-withhold behavior."
+        },
+        {
+          "persona": "helland",
+          "severity": "medium",
+          "dimension": "data_ownership",
+          "title": "Extraction time — a term in the derived-set predicate — has no named owner and is not stamped by the service",
+          "detail": "The derived-set predicate turns on 'receipt time at or before B's extraction time'. Receipt time is service-stamped and owned. Extraction time is not: §5 assumes only that 'extraction provenance already names the session and an extraction time'. If extraction time is client-supplied or adapter-supplied, a wrong or adversarial value moves atoms out of the derived set — an under-approximation, the exact direction the governing invariant forbids. The invariant is stated over emissions but not enforced over the other side of the comparison.",
+          "evidence": "§2.5: \"B is derived from A if B's extraction provenance names a session S and an emission record referencing A for S exists, in either state, with receipt time at or before B's extraction time\"; §5: 'Extraction provenance already names the session and an extraction time, which architecture section 5 requires.'",
+          "recommendation": "State that the extraction time used by the predicate is the service's receipt time for the extraction event, not any client-claimed time, and keep any claimed time beside it as the emission record already does. If architecture §5 does not currently guarantee a service-stamped extraction time, that is a dependency the Validator must confirm before ratification, and it belongs in §9 as a resolution gate rather than in §5 as an assumption. Where the time is genuinely unavailable, the `unordered` → `missing[]` path already gives the safe answer; make it the default rather than the exception."
+        },
+        {
+          "persona": "helland",
+          "severity": "medium",
+          "dimension": "design",
+          "title": "Truncated derived-set frontier and the served set have different containment semantics, and the runbook conflates them",
+          "detail": "At the closure bound 'the frontier is withheld as a set' and recorded in `unattested[]`. The runbook then says 'Treat `missing[]` and `unattested[]` entries and any truncated frontier as retained copies.' But a withheld frontier is not a retained copy — it is contained; whereas a `missing[]` entry with reason `forbidden` or `unreachable` genuinely is an unknown. Collapsing three different epistemic states into one instruction gives the responder no basis to distinguish 'I contained this' from 'I cannot see this' from 'someone else owns this'. Under time pressure that distinction is the whole job.",
+          "evidence": "O-03 replacement block: 'Treat `missing[]` and `unattested[]` entries and any truncated frontier as retained copies.' vs §2.5: 'when either bound is reached, the frontier is withheld as a set'",
+          "recommendation": "Split the runbook instruction by state: truncated frontier is withheld-but-unenumerated (contained, owner must acknowledge before release); `missing[]` with `forbidden` or `unreachable` is outside our authority (escalate to the naming owner); `missing[]` with `evicted`, `unordered`, or `inconsistent` is unknown-and-uncontained (treat as retained). One instruction for three states is a defect."
+        },
+        {
+          "persona": "helland",
+          "severity": "medium",
+          "dimension": "data_ownership",
+          "title": "Child story spawning names an owner but no delivery obligation, deadline, or escalation when that owner does not act",
+          "detail": "'Where the derived set reaches a store with a different owner, the story spawns a child story owned by that store's owner and records it by reference; a story never carries a disposition on another owner's atoms.' The ownership rule is exactly right. What is missing is what the parent story's responder does while the child sits undisposed. The parent cannot dispose of the child's atoms — correct — but the parent's own disposition, impact counts, and release gate all depend on the child. Nothing states whether the child's atoms are withheld in the interim, whether the parent can reach `confirmed` with an open child, or who escalates when a codebase maintainer is unreachable during an irreversible-failure response.",
+          "evidence": "§2.5: 'the story spawns a child story owned by that store's owner and records it by reference; a story never carries a disposition on another owner's atoms.'",
+          "recommendation": "State the interim: cross-store derived atoms are withheld on spawn by the parent's authority (withhold is reversible, so this is safe and within the invariant), the child owner disposes of release and redaction. State that a parent story cannot reach `confirmed` disposition while a child is `open`, and name the escalation path and bound when a child owner does not respond — the Company owner, who already issues responder capabilities, is the obvious candidate but must be named."
+        },
+        {
+          "persona": "helland",
+          "severity": "medium",
+          "dimension": "reconciliation",
+          "title": "`retraction_notice` emissions that never reach `delivered` have no apology path, only a count",
+          "detail": "The withhold notice is itself an emission with two states. V-3 requires 'a `retraction_notice` to each with a matching emission.' But an adapter that never acknowledges leaves the notice at `intended` — the session may still be acting on a withheld fact and the system's only response is to count it as unconfirmed. For the ordinary projection, unconfirmed is safe (over-approximation of the served set). For the notice, unconfirmed is unsafe in the operative direction: someone who should have been told may not have been. The design's own governing invariant does not transfer to this event kind, and the text does not notice.",
+          "evidence": "'the host adapter records its delivery as an emission record of kind `retraction_notice` with the same two states'; §3: 'Recorded but not delivered. Now a named state rather than an ambiguity: the served set counts it as unconfirmed and notifies it anyway, which is the safe direction.'",
+          "recommendation": "Distinguish the two directions explicitly. For projections, unconfirmed is safe. For `retraction_notice`, an emission that remains `intended` past a ratified bound is an unclosed containment gap: it must be surfaced on the story as a named unreached session, block the story from `confirmed` or `refuted`, and trigger the out-of-band contact path (the human apology). Add a V-3 instrument that suppresses a retraction_notice acknowledgment and asserts the story cannot close."
+        },
+        {
+          "persona": "helland",
+          "severity": "low",
+          "dimension": "design",
+          "title": "Erasure request is named as its own adjudication without naming who performs it",
+          "detail": "Redaction occurs 'only on the owner's `confirmed` disposition or on a principal's erasure request, which is its own adjudication.' This treats the principal's request as self-authorizing. For material the principal owns, that is correct. For a derived atom sitting in a `codebase:<repo-id>` store owned by a maintainer, or a `company` atom, the principal's request and the store owner's authority collide, and the text elsewhere is emphatic that 'a story never carries a disposition on another owner's atoms.' The erasure clause quietly creates a second path to destructive authority over an owner's store without saying how the conflict resolves.",
+          "evidence": "§2.4: 'only on the owner's `confirmed` disposition or on a principal's erasure request, which is its own adjudication'; §2.5: 'a story never carries a disposition on another owner's atoms'",
+          "recommendation": "State the scope of self-authorization: an erasure request is its own adjudication for atoms whose owner is the requesting principal. Where it reaches atoms in another owner's store, it spawns a child story owned by that store's owner with an erasure disposition required within a ratified bound, and name who adjudicates a refusal. Add this to §9 as a resolution gate if the answer is a legal question rather than an architectural one."
+        },
+        {
+          "persona": "helland",
+          "severity": "low",
+          "dimension": "wrong_assumptions",
+          "title": "Assumption §5 carries a load-bearing protocol dependency stated as a fact about existing adapters",
+          "detail": "'The host adapters can deliver a withhold notice beside the next projection ... and can post a delivery acknowledgment, without a new protocol surface beyond those two messages.' Two new messages on the adapter protocol is a new protocol surface, and the entire containment guarantee in P-3 ('reaches every recorded session by its next projection') rests on adapters we do not own — Codex and Claude hosts, per §7. The amendment elsewhere is scrupulous about not depending on external systems ('Codex and Claude logs are neither complete nor ours') but then makes a Product-level promise contingent on those same external adapters implementing two new messages correctly.",
+          "evidence": "§5 Assumptions, first bullet; contrasted with §7: 'the shared process may not read Personal transcripts, and Codex and Claude logs are neither complete nor ours.'",
+          "recommendation": "Move this from Assumptions to a named dependency with a verification obligation: V-3 should exercise both messages against each host kind, and P-3's containment promise should be qualified to host kinds for which the two messages are proven. Where an adapter cannot deliver a notice, the correct behavior is to refuse projection to that adapter entirely rather than to serve facts that cannot be retracted — state which it is."
+        }
+      ],
+      "summary": "This is unusually disciplined work — the governing invariant is stated first, the safe direction of error is named, references point inward, nothing is deleted, and withhold/redact/purge separates reversible authority from destructive authority exactly where it should be split. My findings cluster in one place: the boundary where the service's owned facts meet the host adapter's claims. `delivered` is treated as service-owned when it is an adapter assertion, the race is described as closed when it is only narrowed, and the retraction notice inherits the projection's safe-direction reasoning when its unsafe direction is the opposite one. Fix those and the ledger's over-approximation guarantee holds all the way to the session; leave them and the confirmed counts are a guess wearing an authority's badge.",
+      "ok": true,
+      "error": null,
+      "duration_ms": 71201.57350000227,
+      "input_tokens": 14517,
+      "output_tokens": 5002,
+      "estimated_cost_usd": 0.197635
+    },
+    {
+      "persona": "adversarial",
+      "findings": [
+        {
+          "persona": "adversarial",
+          "severity": "critical",
+          "dimension": "wrong_assumptions",
+          "title": "The governing invariant is violated by the amendment's own `withdrawn` path: a projection can be recorded-and-served while marked withdrawn, and conversely the emission is not the last thing to happen before bytes leave the process",
+          "detail": "The spec claims 'the only errors the system can make are in the safe direction' and that served-but-not-recorded is impossible. But the sequence is: (1) serializable txn writes emission + reads revocation cursor, (2) re-read revocation cursor, (3) if advanced, discard projection and mark `withdrawn`. Step 3 assumes 'discard' is possible. If the projection has already been serialized into a response buffer, or the transport has begun streaming, or the process crashes between the acknowledgment and the discard-decision, the bytes go out. Worse: the emission is then marked `withdrawn`, and the served-set definition explicitly says 'every emission referencing it in either state' — `intended` or `delivered`. `withdrawn` is a third state (it is in the glossary as such) and is NOT in the served set. So a race-lost projection that actually reached the client is recorded but excluded from the served set. That is exactly served-but-not-recorded, produced by the mechanism designed to prevent it.",
+          "evidence": "§2.2: 'the projection is discarded, the session receives `REVOCATION_RACE`, and the emission is marked `withdrawn` by a new event.' §2.2: 'The **served set** of an atom is every emission referencing it in either state' (states enumerated as `intended`/`delivered`). Glossary O-04: 'in state `intended`, `delivered`, or `withdrawn`'.",
+          "recommendation": "Either (a) define the served set as every emission in any state including `withdrawn`, and report withdrawn as a fourth count, or (b) prove that discard is atomic with respect to the transport — which requires stating that no projection bytes are handed to the transport until after the second cursor read, and stating what happens on crash between read and send. Do not leave `withdrawn` outside the served set."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "critical",
+          "dimension": "failure_modes",
+          "title": "Purge destroys the bytes that the digest chain and byte-identical rebuild are defined over; the two claims are mutually exclusive",
+          "detail": "The amendment asserts simultaneously: 'the digest chain remains verifiable against each version', 'Byte-identical rebuild is defined over the event set including redact and purge events and reproduces the tombstoned state', and 'purge ... is the only operation that changes stored bytes ... rebuild reproduces the purged state.' If purge physically removes an earlier version's bytes, then (a) the digest of that version can no longer be recomputed from bytes, only trusted from a stored hash — so 'verifiable' degrades to 'asserted'; and (b) rebuild over the event set now produces a *different* state than it did before the purge, which is precisely a violation of the byte-identical rebuild property the base spec anchors on ('Byte-identical rebuild applies only to reduction/current-view and selection over a frozen admitted event set' — purge un-freezes the set). The amendment redefines the property to mean 'reproduces the purged state', which is a silent weakening of a Critical proof gate, not a preservation of it.",
+          "evidence": "§2.4 redact bullet: 'the digest chain remains verifiable against each version.' §2.4 purge bullet: 'the only operation that changes stored bytes; rebuild reproduces the purged state.' O-01 anchor: 'Byte-identical rebuild applies only to reduction/current-view and selection over a frozen admitted event set.'",
+          "recommendation": "State explicitly that purge redefines the frozen event set, that pre-purge rebuild receipts are no longer reproducible, and that this is a ratified weakening of the rebuild gate. Name what a verifier does with a purged version's digest (trust a retained hash? mark unverifiable?). Add a V-3 instrument that purges a version and asserts the exact post-purge rebuild and digest-verification semantics. Currently there is no purge instrument at all in O-05."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "high",
+          "dimension": "wrong_assumptions",
+          "title": "The derived-set predicate is unsound in the direction the amendment claims is safe: it under-approximates for atoms extracted by a session with no emission record",
+          "detail": "The predicate is 'B is derived from A if B's extraction provenance names a session S and an emission record referencing A for S exists ... with receipt time at or before B's extraction time.' The amendment claims this over-approximates because context eviction is invisible. But it *under*-approximates whenever the causal path does not run through a recorded emission: a human reads atom A in session S1, types the fact by hand into session S2, and B is extracted from S2. No emission of A for S2 exists, so B is not in the derived set, is not withheld, and does not appear in `missing[]` or `unattested[]` — the story reports an empty `missing[]` and looks complete. §6 admits 'It does not cover what a person copied out of a session' but §2.5 and the reader summary claim 'everything downstream is withheld' and the governing invariant claims only safe-direction errors. Those cannot both hold.",
+          "evidence": "Reader summary: 'it promises that once something is known to be tainted, everywhere the system sent it is enumerable and everything downstream is withheld.' §2.5: 'It over-approximates, because context-window eviction is invisible to it, which is the safe direction.' §6: 'It does not cover what a person copied out of a session.'",
+          "recommendation": "Weaken the promise in the reader summary and O-02 to 'everything downstream *by recorded emission*'. Add a `unattested[]` class for cross-session human transfer so that an empty `missing[]` is not read as 'closure complete'. The current wording will cause a responder to close a story that is not closed."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "high",
+          "dimension": "edge_cases",
+          "title": "`session_id` uniqueness is asserted from the wrong premise, and the `projection_seq` monotonicity claim has no stated behavior on service restart",
+          "detail": "'it is unique across host restarts and host kinds because the service issues it' — issuance by the service is necessary but not sufficient; uniqueness requires that the service's issuance state survive *its own* restart. The record path is single-node SQLite with fsync-on-commit, so uniqueness holds only if session_id issuance is itself a committed record-path event. That is never stated. Similarly `projection_seq` is 'strictly monotonic per session' — if the counter lives in memory and the service restarts mid-session, either the session is invalidated (unstated) or seq restarts and a repeat key with a different payload digest fires `EMISSION_KEY_CONFLICT`, which is *itself a leak-story trigger*. So a routine service restart manufactures a spurious leak story, burning the approval-fatigue budget it explicitly counts against.",
+          "evidence": "§2.2: '`session_id` is issued by the service at SessionStart and bound to the authenticated client instance; it is unique across host restarts and host kinds because the service issues it.' §2.2: 'a repeat key with a different payload digest is refused with `EMISSION_KEY_CONFLICT` and is itself a leak-story trigger.' §2.5 lists `EMISSION_KEY_CONFLICT` as a trigger.",
+          "recommendation": "State that session_id issuance and the per-session seq high-water mark are committed record-path facts, or that service restart invalidates all live sessions. Add a V-3 instrument: restart the service mid-session and assert no spurious `EMISSION_KEY_CONFLICT` and no spurious story."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "high",
+          "dimension": "failure_modes",
+          "title": "The delivery acknowledgment is client-supplied and unauthenticated as to truth; `delivered` is a claim, not a fact, yet it drives the confirmed/unconfirmed split the runbook relies on",
+          "detail": "'The host adapter posts a delivery acknowledgment after the projection is in the session's context; the service records `delivered`.' The host adapter is the party whose logs the shared process is forbidden to read and whose completeness §7 explicitly disclaims ('Codex and Claude logs are neither complete nor ours'). A compromised or buggy adapter can (a) never ack, inflating unconfirmed — safe; or (b) ack for projections it dropped, producing `delivered` for something never in context — which is safe for enumeration but *false* for the `retraction_notice` confirmation in runbook step 5, where the responder 'confirm[s] each notice by its `retraction_notice` emission'. A lying or crashed-after-ack adapter yields a confirmed notice that was never seen, and the responder marks containment complete. That is an unsafe-direction error the invariant claims is impossible.",
+          "evidence": "§2.2 delivery ack from host adapter. O-03 step 5: 'confirm each notice by its `retraction_notice` emission.' §7: 'Codex and Claude logs are neither complete nor ours.'",
+          "recommendation": "State that `delivered` on a `retraction_notice` is an adapter attestation, not proof of human or model awareness, and that step 5 confirmation is 'notice dispatched and acknowledged by the adapter', not 'notice received'. Consider requiring an in-session acknowledgment distinct from an adapter-transport ack for retraction notices specifically."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "high",
+          "dimension": "failure_modes",
+          "title": "The responder capability requires the Company owner to be available and uncompromised, with no stated path when the owner is the leak or is unreachable",
+          "detail": "'issued by the Company owner to the owner of the trigger's store.' The one scenario this amendment exists for — an irreversible Type 1 failure — is also the scenario most likely to involve the owner: a principal's material leaking, an owner on holiday, an owner's key compromised, or the leak being *of the owner's own data*. Also: for a `principal` store, the owner is 'the principal for their own material', so a principal's leak story is owned by the principal, who must be issued a capability by the Company owner to see which sessions received their own leaked data. If the Company owner is unavailable, the lineage query is unsatisfiable, and §2.3 has already established that no ordinary token can read a tainted record. The system fails *closed into total blindness* precisely at the moment §0 says every hour costs.",
+          "evidence": "§2.3: 'issued by the Company owner to the owner of the trigger's store.' §2.3: 'after taint, no ordinary token has scope for the tainted atom, so no ordinary token could read any emission that references it.' §0: 'Every hour spent reconstructing who received a fact is an hour in which those sessions keep acting on it.'",
+          "recommendation": "Add a break-glass path: a pre-issued, sealed, time-boxed, dual-control capability, or a named delegate/quorum for issuance, with every use loudly recorded. Add an open question or a V-3 instrument for owner-unavailable. As written, availability of one human is a single point of failure on the critical containment path."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "backward_compatibility",
+          "title": "Emission-write-before-return changes the refusal surface of every existing projection call; existing clients have no handler for the new typed refusals",
+          "detail": "Three new typed refusals — `EMISSION_UNRECORDED`, `REVOCATION_RACE`, `EMISSION_KEY_CONFLICT` — are added to the projection path. §2.2 says the session 'degrades exactly as it does for a stale revocation snapshot', which assumes every existing client already implements that degradation for an unknown error code and that the degradation is correct for a *new* cause. There is no statement of what an old client does on an unrecognized code, no version negotiation, and no migration statement. Similarly §5 assumes host adapters can post a delivery acknowledgment 'without a new protocol surface beyond those two messages' — two new messages *is* a new protocol surface, and adapters that do not implement it will leave every emission permanently `intended`, making every story's confirmed count zero and every session unconfirmed. The V-3 instrument only tests suppressing *one* adapter's ack; it does not test the all-adapters-unupgraded case, which is the actual rollout state on day one.",
+          "evidence": "§2.2: 'degrades exactly as it does for a stale revocation snapshot.' §5: 'without a new protocol surface beyond those two messages.' O-05: 'Suppress one host adapter's delivery acknowledgment.'",
+          "recommendation": "State the wire-compatibility rule for unrecognized refusal codes, state a capability-negotiation or version gate for the delivery-ack message, and add an instrument for the all-adapters-non-acking case asserting the system still enumerates (unconfirmed) and still withholds."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "backward_compatibility",
+          "title": "Atom-identity-independent-of-digest is a breaking change deferred to a receipt that does not yet exist, and the tombstone version silently changes what any cached or Git-carried copy resolves to",
+          "detail": "§4 says 'Atom identity is independent of content digest ... Any existing consumer that treats an atom digest as its identity must be enumerated by the Validator's semantic-delta receipt and migrated or named as a residual before ratification' — and §9.3 makes it an open question whether such consumers exist. That is a known-unknown on a Critical boundary, listed as a gate but with no fallback if consumers *are* found. Separately, redaction appends a tombstone version and 'the reducer resolves identity to the latest version' — but §9.2 leaves it open whether Git-carried `.kin/` events carry withhold/redact at all. Until that follow-up lands, every clone continues resolving the identity to the pre-tombstone version, so the same atom_id means two different things inside and outside the process, and the reader summary's claim that 'identity, digest history, and byte-identical rebuild over the event set are preserved' is true only for the single node.",
+          "evidence": "§4 final bullet; §9.2: 'Whether the Codebase store's Git-carried `.kin/` events should carry withhold and redact events ... proposed yes, as a follow-up amendment'; §9.3.",
+          "recommendation": "Either block ratification on the digest-identity enumeration completing (not merely being scheduled) or state the residual behavior explicitly. State that until §9.2 lands, redaction has no effect on clones and that the runbook must treat every clone as holding the pre-tombstone version — currently step 3 says treat unknown clones as retained copies, but not that *known* clones retain the un-redacted bytes."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "edge_cases",
+          "title": "Bound truncation is recorded in `unattested[]`, which the spec defines as meaning something else entirely, collapsing two distinct signals",
+          "detail": "`unattested[]` is defined as 'each observation class for which no expectation was declared, so that an empty `missing[]` is never vacuous' — i.e. epistemic blind spots by class. But truncation at the 3-generation/512-atom bound is *also* 'recorded in `unattested[]`'. These are categorically different: one says 'I never knew to look here', the other says 'I looked, found more, and stopped'. A responder reading `unattested[]` cannot distinguish 'we don't instrument scanner class X' from 'there are more than 512 tainted atoms and we gave up'. The 512-atom bound with the second-order effect that no release is permitted without owner-acknowledged truncation means a large leak degrades into an unbounded manual acknowledgment problem — and the amendment does not say what happens when the derived set genuinely exceeds 512 in a real incident.",
+          "evidence": "§2.5: '`unattested[]` names each observation class for which no expectation was declared'; and 'when either bound is reached, the frontier is withheld as a set, the story records the truncation in `unattested[]`.'",
+          "recommendation": "Add a distinct `truncated[]` field with the bound hit, the frontier size, and the frontier reference set. Add a V-3 instrument that exceeds the 512-atom bound and asserts the frontier is withheld as a set and the story is legible. Currently O-05 tests only two generations and never approaches either bound."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "medium",
+          "dimension": "failure_modes",
+          "title": "Withhold notice reaches a session only 'at its next projection', so an idle or terminated session that still holds the fact is never notified — and the runbook treats notice as containment",
+          "detail": "'Every session in the served set is told at its next projection.' A session that received the tainted atom and then went idle, or ended, or whose host crashed, has no next projection. Its `retraction_notice` emission never exists. Runbook step 5 says 'confirm each notice by its `retraction_notice` emission' — for these sessions there is nothing to confirm, and the step gives no instruction. The story's confirmed/unconfirmed counts capture the *original* emission's delivery state, not the notice's, so a responder can see 'confirmed: 20' and have zero notices delivered. There is no timeout after which an un-notified session is escalated out-of-band.",
+          "evidence": "§2.4 withhold bullet; O-03 step 5: 'confirm each notice by its `retraction_notice` emission.'",
+          "recommendation": "Define the notice as having its own two states and its own unconfirmed count, distinct from the emission's. Define a ratified notice deadline after which un-notified sessions are escalated to their principal out of band, and add that to runbook step 5 and to a V-3 instrument (serve, end the session, withhold, assert the story names the un-notifiable session explicitly)."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "low",
+          "dimension": "wrong_assumptions",
+          "title": "The 'no content digest, therefore no oracle' argument is incomplete: identity plus version plus co-served set plus timing is itself an oracle",
+          "detail": "§3 claims 'A leaked record would reveal that an atom was served, not the atom.' But the record carries `(atom_id, version)` for every co-served atom, plus principal, host, host_kind, cursors, and receipt time. Correlating emission records reveals which facts are served together, to whom, and how often — a structural map of the company's knowledge graph and of which principals work on what. The lineage query is scope-limited ('never co-served atoms outside the caller's scope') but the whole-record read is scope-gated on 'authority scopes could read every atom the record references', which is a conjunction that any broadly-scoped principal satisfies. Metadata is not nothing.",
+          "evidence": "§3 'Ledger as disclosure oracle' bullet; §2.3 operation 1.",
+          "recommendation": "Name metadata correlation as a residual in §6 rather than dismissing the oracle concern as closed by the absence of digests. Consider a volume ceiling on whole-record reads distinct from the atom-read ceiling."
+        },
+        {
+          "persona": "adversarial",
+          "severity": "low",
+          "dimension": "edge_cases",
+          "title": "The 'B is derived from A' predicate uses receipt time versus extraction time across two clocks with no stated ordering source beyond a staleness window",
+          "detail": "The predicate compares the service's `received_at` to B's extraction time from architecture section 5. §5 assumes 'Extraction provenance already names the session and an extraction time' — but nothing says that time is service-stamped rather than client-claimed. If extraction time is client-claimed, a session can place B before the emission of A and escape the derived set. The `unordered` → `missing[]` rule handles unorderable pairs but not *mis*-ordered ones. Clock skew, DST, and leap-second handling are unaddressed for a comparison that determines containment membership.",
+          "evidence": "§2.5 predicate; §5 assumption; §2.5 'an atom whose extraction time cannot be ordered against the emission's receipt time inside the ratified window is placed in `missing[]`.'",
+          "recommendation": "Require that the ordering be over service-assigned monotonic sequence numbers on the record path, not wall-clock times, or explicitly state that extraction time must be service-stamped. Verify the §5 assumption against architecture section 5 before ratification rather than asserting it."
+        }
+      ],
+      "summary": "The amendment is unusually careful and its safe-direction framing is the right frame — but the framing does not survive its own mechanisms. The `withdrawn` state is excluded from the served set while being reachable on a path where bytes may already have left; purge and byte-identical rebuild are asserted together and cannot both hold; the derived-set predicate under-approximates for human cross-session transfer while the reader summary promises \"everything downstream is withheld\"; and the responder capability makes one human's availability a single point of failure on the only path that matters. The V-3 instruments test the happy path and four named races but never test purge, never approach either closure bound, never restart the service, and never test the day-one all-adapters-unupgraded state.",
+      "ok": true,
+      "error": null,
+      "duration_ms": 99430.87283300702,
+      "input_tokens": 14212,
+      "output_tokens": 7189,
+      "estimated_cost_usd": 0.250785
+    }
+  ],
+  "disagreements": [],
+  "total_findings": 21,
+  "total_cost_usd": 0.44842,
+  "cost_partial": false
+}

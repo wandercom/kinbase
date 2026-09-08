@@ -1,0 +1,15 @@
+{
+  "schema": "guildhall-materializer-adversarial-crosscheck/1",
+  "observed_at": "2026-09-06T05:08:37Z",
+  "corpus_path": "evidence/factory-run/materializer-adversarial-corpus-001.json",
+  "corpus_sha256": "07a7e9a9817fafcdcd837c4ae1c68734c0f45b75dfb5c8f9f8e868a7ce0e9f62",
+  "python_materializer_sha256": "ce6b2e901d8070e9e56f9a5b6b3105838cd86b083d765e8f7f68bb2849776b21",
+  "ruby_materializer_sha256": "e5877e3b87578fd3e09bf3c8e145ae4535499eb0a62b991e4d5c632409671e25",
+  "normalized_result_sha256": "001c9ada95dcedebf39116d19c8478a4eacce80a81743465134ecdaacc153f7d",
+  "case_count": 32,
+  "ok_count": 14,
+  "expected_error_count": 18,
+  "byte_equal": true,
+  "result": "PASS",
+  "claim_boundary": "Shared-corpus equality tests parser, splice, seam, ordering, and link-census edge behavior only; it is not independent semantic interpretation."
+}

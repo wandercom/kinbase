@@ -1,0 +1,4822 @@
+{
+  "catalog_digest": "ff52499a2c0c5f8f7f263880a309ab82e8ba771d4c71c8986f6843cbaaf2e058",
+  "census_digest": "cabe538228cf642ad1d728ee234cc6b1cf4077ff8806b55a0e8d424e9d0ca8fe",
+  "collection_errors": [],
+  "detector_mutation": "",
+  "gate_vector": {
+    "EVIDENCE": "INVALID_HARNESS",
+    "INSTRUMENT": "INVALID_HARNESS",
+    "NONFUNCTIONAL": "PRODUCT_FAILURE",
+    "V-1": "INVALID_HARNESS",
+    "V-10": "PRODUCT_FAILURE",
+    "V-2": "INVALID_HARNESS",
+    "V-3": "INVALID_HARNESS",
+    "V-4": "INVALID_HARNESS",
+    "V-5": "INVALID_HARNESS",
+    "V-6": "INVALID_HARNESS",
+    "V-7": "PRODUCT_FAILURE",
+    "V-8": "INVALID_HARNESS",
+    "V-9": "INVALID_HARNESS",
+    "VERDICT": "PRODUCT_FAILURE"
+  },
+  "gates": {
+    "EVIDENCE": {
+      "executed_nodes": 4,
+      "expected_nodes": 4,
+      "gate": "EVIDENCE",
+      "independently_content_addressed_product_observations": [],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "acceptance/test_evidence_packet.py::test_retention_and_incident_hold_fields_are_enforced: unexpected NameError",
+        "acceptance/test_evidence_packet.py::test_only_ciphertext_metadata_reaches_the_manifest: unexpected TypeError",
+        "test_evidence_packet.py::test_retention_and_incident_hold_fields_are_enforced: acceptance/test_evidence_packet.py::test_retention_and_incident_hold_fields_are_enforced: unexpected NameError",
+        "test_evidence_packet.py::test_only_ciphertext_metadata_reaches_the_manifest: acceptance/test_evidence_packet.py::test_only_ciphertext_metadata_reaches_the_manifest: unexpected TypeError",
+        "2 catalogued obligation(s) executed without being evaluated: EV.ciphertext-only declared by test_evidence_packet.py::test_only_ciphertext_metadata_reaches_the_manifest but never evaluated"
+      ],
+      "not_run_nodes": 0,
+      "product_channel": "PASS",
+      "product_reasons": [],
+      "reported": "INVALID_HARNESS"
+    },
+    "INSTRUMENT": {
+      "executed_nodes": 0,
+      "expected_nodes": 0,
+      "gate": "INSTRUMENT",
+      "independently_content_addressed_product_observations": [],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "acceptance/test_instrument_debt.py::test_instrument_declares_no_open_validity_debt: selftest failure (no product involved)",
+        "test_instrument_debt.py::test_instrument_declares_no_open_validity_debt: acceptance/test_instrument_debt.py::test_instrument_declares_no_open_validity_debt: selftest failure (no product involved)"
+      ],
+      "not_run_nodes": 0,
+      "product_channel": "NOT_RUN",
+      "product_reasons": [
+        "every expected node is instrument-only, so no product behaviour was observed"
+      ],
+      "reported": "INVALID_HARNESS"
+    },
+    "NONFUNCTIONAL": {
+      "executed_nodes": 11,
+      "expected_nodes": 11,
+      "gate": "NONFUNCTIONAL",
+      "independently_content_addressed_product_observations": [
+        "14ad03c98e3a6fdfa3d3ba79af29f6804c052144ae572c8e128df46ea51e001c",
+        "c588a990d8160884ccfff8059852fb1e81214bb91253b1760a5484f9dad59218",
+        "54bf59ae0512cc3013d19ab8ed7d8683d192f633ad6b9be3eb0c1f117585dc8c",
+        "1263c734e9820bccf7efda71630ac7b796986db7f180f0a21f3c1133a2629120",
+        "d07c683bcadfe82225246c25ce498ebd9940c165a5d6f68b0b0218073e493d95",
+        "4b3971123652f1dbe9e61b4861a52115ceafaded72cb6fc998900efdbbcb3291",
+        "1d2f826e9408f76c937403e4d1775a532976470285a78ee976b51c724377086f",
+        "14ad03c98e3a6fdfa3d3ba79af29f6804c052144ae572c8e128df46ea51e001c",
+        "c588a990d8160884ccfff8059852fb1e81214bb91253b1760a5484f9dad59218",
+        "54bf59ae0512cc3013d19ab8ed7d8683d192f633ad6b9be3eb0c1f117585dc8c",
+        "1263c734e9820bccf7efda71630ac7b796986db7f180f0a21f3c1133a2629120",
+        "d07c683bcadfe82225246c25ce498ebd9940c165a5d6f68b0b0218073e493d95",
+        "4b3971123652f1dbe9e61b4861a52115ceafaded72cb6fc998900efdbbcb3291",
+        "1d2f826e9408f76c937403e4d1775a532976470285a78ee976b51c724377086f"
+      ],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "acceptance/test_nonfunctional.py::test_uncaught_application_exceptions_exit_seventy: unexpected ValueError",
+        "test_nonfunctional.py::test_uncaught_application_exceptions_exit_seventy: acceptance/test_nonfunctional.py::test_uncaught_application_exceptions_exit_seventy: unexpected ValueError",
+        "3 catalogued obligation(s) executed without being evaluated: NF.diagnostics declared by test_nonfunctional.py::test_diagnostics_are_executable_and_useful_after_restart but never evaluated"
+      ],
+      "not_run_nodes": 0,
+      "product_channel": "PRODUCT_FAILURE",
+      "product_reasons": [
+        "acceptance/test_nonfunctional.py::test_schema_validation_and_rebuild_are_deterministic: ProductFailure",
+        "acceptance/test_nonfunctional.py::test_external_calls_have_timeouts_and_failed_writes_are_not_admitted: ProductFailure",
+        "acceptance/test_nonfunctional.py::test_diagnostics_are_executable_and_useful_after_restart: ProductFailure",
+        "acceptance/test_nonfunctional.py::test_http_rejects_every_declared_probe: ProductFailure",
+        "acceptance/test_nonfunctional.py::test_every_operational_ceiling_refuses_with_an_omitted_count: ProductFailure",
+        "acceptance/test_nonfunctional.py::test_candidate_lifetime_and_private_retention_are_enforced: ProductFailure",
+        "acceptance/test_nonfunctional.py::test_broad_token_mode_is_refused_with_chmod_remediation: ProductFailure",
+        "test_nonfunctional.py::test_schema_validation_and_rebuild_are_deterministic: acceptance/test_nonfunctional.py::test_schema_validation_and_rebuild_are_deterministic: ProductFailure",
+        "test_nonfunctional.py::test_external_calls_have_timeouts_and_failed_writes_are_not_admitted: acceptance/test_nonfunctional.py::test_external_calls_have_timeouts_and_failed_writes_are_not_admitted: ProductFailure",
+        "test_nonfunctional.py::test_diagnostics_are_executable_and_useful_after_restart: acceptance/test_nonfunctional.py::test_diagnostics_are_executable_and_useful_after_restart: ProductFailure",
+        "test_nonfunctional.py::test_http_rejects_every_declared_probe: acceptance/test_nonfunctional.py::test_http_rejects_every_declared_probe: ProductFailure",
+        "test_nonfunctional.py::test_every_operational_ceiling_refuses_with_an_omitted_count: acceptance/test_nonfunctional.py::test_every_operational_ceiling_refuses_with_an_omitted_count: ProductFailure",
+        "test_nonfunctional.py::test_candidate_lifetime_and_private_retention_are_enforced: acceptance/test_nonfunctional.py::test_candidate_lifetime_and_private_retention_are_enforced: ProductFailure",
+        "test_nonfunctional.py::test_broad_token_mode_is_refused_with_chmod_remediation: acceptance/test_nonfunctional.py::test_broad_token_mode_is_refused_with_chmod_remediation: ProductFailure"
+      ],
+      "reported": "PRODUCT_FAILURE"
+    },
+    "V-1": {
+      "executed_nodes": 11,
+      "expected_nodes": 11,
+      "gate": "V-1",
+      "independently_content_addressed_product_observations": [],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "acceptance/test_v1_ingestion.py::test_all_ten_adapters_run_against_native_sources: failure during setup",
+        "acceptance/test_v1_ingestion.py::test_adapter_receipt_reports_observations_not_counts: failure during setup",
+        "acceptance/test_v1_ingestion.py::test_end_to_end_build_uses_at_least_seven_source_classes: failure during setup",
+        "acceptance/test_v1_ingestion.py::test_reingest_unchanged_is_idempotent_and_byte_identical: failure during setup",
+        "acceptance/test_v1_ingestion.py::test_change_delete_reject_revert_preserve_history_and_change_disposition: failure during setup",
+        "acceptance/test_v1_ingestion.py::test_lifecycle_matrix_executes_every_declared_cell: failure during setup",
+        "acceptance/test_v1_ingestion.py::test_retiring_supports_one_at_a_time_recomputes_then_withdraws: failure during setup",
+        "acceptance/test_v1_ingestion.py::test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors: failure during setup",
+        "acceptance/test_v1_ingestion.py::test_misextraction_notice_is_approver_owned_and_withholds_only: failure during setup",
+        "acceptance/test_v1_ingestion.py::test_never_true_requires_subject_matter_authority: failure during setup",
+        "acceptance/test_v1_ingestion.py::test_origin_trust_class_is_derived_and_bounds_trusted_direction: failure during setup",
+        "test_v1_ingestion.py::test_all_ten_adapters_run_against_native_sources: acceptance/test_v1_ingestion.py::test_all_ten_adapters_run_against_native_sources: failure during setup",
+        "test_v1_ingestion.py::test_adapter_receipt_reports_observations_not_counts: acceptance/test_v1_ingestion.py::test_adapter_receipt_reports_observations_not_counts: failure during setup",
+        "test_v1_ingestion.py::test_end_to_end_build_uses_at_least_seven_source_classes: acceptance/test_v1_ingestion.py::test_end_to_end_build_uses_at_least_seven_source_classes: failure during setup",
+        "test_v1_ingestion.py::test_reingest_unchanged_is_idempotent_and_byte_identical: acceptance/test_v1_ingestion.py::test_reingest_unchanged_is_idempotent_and_byte_identical: failure during setup",
+        "test_v1_ingestion.py::test_change_delete_reject_revert_preserve_history_and_change_disposition: acceptance/test_v1_ingestion.py::test_change_delete_reject_revert_preserve_history_and_change_disposition: failure during setup",
+        "test_v1_ingestion.py::test_lifecycle_matrix_executes_every_declared_cell: acceptance/test_v1_ingestion.py::test_lifecycle_matrix_executes_every_declared_cell: failure during setup",
+        "test_v1_ingestion.py::test_retiring_supports_one_at_a_time_recomputes_then_withdraws: acceptance/test_v1_ingestion.py::test_retiring_supports_one_at_a_time_recomputes_then_withdraws: failure during setup",
+        "test_v1_ingestion.py::test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors: acceptance/test_v1_ingestion.py::test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors: failure during setup",
+        "test_v1_ingestion.py::test_misextraction_notice_is_approver_owned_and_withholds_only: acceptance/test_v1_ingestion.py::test_misextraction_notice_is_approver_owned_and_withholds_only: failure during setup",
+        "test_v1_ingestion.py::test_never_true_requires_subject_matter_authority: acceptance/test_v1_ingestion.py::test_never_true_requires_subject_matter_authority: failure during setup",
+        "test_v1_ingestion.py::test_origin_trust_class_is_derived_and_bounds_trusted_direction: acceptance/test_v1_ingestion.py::test_origin_trust_class_is_derived_and_bounds_trusted_direction: failure during setup",
+        "11 catalogued obligation(s) executed without being evaluated: V-1.adapters-native declared by test_v1_ingestion.py::test_all_ten_adapters_run_against_native_sources but never evaluated"
+      ],
+      "not_run_nodes": 0,
+      "product_channel": "PASS",
+      "product_reasons": [],
+      "reported": "INVALID_HARNESS"
+    },
+    "V-10": {
+      "executed_nodes": 8,
+      "expected_nodes": 8,
+      "gate": "V-10",
+      "independently_content_addressed_product_observations": [
+        "610ae04711e9f308edd1110f8dcc48b183cf97ca266d6e8c2cc588d3e9e9a59e",
+        "e1d9a41f5600129061c332c2f05c54b4f086a8b59c9c7fdc39ae4f5e4f0142b3",
+        "c6687b78797e34414c2bf230a18b720494690c05b08a15346807057c62b6a0b3",
+        "092c54ea8b34bac5cdfba668a4936c0fd42377dfc9bae1c86b3d3ffb24357f4d",
+        "610ae04711e9f308edd1110f8dcc48b183cf97ca266d6e8c2cc588d3e9e9a59e",
+        "e1d9a41f5600129061c332c2f05c54b4f086a8b59c9c7fdc39ae4f5e4f0142b3",
+        "c6687b78797e34414c2bf230a18b720494690c05b08a15346807057c62b6a0b3",
+        "092c54ea8b34bac5cdfba668a4936c0fd42377dfc9bae1c86b3d3ffb24357f4d"
+      ],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "acceptance/test_v10_protocol.py::test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task: unexpected NameError",
+        "acceptance/test_v10_protocol.py::test_published_conclusion_uses_only_the_licensed_claim: unexpected NameError",
+        "test_v10_protocol.py::test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task: acceptance/test_v10_protocol.py::test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task: unexpected NameError",
+        "test_v10_protocol.py::test_published_conclusion_uses_only_the_licensed_claim: acceptance/test_v10_protocol.py::test_published_conclusion_uses_only_the_licensed_claim: unexpected NameError",
+        "2 catalogued obligation(s) executed without being evaluated: V10.claim declared by test_v10_protocol.py::test_published_conclusion_uses_only_the_licensed_claim but never evaluated"
+      ],
+      "not_run_nodes": 0,
+      "product_channel": "PRODUCT_FAILURE",
+      "product_reasons": [
+        "acceptance/test_v10_protocol.py::test_experiment_freeze_refuses_before_gates_census_power_and_budget: ProductFailure",
+        "acceptance/test_v10_protocol.py::test_launch_without_a_signed_census_row_is_refused: ProductFailure",
+        "acceptance/test_v10_protocol.py::test_human_bytes_after_freeze_must_be_zero: ProductFailure",
+        "acceptance/test_v10_protocol.py::test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised: ProductFailure",
+        "test_v10_protocol.py::test_experiment_freeze_refuses_before_gates_census_power_and_budget: acceptance/test_v10_protocol.py::test_experiment_freeze_refuses_before_gates_census_power_and_budget: ProductFailure",
+        "test_v10_protocol.py::test_launch_without_a_signed_census_row_is_refused: acceptance/test_v10_protocol.py::test_launch_without_a_signed_census_row_is_refused: ProductFailure",
+        "test_v10_protocol.py::test_human_bytes_after_freeze_must_be_zero: acceptance/test_v10_protocol.py::test_human_bytes_after_freeze_must_be_zero: ProductFailure",
+        "test_v10_protocol.py::test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised: acceptance/test_v10_protocol.py::test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised: ProductFailure"
+      ],
+      "reported": "PRODUCT_FAILURE"
+    },
+    "V-2": {
+      "executed_nodes": 14,
+      "expected_nodes": 14,
+      "gate": "V-2",
+      "independently_content_addressed_product_observations": [],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "acceptance/test_v2_classification.py::test_five_pinned_runs_lower_bound_meets_macro_f1_and_shared_precision: failure during setup",
+        "acceptance/test_v2_classification.py::test_excluded_calibration_corpus_gates_measurement: failure during setup",
+        "acceptance/test_v2_classification.py::test_mixed_messages_atomise_rather_than_take_one_label: failure during setup",
+        "acceptance/test_v2_classification.py::test_exact_match_atomization_and_per_label_metrics: failure during setup",
+        "acceptance/test_v2_classification.py::test_low_confidence_shared_label_demotes_to_none_or_unknown: failure during setup",
+        "acceptance/test_v2_classification.py::test_independent_candidates_with_distinct_minimized_bytes: failure during setup",
+        "acceptance/test_v2_classification.py::test_partial_fanout_failure_does_not_roll_back_committed_destination: failure during setup",
+        "acceptance/test_v2_classification.py::test_retry_returns_original_receipt_without_duplication: failure during setup",
+        "acceptance/test_v2_classification.py::test_expired_closing_deadline_emits_one_signed_orphan_abandoned: failure during setup",
+        "acceptance/test_v2_classification.py::test_kill_at_every_transition_then_concurrent_retry: failure during setup",
+        "acceptance/test_v2_classification.py::test_no_cross_store_transaction_exists: failure during setup",
+        "acceptance/test_v2_classification.py::test_no_accept_all_path_is_reachable: failure during setup",
+        "test_v2_classification.py::test_five_pinned_runs_lower_bound_meets_macro_f1_and_shared_precision: acceptance/test_v2_classification.py::test_five_pinned_runs_lower_bound_meets_macro_f1_and_shared_precision: failure during setup",
+        "test_v2_classification.py::test_excluded_calibration_corpus_gates_measurement: acceptance/test_v2_classification.py::test_excluded_calibration_corpus_gates_measurement: failure during setup",
+        "test_v2_classification.py::test_mixed_messages_atomise_rather_than_take_one_label: acceptance/test_v2_classification.py::test_mixed_messages_atomise_rather_than_take_one_label: failure during setup",
+        "test_v2_classification.py::test_exact_match_atomization_and_per_label_metrics: acceptance/test_v2_classification.py::test_exact_match_atomization_and_per_label_metrics: failure during setup",
+        "test_v2_classification.py::test_low_confidence_shared_label_demotes_to_none_or_unknown: acceptance/test_v2_classification.py::test_low_confidence_shared_label_demotes_to_none_or_unknown: failure during setup",
+        "test_v2_classification.py::test_independent_candidates_with_distinct_minimized_bytes: acceptance/test_v2_classification.py::test_independent_candidates_with_distinct_minimized_bytes: failure during setup",
+        "test_v2_classification.py::test_partial_fanout_failure_does_not_roll_back_committed_destination: acceptance/test_v2_classification.py::test_partial_fanout_failure_does_not_roll_back_committed_destination: failure during setup",
+        "test_v2_classification.py::test_retry_returns_original_receipt_without_duplication: acceptance/test_v2_classification.py::test_retry_returns_original_receipt_without_duplication: failure during setup",
+        "test_v2_classification.py::test_expired_closing_deadline_emits_one_signed_orphan_abandoned: acceptance/test_v2_classification.py::test_expired_closing_deadline_emits_one_signed_orphan_abandoned: failure during setup",
+        "test_v2_classification.py::test_kill_at_every_transition_then_concurrent_retry: acceptance/test_v2_classification.py::test_kill_at_every_transition_then_concurrent_retry: failure during setup",
+        "test_v2_classification.py::test_no_cross_store_transaction_exists: acceptance/test_v2_classification.py::test_no_cross_store_transaction_exists: failure during setup",
+        "test_v2_classification.py::test_no_accept_all_path_is_reachable: acceptance/test_v2_classification.py::test_no_accept_all_path_is_reachable: failure during setup",
+        "12 catalogued obligation(s) executed without being evaluated: V-2.atomisation declared by test_v2_classification.py::test_mixed_messages_atomise_rather_than_take_one_label but never evaluated"
+      ],
+      "not_run_nodes": 0,
+      "product_channel": "PASS",
+      "product_reasons": [],
+      "reported": "INVALID_HARNESS"
+    },
+    "V-3": {
+      "executed_nodes": 12,
+      "expected_nodes": 14,
+      "gate": "V-3",
+      "independently_content_addressed_product_observations": [],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "open instrument debt 21: Auxiliary corpus rights grant is unsigned",
+        "acceptance/test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe: failure during setup",
+        "acceptance/test_v3_privacy.py::test_positive_control_precedes_and_licenses_the_clean_assertion: failure during setup",
+        "acceptance/test_v3_privacy.py::test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle: failure during setup",
+        "acceptance/test_v3_privacy.py::test_shared_writer_has_no_personal_capability: failure during setup",
+        "acceptance/test_v3_privacy.py::test_sandbox_denies_personal_root_for_shared_processes: failure during setup",
+        "acceptance/test_v3_privacy.py::test_inherited_personal_descriptor_fails_startup: failure during setup",
+        "acceptance/test_v3_privacy.py::test_process_artifacts_contain_no_personal_root_canary: failure during setup",
+        "acceptance/test_v3_privacy.py::test_hard_blocking_taint_is_never_cleared_by_deidentification: failure during setup",
+        "acceptance/test_v3_privacy.py::test_paraphrase_only_output_stays_private_by_taint_policy: failure during setup",
+        "acceptance/test_v3_privacy.py::test_egress_to_unnamed_processor_fails_with_typed_refusal: failure during setup",
+        "acceptance/test_v3_privacy.py::test_v3_claim_is_digest_qualified_and_never_unqualified: failure during setup",
+        "acceptance/test_v3_privacy.py::test_reconstructor_findings_are_independent_and_content_addressed: failure during setup",
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe: acceptance/test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe: failure during setup",
+        "test_v3_privacy.py::test_positive_control_precedes_and_licenses_the_clean_assertion: acceptance/test_v3_privacy.py::test_positive_control_precedes_and_licenses_the_clean_assertion: failure during setup",
+        "test_v3_privacy.py::test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle: acceptance/test_v3_privacy.py::test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle: failure during setup",
+        "test_v3_privacy.py::test_shared_writer_has_no_personal_capability: acceptance/test_v3_privacy.py::test_shared_writer_has_no_personal_capability: failure during setup",
+        "test_v3_privacy.py::test_sandbox_denies_personal_root_for_shared_processes: acceptance/test_v3_privacy.py::test_sandbox_denies_personal_root_for_shared_processes: failure during setup",
+        "test_v3_privacy.py::test_inherited_personal_descriptor_fails_startup: acceptance/test_v3_privacy.py::test_inherited_personal_descriptor_fails_startup: failure during setup",
+        "test_v3_privacy.py::test_process_artifacts_contain_no_personal_root_canary: acceptance/test_v3_privacy.py::test_process_artifacts_contain_no_personal_root_canary: failure during setup",
+        "test_v3_privacy.py::test_hard_blocking_taint_is_never_cleared_by_deidentification: acceptance/test_v3_privacy.py::test_hard_blocking_taint_is_never_cleared_by_deidentification: failure during setup",
+        "test_v3_privacy.py::test_paraphrase_only_output_stays_private_by_taint_policy: acceptance/test_v3_privacy.py::test_paraphrase_only_output_stays_private_by_taint_policy: failure during setup",
+        "test_v3_privacy.py::test_egress_to_unnamed_processor_fails_with_typed_refusal: acceptance/test_v3_privacy.py::test_egress_to_unnamed_processor_fails_with_typed_refusal: failure during setup",
+        "test_v3_privacy.py::test_v3_claim_is_digest_qualified_and_never_unqualified: acceptance/test_v3_privacy.py::test_v3_claim_is_digest_qualified_and_never_unqualified: failure during setup",
+        "test_v3_privacy.py::test_reconstructor_findings_are_independent_and_content_addressed: acceptance/test_v3_privacy.py::test_reconstructor_findings_are_independent_and_content_addressed: failure during setup",
+        "12 catalogued obligation(s) executed without being evaluated: V-3.attack-families declared by test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe but never evaluated"
+      ],
+      "not_run_nodes": 2,
+      "product_channel": "NOT_RUN",
+      "product_reasons": [
+        "not every expected node executed; the product channel cannot resolve"
+      ],
+      "reported": "INVALID_HARNESS"
+    },
+    "V-4": {
+      "executed_nodes": 9,
+      "expected_nodes": 11,
+      "gate": "V-4",
+      "independently_content_addressed_product_observations": [],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "acceptance/test_v4_maintenance.py::test_repeated_incremental_cycle_is_restart_safe_and_bounded: failure during setup",
+        "acceptance/test_v4_maintenance.py::test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event: failure during setup",
+        "acceptance/test_v4_maintenance.py::test_manifest_comparison_classifies_lag_incomplete_and_expiry: failure during setup",
+        "acceptance/test_v4_maintenance.py::test_case_crlf_normalisation_and_uppercase_alias_are_refused: failure during setup",
+        "acceptance/test_v4_maintenance.py::test_rebuild_is_deterministic_over_frozen_inputs: failure during setup",
+        "acceptance/test_v4_maintenance.py::test_omitting_as_of_breaks_determinism_and_is_refused: failure during setup",
+        "acceptance/test_v4_maintenance.py::test_pre_revocation_replay_returns_history_without_readmission: failure during setup",
+        "acceptance/test_v4_maintenance.py::test_linked_worktrees_serialize_on_one_common_dir_lock: failure during setup",
+        "test_v4_maintenance.py::test_repeated_incremental_cycle_is_restart_safe_and_bounded: acceptance/test_v4_maintenance.py::test_repeated_incremental_cycle_is_restart_safe_and_bounded: failure during setup",
+        "test_v4_maintenance.py::test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event: acceptance/test_v4_maintenance.py::test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event: failure during setup",
+        "test_v4_maintenance.py::test_manifest_comparison_classifies_lag_incomplete_and_expiry: acceptance/test_v4_maintenance.py::test_manifest_comparison_classifies_lag_incomplete_and_expiry: failure during setup",
+        "test_v4_maintenance.py::test_case_crlf_normalisation_and_uppercase_alias_are_refused: acceptance/test_v4_maintenance.py::test_case_crlf_normalisation_and_uppercase_alias_are_refused: failure during setup",
+        "test_v4_maintenance.py::test_rebuild_is_deterministic_over_frozen_inputs: acceptance/test_v4_maintenance.py::test_rebuild_is_deterministic_over_frozen_inputs: failure during setup",
+        "test_v4_maintenance.py::test_omitting_as_of_breaks_determinism_and_is_refused: acceptance/test_v4_maintenance.py::test_omitting_as_of_breaks_determinism_and_is_refused: failure during setup",
+        "test_v4_maintenance.py::test_pre_revocation_replay_returns_history_without_readmission: acceptance/test_v4_maintenance.py::test_pre_revocation_replay_returns_history_without_readmission: failure during setup",
+        "test_v4_maintenance.py::test_linked_worktrees_serialize_on_one_common_dir_lock: acceptance/test_v4_maintenance.py::test_linked_worktrees_serialize_on_one_common_dir_lock: failure during setup",
+        "8 catalogued obligation(s) executed without being evaluated: V-4.as-of declared by test_v4_maintenance.py::test_omitting_as_of_breaks_determinism_and_is_refused but never evaluated"
+      ],
+      "not_run_nodes": 2,
+      "product_channel": "NOT_RUN",
+      "product_reasons": [
+        "not every expected node executed; the product channel cannot resolve"
+      ],
+      "reported": "INVALID_HARNESS"
+    },
+    "V-5": {
+      "executed_nodes": 7,
+      "expected_nodes": 7,
+      "gate": "V-5",
+      "independently_content_addressed_product_observations": [],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "acceptance/test_v5_temporal.py::test_frozen_temporal_case: failure during setup",
+        "acceptance/test_v5_temporal.py::test_newest_wins_is_not_the_rule: failure during setup",
+        "acceptance/test_v5_temporal.py::test_rejected_pr_does_not_displace_current_adr: failure during setup",
+        "acceptance/test_v5_temporal.py::test_copied_chorus_does_not_outweigh_one_independent_decision: failure during setup",
+        "acceptance/test_v5_temporal.py::test_scope_bounds_authority_rather_than_prestige: failure during setup",
+        "acceptance/test_v5_temporal.py::test_runtime_config_wins_diagnosis_without_acquiring_architecture_authority: failure during setup",
+        "acceptance/test_v5_temporal.py::test_unregistered_environment_is_untrusted_with_a_steward_unknown: failure during setup",
+        "test_v5_temporal.py::test_frozen_temporal_case: acceptance/test_v5_temporal.py::test_frozen_temporal_case: failure during setup",
+        "test_v5_temporal.py::test_newest_wins_is_not_the_rule: acceptance/test_v5_temporal.py::test_newest_wins_is_not_the_rule: failure during setup",
+        "test_v5_temporal.py::test_rejected_pr_does_not_displace_current_adr: acceptance/test_v5_temporal.py::test_rejected_pr_does_not_displace_current_adr: failure during setup",
+        "test_v5_temporal.py::test_copied_chorus_does_not_outweigh_one_independent_decision: acceptance/test_v5_temporal.py::test_copied_chorus_does_not_outweigh_one_independent_decision: failure during setup",
+        "test_v5_temporal.py::test_scope_bounds_authority_rather_than_prestige: acceptance/test_v5_temporal.py::test_scope_bounds_authority_rather_than_prestige: failure during setup",
+        "test_v5_temporal.py::test_runtime_config_wins_diagnosis_without_acquiring_architecture_authority: acceptance/test_v5_temporal.py::test_runtime_config_wins_diagnosis_without_acquiring_architecture_authority: failure during setup",
+        "test_v5_temporal.py::test_unregistered_environment_is_untrusted_with_a_steward_unknown: acceptance/test_v5_temporal.py::test_unregistered_environment_is_untrusted_with_a_steward_unknown: failure during setup",
+        "7 catalogued obligation(s) executed without being evaluated: V-5.cases declared by test_v5_temporal.py::test_frozen_temporal_case but never evaluated"
+      ],
+      "not_run_nodes": 0,
+      "product_channel": "PASS",
+      "product_reasons": [],
+      "reported": "INVALID_HARNESS"
+    },
+    "V-6": {
+      "executed_nodes": 6,
+      "expected_nodes": 6,
+      "gate": "V-6",
+      "independently_content_addressed_product_observations": [],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "acceptance/test_v6_authority.py::test_service_starts_and_registers_a_named_chief_architect: failure during setup",
+        "acceptance/test_v6_authority.py::test_high_distortion_unknown_sends_a_targeted_question_and_withholds_guidance: failure during setup",
+        "acceptance/test_v6_authority.py::test_signed_answer_from_a_separate_process_materially_changes_the_decision: failure during setup",
+        "acceptance/test_v6_authority.py::test_another_roles_signature_is_rejected: failure during setup",
+        "acceptance/test_v6_authority.py::test_unavailable_authority_yields_declared_degraded_policy: failure during setup",
+        "acceptance/test_v6_authority.py::test_frozen_answer_service_refuses_the_third_call_and_returns_no_code: failure during setup",
+        "test_v6_authority.py::test_service_starts_and_registers_a_named_chief_architect: acceptance/test_v6_authority.py::test_service_starts_and_registers_a_named_chief_architect: failure during setup",
+        "test_v6_authority.py::test_high_distortion_unknown_sends_a_targeted_question_and_withholds_guidance: acceptance/test_v6_authority.py::test_high_distortion_unknown_sends_a_targeted_question_and_withholds_guidance: failure during setup",
+        "test_v6_authority.py::test_signed_answer_from_a_separate_process_materially_changes_the_decision: acceptance/test_v6_authority.py::test_signed_answer_from_a_separate_process_materially_changes_the_decision: failure during setup",
+        "test_v6_authority.py::test_another_roles_signature_is_rejected: acceptance/test_v6_authority.py::test_another_roles_signature_is_rejected: failure during setup",
+        "test_v6_authority.py::test_unavailable_authority_yields_declared_degraded_policy: acceptance/test_v6_authority.py::test_unavailable_authority_yields_declared_degraded_policy: failure during setup",
+        "test_v6_authority.py::test_frozen_answer_service_refuses_the_third_call_and_returns_no_code: acceptance/test_v6_authority.py::test_frozen_answer_service_refuses_the_third_call_and_returns_no_code: failure during setup",
+        "6 catalogued obligation(s) executed without being evaluated: V-6.call-ceiling declared by test_v6_authority.py::test_frozen_answer_service_refuses_the_third_call_and_returns_no_code but never evaluated"
+      ],
+      "not_run_nodes": 0,
+      "product_channel": "PASS",
+      "product_reasons": [],
+      "reported": "INVALID_HARNESS"
+    },
+    "V-7": {
+      "executed_nodes": 9,
+      "expected_nodes": 9,
+      "gate": "V-7",
+      "independently_content_addressed_product_observations": [
+        "e714cadeb9564b0d5b89951b6d22dd726713708d52424c48b5109c880334d9e1",
+        "cc446e7a23a6b0b585c536117759d5a5f533a15f3255d8c0a8f4d56cb74d890d",
+        "6f40e9e492dddc4e30f21836f9fa22bf3d4308fca2f4c39366b40124db19a915",
+        "a6b9dbf784cc758a2af3d800fcb1de1069d51888746f16b2ac5aa1395346e288",
+        "f0fb8f398811da0902522ea38d7bd60c4bd216de1ab730f5ccf5797d28fef027",
+        "990eec413474341d00182097ee9291a0050631d1347a0bc7af28bb9a35a0b903",
+        "4667c517be34bc145edb4ec3b4597e53c1663f47f491056e7839776c2fb5f64b",
+        "fd0898138f73badd4b2fc866a9d61ac64ecd5f5060c8d5fb9379896fb4c31218",
+        "c0c1c6bc60bc83095db93c0b8a5f6f3e49d55f8c22f4f3a82cf004cd78010c7d",
+        "e714cadeb9564b0d5b89951b6d22dd726713708d52424c48b5109c880334d9e1",
+        "cc446e7a23a6b0b585c536117759d5a5f533a15f3255d8c0a8f4d56cb74d890d",
+        "6f40e9e492dddc4e30f21836f9fa22bf3d4308fca2f4c39366b40124db19a915",
+        "a6b9dbf784cc758a2af3d800fcb1de1069d51888746f16b2ac5aa1395346e288",
+        "f0fb8f398811da0902522ea38d7bd60c4bd216de1ab730f5ccf5797d28fef027",
+        "990eec413474341d00182097ee9291a0050631d1347a0bc7af28bb9a35a0b903",
+        "4667c517be34bc145edb4ec3b4597e53c1663f47f491056e7839776c2fb5f64b",
+        "fd0898138f73badd4b2fc866a9d61ac64ecd5f5060c8d5fb9379896fb4c31218",
+        "c0c1c6bc60bc83095db93c0b8a5f6f3e49d55f8c22f4f3a82cf004cd78010c7d"
+      ],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "9 catalogued obligation(s) executed without being evaluated: V-7.candidate-set declared by test_v7_projection.py::test_frozen_candidate_set_contains_every_declared_role but never evaluated"
+      ],
+      "not_run_nodes": 0,
+      "product_channel": "PRODUCT_FAILURE",
+      "product_reasons": [
+        "acceptance/test_v7_projection.py::test_frozen_candidate_set_contains_every_declared_role: ProductFailure",
+        "acceptance/test_v7_projection.py::test_selection_changes_when_working_set_ids_change: ProductFailure",
+        "acceptance/test_v7_projection.py::test_duplicates_do_not_crowd_out_the_high_distortion_invariant: ProductFailure",
+        "acceptance/test_v7_projection.py::test_marginal_value_is_recomputed_against_the_current_set: ProductFailure",
+        "acceptance/test_v7_projection.py::test_complementarity_is_visible_and_redundancy_is_penalised: ProductFailure",
+        "acceptance/test_v7_projection.py::test_loop_stops_on_net_marginal_value_not_a_filled_window: ProductFailure",
+        "acceptance/test_v7_projection.py::test_query_log_records_every_declared_field: ProductFailure",
+        "acceptance/test_v7_projection.py::test_stale_fact_is_withheld_and_produces_an_owned_unknown: ProductFailure",
+        "acceptance/test_v7_projection.py::test_no_calibrated_causal_voi_claim_is_made: ProductFailure",
+        "test_v7_projection.py::test_frozen_candidate_set_contains_every_declared_role: acceptance/test_v7_projection.py::test_frozen_candidate_set_contains_every_declared_role: ProductFailure",
+        "test_v7_projection.py::test_selection_changes_when_working_set_ids_change: acceptance/test_v7_projection.py::test_selection_changes_when_working_set_ids_change: ProductFailure",
+        "test_v7_projection.py::test_duplicates_do_not_crowd_out_the_high_distortion_invariant: acceptance/test_v7_projection.py::test_duplicates_do_not_crowd_out_the_high_distortion_invariant: ProductFailure",
+        "test_v7_projection.py::test_marginal_value_is_recomputed_against_the_current_set: acceptance/test_v7_projection.py::test_marginal_value_is_recomputed_against_the_current_set: ProductFailure",
+        "test_v7_projection.py::test_complementarity_is_visible_and_redundancy_is_penalised: acceptance/test_v7_projection.py::test_complementarity_is_visible_and_redundancy_is_penalised: ProductFailure",
+        "test_v7_projection.py::test_loop_stops_on_net_marginal_value_not_a_filled_window: acceptance/test_v7_projection.py::test_loop_stops_on_net_marginal_value_not_a_filled_window: ProductFailure",
+        "test_v7_projection.py::test_query_log_records_every_declared_field: acceptance/test_v7_projection.py::test_query_log_records_every_declared_field: ProductFailure",
+        "test_v7_projection.py::test_stale_fact_is_withheld_and_produces_an_owned_unknown: acceptance/test_v7_projection.py::test_stale_fact_is_withheld_and_produces_an_owned_unknown: ProductFailure",
+        "test_v7_projection.py::test_no_calibrated_causal_voi_claim_is_made: acceptance/test_v7_projection.py::test_no_calibrated_causal_voi_claim_is_made: ProductFailure"
+      ],
+      "reported": "PRODUCT_FAILURE"
+    },
+    "V-8": {
+      "executed_nodes": 12,
+      "expected_nodes": 12,
+      "gate": "V-8",
+      "independently_content_addressed_product_observations": [],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "acceptance/test_v8_company_refs.py::test_fresh_clone_resolves_the_reference_without_copying_prose: failure during setup",
+        "acceptance/test_v8_company_refs.py::test_reference_carries_exactly_the_company_owned_field_set: failure during setup",
+        "acceptance/test_v8_company_refs.py::test_stricter_of_company_and_local_class_controls_freshness: failure during setup",
+        "acceptance/test_v8_company_refs.py::test_only_company_steward_may_sign_a_relaxation: failure during setup",
+        "acceptance/test_v8_company_refs.py::test_maintainer_may_request_but_not_mint_an_exception: failure during setup",
+        "acceptance/test_v8_company_refs.py::test_digest_mismatch_attribution_truth_table: failure during setup",
+        "acceptance/test_v8_company_refs.py::test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts: failure during setup",
+        "acceptance/test_v8_company_refs.py::test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change: failure during setup",
+        "acceptance/test_v8_company_refs.py::test_publish_manifest_enforces_monotonic_counts: failure during setup",
+        "acceptance/test_v8_company_refs.py::test_company_emits_its_own_observation_expired_event: failure during setup",
+        "acceptance/test_v8_company_refs.py::test_cache_disagreement_truth_table: failure during setup",
+        "acceptance/test_v8_company_refs.py::test_uncertified_codebase_only_mode_emits_counts_and_status_only: failure during setup",
+        "test_v8_company_refs.py::test_fresh_clone_resolves_the_reference_without_copying_prose: acceptance/test_v8_company_refs.py::test_fresh_clone_resolves_the_reference_without_copying_prose: failure during setup",
+        "test_v8_company_refs.py::test_reference_carries_exactly_the_company_owned_field_set: acceptance/test_v8_company_refs.py::test_reference_carries_exactly_the_company_owned_field_set: failure during setup",
+        "test_v8_company_refs.py::test_stricter_of_company_and_local_class_controls_freshness: acceptance/test_v8_company_refs.py::test_stricter_of_company_and_local_class_controls_freshness: failure during setup",
+        "test_v8_company_refs.py::test_only_company_steward_may_sign_a_relaxation: acceptance/test_v8_company_refs.py::test_only_company_steward_may_sign_a_relaxation: failure during setup",
+        "test_v8_company_refs.py::test_maintainer_may_request_but_not_mint_an_exception: acceptance/test_v8_company_refs.py::test_maintainer_may_request_but_not_mint_an_exception: failure during setup",
+        "test_v8_company_refs.py::test_digest_mismatch_attribution_truth_table: acceptance/test_v8_company_refs.py::test_digest_mismatch_attribution_truth_table: failure during setup",
+        "test_v8_company_refs.py::test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts: acceptance/test_v8_company_refs.py::test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts: failure during setup",
+        "test_v8_company_refs.py::test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change: acceptance/test_v8_company_refs.py::test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change: failure during setup",
+        "test_v8_company_refs.py::test_publish_manifest_enforces_monotonic_counts: acceptance/test_v8_company_refs.py::test_publish_manifest_enforces_monotonic_counts: failure during setup",
+        "test_v8_company_refs.py::test_company_emits_its_own_observation_expired_event: acceptance/test_v8_company_refs.py::test_company_emits_its_own_observation_expired_event: failure during setup",
+        "test_v8_company_refs.py::test_cache_disagreement_truth_table: acceptance/test_v8_company_refs.py::test_cache_disagreement_truth_table: failure during setup",
+        "test_v8_company_refs.py::test_uncertified_codebase_only_mode_emits_counts_and_status_only: acceptance/test_v8_company_refs.py::test_uncertified_codebase_only_mode_emits_counts_and_status_only: failure during setup",
+        "12 catalogued obligation(s) executed without being evaluated: V-8.cache-table declared by test_v8_company_refs.py::test_cache_disagreement_truth_table but never evaluated"
+      ],
+      "not_run_nodes": 0,
+      "product_channel": "PASS",
+      "product_reasons": [],
+      "reported": "INVALID_HARNESS"
+    },
+    "V-9": {
+      "executed_nodes": 10,
+      "expected_nodes": 13,
+      "gate": "V-9",
+      "independently_content_addressed_product_observations": [],
+      "instrument_channel": "INVALID_HARNESS",
+      "instrument_reasons": [
+        "acceptance/test_v9_fatigue.py::test_four_total_per_hour_shared_across_destinations: failure during setup",
+        "acceptance/test_v9_fatigue.py::test_reset_clears_only_the_consecutive_counter_once_per_hour: failure during setup",
+        "acceptance/test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction: failure during setup",
+        "acceptance/test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window: failure during setup",
+        "acceptance/test_v9_fatigue.py::test_blinded_operator_exercise_accuracy_and_median_time: HarnessInvalid",
+        "acceptance/test_v9_host_lifecycle.py::test_hooks_plan_is_read_only_and_install_requires_native_approval[codex]: failure during setup",
+        "acceptance/test_v9_host_lifecycle.py::test_hooks_plan_is_read_only_and_install_requires_native_approval[claude]: failure during setup",
+        "acceptance/test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal[codex]: failure during setup",
+        "acceptance/test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal[claude]: failure during setup",
+        "acceptance/test_v9_host_lifecycle.py::test_matched_conversations_produce_identical_canonical_payloads: failure during setup",
+        "acceptance/test_v9_host_lifecycle.py::test_blackholed_company_endpoint_degrades_loudly_inside_the_budget[codex]: failure during setup",
+        "acceptance/test_v9_host_lifecycle.py::test_blackholed_company_endpoint_degrades_loudly_inside_the_budget[claude]: failure during setup",
+        "acceptance/test_v9_host_lifecycle.py::test_worktrees_share_uuid_while_nested_roots_require_their_own_certificate: failure during setup",
+        "test_v9_fatigue.py::test_four_total_per_hour_shared_across_destinations: acceptance/test_v9_fatigue.py::test_four_total_per_hour_shared_across_destinations: failure during setup",
+        "test_v9_fatigue.py::test_reset_clears_only_the_consecutive_counter_once_per_hour: acceptance/test_v9_fatigue.py::test_reset_clears_only_the_consecutive_counter_once_per_hour: failure during setup",
+        "test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction: acceptance/test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction: failure during setup",
+        "test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window: acceptance/test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window: failure during setup",
+        "test_v9_fatigue.py::test_blinded_operator_exercise_accuracy_and_median_time: acceptance/test_v9_fatigue.py::test_blinded_operator_exercise_accuracy_and_median_time: HarnessInvalid",
+        "test_v9_host_lifecycle.py::test_hooks_plan_is_read_only_and_install_requires_native_approval: acceptance/test_v9_host_lifecycle.py::test_hooks_plan_is_read_only_and_install_requires_native_approval[codex]: failure during setup; acceptance/test_v9_host_lifecycle.py::test_hooks_plan_is_read_only_and_install_requires_native_approval[claude]: failure during setup",
+        "test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal: acceptance/test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal[codex]: failure during setup; acceptance/test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal[claude]: failure during setup",
+        "test_v9_host_lifecycle.py::test_matched_conversations_produce_identical_canonical_payloads: acceptance/test_v9_host_lifecycle.py::test_matched_conversations_produce_identical_canonical_payloads: failure during setup",
+        "test_v9_host_lifecycle.py::test_blackholed_company_endpoint_degrades_loudly_inside_the_budget: acceptance/test_v9_host_lifecycle.py::test_blackholed_company_endpoint_degrades_loudly_inside_the_budget[codex]: failure during setup; acceptance/test_v9_host_lifecycle.py::test_blackholed_company_endpoint_degrades_loudly_inside_the_budget[claude]: failure during setup",
+        "test_v9_host_lifecycle.py::test_worktrees_share_uuid_while_nested_roots_require_their_own_certificate: acceptance/test_v9_host_lifecycle.py::test_worktrees_share_uuid_while_nested_roots_require_their_own_certificate: failure during setup",
+        "10 catalogued obligation(s) executed without being evaluated: V-9.blackhole declared by test_v9_host_lifecycle.py::test_blackholed_company_endpoint_degrades_loudly_inside_the_budget but never evaluated"
+      ],
+      "not_run_nodes": 3,
+      "product_channel": "NOT_RUN",
+      "product_reasons": [
+        "not every expected node executed; the product channel cannot resolve"
+      ],
+      "reported": "INVALID_HARNESS"
+    },
+    "VERDICT": {
+      "executed_nodes": 0,
+      "expected_nodes": 0,
+      "gate": "VERDICT",
+      "independently_content_addressed_product_observations": [
+        "64543d79b963009e2d04701ba1b1cb4152a2e89d54b835aa931b26e1f1767a45",
+        "64543d79b963009e2d04701ba1b1cb4152a2e89d54b835aa931b26e1f1767a45"
+      ],
+      "instrument_channel": "NOT_RUN",
+      "instrument_reasons": [],
+      "not_run_nodes": 0,
+      "product_channel": "PRODUCT_FAILURE",
+      "product_reasons": [
+        "acceptance/test_verdict_composition.py::test_product_verdict_states_are_exactly_the_ratified_set: ProductFailure",
+        "test_verdict_composition.py::test_product_verdict_states_are_exactly_the_ratified_set: acceptance/test_verdict_composition.py::test_product_verdict_states_are_exactly_the_ratified_set: ProductFailure"
+      ],
+      "reported": "PRODUCT_FAILURE"
+    }
+  },
+  "instrument_debt_digest": "99d8a395782c8760aa3cb55821b5833603775fdc8e6b24c8d3a5c8ad7fad6121",
+  "kill_ledger_digest": "",
+  "kill_ledger_sound": false,
+  "mutation": "",
+  "nodes": [
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_backreference_integrity.py::test_every_gate_has_a_positive_and_negative_control_or_a_frozen_mutation",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_backreference_integrity.py::test_every_gate_v1_through_v10_has_backreferenced_coverage",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_backreference_integrity.py::test_every_reference_resolves_against_the_ratified_bytes",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_backreference_integrity.py::test_every_test_carries_at_least_one_authority_backreference",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_backreference_integrity.py::test_no_reference_cites_an_unratified_artifact",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_backreference_integrity.py::test_the_lane_reads_no_implementation_and_issues_no_verdict",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_a_planter_that_never_reaches_its_seam_is_invalid_not_a_kill",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_blinding_an_unknown_clause_is_an_instrument_error",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_catalog_json_mirror_is_current",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_each_kill_lands_in_the_declared_fail_closed_channel",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_catalogued_node_exists_in_the_suite",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_detector_mutation_actually_blinds",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_detector_mutation_lets_its_positive_control_escape",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_negative_control_stays_clean",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_obligation_declares_surfaces_vectors_and_fail_closed",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_obligation_freezes_all_four_elements",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_obligation_has_frozen_raw_controls_and_a_bound_product_mutation",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_obligation_quotes_the_ratified_bytes",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_planter_mutates_raw_state_before_the_product_runs",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_positive_control_is_accepted",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_product_mutation_has_an_executable_pre_execution_planter",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_product_mutation_is_killed",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_every_required_gate_has_catalogued_obligations",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_catalog_and_kill_ledger.py::test_kill_ledger_is_total_and_content_addressed",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_control_policy.py::test_every_permitted_fault_schedule_declares_a_witness",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_control_policy.py::test_harness_only_variables_never_reach_the_product",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_control_policy.py::test_no_acceptance_prefixed_name_survives_anywhere_in_test_bodies",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_control_policy.py::test_no_committed_fixture_that_reaches_the_product_carries_gold",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_control_policy.py::test_no_semantic_case_identity_reaches_the_product_on_any_channel",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_control_policy.py::test_no_semantic_control_reaches_the_product",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_author_identity_is_scrubbed_from_projected_context",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_data_withdrawal_retires_a_result_without_erasing_history",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_factory_method_evidence_is_labelled_method_poc",
+      "origin": "product",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_forbidden_claims_are_enumerated_and_checkable",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_forbidden_fields_are_detected_anywhere_in_the_packet",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_only_ciphertext_metadata_reaches_the_manifest",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "unexpected TypeError"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_packet_root_is_private_and_outside_git",
+      "origin": "product",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_packet_schema_requires_every_declared_section",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_permanent_failure_rows_reject_extra_and_missing_keys",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_rebuild_scope_excludes_expired_raw_bodies",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_repository_provenance_is_frozen_per_task",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_retention_and_incident_hold_fields_are_enforced",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "unexpected NameError"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "EVIDENCE",
+      "node": "acceptance/test_evidence_packet.py::test_sanitised_report_claim_discipline_is_checkable",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_blinding_failure_arithmetic",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_call_envelope_formula_reproduces_the_frozen_table",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_canonicaliser_enforces_the_frozen_bounds",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_catalog_must_fail_nodes_resolve_to_real_tests",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_decoded_views_preserve_surrounding_context",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_decoys_do_not_trip_the_detector",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_detector_catches_every_frozen_transformation_family",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_detector_mutations_miss_their_positive_control",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_domain_separation_changes_the_signing_digest",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_ed25519_agrees_with_cryptography_when_available",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_ed25519_matches_rfc8032_vectors",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_every_catalog_mutation_names_must_fail_nodes",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_every_gate_with_a_frozen_mutation_has_catalog_entries",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_findings_never_carry_raw_bytes",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_manifest_and_every_artifact_digest_verify",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_normalised_views_cover_the_declared_encodings",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_packed_objects_and_sqlite_blobs_are_reachable",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_power_program_rejects_underpowered_n",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_quadratic_weighted_kappa_behaves",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_randomized_sensitivity_meets_the_frozen_wilson_bound",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_scanner_error_fails_closed",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_sealed_registry_exposes_only_ciphertext_metadata",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_stratum_effective_n_does_not_borrow_the_aggregate",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_suite_refuses_unratified_bytes",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_tost_requires_the_whole_interval_inside_the_band",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_vault_destroy_removes_key_and_raw_values",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_harness_selftest.py::test_vault_is_private_and_outside_every_repository",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_instrument_debt.py::test_debt_ledger_mirror_is_current",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_instrument_debt.py::test_every_finding_is_accounted_for",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_instrument_debt.py::test_instrument_declares_no_open_validity_debt",
+      "origin": "instrument",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "selftest failure (no product involved)"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_no_green_paths.py::test_every_catalog_row_is_consumed_by_the_node_that_declares_it",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_no_green_paths.py::test_every_gate_test_evaluates_a_catalogued_obligation",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_no_green_paths.py::test_every_gate_test_has_an_unconditional_claim",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_no_green_paths.py::test_every_loop_carrying_a_claim_proves_its_domain",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_no_green_paths.py::test_no_bare_return_ends_a_gate_test_green",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_no_green_paths.py::test_no_collection_fallback_substitutes_an_empty_domain",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_no_green_paths.py::test_no_except_handler_swallows_a_typed_failure",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_no_green_paths.py::test_no_node_evaluates_an_obligation_the_catalog_gives_to_another_node",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_no_green_paths.py::test_no_permissive_default_satisfies_an_assertion",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_no_green_paths.py::test_no_tautological_assertion",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "INSTRUMENT",
+      "node": "acceptance/test_no_green_paths.py::test_no_untyped_assertion_in_a_gate_module",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_acceptance_suite_declares_all_its_dependencies",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_broad_token_mode_is_refused_with_chmod_remediation",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "1d2f826e9408f76c937403e4d1775a532976470285a78ee976b51c724377086f",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_candidate_lifetime_and_private_retention_are_enforced",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "4b3971123652f1dbe9e61b4861a52115ceafaded72cb6fc998900efdbbcb3291",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_commands_have_bounded_help",
+      "origin": "product",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_diagnostics_are_executable_and_useful_after_restart",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "54bf59ae0512cc3013d19ab8ed7d8683d192f633ad6b9be3eb0c1f117585dc8c",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_error_taxonomy_and_exit_table_match_the_ratified_contract",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_every_operational_ceiling_refuses_with_an_omitted_count",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "d07c683bcadfe82225246c25ce498ebd9940c165a5d6f68b0b0218073e493d95",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_external_calls_have_timeouts_and_failed_writes_are_not_admitted",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "c588a990d8160884ccfff8059852fb1e81214bb91253b1760a5484f9dad59218",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_first_run_failure_table_is_transcribed",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_http_rejects_every_declared_probe",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "1263c734e9820bccf7efda71630ac7b796986db7f180f0a21f3c1133a2629120",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_logs_are_structured_and_carry_no_raw_private_messages",
+      "origin": "product",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_roots_are_explicit_modes_restrictive_and_escapes_fail_closed",
+      "origin": "product",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_schema_validation_and_rebuild_are_deterministic",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "14ad03c98e3a6fdfa3d3ba79af29f6804c052144ae572c8e128df46ea51e001c",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "NONFUNCTIONAL",
+      "node": "acceptance/test_nonfunctional.py::test_uncaught_application_exceptions_exit_seventy",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "unexpected ValueError"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "unexpected NameError"
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "092c54ea8b34bac5cdfba668a4936c0fd42377dfc9bae1c86b3d3ffb24357f4d",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_blinding_failure_predicates_are_computed_independently",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_composite_weights_are_frozen_and_sum_to_one",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_corpus_builder_blindness_is_enforced",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_denial_density_bounds_are_enforced",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_eleven_arms_are_frozen_and_enumerated",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_experiment_freeze_refuses_before_gates_census_power_and_budget",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "610ae04711e9f308edd1110f8dcc48b183cf97ca266d6e8c2cc588d3e9e9a59e",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_gap_closure_is_reported_but_not_counted_as_an_independent_hurdle",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_human_bytes_after_freeze_must_be_zero",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "c6687b78797e34414c2bf230a18b720494690c05b08a15346807057c62b6a0b3",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_intention_to_treat_accounting_keeps_every_admitted_launch",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_launch_without_a_signed_census_row_is_refused",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "e1d9a41f5600129061c332c2f05c54b4f086a8b59c9c7fdc39ae4f5e4f0142b3",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_manifest_must_bind_every_field_that_can_change_an_arm",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_named_mechanism_findings_are_not_renamed_successes",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_normal_approximation_table_is_internally_consistent",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_oracle_curator_blindness_is_enforced",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_phase_ledger_enforces_the_frozen_ordering",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_published_call_envelope_matches_the_formula",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_published_conclusion_uses_only_the_licensed_claim",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "unexpected NameError"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_reducer_repair_recovery_rule_is_frozen",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_reserve_is_ten_percent_of_planned_blocks_rounded_up",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_residency_and_false_completion_thresholds_are_frozen",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_result_entry_rules_are_mechanical",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_single_artifact_spec_is_a_published_exclusion_code",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_static_prior_ceiling_is_two_kibibytes",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_stratification_plan_violations_are_detected",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_tester_lane_contains_no_v10_task_corpus",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-10",
+      "node": "acceptance/test_v10_protocol.py::test_underpowered_design_terminates_not_proven_with_the_named_diagnostic",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-1",
+      "node": "acceptance/test_v1_ingestion.py::test_adapter_receipt_reports_observations_not_counts",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-1",
+      "node": "acceptance/test_v1_ingestion.py::test_all_ten_adapters_run_against_native_sources",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-1",
+      "node": "acceptance/test_v1_ingestion.py::test_change_delete_reject_revert_preserve_history_and_change_disposition",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-1",
+      "node": "acceptance/test_v1_ingestion.py::test_end_to_end_build_uses_at_least_seven_source_classes",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-1",
+      "node": "acceptance/test_v1_ingestion.py::test_lifecycle_matrix_executes_every_declared_cell",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-1",
+      "node": "acceptance/test_v1_ingestion.py::test_misextraction_notice_is_approver_owned_and_withholds_only",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-1",
+      "node": "acceptance/test_v1_ingestion.py::test_never_true_requires_subject_matter_authority",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-1",
+      "node": "acceptance/test_v1_ingestion.py::test_origin_trust_class_is_derived_and_bounds_trusted_direction",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-1",
+      "node": "acceptance/test_v1_ingestion.py::test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-1",
+      "node": "acceptance/test_v1_ingestion.py::test_reingest_unchanged_is_idempotent_and_byte_identical",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-1",
+      "node": "acceptance/test_v1_ingestion.py::test_retiring_supports_one_at_a_time_recomputes_then_withdraws",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_annotator_agreement_and_frozen_adjudication_digest",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_exact_match_atomization_and_per_label_metrics",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_excluded_calibration_corpus_gates_measurement",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_expired_closing_deadline_emits_one_signed_orphan_abandoned",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_five_pinned_runs_lower_bound_meets_macro_f1_and_shared_precision",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_held_out_corpus_meets_every_frozen_floor",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_independent_candidates_with_distinct_minimized_bytes",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_kill_at_every_transition_then_concurrent_retry",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_low_confidence_shared_label_demotes_to_none_or_unknown",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_mixed_messages_atomise_rather_than_take_one_label",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_no_accept_all_path_is_reachable",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_no_cross_store_transaction_exists",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_partial_fanout_failure_does_not_roll_back_committed_destination",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-2",
+      "node": "acceptance/test_v2_classification.py::test_retry_returns_original_receipt_without_duplication",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_privacy.py::test_egress_to_unnamed_processor_fails_with_typed_refusal",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_privacy.py::test_hard_blocking_taint_is_never_cleared_by_deidentification",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_privacy.py::test_inherited_personal_descriptor_fails_startup",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_privacy.py::test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_privacy.py::test_paraphrase_only_output_stays_private_by_taint_policy",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_privacy.py::test_positive_control_precedes_and_licenses_the_clean_assertion",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_privacy.py::test_process_artifacts_contain_no_personal_root_canary",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_privacy.py::test_reconstructor_findings_are_independent_and_content_addressed",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_privacy.py::test_sandbox_denies_personal_root_for_shared_processes",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_privacy.py::test_shared_writer_has_no_personal_capability",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_privacy.py::test_v3_claim_is_digest_qualified_and_never_unqualified",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_qualification.py::test_auxiliary_corpus_selection_record_is_complete_and_frozen",
+      "origin": "instrument",
+      "outcome": "NOT_RUN",
+      "phases": {},
+      "product_digest": "",
+      "reason": "deselected by marker/name selection"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "V-3",
+      "node": "acceptance/test_v3_qualification.py::test_randomized_qualification_publishes_every_denominator",
+      "origin": "instrument",
+      "outcome": "NOT_RUN",
+      "phases": {},
+      "product_digest": "",
+      "reason": "deselected by marker/name selection"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-4",
+      "node": "acceptance/test_v4_maintenance.py::test_case_crlf_normalisation_and_uppercase_alias_are_refused",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-4",
+      "node": "acceptance/test_v4_maintenance.py::test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "V-4",
+      "node": "acceptance/test_v4_maintenance.py::test_legacy_kindex_bytes_preserved_and_collision_refuses",
+      "origin": "product",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-4",
+      "node": "acceptance/test_v4_maintenance.py::test_linked_worktrees_serialize_on_one_common_dir_lock",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-4",
+      "node": "acceptance/test_v4_maintenance.py::test_manifest_comparison_classifies_lag_incomplete_and_expiry",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-4",
+      "node": "acceptance/test_v4_maintenance.py::test_omitting_as_of_breaks_determinism_and_is_refused",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-4",
+      "node": "acceptance/test_v4_maintenance.py::test_pre_revocation_replay_returns_history_without_readmission",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-4",
+      "node": "acceptance/test_v4_maintenance.py::test_rebuild_is_deterministic_over_frozen_inputs",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-4",
+      "node": "acceptance/test_v4_maintenance.py::test_repeated_incremental_cycle_is_restart_safe_and_bounded",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "V-4",
+      "node": "acceptance/test_v4_maintenance.py::test_revocation_cascade_completes_in_bound_or_stays_fail_closed",
+      "origin": "product",
+      "outcome": "NOT_RUN",
+      "phases": {},
+      "product_digest": "",
+      "reason": "deselected by marker/name selection"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "V-4",
+      "node": "acceptance/test_v4_maintenance.py::test_ten_times_the_admission_ceiling_refuses_writes_but_still_diagnoses",
+      "origin": "product",
+      "outcome": "NOT_RUN",
+      "phases": {},
+      "product_digest": "",
+      "reason": "deselected by marker/name selection"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-5",
+      "node": "acceptance/test_v5_temporal.py::test_copied_chorus_does_not_outweigh_one_independent_decision",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-5",
+      "node": "acceptance/test_v5_temporal.py::test_frozen_temporal_case",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-5",
+      "node": "acceptance/test_v5_temporal.py::test_newest_wins_is_not_the_rule",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-5",
+      "node": "acceptance/test_v5_temporal.py::test_rejected_pr_does_not_displace_current_adr",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-5",
+      "node": "acceptance/test_v5_temporal.py::test_runtime_config_wins_diagnosis_without_acquiring_architecture_authority",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-5",
+      "node": "acceptance/test_v5_temporal.py::test_scope_bounds_authority_rather_than_prestige",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-5",
+      "node": "acceptance/test_v5_temporal.py::test_unregistered_environment_is_untrusted_with_a_steward_unknown",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-6",
+      "node": "acceptance/test_v6_authority.py::test_another_roles_signature_is_rejected",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-6",
+      "node": "acceptance/test_v6_authority.py::test_frozen_answer_service_refuses_the_third_call_and_returns_no_code",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-6",
+      "node": "acceptance/test_v6_authority.py::test_high_distortion_unknown_sends_a_targeted_question_and_withholds_guidance",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-6",
+      "node": "acceptance/test_v6_authority.py::test_service_starts_and_registers_a_named_chief_architect",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-6",
+      "node": "acceptance/test_v6_authority.py::test_signed_answer_from_a_separate_process_materially_changes_the_decision",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-6",
+      "node": "acceptance/test_v6_authority.py::test_unavailable_authority_yields_declared_degraded_policy",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-7",
+      "node": "acceptance/test_v7_projection.py::test_complementarity_is_visible_and_redundancy_is_penalised",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "f0fb8f398811da0902522ea38d7bd60c4bd216de1ab730f5ccf5797d28fef027",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-7",
+      "node": "acceptance/test_v7_projection.py::test_duplicates_do_not_crowd_out_the_high_distortion_invariant",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "6f40e9e492dddc4e30f21836f9fa22bf3d4308fca2f4c39366b40124db19a915",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-7",
+      "node": "acceptance/test_v7_projection.py::test_frozen_candidate_set_contains_every_declared_role",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "e714cadeb9564b0d5b89951b6d22dd726713708d52424c48b5109c880334d9e1",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-7",
+      "node": "acceptance/test_v7_projection.py::test_loop_stops_on_net_marginal_value_not_a_filled_window",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "990eec413474341d00182097ee9291a0050631d1347a0bc7af28bb9a35a0b903",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-7",
+      "node": "acceptance/test_v7_projection.py::test_marginal_value_is_recomputed_against_the_current_set",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "a6b9dbf784cc758a2af3d800fcb1de1069d51888746f16b2ac5aa1395346e288",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-7",
+      "node": "acceptance/test_v7_projection.py::test_no_calibrated_causal_voi_claim_is_made",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "c0c1c6bc60bc83095db93c0b8a5f6f3e49d55f8c22f4f3a82cf004cd78010c7d",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-7",
+      "node": "acceptance/test_v7_projection.py::test_query_log_records_every_declared_field",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "4667c517be34bc145edb4ec3b4597e53c1663f47f491056e7839776c2fb5f64b",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-7",
+      "node": "acceptance/test_v7_projection.py::test_selection_changes_when_working_set_ids_change",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "cc446e7a23a6b0b585c536117759d5a5f533a15f3255d8c0a8f4d56cb74d890d",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": true,
+      "gate": "V-7",
+      "node": "acceptance/test_v7_projection.py::test_stale_fact_is_withheld_and_produces_an_owned_unknown",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "fd0898138f73badd4b2fc866a9d61ac64ecd5f5060c8d5fb9379896fb4c31218",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-8",
+      "node": "acceptance/test_v8_company_refs.py::test_cache_disagreement_truth_table",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-8",
+      "node": "acceptance/test_v8_company_refs.py::test_company_emits_its_own_observation_expired_event",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-8",
+      "node": "acceptance/test_v8_company_refs.py::test_digest_mismatch_attribution_truth_table",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-8",
+      "node": "acceptance/test_v8_company_refs.py::test_fresh_clone_resolves_the_reference_without_copying_prose",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-8",
+      "node": "acceptance/test_v8_company_refs.py::test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-8",
+      "node": "acceptance/test_v8_company_refs.py::test_maintainer_may_request_but_not_mint_an_exception",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-8",
+      "node": "acceptance/test_v8_company_refs.py::test_only_company_steward_may_sign_a_relaxation",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-8",
+      "node": "acceptance/test_v8_company_refs.py::test_publish_manifest_enforces_monotonic_counts",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-8",
+      "node": "acceptance/test_v8_company_refs.py::test_reference_carries_exactly_the_company_owned_field_set",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-8",
+      "node": "acceptance/test_v8_company_refs.py::test_stricter_of_company_and_local_class_controls_freshness",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-8",
+      "node": "acceptance/test_v8_company_refs.py::test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-8",
+      "node": "acceptance/test_v8_company_refs.py::test_uncertified_codebase_only_mode_emits_counts_and_status_only",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_fatigue.py::test_blinded_operator_exercise_accuracy_and_median_time",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "HarnessInvalid"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": true,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_fatigue.py::test_corpus_growth_adequacy_under_the_fatigue_ceiling",
+      "origin": "product",
+      "outcome": "NOT_RUN",
+      "phases": {},
+      "product_digest": "",
+      "reason": "deselected by marker/name selection"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_fatigue.py::test_four_total_per_hour_shared_across_destinations",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_fatigue.py::test_reset_clears_only_the_consecutive_counter_once_per_hour",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": false,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_host_lifecycle.py::test_blackholed_company_endpoint_degrades_loudly_inside_the_budget[claude]",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": false,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_host_lifecycle.py::test_blackholed_company_endpoint_degrades_loudly_inside_the_budget[codex]",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": false,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_host_lifecycle.py::test_hooks_plan_is_read_only_and_install_requires_native_approval[claude]",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": false,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_host_lifecycle.py::test_hooks_plan_is_read_only_and_install_requires_native_approval[codex]",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_host_lifecycle.py::test_matched_conversations_produce_identical_canonical_payloads",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": false,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal[claude]",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": false,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal[codex]",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_host_lifecycle.py::test_session_start_p95_under_two_seconds_in_every_state[claude]",
+      "origin": "product",
+      "outcome": "NOT_RUN",
+      "phases": {},
+      "product_digest": "",
+      "reason": "deselected by marker/name selection"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_host_lifecycle.py::test_session_start_p95_under_two_seconds_in_every_state[codex]",
+      "origin": "product",
+      "outcome": "NOT_RUN",
+      "phases": {},
+      "product_digest": "",
+      "reason": "deselected by marker/name selection"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_host_lifecycle.py::test_twenty_session_soak_warm_path_and_fsck_incidence[claude]",
+      "origin": "product",
+      "outcome": "NOT_RUN",
+      "phases": {},
+      "product_digest": "",
+      "reason": "deselected by marker/name selection"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_host_lifecycle.py::test_twenty_session_soak_warm_path_and_fsck_incidence[codex]",
+      "origin": "product",
+      "outcome": "NOT_RUN",
+      "phases": {},
+      "product_digest": "",
+      "reason": "deselected by marker/name selection"
+    },
+    {
+      "channel": "INVALID_HARNESS",
+      "collected": true,
+      "expected": true,
+      "gate": "V-9",
+      "node": "acceptance/test_v9_host_lifecycle.py::test_worktrees_share_uuid_while_nested_roots_require_their_own_certificate",
+      "origin": "product",
+      "outcome": "INVALID_HARNESS",
+      "phases": {
+        "setup": "failed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": "failure during setup"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "VERDICT",
+      "node": "acceptance/test_verdict_composition.py::test_ceiling_reported_while_headroom_flag_remains_visible",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "VERDICT",
+      "node": "acceptance/test_verdict_composition.py::test_composition_is_total_over_the_product_space",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "VERDICT",
+      "node": "acceptance/test_verdict_composition.py::test_composition_table_matches_the_ratified_bytes",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "VERDICT",
+      "node": "acceptance/test_verdict_composition.py::test_document_statuses_and_milestones_are_not_verdicts",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "VERDICT",
+      "node": "acceptance/test_verdict_composition.py::test_gate_vector_folds_with_product_failure_dominant",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "VERDICT",
+      "node": "acceptance/test_verdict_composition.py::test_independent_product_failure_dominates_an_invalid_detector",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "VERDICT",
+      "node": "acceptance/test_verdict_composition.py::test_no_role_can_convert_an_unresolved_disagreement_into_a_pass",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "VERDICT",
+      "node": "acceptance/test_verdict_composition.py::test_not_run_is_not_a_mechanism_falsifier",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "VERDICT",
+      "node": "acceptance/test_verdict_composition.py::test_one_superseding_run_requires_a_pre_unblinding_countersigned_record",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    },
+    {
+      "channel": "PRODUCT_FAILURE",
+      "collected": true,
+      "expected": false,
+      "gate": "VERDICT",
+      "node": "acceptance/test_verdict_composition.py::test_product_verdict_states_are_exactly_the_ratified_set",
+      "origin": "product",
+      "outcome": "PRODUCT_FAILURE",
+      "phases": {
+        "call": "failed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "64543d79b963009e2d04701ba1b1cb4152a2e89d54b835aa931b26e1f1767a45",
+      "reason": "ProductFailure"
+    },
+    {
+      "channel": "",
+      "collected": true,
+      "expected": false,
+      "gate": "VERDICT",
+      "node": "acceptance/test_verdict_composition.py::test_verdict_consequences_are_fixed_in_advance",
+      "origin": "instrument",
+      "outcome": "PASS",
+      "phases": {
+        "call": "passed",
+        "setup": "passed",
+        "teardown": "passed"
+      },
+      "product_digest": "",
+      "reason": ""
+    }
+  ],
+  "obligation_consumption": {
+    "consumed_pairs": 19,
+    "declared_pairs": 113,
+    "duplicate_digests": [],
+    "records": [
+      {
+        "digest": "cfd2566ce5d49fc1b10b6f7bd81f298e376f265f994ea9871e645311d78d460d",
+        "label": "the evidence packet root is private and outside Git",
+        "node": "test_evidence_packet.py::test_packet_root_is_private_and_outside_git",
+        "obligation": "EV.custody",
+        "origin": "harness",
+        "payload_keys": [
+          "inside_git_worktree",
+          "mode",
+          "outside_repository"
+        ]
+      },
+      {
+        "digest": "13e2134aa4a7574ca1d23dca9300bed6b54e7443253cef772ec7c8c1f9af42b4",
+        "label": "Factory method evidence is labelled METHOD_POC",
+        "node": "test_evidence_packet.py::test_factory_method_evidence_is_labelled_method_poc",
+        "obligation": "EV.method-label",
+        "origin": "harness",
+        "payload_keys": [
+          "forbidden_label_occurrences",
+          "method_label"
+        ]
+      },
+      {
+        "digest": "cfcad6ea3cced788ca87392b9ef9a5c925c0b0fef7c7c12653dd6ffb158bd8c1",
+        "label": "every command exposes bounded help",
+        "node": "test_nonfunctional.py::test_commands_have_bounded_help",
+        "obligation": "NF.help",
+        "origin": "product",
+        "payload_keys": [
+          "commands"
+        ]
+      },
+      {
+        "digest": "7c23cddfcd150b3a81fec6b38e295a2e4793c5fa55c385b027ef26e10b221b3c",
+        "label": "explicit roots, restrictive modes, escapes fail closed",
+        "node": "test_nonfunctional.py::test_roots_are_explicit_modes_restrictive_and_escapes_fail_closed",
+        "obligation": "NF.roots",
+        "origin": "product",
+        "payload_keys": [
+          "escape_probes",
+          "loopback_only",
+          "roots"
+        ]
+      },
+      {
+        "digest": "f0ad234b1c0437ca2242b09aa4b88c321f32baa3ed6d5ae406d9267ef4c628bb",
+        "label": "validation and rebuild are deterministic",
+        "node": "test_nonfunctional.py::test_schema_validation_and_rebuild_are_deterministic",
+        "obligation": "NF.determinism",
+        "origin": "product",
+        "payload_keys": [
+          "canonicalisation_identical",
+          "rebuild_digest",
+          "rebuild_identical",
+          "schema_refusals"
+        ]
+      },
+      {
+        "digest": "b69230c68a19bac21a20fdf0ba984e94572768682a958bf1ca14aa50b9d26e71",
+        "label": "structured logs carry no raw private bytes",
+        "node": "test_nonfunctional.py::test_logs_are_structured_and_carry_no_raw_private_messages",
+        "obligation": "NF.logs",
+        "origin": "product",
+        "payload_keys": [
+          "log_lines",
+          "raw_private_findings",
+          "structured"
+        ]
+      },
+      {
+        "digest": "7fa56a3568a107db18c7a51db8e56ac57561215f9c252eb2a1ed885d7e208d76",
+        "label": "external calls time out and failed writes never admit",
+        "node": "test_nonfunctional.py::test_external_calls_have_timeouts_and_failed_writes_are_not_admitted",
+        "obligation": "NF.timeouts",
+        "origin": "product",
+        "payload_keys": [
+          "admitted_after_failed_write",
+          "observed_seconds",
+          "timeout_observed",
+          "timeout_refusal_code"
+        ]
+      },
+      {
+        "digest": "b598f0ed6a78b366ca94e8acbba7e28423c3fbfc2664b30563a7830a735ff0e9",
+        "label": "every operational ceiling refuses with an omitted count",
+        "node": "test_nonfunctional.py::test_every_operational_ceiling_refuses_with_an_omitted_count",
+        "obligation": "NF.ceilings",
+        "origin": "product",
+        "payload_keys": [
+          "ceilings"
+        ]
+      },
+      {
+        "digest": "eea3a79fd1d1fd6e1dfc10ab845521a2e464a87bf651d1a5ed575be202125989",
+        "label": "candidate lifetime and private retention are enforced",
+        "node": "test_nonfunctional.py::test_candidate_lifetime_and_private_retention_are_enforced",
+        "obligation": "NF.lifetimes",
+        "origin": "product",
+        "payload_keys": [
+          "candidate_lifetime_seconds",
+          "expired_approval_refusal_code",
+          "private_retention_seconds",
+          "raw_removed_after_retention"
+        ]
+      },
+      {
+        "digest": "927b33a005f93251701398de02515d370dc4cf2301378d40a115044b7ba03302",
+        "label": "a broad token mode is refused with chmod remediation",
+        "node": "test_nonfunctional.py::test_broad_token_mode_is_refused_with_chmod_remediation",
+        "obligation": "NF.token-mode",
+        "origin": "product",
+        "payload_keys": [
+          "exit_code",
+          "mode_observed_broad",
+          "remediation_names_chmod",
+          "secret_bytes_leaked"
+        ]
+      },
+      {
+        "digest": "c32a47b5dde637a82eab1fb7063aff0951f506584bae11a75cb41ebc73e63c81",
+        "label": "freeze refuses before gates, census, power and budget",
+        "node": "test_v10_protocol.py::test_experiment_freeze_refuses_before_gates_census_power_and_budget",
+        "obligation": "V10.freeze-order",
+        "origin": "product",
+        "payload_keys": [
+          "preconditions"
+        ]
+      },
+      {
+        "digest": "80b7e5ff6aa30e7c00e2eb49f839a86814074477ec7ca5d570b3eb8099ca43c8",
+        "label": "launch without a signed census row is refused",
+        "node": "test_v10_protocol.py::test_launch_without_a_signed_census_row_is_refused",
+        "obligation": "V10.census-row",
+        "origin": "product",
+        "payload_keys": [
+          "exit_code",
+          "refusal_code",
+          "smoke_exemption_accepted"
+        ]
+      },
+      {
+        "digest": "9c7e37eb948f2e51b2bcc29d4f5a481efc6761c5e7244965c93e56fb88040108",
+        "label": "eleven frozen arms and the published call envelope",
+        "node": "test_v10_protocol.py::test_eleven_arms_are_frozen_and_enumerated",
+        "obligation": "V-10.envelope",
+        "origin": "harness",
+        "payload_keys": [
+          "arms",
+          "arms_distinguished_from_full_system",
+          "envelope_rows"
+        ]
+      },
+      {
+        "digest": "4e2531090d4d6f8e5d12b37485e35340b7d627556a215fa2d5cd742144a94547",
+        "label": "human bytes after freeze must be zero",
+        "node": "test_v10_protocol.py::test_human_bytes_after_freeze_must_be_zero",
+        "obligation": "V10.human-bytes",
+        "origin": "product",
+        "payload_keys": [
+          "human_bytes_after_freeze",
+          "nonzero_yields_invalid_run"
+        ]
+      },
+      {
+        "digest": "5701545285f116be43b9c73b41b0ea94b3ca6bc79e06d4225f73e3a58e349e4e",
+        "label": "the published call envelope matches the frozen formula",
+        "node": "test_v10_protocol.py::test_published_call_envelope_matches_the_formula",
+        "obligation": "V-10.envelope",
+        "origin": "harness",
+        "payload_keys": [
+          "arms",
+          "envelope_rows",
+          "structural_product"
+        ]
+      },
+      {
+        "digest": "98b81cf228b349ed700e606bfcb619adc0d0729b244cc2b8d3f44b5eeddafc05",
+        "label": "the aggregate ceiling is reserved atomically and cannot be raised",
+        "node": "test_v10_protocol.py::test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised",
+        "obligation": "V10.ceiling",
+        "origin": "product",
+        "payload_keys": [
+          "ceiling_raised",
+          "increase_refusal_code",
+          "increase_refused",
+          "reserved_atomically"
+        ]
+      },
+      {
+        "digest": "dcef2ab59b45c8139f73b248beb62b6158fc26f567a4476aaffadda7ed38619a",
+        "label": "frozen held-out corpus floors",
+        "node": "test_v2_classification.py::test_held_out_corpus_meets_every_frozen_floor",
+        "obligation": "V-2.corpus-floors",
+        "origin": "harness",
+        "payload_keys": [
+          "canary_bearing_messages",
+          "gold_withheld_from_product",
+          "held_out_messages",
+          "mixed_messages",
+          "seeded_canaries",
+          "strata"
+        ]
+      },
+      {
+        "digest": "641195be7d48419b1c29f172f06261ea54fad7a1dd9154004e3559980e4e5782",
+        "label": "two independent annotators, frozen adjudication",
+        "node": "test_v2_classification.py::test_annotator_agreement_and_frozen_adjudication_digest",
+        "obligation": "V-2.annotators",
+        "origin": "harness",
+        "payload_keys": [
+          "adjudication_digest",
+          "frozen_before_classifier_runs",
+          "per_destination_kappa"
+        ]
+      },
+      {
+        "digest": "0a4aefa2fc86b681f719fea9ff3720c2c0f9d4088bf42b995bbd44201d9c407d",
+        "label": "legacy Kindex bytes preserved and reserved-path collision refused",
+        "node": "test_v4_maintenance.py::test_legacy_kindex_bytes_preserved_and_collision_refuses",
+        "obligation": "V-4.kindex-compat",
+        "origin": "product",
+        "payload_keys": [
+          "bytes_changed_by_refused_init",
+          "collision_refused",
+          "legacy_bytes_changed",
+          "legacy_files"
+        ]
+      }
+    ],
+    "schema": "guildhall-obligation-consumption/1",
+    "unconsumed": [
+      [
+        "EV.ciphertext-only",
+        "test_evidence_packet.py::test_only_ciphertext_metadata_reaches_the_manifest"
+      ],
+      [
+        "EV.retention",
+        "test_evidence_packet.py::test_retention_and_incident_hold_fields_are_enforced"
+      ],
+      [
+        "NF.diagnostics",
+        "test_nonfunctional.py::test_diagnostics_are_executable_and_useful_after_restart"
+      ],
+      [
+        "NF.exit-boundary",
+        "test_nonfunctional.py::test_uncaught_application_exceptions_exit_seventy"
+      ],
+      [
+        "NF.http",
+        "test_nonfunctional.py::test_http_rejects_every_declared_probe"
+      ],
+      [
+        "V-1.adapters-native",
+        "test_v1_ingestion.py::test_all_ten_adapters_run_against_native_sources"
+      ],
+      [
+        "V-1.build-manifest",
+        "test_v1_ingestion.py::test_end_to_end_build_uses_at_least_seven_source_classes"
+      ],
+      [
+        "V-1.clock-skew",
+        "test_v1_ingestion.py::test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors"
+      ],
+      [
+        "V-1.disposition-change",
+        "test_v1_ingestion.py::test_change_delete_reject_revert_preserve_history_and_change_disposition"
+      ],
+      [
+        "V-1.idempotence",
+        "test_v1_ingestion.py::test_reingest_unchanged_is_idempotent_and_byte_identical"
+      ],
+      [
+        "V-1.lifecycle-matrix",
+        "test_v1_ingestion.py::test_lifecycle_matrix_executes_every_declared_cell"
+      ],
+      [
+        "V-1.misextraction",
+        "test_v1_ingestion.py::test_misextraction_notice_is_approver_owned_and_withholds_only"
+      ],
+      [
+        "V-1.never-true-authority",
+        "test_v1_ingestion.py::test_never_true_requires_subject_matter_authority"
+      ],
+      [
+        "V-1.origin-trust",
+        "test_v1_ingestion.py::test_origin_trust_class_is_derived_and_bounds_trusted_direction"
+      ],
+      [
+        "V-1.receipt-not-count",
+        "test_v1_ingestion.py::test_adapter_receipt_reports_observations_not_counts"
+      ],
+      [
+        "V-1.support-retirement",
+        "test_v1_ingestion.py::test_retiring_supports_one_at_a_time_recomputes_then_withdraws"
+      ],
+      [
+        "V-2.atomisation",
+        "test_v2_classification.py::test_mixed_messages_atomise_rather_than_take_one_label"
+      ],
+      [
+        "V-2.calibration",
+        "test_v2_classification.py::test_excluded_calibration_corpus_gates_measurement"
+      ],
+      [
+        "V-2.crash-recovery",
+        "test_v2_classification.py::test_kill_at_every_transition_then_concurrent_retry"
+      ],
+      [
+        "V-2.independent-candidates",
+        "test_v2_classification.py::test_independent_candidates_with_distinct_minimized_bytes"
+      ],
+      [
+        "V-2.low-confidence",
+        "test_v2_classification.py::test_low_confidence_shared_label_demotes_to_none_or_unknown"
+      ],
+      [
+        "V-2.metrics",
+        "test_v2_classification.py::test_exact_match_atomization_and_per_label_metrics"
+      ],
+      [
+        "V-2.no-cross-store",
+        "test_v2_classification.py::test_no_accept_all_path_is_reachable"
+      ],
+      [
+        "V-2.no-cross-store",
+        "test_v2_classification.py::test_no_cross_store_transaction_exists"
+      ],
+      [
+        "V-2.orphan-abandoned",
+        "test_v2_classification.py::test_expired_closing_deadline_emits_one_signed_orphan_abandoned"
+      ],
+      [
+        "V-2.partial-fanout",
+        "test_v2_classification.py::test_partial_fanout_failure_does_not_roll_back_committed_destination"
+      ],
+      [
+        "V-2.pinned-runs",
+        "test_v2_classification.py::test_five_pinned_runs_lower_bound_meets_macro_f1_and_shared_precision"
+      ],
+      [
+        "V-2.retry-receipt",
+        "test_v2_classification.py::test_retry_returns_original_receipt_without_duplication"
+      ],
+      [
+        "V-3.attack-families",
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe"
+      ],
+      [
+        "V-3.capability",
+        "test_v3_privacy.py::test_shared_writer_has_no_personal_capability"
+      ],
+      [
+        "V-3.claim",
+        "test_v3_privacy.py::test_v3_claim_is_digest_qualified_and_never_unqualified"
+      ],
+      [
+        "V-3.egress",
+        "test_v3_privacy.py::test_egress_to_unnamed_processor_fails_with_typed_refusal"
+      ],
+      [
+        "V-3.inherited-fd",
+        "test_v3_privacy.py::test_inherited_personal_descriptor_fails_startup"
+      ],
+      [
+        "V-3.lifecycle-scan",
+        "test_v3_privacy.py::test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle"
+      ],
+      [
+        "V-3.paraphrase",
+        "test_v3_privacy.py::test_paraphrase_only_output_stays_private_by_taint_policy"
+      ],
+      [
+        "V-3.positive-control",
+        "test_v3_privacy.py::test_positive_control_precedes_and_licenses_the_clean_assertion"
+      ],
+      [
+        "V-3.process-artifacts",
+        "test_v3_privacy.py::test_process_artifacts_contain_no_personal_root_canary"
+      ],
+      [
+        "V-3.reconstructor",
+        "test_v3_privacy.py::test_reconstructor_findings_are_independent_and_content_addressed"
+      ],
+      [
+        "V-3.sandbox",
+        "test_v3_privacy.py::test_sandbox_denies_personal_root_for_shared_processes"
+      ],
+      [
+        "V-3.taint",
+        "test_v3_privacy.py::test_hard_blocking_taint_is_never_cleared_by_deidentification"
+      ],
+      [
+        "V-4.as-of",
+        "test_v4_maintenance.py::test_omitting_as_of_breaks_determinism_and_is_refused"
+      ],
+      [
+        "V-4.common-dir-lock",
+        "test_v4_maintenance.py::test_linked_worktrees_serialize_on_one_common_dir_lock"
+      ],
+      [
+        "V-4.conflict",
+        "test_v4_maintenance.py::test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event"
+      ],
+      [
+        "V-4.determinism",
+        "test_v4_maintenance.py::test_rebuild_is_deterministic_over_frozen_inputs"
+      ],
+      [
+        "V-4.incremental-cycle",
+        "test_v4_maintenance.py::test_repeated_incremental_cycle_is_restart_safe_and_bounded"
+      ],
+      [
+        "V-4.manifest-comparison",
+        "test_v4_maintenance.py::test_manifest_comparison_classifies_lag_incomplete_and_expiry"
+      ],
+      [
+        "V-4.normalisation",
+        "test_v4_maintenance.py::test_case_crlf_normalisation_and_uppercase_alias_are_refused"
+      ],
+      [
+        "V-4.replay",
+        "test_v4_maintenance.py::test_pre_revocation_replay_returns_history_without_readmission"
+      ],
+      [
+        "V-5.cases",
+        "test_v5_temporal.py::test_frozen_temporal_case"
+      ],
+      [
+        "V-5.independence",
+        "test_v5_temporal.py::test_copied_chorus_does_not_outweigh_one_independent_decision"
+      ],
+      [
+        "V-5.no-newest-wins",
+        "test_v5_temporal.py::test_newest_wins_is_not_the_rule"
+      ],
+      [
+        "V-5.rejected-pr",
+        "test_v5_temporal.py::test_rejected_pr_does_not_displace_current_adr"
+      ],
+      [
+        "V-5.runtime-vs-architecture",
+        "test_v5_temporal.py::test_runtime_config_wins_diagnosis_without_acquiring_architecture_authority"
+      ],
+      [
+        "V-5.scope",
+        "test_v5_temporal.py::test_scope_bounds_authority_rather_than_prestige"
+      ],
+      [
+        "V-5.unregistered-environment",
+        "test_v5_temporal.py::test_unregistered_environment_is_untrusted_with_a_steward_unknown"
+      ],
+      [
+        "V-6.call-ceiling",
+        "test_v6_authority.py::test_frozen_answer_service_refuses_the_third_call_and_returns_no_code"
+      ],
+      [
+        "V-6.degraded",
+        "test_v6_authority.py::test_unavailable_authority_yields_declared_degraded_policy"
+      ],
+      [
+        "V-6.question",
+        "test_v6_authority.py::test_high_distortion_unknown_sends_a_targeted_question_and_withholds_guidance"
+      ],
+      [
+        "V-6.registration",
+        "test_v6_authority.py::test_service_starts_and_registers_a_named_chief_architect"
+      ],
+      [
+        "V-6.round-trip",
+        "test_v6_authority.py::test_signed_answer_from_a_separate_process_materially_changes_the_decision"
+      ],
+      [
+        "V-6.wrong-role",
+        "test_v6_authority.py::test_another_roles_signature_is_rejected"
+      ],
+      [
+        "V-7.candidate-set",
+        "test_v7_projection.py::test_frozen_candidate_set_contains_every_declared_role"
+      ],
+      [
+        "V-7.complementarity",
+        "test_v7_projection.py::test_complementarity_is_visible_and_redundancy_is_penalised"
+      ],
+      [
+        "V-7.marginal-terms",
+        "test_v7_projection.py::test_marginal_value_is_recomputed_against_the_current_set"
+      ],
+      [
+        "V-7.no-crowding",
+        "test_v7_projection.py::test_duplicates_do_not_crowd_out_the_high_distortion_invariant"
+      ],
+      [
+        "V-7.no-voi-claim",
+        "test_v7_projection.py::test_no_calibrated_causal_voi_claim_is_made"
+      ],
+      [
+        "V-7.query-log",
+        "test_v7_projection.py::test_query_log_records_every_declared_field"
+      ],
+      [
+        "V-7.set-conditional",
+        "test_v7_projection.py::test_selection_changes_when_working_set_ids_change"
+      ],
+      [
+        "V-7.stale-fact",
+        "test_v7_projection.py::test_stale_fact_is_withheld_and_produces_an_owned_unknown"
+      ],
+      [
+        "V-7.voi-stop",
+        "test_v7_projection.py::test_loop_stops_on_net_marginal_value_not_a_filled_window"
+      ],
+      [
+        "V-8.cache-table",
+        "test_v8_company_refs.py::test_cache_disagreement_truth_table"
+      ],
+      [
+        "V-8.counts-only",
+        "test_v8_company_refs.py::test_uncertified_codebase_only_mode_emits_counts_and_status_only"
+      ],
+      [
+        "V-8.digest-attribution",
+        "test_v8_company_refs.py::test_digest_mismatch_attribution_truth_table"
+      ],
+      [
+        "V-8.expiry",
+        "test_v8_company_refs.py::test_company_emits_its_own_observation_expired_event"
+      ],
+      [
+        "V-8.fresh-clone",
+        "test_v8_company_refs.py::test_fresh_clone_resolves_the_reference_without_copying_prose"
+      ],
+      [
+        "V-8.identity",
+        "test_v8_company_refs.py::test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change"
+      ],
+      [
+        "V-8.publish-manifest",
+        "test_v8_company_refs.py::test_publish_manifest_enforces_monotonic_counts"
+      ],
+      [
+        "V-8.reference-fields",
+        "test_v8_company_refs.py::test_reference_carries_exactly_the_company_owned_field_set"
+      ],
+      [
+        "V-8.steward-only-exception",
+        "test_v8_company_refs.py::test_maintainer_may_request_but_not_mint_an_exception"
+      ],
+      [
+        "V-8.steward-only-exception",
+        "test_v8_company_refs.py::test_only_company_steward_may_sign_a_relaxation"
+      ],
+      [
+        "V-8.stricter-class",
+        "test_v8_company_refs.py::test_stricter_of_company_and_local_class_controls_freshness"
+      ],
+      [
+        "V-8.uncertified",
+        "test_v8_company_refs.py::test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts"
+      ],
+      [
+        "V-9.blackhole",
+        "test_v9_host_lifecycle.py::test_blackholed_company_endpoint_degrades_loudly_inside_the_budget"
+      ],
+      [
+        "V-9.interleave",
+        "test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window"
+      ],
+      [
+        "V-9.native-events",
+        "test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal"
+      ],
+      [
+        "V-9.operator",
+        "test_v9_fatigue.py::test_blinded_operator_exercise_accuracy_and_median_time"
+      ],
+      [
+        "V-9.parity",
+        "test_v9_host_lifecycle.py::test_matched_conversations_produce_identical_canonical_payloads"
+      ],
+      [
+        "V-9.prompt-budget",
+        "test_v9_fatigue.py::test_four_total_per_hour_shared_across_destinations"
+      ],
+      [
+        "V-9.reissue-atomicity",
+        "test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction"
+      ],
+      [
+        "V-9.reset",
+        "test_v9_fatigue.py::test_reset_clears_only_the_consecutive_counter_once_per_hour"
+      ],
+      [
+        "V-9.setup",
+        "test_v9_host_lifecycle.py::test_hooks_plan_is_read_only_and_install_requires_native_approval"
+      ],
+      [
+        "V-9.topology",
+        "test_v9_host_lifecycle.py::test_worktrees_share_uuid_while_nested_roots_require_their_own_certificate"
+      ],
+      [
+        "V10.claim",
+        "test_v10_protocol.py::test_published_conclusion_uses_only_the_licensed_claim"
+      ],
+      [
+        "V10.principal",
+        "test_v10_protocol.py::test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task"
+      ]
+    ],
+    "undeclared": []
+  },
+  "open_instrument_debt": 1,
+  "planter_applications": [],
+  "schema": "guildhall-acceptance-census/1"
+}

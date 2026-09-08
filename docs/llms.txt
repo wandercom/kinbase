@@ -1,0 +1,27 @@
+# Kinbase (technical documentation)
+
+> Kinbase is the Company product of the three-store Kindex system (Personal, Codebase, Company) over one engine and protocol: a store of what a company has decided, and why, that engineers and coding agents read before they change a line. Developed in this repository under the name Guildhall. A Wander project.
+
+Status: specification ratified; proof of concept not yet run; two candidate amendments in review. Until the pre-registered experiment passes, everything here describes intent, not an installable product.
+
+- Canonical site and pitch: https://kinbase.tools/
+- Proof conditions: https://kinbase.tools/proof/ (also proof.md here)
+- Overview: overview.md
+- Amendment register: amendments.md
+- Specification (the authority for every claim): the spec/ directory of this repository
+- Kindex, the individual and codebase index that ships today: https://kindex.tools/ (source https://github.com/wandercom/kindex)
+- Privacy: https://kinbase.tools/privacy/
+
+## Specified behavior
+
+- Heterogeneous, provenance-preserving ingestion; idempotent re-ingest; explicit staleness and retraction.
+- Atomization and classification with zero write authority; exact-byte human approval publishes, one destination at a time, with per-destination receipts.
+- Physically separate stores; a coding session composes Company and Codebase and never mounts Personal; the shared writer is denied the Personal root by OS policy.
+- Non-clearable taint that hard-blocks registered secrets, credentials, canaries, and forbidden identifiers from every shared candidate.
+- Authority-seeking: unknowns routed to the registered scoped authority; signed, scoped, dated, supersedable answers; revocation reopens dependents as apology Unknowns.
+- Decision-conditional projection with revocation and validity rechecked at every projection.
+- Approval-fatigue bound: at most four shared approval prompts per hour, never three in a row, never an accept-all.
+
+## Proof, summarised
+
+Eleven arms on the same brownfield commits with blind scorers. The full system must score at least 0.90 and land within 0.05 of an agent handed the fully informed spec, close at least 70% of the gap between a plain agent and that spec-fed agent, beat the plain agent and an empty-corpus control by 0.15, beat a 2 KiB conventions note and top-k retrieval by 0.10, route with macro-F1 of at least 0.90 and shared-destination precision of at least 0.95, and allow zero seeded secrets on any shared surface, including under prompt-injection probes.
