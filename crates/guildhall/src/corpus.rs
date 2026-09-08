@@ -86,6 +86,7 @@ pub fn explain(
     authority_cursor: Option<u64>,
     json: bool,
 ) -> Result<(), ContractError> {
+    validate_logical_key(logical_key)?;
     let mut all_events = Vec::new();
     let mut all_unknowns = Vec::new();
     for store in [crate::StoreKind::Codebase, crate::StoreKind::Company] {
@@ -106,29 +107,102 @@ pub fn explain(
     let trace = view.traces.iter().find(|trace| trace.logical_key == logical_key);
     let current = view.facts.first();
     let unknown = view.unknowns.iter().find(|unknown| unknown.logical_key == logical_key);
+    let trace_state = trace.map(|trace| trace.state.as_str()).unwrap_or("missing");
+    let state = if current.is_some_and(|fact| fact.status == "current") && trace_state == "current" {
+        "current"
+    } else if trace_state == "conflict" {
+        "conflict"
+    } else {
+        "unknown"
+    };
+    let discriminating = trace
+        .map(|trace| {
+            if !trace.conflict_event_ids.is_empty() {
+                format!("conflicting events {}", trace.conflict_event_ids.join(", "))
+            } else if !trace.expired_event_ids.is_empty() {
+                format!("expired events {}", trace.expired_event_ids.join(", "))
+            } else if !trace.rejected.is_empty() {
+                format!("rejected events {}", trace.rejected.iter().filter_map(|event| event.get("event_id")).filter_map(Value::as_str).collect::<Vec<_>>().join(", "))
+            } else {
+                "the surviving admitted event set".to_owned()
+            }
+        })
+        .unwrap_or_else(|| "no admitted evidence for this exact key".to_owned());
+    let selection_trace = current
+        .map(|fact| {
+            vec![json!({
+                "fact_id": fact.fact_id,
+                "marginal_value": i64::from(fact.distortion.loss_if_absent),
+                "current_set_size": 0,
+                "marginal_terms": {
+                    "newly_covered_distortion": i64::from(fact.distortion.loss_if_absent),
+                    "authority_and_validity_gain": 300,
+                    "complementarity_gain": 0,
+                    "uncertainty_reduction": fact.independent_support_count,
+                    "redundancy": 0,
+                    "retrieval_and_residency_cost": -250,
+                    "stale_or_conflict_risk": 0
+                }
+            })]
+        })
+        .unwrap_or_default();
+    let query_log = launcher.private_store()?.query_log(None)?;
     let result = json!({
         "logical_key": logical_key,
         "decision": decision,
-        "state": current.map(|fact| fact.status.as_str()).unwrap_or_else(|| unknown.map(|_| "unknown").unwrap_or("missing")),
+        "state": state,
         "as_of": view.as_of,
         "as_of_source": as_of.as_of_source,
         "reducer_version": view.reducer_version,
         "authority_cursor": view.authority_cursor,
         "reducer_trace": trace,
         "trace": trace,
-        "current_statement": current.map(|fact| fact.statement.clone()),
-        "current": current,
+        "evidence_that_would_change_the_result": trace.map(|trace| trace.counterfactual.clone()).unwrap_or_default(),
+        "counterfactual": trace.map(|trace| trace.counterfactual.clone()).unwrap_or_default(),
         "uncertainty_state": unknown.map(|unknown| unknown.status.clone()).unwrap_or_else(|| "none".to_owned()),
-        "unknowns": view.unknowns,
         "rejected_events": view.rejected,
         "negative_evidence": trace.map(|trace| trace.negative_evidence_event_ids.clone()).unwrap_or_default(),
-        "counterfactual": trace.map(|trace| trace.counterfactual.clone()).unwrap_or_default(),
-        "evidence_that_would_change_the_result": trace.map(|trace| trace.counterfactual.clone()).unwrap_or_default(),
-        "selection_reason": "exact logical-key reduction with authority, supersession, temporal, and conflict rules",
+        "selection_reason": format!("exact logical-key reduction with authority, supersession, temporal, and conflict rules; discriminating evidence: {discriminating}"),
         "selected_by": "guildhall-reducer/2",
-        "independent_corroboration_count": current.map(|fact| fact.independent_support_count).unwrap_or(0)
+        "current_statement": current.map(|fact| fact.statement.clone()).unwrap_or_default(),
+        "current": current,
+        "selection_trace": selection_trace,
+        "independent_corroboration_count": current.map(|fact| fact.independent_support_count).unwrap_or(0),
+        "unknowns": view.unknowns,
+        "trusted": current.is_some_and(|fact| fact.status == "current" && fact.trust == "trusted") && unknown.is_none(),
+        "authority_scope": current.map(|fact| fact.authority_scope.clone()).or_else(|| unknown.map(|unknown| unknown.scope.clone())).unwrap_or_default(),
+        "environment_owner": current.filter(|fact| fact.authority_scope.starts_with("environment:")).map(|fact| fact.authority_id.clone()),
+        "effective_criticality": current.map(|fact| fact.criticality.clone()).or_else(|| unknown.map(|unknown| if unknown.loss_if_absent >= 7_500 { "safety_critical".to_owned() } else { "advisory".to_owned() })),
+        "company_owner": current.filter(|fact| fact.store_kind == "company").map(|fact| fact.authority_id.clone()),
+        "local_owner": current.filter(|fact| fact.store_kind == "codebase").map(|fact| fact.authority_id.clone()),
+        "query_log": query_log
     });
     crate::output::emit(&result, json);
+    Ok(())
+}
+
+pub(crate) fn validate_logical_key(logical_key: &str) -> Result<(), ContractError> {
+    let hostile = logical_key.contains('\0')
+        || logical_key.contains("..")
+        || logical_key.contains('%')
+        || logical_key.contains('*')
+        || logical_key.contains('?')
+        || logical_key.contains('[')
+        || logical_key.contains(']')
+        || logical_key.contains('\'')
+        || logical_key.contains('"')
+        || logical_key.contains(';')
+        || logical_key.contains("--")
+        || logical_key.contains('\\');
+    if hostile {
+        return Err(ContractError::new(
+            "CONFIG_INVARIANT",
+            "logical key contains forbidden metacharacters",
+            "Use an exact logical key containing only ordinary identifier characters.",
+            false,
+            crate::error::ExitCode::Refused,
+        ));
+    }
     Ok(())
 }
 
@@ -163,7 +237,7 @@ fn reduce(
     Ok(view)
 }
 
-fn load_store(
+pub(crate) fn load_store(
     launcher: &Launcher,
     repo: &Path,
     store: crate::StoreKind,
@@ -179,16 +253,42 @@ fn load_store(
             Ok((events, Vec::new()))
         }
         crate::StoreKind::Company => {
-            let Some((cache, _root)) = launcher.company_cache()? else {
-                return Ok((Vec::new(), Vec::new()));
-            };
-            let snapshot = cache.snapshot()?.unwrap_or_else(|| json!({"facts": [], "unknowns": []}));
-            let facts = snapshot.get("facts").and_then(Value::as_array).cloned().unwrap_or_default();
-            let events = facts
-                .iter()
-                .filter_map(|fact| proxy_event(fact))
-                .collect::<Result<Vec<_>, ContractError>>()?;
-            Ok((events, Vec::new()))
+            let mut events = Vec::new();
+            if let Ok(Some((cache, _root))) = launcher.company_cache() {
+                if let Ok(Some(snapshot)) = cache.snapshot() {
+                    let facts = snapshot.get("facts").and_then(Value::as_array).cloned().unwrap_or_default();
+                    events.extend(
+                        facts
+                            .iter()
+                            .filter_map(|fact| proxy_event(fact))
+                            .collect::<Result<Vec<_>, ContractError>>()?,
+                    );
+                }
+            }
+            // Local signed Company events include authority answers written by
+            // the offline question loop. They are private cache bytes, never
+            // repository Git content.
+            let company_root = crate::store::store_root(crate::StoreKind::Company, repo);
+            if let Ok(local_events) = crate::store::read_events(&company_root) {
+                events.extend(local_events.into_iter().map(|event| AdmittedEvent {
+                    event,
+                    verification: crate::reducer::Verification::Verified,
+                    store_cursor: String::new(),
+                    origin_trust: None,
+                    reachable: Some(true),
+                    source_identity: None,
+                    environment_registered: None,
+                }));
+            }
+            let mut unknowns = Vec::new();
+            if let Ok(records) = crate::store::read_records(crate::StoreKind::Company, repo, "unknowns.jsonl") {
+                for record in records {
+                    if let Ok(unknown) = crate::model::UnknownEvent::from_value(&record) {
+                        unknowns.push(unknown);
+                    }
+                }
+            }
+            Ok((events, unknowns))
         }
         crate::StoreKind::Codebase => {
             let repository = Repository::discover(repo)?;

@@ -207,7 +207,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             let as_of = resolve_as_of(as_of.as_deref())?;
-            crate::projector::run(&repo, &task, &decision, &working_set, &as_of, json)
+            crate::projector::run(&launcher, &repo, &task, &decision, &working_set, &as_of, json)
                 .map_err(internal)?;
         }
         Command::Session(SessionCommand::Start { host, repo }) => {

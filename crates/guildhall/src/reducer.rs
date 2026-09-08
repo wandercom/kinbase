@@ -774,6 +774,15 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
     }
 
     // Explicit Unknown events: open ones are surfaced; closed ones are history.
+    // A later closed record with the same stable ID retires the earlier open
+    // record without rewriting append-only history.
+    let closed_unknown_ids: BTreeSet<&str> = input
+        .unknowns
+        .iter()
+        .filter(|unknown| unknown.status == "closed" || unknown.status == "superseded")
+        .map(|unknown| unknown.fact_id.as_str())
+        .collect();
+    unknowns.retain(|unknown| !closed_unknown_ids.contains(unknown.unknown_id.as_str()));
     let mut open_unknown_ids = Vec::new();
     for unknown in &input.unknowns {
         if unknown.status == "open" || unknown.status == "asked" {
