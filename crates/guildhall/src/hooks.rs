@@ -140,10 +140,40 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r#"'"'"'"#))
 }
 
+fn probe_host(host: &str) -> Result<Value, ContractError> {
+    let path = resolve_host_executable(host)?;
+    let output = std::process::Command::new(&path)
+        .arg("--version")
+        .output()
+        .map_err(|error| ContractError::degraded(
+            "UNSUPPORTED_HOST_VERSION",
+            format!("host version probe failed: {}", error.kind()),
+            "Repair the host executable or its approved wrapper on PATH.",
+        ))?;
+    let version = version_text(&output.stdout);
+    if !output.status.success() || version.is_empty() {
+        return Err(ContractError::degraded(
+            "UNSUPPORTED_HOST_VERSION",
+            format!("host version probe exited with {}", output.status),
+            "Install a host CLI or approved wrapper that answers `--version`.",
+        ));
+    }
+    Ok(json!({
+        "path": path.to_string_lossy(),
+        "version": version,
+        "invocation": {
+            "argv": [path.to_string_lossy(), "--version"],
+            "exit_code": output.status.code(),
+            "stdout_bytes": output.stdout.len(),
+            "stderr_bytes": output.stderr.len()
+        }
+    }))
+}
+
 fn plan_payload(
     host_arg: crate::command_types::Host,
     ranges: &crate::config::SharedHosts,
-) -> Value {
+) -> Result<Value, ContractError> {
     let host = host_name(host_arg);
     let relative = host_relative_config(host);
     let program = current_program();
@@ -157,24 +187,21 @@ fn plan_payload(
             })
         })
         .collect::<Vec<_>>();
-    let host_executable = resolve_host_executable(host)
-        .ok()
-        .map(|path| Value::String(path.to_string_lossy().into_owned()))
-        .unwrap_or(Value::Null);
+    let host_details = probe_host(host)?;
     let mut base = json!({
-        "host": host,
+        "host_name": host,
+        "host": host_details,
         "status": "planned",
         "files": [{"path": relative}],
         "commands": commands,
         "permissions": [{"path": relative, "mode": "0600"}],
-        "host_executable": host_executable,
-        "host_version": host_range(host, ranges)
+        "required_host_version": host_range(host, ranges)
     });
     let digest = crate::hash::sha256_text(&crate::json::canonical_text(&base));
     if let Value::Object(map) = &mut base {
         map.insert("plan_digest".to_owned(), Value::String(digest));
     }
-    base
+    Ok(base)
 }
 
 fn plan(
@@ -182,7 +209,7 @@ fn plan(
     ranges: &crate::config::SharedHosts,
     json: bool,
 ) -> Result<(), ContractError> {
-    let result = plan_payload(host, ranges);
+    let result = plan_payload(host, ranges)?;
     if json {
         println!("{}", crate::json::canonical_text(&result));
     } else {
@@ -196,7 +223,7 @@ fn install(
     ranges: &crate::config::SharedHosts,
     json: bool,
 ) -> Result<(), ContractError> {
-    let plan = plan_payload(host_arg, ranges);
+    let plan = plan_payload(host_arg, ranges)?;
     let host = host_name(host_arg);
     let relative = host_relative_config(host);
     let home = std::env::var_os("HOME")
@@ -218,7 +245,8 @@ fn install(
         "host": host,
         "plan_digest": plan.get("plan_digest"),
         "files_written": [relative],
-        "host_version": host_range(host, ranges)
+        "required_host_version": host_range(host, ranges),
+        "host": plan.get("host").cloned().unwrap_or(Value::Null)
     });
     if json {
         println!("{}", crate::json::canonical_text(&receipt));
@@ -484,7 +512,7 @@ pub fn hook_state(host: &str, ranges: &crate::config::SharedHosts) -> Value {
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| hook_config_has_entries(host, &text))
         .unwrap_or(false);
-    let plan = plan_payload(host_arg(host), ranges);
+    let plan = plan_payload(host_arg(host), ranges).unwrap_or_else(|_| json!({"plan_digest": Value::Null}));
     if configured {
         json!({
             "host": host,

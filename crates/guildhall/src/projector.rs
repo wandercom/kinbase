@@ -6,9 +6,9 @@
 
 use crate::error::ContractError;
 use crate::launcher::Launcher;
-use crate::model::CurrentFact;
+use crate::model::{CurrentFact, FactEvent};
 use crate::reducer::{CurrentView, ReducerInput};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -62,33 +62,42 @@ pub fn run(
     json: bool,
 ) -> Result<(), ContractError> {
     let mut facts = Vec::new();
+    let mut ingested_events = Vec::new();
+    let mut conflict_event_ids = BTreeSet::new();
     let mut view_unknowns = Vec::new();
     for store in [crate::StoreKind::Company, crate::StoreKind::Codebase] {
-        let view = load_view(launcher, repo, store, as_of)?;
+        let (view, store_events) = load_view(launcher, repo, store, as_of)?;
+        conflict_event_ids.extend(
+            view.traces
+                .iter()
+                .flat_map(|trace| trace.conflict_event_ids.iter().cloned()),
+        );
         facts.extend(view.facts);
         view_unknowns.extend(view.unknowns);
+        ingested_events.extend(store_events);
     }
     // A closure record is authoritative across stores: the original Unknown
     // remains in append-only history, but no later projection may treat it as
     // still blocking after the signed answer.
-    let closed_unknown_ids: BTreeSet<String> = [crate::StoreKind::Company, crate::StoreKind::Codebase]
-        .into_iter()
-        .filter_map(|store| crate::store::read_records(store, repo, "unknowns.jsonl").ok())
-        .flatten()
-        .filter(|record| {
-            matches!(
-                record.get("status").and_then(Value::as_str),
-                Some("closed") | Some("superseded")
-            )
-        })
-        .filter_map(|record| {
-            record
-                .get("fact_id")
-                .or_else(|| record.get("unknown_id"))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .collect();
+    let closed_unknown_ids: BTreeSet<String> =
+        [crate::StoreKind::Company, crate::StoreKind::Codebase]
+            .into_iter()
+            .filter_map(|store| crate::store::read_records(store, repo, "unknowns.jsonl").ok())
+            .flatten()
+            .filter(|record| {
+                matches!(
+                    record.get("status").and_then(Value::as_str),
+                    Some("closed") | Some("superseded")
+                )
+            })
+            .filter_map(|record| {
+                record
+                    .get("fact_id")
+                    .or_else(|| record.get("unknown_id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .collect();
     view_unknowns.retain(|unknown| !closed_unknown_ids.contains(&unknown.unknown_id));
     facts.sort_by(|left, right| left.fact_id.cmp(&right.fact_id));
 
@@ -99,10 +108,36 @@ pub fn run(
             fact.status == "current"
                 && fact.trust == "trusted"
                 && fact.stale_reasons.is_empty()
-                && !matches!(fact.disposition.as_str(), "disputed" | "expired" | "conflict")
+                && !matches!(
+                    fact.disposition.as_str(),
+                    "disputed" | "expired" | "conflict"
+                )
         })
         .collect();
     let unknowns = unknown_outputs(&facts, &view_unknowns);
+    let mut candidate_documents: Vec<(String, Value)> = facts
+        .iter()
+        .map(|fact| (fact.fact_id.clone(), candidate_value(fact)))
+        .collect();
+    let mut represented_ids: BTreeSet<String> = candidate_documents
+        .iter()
+        .map(|(id, _)| id.clone())
+        .collect();
+    for event in ingested_events {
+        if represented_ids.contains(&event.fact_id) {
+            continue;
+        }
+        represented_ids.insert(event.fact_id.clone());
+        candidate_documents.push((
+            event.fact_id.clone(),
+            event_candidate_value(&event, &conflict_event_ids, &as_of.as_of),
+        ));
+    }
+    candidate_documents.sort_by(|left, right| left.0.cmp(&right.0));
+    let candidate_values: Vec<Value> = candidate_documents
+        .into_iter()
+        .map(|(_, value)| value)
+        .collect();
     let open_unknowns: Vec<_> = unknowns
         .iter()
         .filter(|unknown| unknown.status == "open" || unknown.status == "asked")
@@ -116,7 +151,10 @@ pub fn run(
     while selected.len() < PROJECTION_LIMIT {
         let mut best: Option<(&CurrentFact, Evaluation)> = None;
         for fact in &candidates {
-            if selected.iter().any(|existing| existing.fact_id == fact.fact_id) {
+            if selected
+                .iter()
+                .any(|existing| existing.fact_id == fact.fact_id)
+            {
                 continue;
             }
             let prospective_json: Vec<Value> = selected
@@ -124,7 +162,8 @@ pub fn run(
                 .chain(std::iter::once(*fact))
                 .map(candidate_value)
                 .collect();
-            let prospective_bytes = crate::json::canonical_text(&Value::Array(prospective_json)).len();
+            let prospective_bytes =
+                crate::json::canonical_text(&Value::Array(prospective_json)).len();
             let evaluation = evaluate(fact, &selected, &working, task, decision);
             if prospective_bytes > PROJECTION_BYTE_LIMIT {
                 if evaluation.marginal_value > 0 {
@@ -136,14 +175,17 @@ pub fn run(
                 .as_ref()
                 .map(|(current, current_value)| {
                     evaluation.marginal_value > current_value.marginal_value
-                        || (evaluation.marginal_value == current_value.marginal_value && fact.fact_id < current.fact_id)
+                        || (evaluation.marginal_value == current_value.marginal_value
+                            && fact.fact_id < current.fact_id)
                 })
                 .unwrap_or(true);
             if replace {
                 best = Some((fact, evaluation));
             }
         }
-        let Some((fact, evaluation)) = best else { break };
+        let Some((fact, evaluation)) = best else {
+            break;
+        };
         if evaluation.marginal_value <= 0 {
             break;
         }
@@ -175,12 +217,19 @@ pub fn run(
         let evidence: Vec<String> = selected
             .iter()
             .map(|fact| fact.fact_id.clone())
-            .chain(open_unknowns.iter().flat_map(|unknown| unknown.evidence.clone()))
+            .chain(
+                open_unknowns
+                    .iter()
+                    .flat_map(|unknown| unknown.evidence.clone()),
+            )
             .collect();
         let remaining: Vec<String> = candidates
             .iter()
             .filter_map(|fact| {
-                if selected.iter().any(|selected| selected.fact_id == fact.fact_id) {
+                if selected
+                    .iter()
+                    .any(|selected| selected.fact_id == fact.fact_id)
+                {
                     None
                 } else {
                     Some(fact.statement.clone())
@@ -188,8 +237,13 @@ pub fn run(
             })
             .collect();
         let mut raised = None;
-        for unknown in open_unknowns.iter().filter(|unknown| unknown.loss_if_absent >= 7_000) {
-            if let Some(id) = crate::questions::ensure_question(repo, unknown, decision, &evidence, &remaining)? {
+        for unknown in open_unknowns
+            .iter()
+            .filter(|unknown| unknown.loss_if_absent >= 7_000)
+        {
+            if let Some(id) =
+                crate::questions::ensure_question(repo, unknown, decision, &evidence, &remaining)?
+            {
                 raised = Some(id);
                 break;
             }
@@ -206,7 +260,9 @@ pub fn run(
     };
     let item_ceiling_hit = selected.len() == PROJECTION_LIMIT
         && candidates.iter().any(|fact| {
-            !selected.iter().any(|existing| existing.fact_id == fact.fact_id)
+            !selected
+                .iter()
+                .any(|existing| existing.fact_id == fact.fact_id)
                 && evaluate(fact, &selected, &working, task, decision).marginal_value > 0
         });
     let omitted_count = if byte_ceiling_hit || item_ceiling_hit {
@@ -221,7 +277,8 @@ pub fn run(
         })
         .collect();
     let selected_values: Vec<Value> = selected.iter().map(candidate_value).collect();
-    let projection_bytes = crate::json::canonical_text(&Value::Array(selected_values.clone())).len();
+    let projection_bytes =
+        crate::json::canonical_text(&Value::Array(selected_values.clone())).len();
     let company_reference = company_reference(&selected, &facts);
     let recommendation = if open_unknowns.is_empty() {
         selected
@@ -233,7 +290,10 @@ pub fn run(
     };
     let degraded_policy = if open_unknowns.is_empty() {
         "block_dependent_decision"
-    } else if open_unknowns.iter().any(|unknown| unknown.loss_if_absent >= 7_500) {
+    } else if open_unknowns
+        .iter()
+        .any(|unknown| unknown.loss_if_absent >= 7_500)
+    {
         "block_dependent_decision"
     } else {
         "reversible_sandbox_only_experiment"
@@ -243,7 +303,7 @@ pub fn run(
         "as_of": as_of.as_of,
         "as_of_source": as_of.as_of_source,
         "ambient_clock_read": false,
-        "candidates": candidates.iter().map(|fact| candidate_value(fact)).collect::<Vec<_>>(),
+        "candidates": candidate_values.into_iter().chain(unknowns.iter().map(unknown_value)).collect::<Vec<_>>(),
         "selected": selected.iter().map(|fact| json!({"fact_id": fact.fact_id, "logical_key": fact.logical_key})).collect::<Vec<_>>(),
         "selection_trace": selection_trace,
         "tier_escalation": tier_escalation,
@@ -263,6 +323,7 @@ pub fn run(
         "requested": TIERS.iter().map(|(tier, _, _)| *tier).collect::<Vec<_>>(),
         "returned": candidates.iter().map(|fact| fact.fact_id.clone()).collect::<Vec<_>>(),
         "selected": selected.iter().map(|fact| fact.fact_id.clone()).collect::<Vec<_>>(),
+        "selected_ids": selected.iter().map(|fact| fact.fact_id.clone()).collect::<Vec<_>>(),
         "working_set": working_set,
         "resident_at_dependent_edit": working_set,
         "declared_use": decision,
@@ -272,7 +333,9 @@ pub fn run(
         "cost": TIERS.iter().map(|(_, _, cost)| *cost).sum::<i64>(),
         "as_of": as_of.as_of
     });
-    launcher.private_store()?.log_query(Some(decision), &query_record)?;
+    launcher
+        .private_store()?
+        .log_query(Some(decision), &query_record)?;
 
     if json {
         println!("{}", crate::json::canonical_text(&result));
@@ -290,7 +353,7 @@ fn load_view(
     repo: &Path,
     store: crate::StoreKind,
     as_of: &crate::time::AsOf,
-) -> Result<CurrentView, ContractError> {
+) -> Result<(CurrentView, Vec<FactEvent>), ContractError> {
     let mut data = crate::corpus::load_store(launcher, repo, store)?;
     if store == crate::StoreKind::Codebase {
         if let Ok(repository) = crate::codebase::Repository::discover(repo) {
@@ -310,6 +373,11 @@ fn load_view(
         crate::StoreKind::Personal => "personal",
         crate::StoreKind::Codebase => "codebase",
     };
+    let ingested_events: Vec<FactEvent> = data
+        .events
+        .iter()
+        .map(|admitted| admitted.event.clone())
+        .collect();
     let input = ReducerInput {
         store_kind: store_name_value.to_owned(),
         events: data.events,
@@ -322,10 +390,64 @@ fn load_view(
         fact_valid_until: None,
         certificate_valid: data.certificate_valid,
     };
-    Ok(crate::reducer::reduce(&input))
+    Ok((crate::reducer::reduce(&input), ingested_events))
+}
+
+fn event_candidate_value(
+    event: &FactEvent,
+    conflict_event_ids: &BTreeSet<String>,
+    as_of: &str,
+) -> Value {
+    let expired = event
+        .effective_until
+        .as_deref()
+        .is_some_and(|until| until <= as_of);
+    let (role, reason) = if conflict_event_ids.contains(&event.event_id) {
+        (
+            "conflict",
+            "event participates in a logical-key conflict".to_owned(),
+        )
+    } else if expired || event.disposition == "expired" {
+        ("stale", format!("fact is expired as of {as_of}"))
+    } else {
+        (
+            "stale",
+            "event was superseded or otherwise not represented by the current view".to_owned(),
+        )
+    };
+    json!({
+        "logical_key": event.logical_key,
+        "fact_id": event.fact_id,
+        "atom_kind": event.atom_kind,
+        "statement": event.statement,
+        "scope": event.scope,
+        "authority_scope": event.authority_scope,
+        "distortion": event.distortion,
+        "validity": {
+            "status": if expired { "expired" } else { "admitted" },
+            "effective_from": event.effective_from,
+            "effective_until": event.effective_until
+        },
+        "role": role,
+        "reason": reason,
+        "authority_id": event.authority_id
+    })
+}
+
+fn candidate_role(fact: &CurrentFact) -> (&'static str, String) {
+    if !fact.stale_reasons.is_empty() {
+        ("stale", fact.stale_reasons.join(","))
+    } else if fact.disposition == "conflict" {
+        ("conflict", "fact disposition is conflict".to_owned())
+    } else if fact.disposition == "expired" || fact.disposition == "disputed" {
+        ("stale", format!("fact disposition is {}", fact.disposition))
+    } else {
+        ("current", "selectable current trusted fact".to_owned())
+    }
 }
 
 fn candidate_value(fact: &CurrentFact) -> Value {
+    let (role, reason) = candidate_role(fact);
     json!({
         "logical_key": fact.logical_key,
         "fact_id": fact.fact_id,
@@ -339,12 +461,15 @@ fn candidate_value(fact: &CurrentFact) -> Value {
             "effective_from": fact.effective_from,
             "effective_until": fact.effective_until
         },
-        "role": fact.authority_id
+        "role": role,
+        "reason": reason,
+        "authority_id": fact.authority_id
     })
 }
 
 fn unknown_value(unknown: &UnknownOut) -> Value {
     json!({
+        "role": "unknown",
         "owner_role": unknown.owner_role,
         "owner_identity": unknown.owner_identity,
         "logical_key": unknown.logical_key,
@@ -352,7 +477,10 @@ fn unknown_value(unknown: &UnknownOut) -> Value {
     })
 }
 
-fn unknown_outputs(facts: &[CurrentFact], view_unknowns: &[crate::reducer::DerivedUnknown]) -> Vec<UnknownOut> {
+fn unknown_outputs(
+    facts: &[CurrentFact],
+    view_unknowns: &[crate::reducer::DerivedUnknown],
+) -> Vec<UnknownOut> {
     let mut by_key: BTreeMap<String, UnknownOut> = BTreeMap::new();
     for unknown in view_unknowns {
         if unknown.status != "open" && unknown.status != "asked" {
@@ -379,9 +507,16 @@ fn unknown_outputs(facts: &[CurrentFact], view_unknowns: &[crate::reducer::Deriv
         let ineligible = fact.status != "current"
             || fact.trust != "trusted"
             || !fact.stale_reasons.is_empty()
-            || matches!(fact.disposition.as_str(), "disputed" | "expired" | "conflict");
+            || matches!(
+                fact.disposition.as_str(),
+                "disputed" | "expired" | "conflict"
+            );
         if ineligible && !by_key.contains_key(&fact.logical_key) {
-            let owner_role = if fact.store_kind == "company" { "company-steward" } else { "repository-maintainer" };
+            let owner_role = if fact.store_kind == "company" {
+                "company-steward"
+            } else {
+                "repository-maintainer"
+            };
             by_key.insert(
                 fact.logical_key.clone(),
                 UnknownOut {
@@ -391,17 +526,29 @@ fn unknown_outputs(facts: &[CurrentFact], view_unknowns: &[crate::reducer::Deriv
                     decision_blocked: fact.distortion.trigger.clone(),
                     owner_role: owner_role.to_owned(),
                     owner_identity: fact.authority_id.clone(),
-                    question: format!("Fact {} is not selectable; refresh or supersede its evidence.", fact.fact_id),
+                    question: format!(
+                        "Fact {} is not selectable; refresh or supersede its evidence.",
+                        fact.fact_id
+                    ),
                     evidence: fact.evidence_refs.clone(),
                     loss_if_absent: fact.distortion.loss_if_absent,
                     status: "open".to_owned(),
-                    kind: if fact.stale_reasons.is_empty() { fact.disposition.clone() } else { "stale".to_owned() },
+                    kind: if fact.stale_reasons.is_empty() {
+                        fact.disposition.clone()
+                    } else {
+                        "stale".to_owned()
+                    },
                 },
             );
         }
     }
     let mut values: Vec<_> = by_key.into_values().collect();
-    values.sort_by(|left, right| right.loss_if_absent.cmp(&left.loss_if_absent).then_with(|| left.unknown_id.cmp(&right.unknown_id)));
+    values.sort_by(|left, right| {
+        right
+            .loss_if_absent
+            .cmp(&left.loss_if_absent)
+            .then_with(|| left.unknown_id.cmp(&right.unknown_id))
+    });
     values
 }
 
@@ -418,9 +565,12 @@ fn evaluate(
     let statement_terms = terms(&fact.statement);
     let decision_overlap = statement_terms.intersection(&decision_terms).count().min(4) as i64;
     let task_overlap = statement_terms.intersection(&task_terms).count().min(4) as i64;
-    let relevance = 3_000 + decision_overlap.saturating_mul(1_000) + task_overlap.saturating_mul(500);
+    let relevance =
+        3_000 + decision_overlap.saturating_mul(1_000) + task_overlap.saturating_mul(500);
     let newly_covered = if resident {
         0
+    } else if covers_own_trigger(fact) {
+        i64::from(fact.distortion.loss_if_absent)
     } else {
         i64::from(fact.distortion.loss_if_absent)
             .saturating_mul(relevance)
@@ -429,7 +579,12 @@ fn evaluate(
     let authority_gain = if resident {
         0
     } else {
-        let base = if fact.authority_scope.starts_with("architecture") || fact.store_kind == "company" { 800 } else { 300 };
+        let base =
+            if fact.authority_scope.starts_with("architecture") || fact.store_kind == "company" {
+                800
+            } else {
+                300
+            };
         base + (i64::from(fact.confidence) / 20).min(500)
     };
     let complements_selected = selected.iter().any(|existing| {
@@ -437,18 +592,34 @@ fn evaluate(
             || existing.complements.contains(&fact.fact_id)
             || complementary_pair(fact, existing, decision)
     });
-    let complementarity = if resident { 0 } else if complements_selected { 2_500 } else { 0 };
+    let complementarity = if resident {
+        0
+    } else if complements_selected {
+        2_500
+    } else {
+        0
+    };
+    debug_assert!(complementarity >= 0);
     let uncertainty = if resident {
         0
     } else {
-        (i64::try_from(fact.independent_support_count).unwrap_or(i64::MAX).saturating_mul(250)).min(1_000)
+        (i64::try_from(fact.independent_support_count)
+            .unwrap_or(i64::MAX)
+            .saturating_mul(250))
+        .min(1_000)
             + if fact.company_refs.is_empty() { 0 } else { 250 }
     };
     let (redundancy, basis) = redundancy(fact, selected);
     let cost = if resident { -25 } else { -250 };
     let stale = 0;
     Evaluation {
-        marginal_value: newly_covered + authority_gain + complementarity + uncertainty + redundancy + cost + stale,
+        marginal_value: newly_covered
+            + authority_gain
+            + complementarity
+            + uncertainty
+            + redundancy
+            + cost
+            + stale,
         newly_covered_distortion: newly_covered,
         authority_and_validity_gain: authority_gain,
         complementarity_gain: complementarity,
@@ -460,15 +631,37 @@ fn evaluate(
     }
 }
 
+fn covers_own_trigger(fact: &CurrentFact) -> bool {
+    let trigger = terms(&fact.distortion.trigger);
+    if trigger.is_empty() {
+        return false;
+    }
+    let statement = terms(&fact.statement);
+    trigger.iter().all(|term| statement.contains(term))
+}
+
 fn complementary_pair(left: &CurrentFact, right: &CurrentFact, decision: &str) -> bool {
     let decision_terms = terms(decision);
     let left_key = terms(&left.logical_key);
     let right_key = terms(&right.logical_key);
-    let left_in_decision = !left_key.intersection(&decision_terms).collect::<BTreeSet<_>>().is_empty();
-    let right_in_decision = !right_key.intersection(&decision_terms).collect::<BTreeSet<_>>().is_empty();
-    let test = |fact: &CurrentFact| matches!(fact.atom_kind.as_str(), "test" | "runtime_trace" | "test_runtime_evidence");
+    let left_in_decision = !left_key
+        .intersection(&decision_terms)
+        .collect::<BTreeSet<_>>()
+        .is_empty();
+    let right_in_decision = !right_key
+        .intersection(&decision_terms)
+        .collect::<BTreeSet<_>>()
+        .is_empty();
+    let test = |fact: &CurrentFact| {
+        matches!(
+            fact.atom_kind.as_str(),
+            "test" | "runtime_trace" | "test_runtime_evidence"
+        )
+    };
     let rationale = |fact: &CurrentFact| fact.atom_kind == "rationale";
-    (test(left) && rationale(right) && left_in_decision && right_in_decision)
+    let kind_pair = (test(left) && rationale(right)) || (rationale(left) && test(right));
+    kind_pair
+        || (test(left) && rationale(right) && left_in_decision && right_in_decision)
         || (rationale(left) && test(right) && left_in_decision && right_in_decision)
 }
 
@@ -479,9 +672,23 @@ fn redundancy(fact: &CurrentFact, selected: &[CurrentFact]) -> (i64, String) {
         if explicit {
             return (-8_000, "explicit_edge".to_owned());
         }
-        let fact_support: BTreeSet<&str> = fact.support_event_ids.iter().chain(fact.evidence_refs.iter()).map(String::as_str).collect();
-        let existing_support: BTreeSet<&str> = existing.support_event_ids.iter().chain(existing.evidence_refs.iter()).map(String::as_str).collect();
-        if !fact_support.intersection(&existing_support).collect::<BTreeSet<_>>().is_empty() {
+        let fact_support: BTreeSet<&str> = fact
+            .support_event_ids
+            .iter()
+            .chain(fact.evidence_refs.iter())
+            .map(String::as_str)
+            .collect();
+        let existing_support: BTreeSet<&str> = existing
+            .support_event_ids
+            .iter()
+            .chain(existing.evidence_refs.iter())
+            .map(String::as_str)
+            .collect();
+        if !fact_support
+            .intersection(&existing_support)
+            .collect::<BTreeSet<_>>()
+            .is_empty()
+        {
             return (-3_000, "shared_provenance".to_owned());
         }
     }
@@ -494,9 +701,14 @@ fn redundancy(fact: &CurrentFact, selected: &[CurrentFact]) -> (i64, String) {
         if total == 0 {
             continue;
         }
-        let similarity = intersection.saturating_mul(2).saturating_mul(10_000).saturating_div(total);
+        let similarity = intersection
+            .saturating_mul(2)
+            .saturating_mul(10_000)
+            .saturating_div(total);
         if similarity >= 6_000 {
-            let penalty = similarity.saturating_mul(5_000).saturating_div(10_000);
+            // Near-duplicate paraphrases are withheld aggressively once an
+            // invariant has covered their distortion.
+            let penalty = similarity;
             if penalty > best.0 {
                 best = (penalty, format!("lexical_similarity:{similarity}"));
             }
@@ -508,7 +720,10 @@ fn redundancy(fact: &CurrentFact, selected: &[CurrentFact]) -> (i64, String) {
 fn is_authority_answer(fact: &CurrentFact) -> bool {
     fact.store_kind == "company"
         && fact.atom_kind == "decision"
-        && fact.evidence_refs.iter().any(|reference| reference.starts_with("answer_"))
+        && fact
+            .evidence_refs
+            .iter()
+            .any(|reference| reference.starts_with("answer_"))
 }
 
 fn company_reference(selected: &[CurrentFact], all_facts: &[CurrentFact]) -> Option<String> {

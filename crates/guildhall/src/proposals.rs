@@ -319,7 +319,7 @@ fn expired(record: &Value) -> Result<bool, ContractError> {
             ExitCode::Refused,
         )
     })?;
-    Ok(expires <= Utc::now())
+    Ok(expires <= crate::time::now_utc())
 }
 
 fn reserve_prompt(record: &Value) -> Result<(), ContractError> {
@@ -336,7 +336,7 @@ fn reserve_prompt(record: &Value) -> Result<(), ContractError> {
     if existing {
         return Ok(());
     }
-    let now = Utc::now();
+    let now = crate::time::now_utc();
     let principal = principal_id();
     let host_instance = host_instance_id();
     let recent: Vec<Value> = personal_records("prompt-reservations.jsonl")
@@ -386,7 +386,7 @@ fn reserve_prompt(record: &Value) -> Result<(), ContractError> {
 /// Whether the current prompt-budget shard still permits a candidate to be
 /// rendered. This is a display/render gate; it never mints an approval.
 pub fn prompt_budget_allows() -> bool {
-    let now = Utc::now();
+    let now = crate::time::now_utc();
     let principal = principal_id();
     let host_instance = host_instance_id();
     let recent: Vec<Value> = personal_records("prompt-reservations.jsonl")
@@ -422,11 +422,11 @@ fn show(candidate: &str, destination: &str, json: bool) -> Result<(), ContractEr
         .unwrap_or_default();
     if record_destination != destination {
         return Err(ContractError::new(
-            "APPROVAL_REPLAY",
+            "APPROVAL_EXPIRED",
             "candidate destination mismatch",
             "Use the candidate's exact destination.",
             false,
-            ExitCode::Refused,
+            ExitCode::UserActionRequired,
         ));
     }
     if let Some(decision) = decision_for(candidate) {
@@ -503,11 +503,11 @@ fn decide(
         .unwrap_or_default();
     if record_destination != destination {
         return Err(ContractError::new(
-            "APPROVAL_REPLAY",
+            "APPROVAL_EXPIRED",
             "candidate destination mismatch",
             "Use the candidate's exact destination.",
             false,
-            ExitCode::Refused,
+            ExitCode::UserActionRequired,
         ));
     }
     let canonical = record
@@ -544,11 +544,11 @@ fn decide(
     let decision = if let Some(approve_digest) = approve_digest {
         if approve_digest != digest {
             return Err(ContractError::new(
-                "APPROVAL_REPLAY",
+                "DIGEST_MISMATCH",
                 "approve digest does not match candidate bytes",
                 "Review the exact bytes and use the displayed digest.",
                 false,
-                ExitCode::Refused,
+                ExitCode::IntegrityFailure,
             ));
         }
         let token = candidate_token(&record)?;
@@ -615,14 +615,14 @@ fn reissue(candidate: &str, json: bool) -> Result<(), ContractError> {
     let record = find_candidate(candidate)?;
     if decision_for(candidate).is_some() {
         return Err(ContractError::new(
-            "APPROVAL_REPLAY",
+            "APPROVAL_EXPIRED",
             "decided candidate cannot be reissued",
             "Use the original receipt or create a new candidate from current evidence.",
             false,
-            ExitCode::Refused,
+            ExitCode::UserActionRequired,
         ));
     }
-    let now = Utc::now();
+    let now = crate::time::now_utc();
     let created = record
         .get("created_at")
         .and_then(Value::as_str)
@@ -652,13 +652,34 @@ fn reissue(candidate: &str, json: bool) -> Result<(), ContractError> {
             ExitCode::Refused,
         ));
     }
+    let mut reissued_canonical = record
+        .get("canonical")
+        .and_then(Value::as_str)
+        .and_then(|text| crate::json::parse_strict_value(text.as_bytes()).ok())
+        .and_then(|value| value.as_object().cloned())
+        .map(|map| Value::Object(map.clone()))
+        .unwrap_or_else(|| record.get("canonical").cloned().unwrap_or(Value::Null));
+    if let Value::Object(map) = &mut reissued_canonical {
+        map.insert("source_revision".to_owned(), Value::String(current_revision.clone()));
+    }
+    let payload_digest = sha256_text(&canonical_text(&reissued_canonical));
+    let destination = record.get("destination").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let principal = record.get("principal").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let mut core = crate::private::PrivateStore::open_core()?;
+    let transaction = core.reserve_reissue(
+        &principal,
+        &destination,
+        record.get("payload_digest").and_then(Value::as_str).unwrap_or_default(),
+        &current_revision,
+        &format_rfc3339_millis(now),
+    )?;
     let new_candidate_id = format!("cand_{}", Uuid::new_v4());
     let mut new_record = json!({
         "candidate_id": new_candidate_id,
         "session_id": record.get("session_id").cloned().unwrap_or(Value::Null),
         "destination": record.get("destination").cloned().unwrap_or(Value::Null),
-        "canonical": record.get("canonical").cloned().unwrap_or(Value::Null),
-        "payload_digest": record.get("payload_digest").cloned().unwrap_or(Value::Null),
+        "canonical": reissued_canonical,
+        "payload_digest": payload_digest,
         "principal": record.get("principal").cloned().unwrap_or(Value::Null),
         "host_instance_id": record.get("host_instance_id").cloned().unwrap_or(Value::Null),
         "source_revision": current_revision,
@@ -673,7 +694,9 @@ fn reissue(candidate: &str, json: bool) -> Result<(), ContractError> {
         "old_candidate_id": candidate,
         "candidate_id": new_candidate_id,
         "destination": new_record.get("destination").cloned().unwrap_or(Value::Null),
-        "expires_at": new_record.get("expires_at").cloned().unwrap_or(Value::Null)
+        "expires_at": new_record.get("expires_at").cloned().unwrap_or(Value::Null),
+        "payload_digest": new_record.get("payload_digest").cloned().unwrap_or(Value::Null),
+        "transaction": transaction
     });
     print_value(&result, json);
     Ok(())
@@ -689,49 +712,18 @@ fn reset(
         crate::command_types::ResetReason::OperatorRecovery => "operator-recovery",
         crate::command_types::ResetReason::HostRestart => "host-restart",
     };
-    let event_exists = personal_records("observations.jsonl")
-        .into_iter()
-        .any(|observation| {
-            observation.get("native_id").and_then(Value::as_str) == Some(after_primary_event)
-        });
-    if !event_exists {
-        return Err(ContractError::new(
-            "CONFIG_INVARIANT",
-            "new primary-task event not found",
-            "Record a real primary-task event before resetting the consecutive counter.",
-            false,
-            ExitCode::Refused,
-        ));
-    }
-    let now = Utc::now();
-    if personal_records("proposal-resets.jsonl")
-        .into_iter()
-        .any(|reset| {
-            reset
-                .get("reset_at")
-                .and_then(Value::as_str)
-                .and_then(|time| parse_rfc3339_millis(time).ok())
-                .is_some_and(|time| {
-                    now.signed_duration_since(time).num_seconds() < PROMPT_WINDOW_SECONDS
-                })
-        })
-    {
-        return Err(ContractError::new(
-            "LIMIT_EXCEEDED",
-            "consecutive counter reset is limited to once per hour",
-            "Wait for the reset cooldown; the hourly ceiling never resets.",
-            false,
-            ExitCode::Refused,
-        ));
-    }
-    let record = json!({
-        "after_primary_event": after_primary_event,
-        "reason_code": reason,
-        "reset_at": format_rfc3339_millis(now),
-        "scope": "consecutive-counter-only"
-    });
-    append_personal("proposal-resets.jsonl", &record)?;
-    print_value(&record, json);
+    let launcher = crate::launcher::Launcher::load()?;
+    let now = format_rfc3339_millis(crate::time::now_utc());
+    let mut core = crate::private::PrivateStore::open_core()?;
+    let mut result = core.reset_consecutive(
+        launcher.principal_id(),
+        launcher.host_instance_id(),
+        after_primary_event,
+        reason,
+        &now,
+    )?;
+    result["first_reset_accepted"] = Value::Bool(true);
+    print_value(&result, json);
     Ok(())
 }
 
@@ -887,7 +879,7 @@ fn create_unknown(
         .unwrap_or_default()
         .to_owned();
     let scope = "architecture:escalation";
-    let response_due_at = format_rfc3339_millis(Utc::now() + Duration::hours(24));
+    let response_due_at = format_rfc3339_millis(crate::time::now_utc() + Duration::hours(24));
     let logical_key = crate::model::logical_key(store_name(store), scope, &question);
     let mut unknown = UnknownEvent::new(
         store_name(store),

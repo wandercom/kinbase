@@ -172,7 +172,7 @@ pub fn error_from_response(response: &Response) -> ContractError {
         401 | 403 => ContractError::refused("AUTHORITY_SCOPE_DENIED", "Company refused the request as unauthorized", "Issue a least-privilege exact-scope token bound to this client key."),
         404 => ContractError::invariant("Company endpoint or object not found"),
         409 => ContractError::refused("APPROVAL_REPLAY", "Company reported a conflicting prior commit", "Use the original receipt or create a new candidate."),
-        413 | 429 => ContractError::limit(format!("Company refused with status {}", response.status), json!({"refused_count": 1})),
+        413 | 429 => ContractError::limit(format!("Company refused with status {}", response.status), json!({"refused_count": 1, "omitted_count": 1})),
         500..=599 => ContractError::unreachable(format!("Company answered with status {}", response.status)),
         status => ContractError::invariant(format!("Company answered with status {status}")),
     }

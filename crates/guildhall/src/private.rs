@@ -642,7 +642,7 @@ impl PrivateStore {
                 transaction.commit().map_err(sqlite_error("commit"))?;
                 return Err(ContractError::limit(
                     "this content digest was decided within the last 24 hours and its source revision is unchanged",
-                    json!({"refused_count": 1, "lock_age_seconds": age, "lock_seconds": REISSUE_LOCK_SECONDS}),
+                    json!({"refused_count": 1, "omitted_count": 1, "lock_age_seconds": age, "lock_seconds": REISSUE_LOCK_SECONDS}),
                 ));
             }
         }
@@ -666,7 +666,7 @@ impl PrivateStore {
             transaction.commit().map_err(sqlite_error("commit"))?;
             return Err(ContractError::limit(
                 "four shared approval opportunities are already reserved in the sliding hour for this principal and host instance",
-                json!({"refused_count": 1, "reserved_in_window": reserved_in_window, "window_seconds": PROMPT_WINDOW_SECONDS, "ceiling": PROMPT_WINDOW_LIMIT}),
+                json!({"refused_count": 1, "omitted_count": 1, "reserved_in_window": reserved_in_window, "window_seconds": PROMPT_WINDOW_SECONDS, "ceiling": PROMPT_WINDOW_LIMIT}),
             ));
         }
         let consecutive: i64 = transaction
@@ -691,7 +691,7 @@ impl PrivateStore {
             transaction.commit().map_err(sqlite_error("commit"))?;
             return Err(ContractError::limit(
                 "three consecutive shared prompts were surfaced without returning to the primary task",
-                json!({"refused_count": 1, "consecutive": consecutive, "ceiling": CONSECUTIVE_LIMIT}),
+                json!({"refused_count": 1, "omitted_count": 1, "consecutive": consecutive, "ceiling": CONSECUTIVE_LIMIT}),
             ));
         }
         let reservation_id = crate::crypto::random_id("resv");
@@ -748,6 +748,55 @@ impl PrivateStore {
             .map_err(sqlite_error("metric"))
     }
 
+    /// One `BEGIN IMMEDIATE` reissue eligibility transaction. A digest is locked
+    /// for 24 hours unless the trusted source revision changed.
+    pub fn reserve_reissue(
+        &mut self,
+        principal_id: &str,
+        destination: &str,
+        content_digest: &str,
+        source_revision: &str,
+        now: &str,
+    ) -> Result<Value, ContractError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(sqlite_error("begin immediate"))?;
+        let lock_window = &now[..10];
+        let prior_lock: Option<(String, String)> = transaction
+            .query_row(
+                "SELECT locked_at, source_revision FROM reissue_locks WHERE principal_id=?1 AND destination=?2 AND content_digest=?3 ORDER BY locked_at DESC LIMIT 1",
+                params![principal_id, destination, content_digest],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()
+            .map_err(sqlite_error("reissue lock read"))?;
+        if let Some((locked_at, locked_revision)) = prior_lock {
+            let age = crate::time::seconds_between(&locked_at, now).unwrap_or(0);
+            if age < REISSUE_LOCK_SECONDS && locked_revision == source_revision {
+                self_bump(&transaction, "suppressed")?;
+                transaction.commit().map_err(sqlite_error("commit"))?;
+                return Err(ContractError::limit(
+                    "candidate source bytes and revision are unchanged within 24 hours",
+                    json!({"refused_count": 1, "omitted_count": 1, "lock_age_seconds": age, "lock_seconds": REISSUE_LOCK_SECONDS}),
+                ));
+            }
+        }
+        let inserted = transaction
+            .execute(
+                "INSERT OR IGNORE INTO reissue_locks(principal_id, destination, content_digest, lock_window, locked_at, source_revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![principal_id, destination, content_digest, lock_window, now, source_revision],
+            )
+            .map_err(sqlite_error("reissue lock insert"))?;
+        transaction.commit().map_err(sqlite_error("commit"))?;
+        Ok(json!({
+            "transaction": "BEGIN IMMEDIATE",
+            "committed": true,
+            "lock_inserted": inserted == 1,
+            "at": now
+        }))
+    }
+
     /// Consecutive-counter reset: only after a real primary-task event and at
     /// most once per hour. The hourly ceiling is untouched.
     pub fn reset_consecutive(
@@ -788,7 +837,7 @@ impl PrivateStore {
             transaction.commit().map_err(sqlite_error("commit"))?;
             return Err(ContractError::limit(
                 "this primary-task event already authorized a reset",
-                json!({"refused_count": 1}),
+                json!({"refused_count": 1, "omitted_count": 1}),
             ));
         }
         let now_dt = crate::time::parse_rfc3339_millis(now).map_err(ContractError::internal)?;
@@ -804,7 +853,7 @@ impl PrivateStore {
             transaction.commit().map_err(sqlite_error("commit"))?;
             return Err(ContractError::limit(
                 "consecutive-counter reset is limited to once per hour; the hourly ceiling never resets",
-                json!({"refused_count": 1, "cooldown_seconds": PROMPT_WINDOW_SECONDS}),
+                json!({"refused_count": 1, "omitted_count": 1, "cooldown_seconds": PROMPT_WINDOW_SECONDS}),
             ));
         }
         let reset_id = crate::crypto::random_id("reset");

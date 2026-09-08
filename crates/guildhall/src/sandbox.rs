@@ -396,26 +396,56 @@ pub fn run_verified_executable(
         }
         Err(error) => return Err(ContractError::integrity("PROCESSOR_UNAUTHORIZED", format!("descriptor-backed execution failed ({})", error.kind()), "A platform without verified descriptor-backed execution disables the external classifier.")),
     };
-    if let Some(mut stdin) = child.stdin.take() {
-        let _ = std::io::Write::write_all(&mut stdin, input);
-    }
+    // Write stdin independently and read both pipes concurrently. A
+    // classifier can emit more than a pipe buffer of atoms before consuming
+    // all input; doing this synchronously deadlocks both processes.
+    let stdin_writer = child.stdin.take().map(|mut stdin| {
+        let input = input.to_vec();
+        std::thread::spawn(move || {
+            let _ = std::io::Write::write_all(&mut stdin, &input);
+            // Drop closes stdin even if the child exits before reading all bytes.
+        })
+    });
+    let stdout_reader = child.stdout.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut pipe, &mut bytes);
+            bytes
+        })
+    });
+    let stderr_reader = child.stderr.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut pipe, &mut bytes);
+            bytes
+        })
+    });
     let started = std::time::Instant::now();
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => break status,
             Ok(None) => {
                 if started.elapsed() > timeout {
                     let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = stdin_writer.map(std::thread::JoinHandle::join);
+                    let _ = stdout_reader.map(std::thread::JoinHandle::join);
+                    let _ = stderr_reader.map(std::thread::JoinHandle::join);
                     return Err(ContractError::degraded("UNKNOWN_OWNER_UNRESOLVED", "classifier exceeded its wall timeout; extraction abstained", "Increase classifier.timeout_seconds or use a faster local processor."));
                 }
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
             Err(error) => return Err(ContractError::io("wait classifier", error)),
         }
+    };
+    let _ = stdin_writer.map(std::thread::JoinHandle::join);
+    let stdout = stdout_reader
+        .map(std::thread::JoinHandle::join)
+        .map(|joined| joined.unwrap_or_default())
+        .unwrap_or_default();
+    let _ = stderr_reader.map(std::thread::JoinHandle::join);
+    if !status.success() {
+        return Err(ContractError::degraded("UNKNOWN_OWNER_UNRESOLVED", format!("classifier exited with {status}; extraction abstained"), "Repair the classifier; abstention creates a private Unknown."));
     }
-    let output = child.wait_with_output().map_err(|error| ContractError::io("collect classifier", error))?;
-    if !output.status.success() {
-        return Err(ContractError::degraded("UNKNOWN_OWNER_UNRESOLVED", format!("classifier exited with {}; extraction abstained", output.status), "Repair the classifier; abstention creates a private Unknown."));
-    }
-    Ok(output.stdout)
+    Ok(stdout)
 }

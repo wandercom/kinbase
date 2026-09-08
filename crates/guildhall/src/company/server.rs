@@ -295,7 +295,7 @@ fn authenticate(db: &CompanyDb, state: &ServiceState, request: &Request, now: &s
             429,
             ContractError::limit(
                 "authentication failure ceiling reached for this minute",
-                json!({"refused_count": 1, "ceiling": state.config.auth_failures_per_minute}),
+                json!({"refused_count": 1, "omitted_count": 1, "ceiling": state.config.auth_failures_per_minute}),
             ),
         ));
     }
@@ -346,16 +346,14 @@ fn authenticate(db: &CompanyDb, state: &ServiceState, request: &Request, now: &s
     if !db.consume_request_nonce(&client_hex, &nonce, &expires_at, now).map_err(|error| refuse(500, error))? {
         return Err(fail(db));
     }
-    if !db.bind_token_key(&token.digest, &client_hex).map_err(|error| refuse(500, error))? {
-        return Err(fail(db));
-    }
+    db.record_token_client_pair(&token.digest, &client_hex, now).map_err(|error| refuse(500, error))?;
     let rate = db.bump_request_rate(&client_hex, minute).map_err(|error| refuse(500, error))?;
     if rate > state.config.requests_per_minute {
         return Err(refuse(
             429,
             ContractError::limit(
                 "request rate ceiling exceeded for this client key",
-                json!({"refused_count": 1, "ceiling": state.config.requests_per_minute}),
+                json!({"refused_count": 1, "omitted_count": 1, "ceiling": state.config.requests_per_minute}),
             ),
         ));
     }
@@ -485,7 +483,8 @@ fn status(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state:
             "token_role": auth.token.role,
             "token_scopes": auth.token.scopes,
             "authority_scopes": readable_scopes(auth, trust_state).into_iter().collect::<Vec<_>>(),
-            "client_key_bound": true,
+            "client_key_bound": false,
+            "client_keys_seen": db.token_client_key_count(&auth.token.digest).map_err(|error| refuse(500, error))?,
             "registry_entries": trust_state.registry.len(),
             "started_at": state.started_at,
             "metrics": db.metrics().map_err(|error| refuse(500, error))?
@@ -615,7 +614,7 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
     if bytes.len() > crate::model::MAX_EVENT_BYTES {
         return Err(refuse(
             413,
-            ContractError::limit("shared event exceeds the 64 KiB ceiling", json!({"refused_count": 1, "bytes": bytes.len()})),
+            ContractError::limit("shared event exceeds the 64 KiB ceiling", json!({"refused_count": 1, "omitted_count": 1, "bytes": bytes.len()})),
         ));
     }
     let event = FactEvent::parse(&bytes).map_err(|error| {
@@ -1678,5 +1677,102 @@ nonce_retention_seconds = 1300
             .unwrap();
         db.append_event("evt_packet10_second", "fact-event", "fact-event", &second_document, &root_key.public().to_hex(), "verified", None).unwrap();
         assert_eq!(replay_projection(&db, &trust, &event), (true, false));
+    }
+}
+
+#[cfg(test)]
+mod packet11_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    fn signed_request(key: &PrivateKey, nonce: &str, expires_at: &str, signature: Option<&str>) -> Request {
+        let body = Vec::new();
+        let signed = json!({
+            "method": "GET",
+            "path": "/status",
+            "body_sha256": crate::hash::sha256_bytes(&body),
+            "nonce": nonce,
+            "expires_at": expires_at
+        });
+        let signature = signature
+            .map(str::to_owned)
+            .unwrap_or_else(|| key.sign("receipt", &crate::json::canonical_bytes(&signed)).unwrap());
+        Request {
+            method: "GET".to_owned(),
+            path: "/status".to_owned(),
+            route: "/status".to_owned(),
+            query: BTreeMap::new(),
+            headers: vec![
+                ("authorization".to_owned(), "Bearer facts-packet11".to_owned()),
+                ("x-guildhall-nonce".to_owned(), nonce.to_owned()),
+                ("x-guildhall-expires-at".to_owned(), expires_at.to_owned()),
+                ("x-guildhall-client-key".to_owned(), key.public().to_hex()),
+                ("x-guildhall-signature".to_owned(), signature),
+            ],
+            body,
+            peer: None,
+        }
+    }
+
+    #[test]
+    fn r17_allows_two_client_keys_for_one_token_and_throttles_bad_signatures() {
+        let temp = tempfile::tempdir().unwrap();
+        let root_key = PrivateKey::generate();
+        let first = PrivateKey::generate();
+        let second = PrivateKey::generate();
+        let token_path = temp.path().join("facts.token");
+        crate::crypto::write_0600(&token_path, b"facts-packet11", "facts token").unwrap();
+        let config = ServiceConfig {
+            path: temp.path().join("guildhalld.toml"),
+            company_id: "packet11".to_owned(),
+            sqlite_path: temp.path().join("company.sqlite"),
+            bind: "127.0.0.1:0".parse().unwrap(),
+            root_key_file: temp.path().join("root.key"),
+            facts_token_file: token_path,
+            directory_token_file: None,
+            admin_token_file: None,
+            authority_token_file: None,
+            auth_failures_per_minute: 10,
+            default_fact_freshness_seconds: 900,
+            candidate_lifetime_seconds: 900,
+            clock_skew_seconds: 300,
+            nonce_retention_seconds: 1300,
+            read_volume_per_hour: 2_000,
+            read_bytes_per_hour: 64 * 1024 * 1024,
+            requests_per_minute: 600,
+            revocation_freshness_seconds: 900,
+            directory_retention_seconds: 365 * 24 * 3600,
+            facts_token_scopes: Vec::new(),
+        };
+        let db = CompanyDb::open(&config.sqlite_path).unwrap();
+        register_tokens(&db, &config).unwrap();
+        let state = ServiceState {
+            config,
+            root: root_key,
+            started_at: crate::time::now_rfc3339_millis(),
+        };
+        let now = crate::time::now_rfc3339_millis();
+        let expires_at = crate::time::plus_seconds(&now, 60).unwrap();
+        let first_auth = authenticate(&db, &state, &signed_request(&first, "nonce-a", &expires_at, None), &now).unwrap();
+        let second_auth = authenticate(&db, &state, &signed_request(&second, "nonce-b", &expires_at, None), &now).unwrap();
+        assert_ne!(first_auth.client_key, second_auth.client_key);
+        assert_ne!(first_auth.principal_key, second_auth.principal_key);
+        assert_eq!(db.token_client_key_count(&first_auth.token.digest).unwrap(), 2);
+
+        for index in 0..10 {
+            let nonce = format!("bad-{index}");
+            let request = signed_request(&first, &nonce, &expires_at, Some(&"00".repeat(64)));
+            let Err((status, _)) = authenticate(&db, &state, &request, &now) else {
+                panic!("bad signature was accepted");
+            };
+            assert_eq!(status, 401);
+        }
+        let request = signed_request(&first, "bad-eleventh", &expires_at, Some(&"00".repeat(64)));
+        let Err((status, error)) = authenticate(&db, &state, &request, &now) else {
+                panic!("failure ceiling was not enforced");
+            };
+        assert_eq!(status, 429);
+        assert_eq!(error.detail.as_ref().unwrap()["omitted_count"], 1);
     }
 }

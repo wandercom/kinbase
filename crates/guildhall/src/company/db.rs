@@ -65,6 +65,9 @@ impl CompanyDb {
                     token_digest TEXT PRIMARY KEY, role TEXT NOT NULL, scopes TEXT NOT NULL,
                     authority_scopes TEXT NOT NULL, principal_id TEXT NOT NULL, bound_client_key TEXT,
                     created_at TEXT NOT NULL, retired_at TEXT);
+                 CREATE TABLE IF NOT EXISTS token_client_keys(
+                    token_digest TEXT NOT NULL, client_key TEXT NOT NULL, first_used_at TEXT NOT NULL,
+                    PRIMARY KEY(token_digest, client_key));
                  CREATE TABLE IF NOT EXISTS registry(
                     authority_id TEXT NOT NULL, scope TEXT NOT NULL, public_key TEXT NOT NULL,
                     channel TEXT NOT NULL, capabilities TEXT NOT NULL, status TEXT NOT NULL,
@@ -326,6 +329,38 @@ impl CompanyDb {
                 Ok(true)
             }
         }
+    }
+
+    /// R-17: record each successful `(token, client key)` pair for audit.
+    /// Several keys may use one token; read ceilings are keyed by pair.
+    pub fn record_token_client_pair(&self, token_digest: &str, client_key: &str, now: &str) -> Result<bool, ContractError> {
+        let inserted = self
+            .connection
+            .execute(
+                "INSERT OR IGNORE INTO token_client_keys(token_digest, client_key, first_used_at) VALUES (?1, ?2, ?3)",
+                params![token_digest, client_key, now],
+            )
+            .map_err(sqlite_error("token client pair"))?;
+        if inserted == 1 {
+            let record = json!({"kind": "token-client-pair", "token_digest": token_digest, "client_key": client_key, "first_used_at": now});
+            self.connection
+                .execute(
+                    "INSERT INTO audit(kind, record, recorded_at) VALUES ('token-client-pair', ?1, ?2)",
+                    params![crate::json::canonical_text(&record), now],
+                )
+                .map_err(sqlite_error("token client audit"))?;
+        }
+        Ok(inserted == 1)
+    }
+
+    pub fn token_client_key_count(&self, token_digest: &str) -> Result<i64, ContractError> {
+        self.connection
+            .query_row(
+                "SELECT COUNT(*) FROM token_client_keys WHERE token_digest=?1",
+                params![token_digest],
+                |row| row.get(0),
+            )
+            .map_err(sqlite_error("token client count"))
     }
 
     // ----- throttles -----

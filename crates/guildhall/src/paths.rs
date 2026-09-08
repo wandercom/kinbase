@@ -201,7 +201,7 @@ pub fn read_bounded(path: &Path, limit: usize, role: &str) -> Result<Vec<u8>, Co
     if metadata.len() as usize > limit {
         return Err(ContractError::limit(
             format!("{role} exceeds the {limit}-byte ceiling"),
-            serde_json::json!({"bytes": metadata.len(), "ceiling_bytes": limit, "refused_count": 1}),
+            serde_json::json!({"bytes": metadata.len(), "ceiling_bytes": limit, "refused_count": 1, "omitted_count": 1}),
         ));
     }
     fs::read(path).map_err(|error| ContractError::unreadable(role, &error))

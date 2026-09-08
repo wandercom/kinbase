@@ -80,7 +80,7 @@ pub fn read_request(stream: &TcpStream, body_limit: usize) -> Result<Request, Re
         if total > MAX_HEADER_BYTES {
             return Err(ReadError::Bad(
                 431,
-                ContractError::limit("request headers exceed the 16 KiB bound", serde_json::json!({"refused_count": 1})),
+                ContractError::limit("request headers exceed the 16 KiB bound", serde_json::json!({"refused_count": 1, "omitted_count": 1})),
             ));
         }
         let trimmed = line.trim_end_matches(['\r', '\n']);
@@ -107,7 +107,7 @@ pub fn read_request(stream: &TcpStream, body_limit: usize) -> Result<Request, Re
             413,
             ContractError::limit(
                 format!("request body exceeds the {body_limit}-byte bound"),
-                serde_json::json!({"refused_count": 1, "bytes": content_length, "ceiling_bytes": body_limit}),
+                serde_json::json!({"refused_count": 1, "omitted_count": 1, "bytes": content_length, "ceiling_bytes": body_limit}),
             ),
         ));
     }
@@ -310,7 +310,7 @@ pub fn request(
     if content_length > MAX_BODY_BYTES * 4 {
         return Err(ContractError::limit(
             "Company response exceeds the bounded body size",
-            serde_json::json!({"refused_count": 1, "bytes": content_length}),
+            serde_json::json!({"refused_count": 1, "omitted_count": 1, "bytes": content_length}),
         ));
     }
     let mut raw = vec![0u8; content_length];

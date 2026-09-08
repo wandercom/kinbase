@@ -11,6 +11,7 @@ use std::path::Path;
 use uuid::Uuid;
 
 const SESSION_OBSERVATION_LIMIT: usize = 10_000;
+const CLASSIFIER_REQUEST_LIMIT: usize = 1024 * 1024;
 const SESSION_OBSERVATION_KEYS: [&str; 5] = ["id", "role", "text", "observed_at", "source_kind"];
 
 pub fn start(repo: &Path, host: crate::HostKind, json: bool) -> Result<(), ContractError> {
@@ -111,6 +112,18 @@ pub fn observe(
 
     let repo = std::env::current_dir().map_err(io_error)?;
     let repository_id = crate::repository::repository_id(&repo).ok();
+    {
+        // Prompt-budget resets are authorized by these host-instance events.
+        // `INSERT OR IGNORE` keeps repeated observations idempotent.
+        let mut core = crate::private::PrivateStore::open_core()?;
+        let recorded_at = now_rfc3339_millis();
+        for record in &records {
+            let event_id = record.get("id").and_then(Value::as_str).unwrap_or_default();
+            core.insert_session_event(session, event_id, "primary-task", &json!({
+                "session_id": session, "event_id": event_id, "event_type": "primary-task"
+            }), &recorded_at)?;
+        }
+    }
     let mut observations = Vec::new();
     for record in &records {
         let event_id = record["id"].as_str().unwrap_or_default().to_owned();
@@ -154,27 +167,31 @@ pub fn observe(
         ));
     }
 
-    let classifier_input = json!({
-        "observations": observations
-            .iter()
-            .map(|(observation, event)| {
-                let native_id = event.get("event_id").and_then(Value::as_str).unwrap_or_default();
-                json!({
-                    "observation_id": observation.observation_id,
-                    "source_kind": observation.source_kind,
-                    "source_identity": observation.source_identity,
-                    "content_digest": observation.content_digest,
-                    "observed_at": observation.observed_at,
-                    "disposition": observation.disposition,
-                    "extraction_version": observation.extraction_version,
-                    "body": session_corpus_text(&records, native_id),
-                    "scope": "host-session",
-                    "confidence": 8_000
-                })
+    let classifier_observations = observations
+        .iter()
+        .map(|(observation, event)| {
+            let native_id = event.get("event_id").and_then(Value::as_str).unwrap_or_default();
+            json!({
+                "observation_id": observation.observation_id,
+                "source_kind": observation.source_kind,
+                "source_identity": observation.source_identity,
+                "content_digest": observation.content_digest,
+                "observed_at": observation.observed_at,
+                "disposition": observation.disposition,
+                "extraction_version": observation.extraction_version,
+                "body": session_corpus_text(&records, native_id),
+                "scope": "host-session",
+                "confidence": 8_000
             })
-            .collect::<Vec<_>>()
-    });
-    let external_atoms = pinned_classifier_atoms(classifier, &classifier_input)?;
+        })
+        .collect::<Vec<_>>();
+    let mut external_atoms: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for batch in classifier_batches(classifier_observations)? {
+        let batch_atoms = pinned_classifier_atoms(classifier, &batch)?;
+        for (observation_id, atoms) in batch_atoms {
+            external_atoms.entry(observation_id).or_default().extend(atoms);
+        }
+    }
 
     let mut atom_records = Vec::new();
     let mut candidate_records = Vec::new();
@@ -416,6 +433,41 @@ fn pinned_classifier_atoms(
         }
     }
     Ok(result)
+}
+
+fn classifier_batches(observations: Vec<Value>) -> Result<Vec<Value>, ContractError> {
+    let mut batches = Vec::new();
+    let mut current: Vec<Value> = Vec::new();
+    for observation in observations {
+        let mut candidate = current.clone();
+        candidate.push(observation.clone());
+        let request = json!({ "observations": candidate });
+        let bytes = crate::json::canonical_bytes(&request).len();
+        if bytes <= CLASSIFIER_REQUEST_LIMIT {
+            current = candidate;
+            continue;
+        }
+        if !current.is_empty() {
+            batches.push(json!({ "observations": current }));
+            candidate = vec![observation];
+        }
+        let bytes = crate::json::canonical_bytes(&json!({ "observations": candidate })).len();
+        if bytes > CLASSIFIER_REQUEST_LIMIT {
+            return Err(ContractError::limit(
+                format!("a single classifier observation exceeds the {CLASSIFIER_REQUEST_LIMIT}-byte request bound"),
+                json!({
+                    "omitted_count": 1,
+                    "bytes": bytes,
+                    "ceiling_bytes": CLASSIFIER_REQUEST_LIMIT
+                }),
+            ));
+        }
+        current = candidate;
+    }
+    if !current.is_empty() {
+        batches.push(json!({ "observations": current }));
+    }
+    Ok(batches)
 }
 
 fn atom_from_classifier(

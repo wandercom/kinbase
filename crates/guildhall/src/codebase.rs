@@ -420,7 +420,7 @@ impl Repository {
         if canonical.len() > crate::model::MAX_EVENT_BYTES {
             return Err(ContractError::limit(
                 "shared event exceeds the 64 KiB ceiling",
-                json!({"bytes": canonical.len(), "ceiling_bytes": crate::model::MAX_EVENT_BYTES, "refused_count": 1}),
+                json!({"bytes": canonical.len(), "ceiling_bytes": crate::model::MAX_EVENT_BYTES, "refused_count": 1, "omitted_count": 1}),
             ));
         }
         let digest = crate::hash::sha256_bytes(canonical);

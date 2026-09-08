@@ -707,12 +707,12 @@ pub fn build_trust(launcher: &Launcher, repo: &Repository, online: bool) -> Resu
             Ok(snapshot) => {
                 trust.company_reachable = Some(true);
                 if let Err(error) = company.cache.store_snapshot(&snapshot, &company.root, &now) {
-                    crate::output::diagnostic("snapshot-refused", json!({"code": error.code, "message": error.message}));
+                    crate::output::diagnostic("snapshot-refused", serde_json::to_value(&error).unwrap_or_else(|_| json!({"code": "RUN_INTEGRITY_FAILED", "message": "snapshot refusal detail was unreadable", "remediation": "Preserve the receipt.", "retryable": false, "evidence_id": "err_snapshot_refused"})));
                 }
             }
             Err(error) => {
                 trust.company_reachable = Some(false);
-                crate::output::diagnostic("company-refresh-failed", json!({"code": error.code, "message": error.message, "retryable": error.retryable}));
+                crate::output::diagnostic("company-refresh-failed", serde_json::to_value(&error).unwrap_or_else(|_| json!({"code": "RUN_INTEGRITY_FAILED", "message": "refresh failure detail was unreadable", "remediation": "Preserve the receipt.", "retryable": false, "evidence_id": "err_refresh_failed"})));
             }
         }
         trust.company_connect_seconds = Some(started.elapsed().as_secs_f64());
@@ -1537,6 +1537,13 @@ fn skew_report(private: &crate::private::PrivateStore) -> Result<(Vec<Value>, Ve
     Ok((report, dispositions))
 }
 
+fn manifest_problem(path: &std::path::Path, code: &str, message: &str) -> Value {
+    let error = ContractError::integrity(code, message.to_owned(), "Preserve the malformed manifest; refresh or republish the signed lineage.");
+    let mut problem = crate::output::error_document(&error)["error"].clone();
+    problem["path"] = Value::String(path.to_string_lossy().into_owned());
+    problem
+}
+
 /// `doctor --json` (interface contract §1.3).
 pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_output: bool) -> Result<(), ContractError> {
     let now = crate::time::now_rfc3339_millis();
@@ -1685,7 +1692,7 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
     let mut published_digest_sets: Vec<BTreeSet<String>> = Vec::new();
     for file in &manifests {
         if file.path_alias {
-            manifest_problems.push(json!({"path": file.relative.to_string_lossy(), "code": "DIGEST_MISMATCH", "reason": "manifest path is not its content digest"}));
+            manifest_problems.push(manifest_problem(&file.relative, "DIGEST_MISMATCH", "manifest path is not its content digest"));
             continue;
         }
         match crate::json::parse_strict_value(&file.bytes) {
@@ -1693,15 +1700,15 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
                 let signer = PublicKey::verify_document("manifest", &document);
                 let ok = signer.as_ref().is_some_and(|key| context.trust.is_maintainer(&key.to_hex()) || context.trust.steward_keys().contains(&key.to_hex()));
                 if !ok && context.trust.certificate_valid {
-                    manifest_problems.push(json!({"path": file.relative.to_string_lossy(), "code": "SIGNATURE_INVALID", "reason": "manifest signer is not a registered maintainer"}));
+                    manifest_problems.push(manifest_problem(&file.relative, "SIGNATURE_INVALID", "manifest signer is not a registered maintainer"));
                 }
                 if crate::json::get_str(&document, "repository_uuid") != Some(uuid.as_str()) {
-                    manifest_problems.push(json!({"path": file.relative.to_string_lossy(), "code": "FOREIGN_REPO_EVENTS", "reason": "manifest binds another repository UUID"}));
+                    manifest_problems.push(manifest_problem(&file.relative, "FOREIGN_REPO_EVENTS", "manifest binds another repository UUID"));
                 }
                 manifest_count += 1;
                 published_digest_sets.push(crate::json::get_array(&document, "event_digests").map(|items| items.iter().filter_map(|i| i.as_str().map(str::to_owned)).collect()).unwrap_or_default());
             }
-            _ => manifest_problems.push(json!({"path": file.relative.to_string_lossy(), "code": "MANIFEST_INCOMPLETE", "reason": "manifest is malformed"})),
+            _ => manifest_problems.push(manifest_problem(&file.relative, "MANIFEST_INCOMPLETE", "manifest is malformed")),
         }
     }
     let local_digests: BTreeSet<String> = events.iter().filter(|e| !e.file.path_alias).map(|e| e.file.digest.clone()).collect();
@@ -1869,7 +1876,7 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
     } else if counts.foreign > 0 && context.trust.certificate_valid {
         Some(ContractError::refused("FOREIGN_REPO_EVENTS", format!("{} event(s) bind another repository UUID or store", counts.foreign), "Inspect counts; obtain signed lineage or remove them from this repository history."))
     } else if cascade_incomplete {
-        Some(ContractError::limit("revocation cascade did not complete within 120 seconds; unchecked facts remain withheld", json!({"remaining_count": counts.total_files, "refused_count": counts.total_files})))
+        Some(ContractError::limit("revocation cascade did not complete within 120 seconds; unchecked facts remain withheld", json!({"remaining_count": counts.total_files, "omitted_count": counts.total_files, "refused_count": counts.total_files})))
     } else if counts.total_files > crate::codebase::EVENT_CEILING {
         Some(ContractError::limit("the .kin/ store exceeds the 10,000-event ceiling; intake refuses new writes while diagnosis remains available", json!({"event_count": counts.total_files, "omitted_count": counts.total_files - crate::codebase::EVENT_CEILING, "refused_count": 0})))
     } else {
