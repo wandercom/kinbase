@@ -1825,6 +1825,74 @@ fn publish_registry(
                 .map_err(|error| refuse(500, error))?
                 .unwrap_or(0),
         };
+        // R-10: republication at a strictly newer cursor without an entry is
+        // that entry's revocation. The vanished key is recorded as a signed
+        // revocation event with its own cursor and effective time, so every
+        // client observing this cursor runs the architecture §3 cascade.
+        let published: BTreeSet<(String, String)> = entries
+            .iter()
+            .map(|entry| {
+                (
+                    crate::json::get_str(entry, "authority_id")
+                        .unwrap_or_default()
+                        .to_owned(),
+                    crate::json::get_str(entry, "scope")
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            })
+            .collect();
+        let mut revoked_count = 0usize;
+        for existing in db.registry_entries().map_err(|error| refuse(500, error))? {
+            if crate::json::get_str(&existing, "status") != Some("active") {
+                continue;
+            }
+            let identity = (
+                crate::json::get_str(&existing, "authority_id")
+                    .unwrap_or_default()
+                    .to_owned(),
+                crate::json::get_str(&existing, "scope")
+                    .unwrap_or_default()
+                    .to_owned(),
+            );
+            if published.contains(&identity) {
+                continue;
+            }
+            let public_key = crate::json::get_str(&existing, "public_key")
+                .unwrap_or_default()
+                .to_owned();
+            let revocation = json!({
+                "schema": "guildhall-revocation/1",
+                "revoked_key": public_key,
+                "revoked_authority_id": identity.0,
+                "scope": identity.1,
+                "cursor": cursor.to_string(),
+                "authority_cursor": crate::json::get_str(&document, "authority_cursor").unwrap_or_default(),
+                "effective_at": now,
+                "reason": "registry republication omitted the entry (R-10)",
+                "signer": crate::json::get_str(&document, "signer").unwrap_or_default()
+            });
+            let revocation_id = format!("revocation_{}", &crate::json::digest(&revocation)[..40]);
+            db.append_event(
+                &revocation_id,
+                "revocation",
+                "revocation",
+                &revocation,
+                crate::json::get_str(&document, "signer").unwrap_or_default(),
+                "verified",
+                None,
+            )
+            .map_err(|error| refuse(500, error))?;
+            let mut retired = existing.clone();
+            retired["status"] = Value::String("revoked".to_owned());
+            db.upsert_registry_entry(&retired, cursor)
+                .map_err(|error| refuse(500, error))?;
+            revoked_count += 1;
+        }
+        if revoked_count > 0 {
+            db.set_meta("revocation_cursor", &cursor.to_string())
+                .map_err(|error| refuse(500, error))?;
+        }
         for entry in entries {
             let mut entry = entry.clone();
             if entry.get("status").is_none() {
@@ -1835,7 +1903,7 @@ fn publish_registry(
         }
         db.audit(
             "registry-published",
-            &json!({"digest": digest, "entries": entries.len(), "cursor": cursor}),
+            &json!({"digest": digest, "entries": entries.len(), "cursor": cursor, "revoked": revoked_count}),
         )
         .map_err(|error| refuse(500, error))?;
         Ok((

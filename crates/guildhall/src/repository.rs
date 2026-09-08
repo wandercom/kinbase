@@ -67,10 +67,33 @@ impl TrustContext {
         keys
     }
 
+    /// Currently revoked: the newest revocation of the key is not followed
+    /// by a re-registration at a strictly later registry cursor (R-10).
     pub fn is_revoked(&self, key: &str) -> bool {
-        self.revocations
+        let Some(latest) = self
+            .revocations
             .iter()
-            .any(|revocation| revocation.revoked_key == key)
+            .filter(|revocation| revocation.revoked_key == key)
+            .map(|revocation| revocation.cursor.parse::<u128>().unwrap_or(0))
+            .max()
+        else {
+            return false;
+        };
+        let reregistered = self
+            .registry
+            .iter()
+            .filter(|entry| {
+                crate::json::get_str(entry, "public_key") == Some(key)
+                    && crate::json::get_str(entry, "status").unwrap_or("active") == "active"
+            })
+            .map(|entry| match entry.get("cursor") {
+                Some(Value::String(text)) => text.parse::<u128>().unwrap_or(0),
+                Some(Value::Number(number)) => number.as_u64().unwrap_or(0) as u128,
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0);
+        reregistered <= latest
     }
 
     pub fn entries_for_key(&self, key: &str) -> Vec<&Value> {
@@ -1077,6 +1100,83 @@ fn client_unknown(
     }
 }
 
+/// The narrow authority view the adapter lifecycle projection consumes.
+pub fn trust_facts(
+    launcher: &Launcher,
+    trust: Option<&TrustContext>,
+) -> crate::lifecycle::TrustFacts {
+    let mut facts = crate::lifecycle::TrustFacts {
+        personal_owner: launcher.principal_id().to_owned(),
+        ..Default::default()
+    };
+    let Some(trust) = trust else {
+        return facts;
+    };
+    facts.repository_uuid = trust.repository_uuid.clone();
+    facts.certificate_valid = trust.certificate_valid;
+    facts.steward_authority_id = trust.steward_authority_id();
+    for entry in &trust.registry {
+        if crate::json::get_str(entry, "status").unwrap_or("active") != "active" {
+            continue;
+        }
+        let (Some(scope), Some(key), Some(identity)) = (
+            crate::json::get_str(entry, "scope"),
+            crate::json::get_str(entry, "public_key"),
+            crate::json::get_str(entry, "authority_id"),
+        ) else {
+            continue;
+        };
+        let cursor = match entry.get("cursor") {
+            Some(Value::String(text)) => text.clone(),
+            Some(Value::Number(number)) => number.to_string(),
+            _ => "0".to_owned(),
+        };
+        facts.active_entries.push((
+            scope.to_owned(),
+            key.to_owned(),
+            identity.to_owned(),
+            cursor,
+        ));
+    }
+    for revocation in &trust.revocations {
+        facts.revocations.push((
+            revocation.revoked_key.clone(),
+            revocation.cursor.clone(),
+            revocation.effective_at.clone(),
+        ));
+    }
+    // The ledger cursor at which this client first observed each revocation:
+    // observations admitted before it were warranted by the key and reopen;
+    // later arrivals are historical on arrival and reopen nothing.
+    if let Ok(private) = launcher.private_store() {
+        if let Ok(now_cursor) = private.observation_cursor() {
+            for revocation in &trust.revocations {
+                let key = format!(
+                    "revocation-watermark:{}:{}",
+                    revocation.revoked_key, revocation.cursor
+                );
+                let watermark = match private.meta(&key).ok().flatten() {
+                    Some(text) => text.parse::<u64>().unwrap_or(now_cursor),
+                    None => {
+                        let _ = private.set_meta(&key, &now_cursor.to_string());
+                        now_cursor
+                    }
+                };
+                let entry = facts
+                    .revocation_watermarks
+                    .entry(revocation.revoked_key.clone())
+                    .or_insert((revocation.cursor.clone(), watermark));
+                if revocation.cursor.parse::<u128>().unwrap_or(0)
+                    > entry.0.parse::<u128>().unwrap_or(0)
+                {
+                    *entry = (revocation.cursor.clone(), watermark);
+                }
+            }
+        }
+    }
+    facts
+}
+
 /// Replay the proof clock recorded at repository creation.
 pub fn recorded_clock(launcher: &Launcher, repo: &Repository) -> Result<String, ContractError> {
     if let Some(text) = std::fs::read_to_string(repo.local_dir().join("proof-clock"))
@@ -1085,8 +1185,8 @@ pub fn recorded_clock(launcher: &Launcher, repo: &Repository) -> Result<String, 
     {
         return Ok(crate::time::format_rfc3339_millis(text));
     }
+    let store = launcher.private_store()?;
     if let Some(uuid) = repo.uuid_hint() {
-        let store = launcher.private_store()?;
         let key = format!("proof-clock:{uuid}");
         if let Some(value) = store
             .meta(&key)?
@@ -1094,6 +1194,12 @@ pub fn recorded_clock(launcher: &Launcher, repo: &Repository) -> Result<String, 
         {
             return Ok(crate::time::format_rfc3339_millis(value));
         }
+    }
+    if let Some(value) = store
+        .meta("proof-clock:default")?
+        .and_then(|text| crate::time::parse_rfc3339_millis(text.trim()).ok())
+    {
+        return Ok(crate::time::format_rfc3339_millis(value));
     }
     Err(ContractError::refused(
         "CONFIG_INVARIANT",
@@ -1624,6 +1730,12 @@ pub fn init(
     let key = format!("proof-clock:{uuid}");
     if private.meta(&key)?.is_none() {
         private.set_meta(&key, &recorded_clock)?;
+    }
+    // The first recorded instant also serves clones that carry no `.kin/config`
+    // hint (a sparse or partial checkout): they replay the same proof clock
+    // instead of reading the ambient wall clock.
+    if private.meta("proof-clock:default")?.is_none() {
+        private.set_meta("proof-clock:default", &recorded_clock)?;
     }
     let _ = local_dir;
     let config_path = repo.kin.join("config");
@@ -2621,7 +2733,58 @@ pub fn status(
             }));
         }
     }
-    let observations = private_observations(&private)?;
+    let ledger = private.all_observations()?;
+    let trust_facts = trust_facts(&context.launcher, Some(&context.trust));
+    let derived = crate::lifecycle::derive(&ledger, &trust_facts, &as_of.as_of);
+    let observations = private_observations(&ledger, &derived);
+    // Adapter-derived facts and Unknowns join the reported view: facts a
+    // source observation supports, keyed by the adapter's logical key, with
+    // their evidence bound to observation ids.
+    for fact in &derived.facts {
+        all_facts.push(json!({
+            "fact_id": fact.fact_id,
+            "logical_key": fact.logical_key,
+            "state": fact.state,
+            "current_fact_state": fact.state,
+            "disposition": fact.disposition,
+            "statement": fact.statement,
+            "statement_digest": fact.statement_digest,
+            "atom_kind": fact.atom_kind,
+            "source_kind": fact.source_kind,
+            "store_kind": fact.store_kind,
+            "derived": true,
+            "evidence_refs": fact.evidence_refs,
+            "support_event_ids": fact.support_event_ids,
+            "independent_support_count": fact.independent_support_count,
+            "trust": if fact.state == "current" { "trusted" } else { "withheld" },
+            "owner_identity": fact.owner_identity,
+            "owner_role": fact.owner_role,
+            "origin_trust_class": fact.origin_trust_class,
+            "effective_until": fact.effective_until,
+            "reason": fact.reason,
+            "provenance_recomputed": false
+        }));
+    }
+    for unknown in &derived.unknowns {
+        unknowns.push(json!({
+            "kind": unknown.kind,
+            "unknown_id": unknown.unknown_id,
+            "logical_key": unknown.logical_key,
+            "affected_logical_keys": unknown.affected_logical_keys,
+            "evidence_refs": unknown.evidence_refs,
+            "owner_role": unknown.owner_role,
+            "owner_identity": unknown.owner_identity,
+            "owner": unknown.owner,
+            "response_due_at": crate::time::plus_seconds(&as_of.as_of, 24 * 3600).unwrap_or_default(),
+            "question": unknown.question,
+            "decision_blocked": unknown.decision_blocked,
+            "status": unknown.status,
+            "unknown_state": unknown.status,
+            "source_kind": unknown.source_kind,
+            "store_kind": unknown.store_kind,
+            "derived": true
+        }));
+    }
     let quarantined_observations = private
         .values(
             "SELECT record FROM quarantine WHERE kind='CLOCK_SKEW' ORDER BY id",
@@ -3222,44 +3385,16 @@ fn lifecycle_cells() -> Vec<Value> {
         .collect()
 }
 
+/// Public observation records (C15): every ledger row with the lifecycle
+/// state the adapter projection derives for it.
 fn private_observations(
-    private: &crate::private::PrivateStore,
-) -> Result<Vec<Value>, ContractError> {
-    let records = private.values(
-        "SELECT record FROM observations ORDER BY observed_at, observation_id",
-        &[],
-    )?;
-    Ok(records
-        .into_iter()
-        .map(|record| {
-            let lifecycle = crate::json::get_str(&record, "lifecycle").unwrap_or("observed").to_owned();
-            let disposition = crate::json::get_str(&record, "disposition").unwrap_or("current").to_owned();
-            let state = match lifecycle.as_str() {
-                "retracted" => "retracted",
-                "superseded" => "stale",
-                "quarantined" => "quarantined",
-                "foreign" => "foreign",
-                "observed" => "appended",
-                _ => "current",
-            };
-            let state = if disposition == "CLOCK_SKEW" { "CLOCK_SKEW".to_owned() } else { state.to_owned() };
-            json!({
-                "observation_id": record.get("observation_id").cloned().unwrap_or(Value::Null),
-                "source_kind": record.get("source_kind").cloned().unwrap_or(Value::Null),
-                "source_identity": record.get("source_identity").cloned().unwrap_or(Value::Null),
-                "native_id": record.get("native_id").cloned().unwrap_or(Value::Null),
-                "content_digest": record.get("content_digest").cloned().unwrap_or(Value::Null),
-                "disposition": disposition,
-                "state": state,
-                "observation_state": state,
-                "lifecycle": lifecycle,
-                "origin_trust_class": record.get("origin_trust").cloned().unwrap_or(Value::Null),
-                "observed_at": record.get("observed_at").cloned().unwrap_or(Value::Null),
-                "revision": record.get("revision").cloned().unwrap_or(Value::Null),
-                "extraction_version": record.get("extraction_version").cloned().unwrap_or(Value::Null)
-            })
-        })
-        .collect())
+    ledger: &[crate::model::Observation],
+    derived: &crate::lifecycle::DerivedView,
+) -> Vec<Value> {
+    ledger
+        .iter()
+        .map(|observation| crate::ingest::observation_result(observation, derived))
+        .collect()
 }
 
 fn changed_dispositions(

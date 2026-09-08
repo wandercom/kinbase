@@ -83,10 +83,33 @@ impl TrustState {
         self.steward_keys.contains(key_hex)
     }
 
+    /// Currently revoked: the newest revocation of the key is not followed
+    /// by a re-registration at a strictly later registry cursor (R-10).
     pub fn is_revoked(&self, key_hex: &str) -> bool {
-        self.revocations
+        let Some(latest) = self
+            .revocations
             .iter()
-            .any(|revocation| revocation.revoked_key == key_hex)
+            .filter(|revocation| revocation.revoked_key == key_hex)
+            .map(|revocation| revocation.cursor.parse::<u128>().unwrap_or(0))
+            .max()
+        else {
+            return false;
+        };
+        let reregistered = self
+            .registry
+            .iter()
+            .filter(|entry| {
+                crate::json::get_str(entry, "public_key") == Some(key_hex)
+                    && crate::json::get_str(entry, "status") == Some("active")
+            })
+            .map(|entry| match entry.get("cursor") {
+                Some(Value::String(text)) => text.parse::<u128>().unwrap_or(0),
+                Some(Value::Number(number)) => number.as_u64().unwrap_or(0) as u128,
+                _ => 0,
+            })
+            .max()
+            .unwrap_or(0);
+        reregistered <= latest
     }
 
     /// Exact-scope resolution: exactly one active entry, else a registry

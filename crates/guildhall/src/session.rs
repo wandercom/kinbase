@@ -93,6 +93,7 @@ pub fn record_hook_observation(
         environment_id: None,
         owner_id: None,
         lifecycle: "observed".to_owned(),
+        ..Default::default()
     };
     let value = serde_json::to_value(&observation)
         .map_err(|error| ContractError::internal(error.to_string()))?;
@@ -190,6 +191,7 @@ pub fn observe(
             environment_id: None,
             owner_id: None,
             lifecycle: "observed".to_owned(),
+            ..Default::default()
         };
         observations.push((
             observation,

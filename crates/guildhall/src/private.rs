@@ -306,24 +306,87 @@ impl PrivateStore {
         )
     }
 
+    /// Replace the stored record of an existing observation (mutable
+    /// provenance such as lifecycle, revision or adapter attributes). The
+    /// observation identity and content digest never change.
+    pub fn update_observation(&self, observation: &Observation) -> Result<bool, ContractError> {
+        let record = crate::json::canonical_text(&crate::model::value_of(observation));
+        let updated = self
+            .connection
+            .execute(
+                "UPDATE observations SET record=?2, lifecycle=?3, observed_at=?4 WHERE observation_id=?1",
+                params![
+                    observation.observation_id,
+                    record,
+                    observation.lifecycle,
+                    observation.observed_at
+                ],
+            )
+            .map_err(sqlite_error("update observation"))?;
+        Ok(updated == 1)
+    }
+
+    /// Every observation in the ledger in admission order (the ledger's own
+    /// opaque cursor), with the lifecycle column and cursor attached.
+    pub fn all_observations(&self) -> Result<Vec<Observation>, ContractError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT record, lifecycle, rowid FROM observations ORDER BY rowid")
+            .map_err(sqlite_error("prepare"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(sqlite_error("query"))?;
+        let mut output = Vec::new();
+        for row in rows {
+            let (text, lifecycle, cursor) = row.map_err(sqlite_error("row"))?;
+            let mut observation: Observation = serde_json::from_str(&text)
+                .map_err(|error| ContractError::internal(error.to_string()))?;
+            observation.lifecycle = lifecycle;
+            observation.cursor = Some(cursor.max(0) as u64);
+            output.push(observation);
+        }
+        Ok(output)
+    }
+
+    /// The ledger's current admission cursor (highest rowid), 0 when empty.
+    pub fn observation_cursor(&self) -> Result<u64, ContractError> {
+        let value: i64 = self
+            .connection
+            .query_row(
+                "SELECT COALESCE(MAX(rowid), 0) FROM observations",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(sqlite_error("cursor"))?;
+        Ok(value.max(0) as u64)
+    }
+
     pub fn observations_for_source(
         &self,
         source_identity: &str,
     ) -> Result<Vec<Observation>, ContractError> {
         let mut statement = self
             .connection
-            .prepare("SELECT record FROM observations WHERE source_identity=?1 ORDER BY observed_at, observation_id")
+            .prepare("SELECT record, lifecycle FROM observations WHERE source_identity=?1 ORDER BY observed_at, observation_id")
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
-            .query_map(params![source_identity], |row| row.get::<_, String>(0))
+            .query_map(params![source_identity], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
             .map_err(sqlite_error("query"))?;
         let mut output = Vec::new();
         for row in rows {
-            let text = row.map_err(sqlite_error("row"))?;
-            output.push(
-                serde_json::from_str(&text)
-                    .map_err(|error| ContractError::internal(error.to_string()))?,
-            );
+            let (text, lifecycle) = row.map_err(sqlite_error("row"))?;
+            let mut observation: Observation = serde_json::from_str(&text)
+                .map_err(|error| ContractError::internal(error.to_string()))?;
+            observation.lifecycle = lifecycle;
+            output.push(observation);
         }
         Ok(output)
     }
