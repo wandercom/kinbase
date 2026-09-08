@@ -207,7 +207,12 @@ pub fn ingest(
             "Use an explicit checkpoint and smaller batches.",
             false,
             ExitCode::Refused,
-        ));
+        )
+        .with_detail(json!({
+            "omitted_count": records.len(),
+            "ceiling": MAX_ITEMS,
+            "observed_count": records.len()
+        })));
     }
     let store = store_for_source(source_kind);
     crate::store::write_private_body(&journal_root, &bytes)?;
@@ -249,7 +254,7 @@ pub fn ingest(
         .filter(|record| {
             matches!(
                 record.disposition.as_str(),
-                "MALFORMED_KINDEX_EVENT" | "INVALID_KINDEX_SIGNATURE"
+                "MALFORMED_KINDEX_EVENT" | "INVALID_KINDEX_SIGNATURE" | "OVERSIZED_KINDEX_EVENT"
             )
         })
         .cloned()
@@ -257,7 +262,7 @@ pub fn ingest(
     records.retain(|record| {
         !matches!(
             record.disposition.as_str(),
-            "MALFORMED_KINDEX_EVENT" | "INVALID_KINDEX_SIGNATURE"
+            "MALFORMED_KINDEX_EVENT" | "INVALID_KINDEX_SIGNATURE" | "OVERSIZED_KINDEX_EVENT"
         )
     });
     let present_native_ids = records
@@ -320,19 +325,28 @@ pub fn ingest(
         None
     };
     let prepared_manifest = prepared.clone();
+    let mut omitted_count = 0usize;
     for record in quarantine_records {
-        let code = if record.disposition == "MALFORMED_KINDEX_EVENT" {
-            "DIGEST_MISMATCH"
-        } else {
-            "SIGNATURE_INVALID"
+        let code = match record.disposition.as_str() {
+            "MALFORMED_KINDEX_EVENT" => "DIGEST_MISMATCH",
+            "OVERSIZED_KINDEX_EVENT" => "LIMIT_EXCEEDED",
+            _ => "SIGNATURE_INVALID",
         };
+        if code == "LIMIT_EXCEEDED" {
+            omitted_count += 1;
+        }
         let record_value = json!({
             "source_kind": source_kind,
             "source_identity": source_identity,
             "native_id": record.native_id,
             "reason": record.disposition,
             "disposition": record.disposition,
-            "remediation": "Quarantine the non-conforming event; valid events in the same source are admitted.",
+            "code": code,
+            "remediation": if code == "LIMIT_EXCEEDED" {
+                "The event exceeds the 64 KiB shared-event ceiling; split or summarize it. Valid events in the same source are admitted."
+            } else {
+                "Quarantine the non-conforming event; valid events in the same source are admitted."
+            },
             "proof_clock": now
         });
         private.quarantine(code, &record_value)?;
@@ -581,6 +595,22 @@ pub fn ingest(
         "source_digest": sha256_bytes(&bytes),
         "store": store_name(store)
     });
+    let mut result = result;
+    if omitted_count > 0 {
+        // A per-event ceiling stop is reported in the receipt (verification
+        // "Operational limits": every ceiling stop reports its omitted count).
+        // The admissible remainder of the batch was admitted, so the command
+        // succeeds while the stop stays typed.
+        let stop = ContractError::limit(
+            format!("{omitted_count} shared event(s) exceeded the 64 KiB ceiling and were omitted"),
+            json!({"omitted_count": omitted_count, "ceiling_bytes": crate::model::MAX_EVENT_BYTES}),
+        );
+        result["error"] = crate::output::error_document(&stop)["error"].clone();
+        result["omitted_count"] = json!(omitted_count);
+        result["ceiling_stops"] = json!([{"ceiling": "shared_event", "omitted_count": omitted_count, "ceiling_bytes": crate::model::MAX_EVENT_BYTES}]);
+    } else {
+        result["omitted_count"] = json!(0);
+    }
     if json {
         println!("{}", serde_json::to_string(&result).unwrap_or_default());
     } else {
@@ -1110,6 +1140,27 @@ fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError>
     let mut invalid_signatures = Vec::new();
     for (index, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
+            continue;
+        }
+        if line.len() > crate::model::MAX_EVENT_BYTES {
+            // Shared-event ceiling (verification "Operational limits"): the
+            // event is a ceiling stop, refused and counted, never truncated.
+            records.push(NativeRecord {
+                native_id: format!("oversized-kindex-event-line-{}", index + 1),
+                statement: String::new(),
+                scope: "repository".to_owned(),
+                confidence: 0,
+                disposition: "OVERSIZED_KINDEX_EVENT".to_owned(),
+                asserted_at: None,
+                effective_from: None,
+                effective_until: None,
+                receipt_observed_at: None,
+                receipt_expires_at: None,
+                environment_id: None,
+                owner_id: None,
+                logical_key: None,
+                signer: None,
+            });
             continue;
         }
         if let Ok(unknown) = UnknownEvent::parse(line.as_bytes()) {

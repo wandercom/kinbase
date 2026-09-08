@@ -561,12 +561,27 @@ impl RepoContext {
                         .authority_scope
                         .strip_prefix("environment:")
                         .map(|id| self.trust.environment_registered(id));
+                    // Origin trust classes bound *source observations*
+                    // (architecture §4); a FactEvent verified against the
+                    // registry and certificate is itself the separately
+                    // authorized event, so the Git status of its file never
+                    // demotes or promotes it. Unverified bytes keep their
+                    // repository origin for the diagnostic trace.
+                    let signed_authority = verification == Verification::Verified;
                     admitted.push(AdmittedEvent {
                         event: event.clone(),
                         verification,
                         store_cursor: format!("{index:09}"),
-                        origin_trust: Some(item.origin_trust.clone()),
-                        reachable: item.reachable,
+                        origin_trust: if signed_authority {
+                            Some("merged-default".to_owned())
+                        } else {
+                            Some(item.origin_trust.clone())
+                        },
+                        reachable: if signed_authority {
+                            None
+                        } else {
+                            item.reachable
+                        },
                         source_identity: Some(event.signer.clone()),
                         environment_registered,
                     });
