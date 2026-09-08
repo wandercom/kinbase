@@ -308,8 +308,8 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 let reason = "ENVIRONMENT_UNREGISTERED: runtime observation names an environment absent from the authority registry";
                 trace
                     .rejected
-                    .push(json!({"event_id": event.event_id, "reason": reason}));
-                rejected_global.push(json!({"logical_key": logical_key, "event_id": event.event_id, "reason": reason}));
+                    .push(json!({"event_id": event.event_id, "step": 1, "reason": reason}));
+                rejected_global.push(json!({"logical_key": logical_key, "event_id": event.event_id, "step": 1, "reason": reason}));
                 bump(&mut counts, "rejected");
                 bump(&mut counts, "environment_unregistered");
                 continue;
@@ -356,15 +356,15 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 }
                 trace
                     .rejected
-                    .push(json!({"event_id": event.event_id, "reason": reason}));
-                rejected_global.push(json!({"logical_key": logical_key, "event_id": event.event_id, "reason": reason}));
+                    .push(json!({"event_id": event.event_id, "step": 1, "reason": reason}));
+                rejected_global.push(json!({"logical_key": logical_key, "event_id": event.event_id, "step": 1, "reason": reason}));
                 bump(&mut counts, "rejected");
                 continue;
             }
             let trust = admitted.origin_trust.as_deref();
             if authority_rank(event, trust) == 0 || admitted.reachable == Some(false) {
                 untrusted_branch.push(event.event_id.clone());
-                trace.rejected.push(json!({"event_id": event.event_id, "reason": "UNTRUSTED_BRANCH: origin trust below merged-default or unreachable from the default lineage; ineligible for trusted durable direction"}));
+                trace.rejected.push(json!({"event_id": event.event_id, "step": 1, "reason": "UNTRUSTED_BRANCH: origin trust below merged-default or unreachable from the default lineage; ineligible for trusted durable direction"}));
                 bump(&mut counts, "untrusted_branch");
                 continue;
             }
@@ -391,46 +391,61 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
         let mut support_retired_ids: BTreeSet<String> = BTreeSet::new();
         for admitted in &eligible {
             let event = &admitted.event;
-            // A resolution must be parent-bound to every incompatible head.
-            // Parentless or lower-authority messages never resolve a conflict.
+            // A conflict resolution is parent-bound to the incompatible heads.
+            // It retires exactly the heads its signer owns (same exact scope,
+            // no lower authority); a parent it does not own is acknowledged
+            // lineage, never erased by role prestige. A parentless message
+            // never resolves a conflict, and an unauthorized one leaves the
+            // heads in place and survives only as ordinary lower evidence.
             if event.parents.len() >= 2 {
-                let targets: Vec<&AdmittedEvent> = eligible
-                    .iter()
-                    .copied()
-                    .filter(|candidate| event.parents.contains(&candidate.event.event_id))
-                    .collect();
-                if targets.len() == event.parents.len() {
-                    let new_rank = authority_rank(event, admitted.origin_trust.as_deref());
-                    let authorized = targets.iter().all(|old| {
-                        authority_rank(&old.event, old.origin_trust.as_deref()) <= new_rank
-                            && old.event.authority_scope == event.authority_scope
-                    });
-                    if authorized {
-                        for target in &event.parents {
+                let new_rank = authority_rank(event, admitted.origin_trust.as_deref());
+                let own_identity = statement_identity(event);
+                let mut unauthorized_disagreement: Vec<String> = Vec::new();
+                for target in &event.parents {
+                    let Some(old) = eligible
+                        .iter()
+                        .find(|candidate| candidate.event.event_id == *target)
+                    else {
+                        continue;
+                    };
+                    let old_rank = authority_rank(&old.event, old.origin_trust.as_deref());
+                    let owns =
+                        old_rank <= new_rank && old.event.authority_scope == event.authority_scope;
+                    if owns {
+                        if event.supersedes.is_empty() {
                             retired.insert(
                                 target.clone(),
                                 format!("conflict resolved by parent-bound {}", event.event_id),
                             );
                         }
-                    } else {
-                        let reason = format!(
-                            "AUTHORITY_WRONG_SCOPE: {} names both heads as parents but its authority does not own their scope; the conflict survives",
-                            event.event_id
-                        );
-                        trace
-                            .rejected
-                            .push(json!({"event_id": event.event_id, "reason": reason.clone()}));
-                        rejected_global.push(json!({"logical_key": logical_key, "event_id": event.event_id, "reason": reason.clone()}));
-                        bump(&mut counts, "rejected");
-                        trace.counterfactual.push(reason);
-                        // Retire the unsuccessful resolution message itself. It
-                        // must not become a higher-ranked third head and win
-                        // the conflict it failed to resolve.
-                        retired.insert(
-                            event.event_id.clone(),
-                            "unauthorized conflict resolution".to_owned(),
-                        );
+                    } else if statement_identity(&old.event) != own_identity {
+                        unauthorized_disagreement.push(target.clone());
                     }
+                }
+                if !unauthorized_disagreement.is_empty() {
+                    // The message contradicts a head it has no authority to
+                    // retire. It must not become a higher-ranked third head
+                    // and win the conflict it failed to resolve.
+                    let reason = format!(
+                        "AUTHORITY_WRONG_SCOPE: {} names {} as parent(s) but {}/{} does not own that scope; the heads survive and the attempted resolution is set aside",
+                        event.event_id,
+                        unauthorized_disagreement.join(", "),
+                        event.authority_id,
+                        event.authority_scope
+                    );
+                    trace.rejected.push(
+                        json!({"event_id": event.event_id, "step": 2, "reason": reason.clone()}),
+                    );
+                    rejected_global.push(json!({"logical_key": logical_key, "event_id": event.event_id, "step": 2, "reason": reason.clone()}));
+                    bump(&mut counts, "rejected");
+                    trace.counterfactual.push(format!(
+                        "a parent-bound resolution signed by the authority owning the scope of {} would retire those heads",
+                        unauthorized_disagreement.join(", ")
+                    ));
+                    retired.insert(
+                        event.event_id.clone(),
+                        "unauthorized conflict resolution".to_owned(),
+                    );
                 }
             }
             if crate::model::disposition_is_negative(&event.disposition)
@@ -528,6 +543,15 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             .copied()
             .filter(|admitted| !retired.contains_key(&admitted.event.event_id))
             .collect();
+        for admitted in &eligible {
+            if let Some(reason) = retired.get(&admitted.event.event_id) {
+                trace.rejected.push(json!({
+                    "event_id": admitted.event.event_id,
+                    "step": 2,
+                    "reason": format!("RETIRED: {reason}")
+                }));
+            }
+        }
         trace.steps.push(TraceStep {
             step: 2,
             name: "retraction-revocation-supersession".to_owned(),
@@ -549,6 +573,14 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 trace
                     .negative_evidence_event_ids
                     .push(admitted.event.event_id.clone());
+                trace.rejected.push(json!({
+                    "event_id": admitted.event.event_id,
+                    "step": 3,
+                    "reason": format!(
+                        "NEGATIVE_EVIDENCE: disposition {} is negative evidence, not a current rule; its recency does not promote it",
+                        admitted.event.disposition
+                    )
+                }));
             } else {
                 positive.push(admitted);
             }
@@ -576,15 +608,28 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                     "{} becomes effective at {}",
                     event.event_id, event.effective_from
                 ));
+                trace.rejected.push(json!({
+                    "event_id": event.event_id,
+                    "step": 4,
+                    "reason": format!("NOT_YET_EFFECTIVE: effective_from {} is after as_of {}", event.effective_from, input.as_of)
+                }));
                 continue;
             }
             if let Some(until) = expiry_of(event) {
                 if until.as_str() <= input.as_of.as_str() {
                     trace.expired_event_ids.push(event.event_id.clone());
                     trace.counterfactual.push(format!(
-                        "{} ({}) expired at {}; a renewed observation or durable rule from {} would restore it",
-                        event.event_id, event.disposition, until, event.authority_id
+                        "{} ({}) expired at {}; a renewed or refreshed observation, or a durable rule, from {} ({}) would restore it",
+                        event.event_id, event.disposition, until, event.authority_id, event.authority_scope
                     ));
+                    trace.rejected.push(json!({
+                        "event_id": event.event_id,
+                        "step": 4,
+                        "reason": format!(
+                            "EXPIRED: declared validity ended at {until} before as_of {}; temporary evidence past its validity is not a current rule",
+                            input.as_of
+                        )
+                    }));
                     continue;
                 }
             }
@@ -627,7 +672,55 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
 
         // Step 6: independence versus common-source repetition.
         let mut heads: Vec<Head> = Vec::new();
+        let mut revoked_support_heads: Vec<(String, Vec<String>, String)> = Vec::new();
         for (identity, members) in clusters {
+            // Revocation cascade (architecture §3): once a client has observed
+            // a cursor at or beyond a revocation, a statement whose only
+            // admissible support was the revoked key withdraws from trusted
+            // projection; one with other support stays current and records
+            // the withdrawn support.
+            let revoked_members: Vec<&AdmittedEvent> = members
+                .iter()
+                .copied()
+                .filter(|member| revoked_keys.contains_key(member.event.signer.as_str()))
+                .collect();
+            let members: Vec<&AdmittedEvent> = if revoked_members.len() == members.len() {
+                let revoked_at = revoked_members
+                    .first()
+                    .and_then(|member| revoked_keys.get(member.event.signer.as_str()))
+                    .map(|revocation| revocation.cursor.clone())
+                    .unwrap_or_default();
+                for member in &revoked_members {
+                    trace.rejected.push(json!({
+                        "event_id": member.event.event_id,
+                        "step": 6,
+                        "reason": format!(
+                            "SUPPORT_REVOKED: the signing key was revoked at authority cursor {revoked_at} and no independently admissible support remains; withdrawn from trusted projection under the destination owner"
+                        )
+                    }));
+                }
+                revoked_support_heads.push((
+                    identity,
+                    revoked_members
+                        .iter()
+                        .map(|member| member.event.event_id.clone())
+                        .collect(),
+                    revoked_at,
+                ));
+                continue;
+            } else {
+                for member in &revoked_members {
+                    support_retired_ids.insert(member.event.event_id.clone());
+                    trace.counterfactual.push(format!(
+                        "support {} was withdrawn because its signing key was revoked; the statement stays current on its remaining independent support",
+                        member.event.event_id
+                    ));
+                }
+                members
+                    .into_iter()
+                    .filter(|member| !revoked_keys.contains_key(member.event.signer.as_str()))
+                    .collect()
+            };
             let mut sources: BTreeSet<String> = BTreeSet::new();
             for member in &members {
                 sources.insert(member.source_identity.clone().unwrap_or_else(|| {
@@ -758,15 +851,26 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                     .event
                     .authority_scope
                     .starts_with("architecture:")
-                && lower
-                    .iter()
-                    .any(|head| head.representative.event.store_kind == "codebase")
+                && lower.iter().any(|head| {
+                    head.representative.event.store_kind == "codebase"
+                        && crate::model::disposition_is_durable(
+                            &head.representative.event.disposition,
+                        )
+                })
             {
-                // P-5: code drift against a current Company architecture fact
-                // is a two-head conflict; authority rank cannot silently win.
+                // P-5: accepted code contradicting a current Company
+                // architecture fact is a two-head conflict; authority rank
+                // cannot silently win and the local code cannot silently
+                // override. A merely proposed change is not drift: it is set
+                // aside below as a proposal that was never accepted or merged.
                 conflict_ids = top
                     .iter()
-                    .chain(lower.iter())
+                    .chain(lower.iter().filter(|head| {
+                        head.representative.event.store_kind == "codebase"
+                            && crate::model::disposition_is_durable(
+                                &head.representative.event.disposition,
+                            )
+                    }))
                     .map(|head| head.representative.event.event_id.clone())
                     .collect();
             } else {
@@ -775,9 +879,79 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             contradicted_lower = lower
                 .into_iter()
                 .filter(|head| {
-                    current_head.is_some_and(|current| current.identity != head.identity)
+                    !conflict_ids.contains(&head.representative.event.event_id)
+                        && current_head.is_none_or(|current| current.identity != head.identity)
                 })
                 .collect();
+        }
+        // Lower heads that never became current: a proposal is set aside as
+        // negative-weight evidence (never accepted or merged); a live runtime
+        // observation defeats a code default for the operational question
+        // without acquiring architecture authority; any other durable lower
+        // head is a contradiction the owning authority must resolve.
+        let mut contradictions: Vec<&Head> = Vec::new();
+        for head in &contradicted_lower {
+            let event = &head.representative.event;
+            if crate::model::disposition_is_transient(&event.disposition) {
+                let copies = head.support.len();
+                trace.rejected.push(json!({
+                    "event_id": event.event_id,
+                    "step": 7,
+                    "reason": format!(
+                        "PROPOSED_NOT_ACCEPTED: disposition {} was never accepted or merged, so it does not displace the current rule; {} repetition(s) from {} independent source(s) add no independent corroboration",
+                        event.disposition, copies, head.independent
+                    )
+                }));
+                trace.counterfactual.push(format!(
+                    "an accepted or merged disposition for {} signed by the authority owning {} would make it a candidate current statement; repetition alone never would",
+                    event.event_id, event.authority_scope
+                ));
+                continue;
+            }
+            let runtime_wins = current_head.is_some_and(|current| {
+                current
+                    .representative
+                    .event
+                    .authority_scope
+                    .starts_with("environment:")
+                    && current.representative.event.atom_kind == "observation"
+                    && !event.authority_scope.starts_with("environment:")
+            });
+            if runtime_wins {
+                let current = current_head.map(|current| current.representative.event.clone());
+                let freshness = current
+                    .as_ref()
+                    .and_then(expiry_of)
+                    .unwrap_or_else(|| "its freshness deadline".to_owned());
+                trace.rejected.push(json!({
+                    "event_id": event.event_id,
+                    "step": 7,
+                    "reason": format!(
+                        "DEFEATED_BY_RUNTIME: the live runtime observation from the registered environment owner {} defeats this code-default diagnosis for the operational question; no architecture decision is rewritten",
+                        current.as_ref().map(|event| event.authority_id.as_str()).unwrap_or("unknown")
+                    )
+                }));
+                trace.counterfactual.push(format!(
+                    "at the observation freshness deadline {} the runtime value lapses into an owned Unknown for {}; a fresh runtime observation with a different value would change the diagnosis",
+                    freshness,
+                    current.as_ref().map(|event| event.authority_id.as_str()).unwrap_or("the environment owner")
+                ));
+                continue;
+            }
+            trace.rejected.push(json!({
+                "event_id": event.event_id,
+                "step": 7,
+                "reason": "CONTRADICTED: lower-authority evidence contradicts the current rule; it is recorded for the owning authority, not promoted"
+            }));
+            contradictions.push(*head);
+        }
+        let contradicted_lower = contradictions;
+        for event_id in &conflict_ids {
+            trace.rejected.push(json!({
+                "event_id": event_id,
+                "step": 7,
+                "reason": "CONFLICT: incompatible surviving head; neither head is current until an authorized parent-bound event resolves the conflict"
+            }));
         }
         trace.conflict_event_ids = conflict_ids.clone();
         trace.steps.push(TraceStep {
@@ -838,6 +1012,9 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             trace.state = "unknown".to_owned();
             trace.free_form_owner_admitted = Some(false);
             trace.unknown_id = Some(unknown.unknown_id.clone());
+            trace.counterfactual.push(format!(
+                "a steward-signed registry republication that registers {scope} with exactly one deploy owner and public key would make this runtime observation admissible; a free-form owner string never would"
+            ));
             unknowns.push(unknown);
             bump(&mut counts, "unknown");
         } else if !conflict_ids.is_empty() {
@@ -871,6 +1048,10 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             trace.state = "conflict".to_owned();
             trace.unknown_id = Some(unknown.unknown_id.clone());
             trace.counterfactual.push("a parent-bound supersession or retraction from the owning authority resolves the conflict".to_owned());
+            trace.counterfactual.push(format!(
+                "a signed answer from {} ({}) naming the discriminating evidence closes the Unknown and selects the current statement",
+                unknown.owner_identity, unknown.owner_role
+            ));
             if owner_identity.is_some() {
                 unknowns.push(unknown);
             } else {
@@ -953,6 +1134,18 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             };
             trace.current_fact_id = Some(fact.fact_id.clone());
             trace.state = status.to_owned();
+            trace.counterfactual.push(format!(
+                "a parent-bound supersession or retraction of {} signed by {} ({}) would retire the current rule",
+                event.event_id, event.authority_id, event.authority_scope
+            ));
+            for (retired_id, reason) in &retired {
+                if reason.starts_with("superseded by") || reason.starts_with("conflict resolved by")
+                {
+                    trace.counterfactual.push(format!(
+                        "{retired_id} was retired ({reason}); it would return only if that supersession were itself retracted"
+                    ));
+                }
+            }
             if trust != "trusted" {
                 let scope = event.authority_scope.clone();
                 let unknown_role = if stale_reasons.iter().any(|r| r == "REVOCATION_STALE") {
@@ -1066,6 +1259,12 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                     "{} rejected/reverted proposal(s) remain negative evidence and do not change the current rule",
                     negative.len()
                 ));
+                for rejected in &negative {
+                    trace.counterfactual.push(format!(
+                        "an accepted disposition for {} signed by the authority owning {} would make it a candidate to supersede the current rule; its recency alone never would",
+                        rejected.event.event_id, rejected.event.authority_scope
+                    ));
+                }
             }
         } else {
             // Nothing survives: an expired or fully negative key produces an
@@ -1074,6 +1273,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 || !negative.is_empty()
                 || !trace.rejected.is_empty()
                 || !support_retired_ids.is_empty()
+                || !revoked_support_heads.is_empty()
             {
                 let representative_scope = eligible
                     .first()
@@ -1084,7 +1284,15 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                             .map(|admitted| admitted.event.scope.clone())
                     })
                     .unwrap_or_else(|| "unknown".to_owned());
-                let kind = if !support_retired_ids.is_empty() {
+                let revoked_at_step_1 = trace.rejected.iter().any(|entry| {
+                    entry
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .is_some_and(|reason| reason.starts_with("REVOKED"))
+                });
+                let kind = if !revoked_support_heads.is_empty() || revoked_at_step_1 {
+                    "revoked"
+                } else if !support_retired_ids.is_empty() {
                     "withdrawn"
                 } else if !trace.expired_event_ids.is_empty() {
                     "expired"
@@ -1093,13 +1301,29 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 } else {
                     "withdrawn"
                 };
-                let owner_role = owner_role_for_scope(input, &representative_scope);
-                let owner_identity = authority_owner_for_scope(
-                    input,
-                    &representative_scope,
-                    repository_scope(&group).as_deref(),
-                );
+                let (owner_role, owner_identity) = if kind == "revoked" {
+                    // The apology Unknown belongs to the destination owner
+                    // (Company steward or repository maintainer), never to
+                    // the revoked principal.
+                    destination_owner(input, &group)
+                } else {
+                    (
+                        owner_role_for_scope(input, &representative_scope),
+                        authority_owner_for_scope(
+                            input,
+                            &representative_scope,
+                            repository_scope(&group).as_deref(),
+                        ),
+                    )
+                };
                 let question = match kind {
+                    "revoked" => format!(
+                        "The only support for logical key {logical_key} was signed by a key revoked at authority cursor {}; an independently admissible support or a signed withdrawal from the destination owner closes this apology Unknown.",
+                        revoked_support_heads
+                            .first()
+                            .map(|(_, _, cursor)| cursor.as_str())
+                            .unwrap_or(input.authority_cursor.as_str())
+                    ),
                     "expired" => format!(
                         "The only evidence for logical key {logical_key} expired. Is the workaround, incident value, or observation still in force?"
                     ),
@@ -1125,9 +1349,19 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                         .iter()
                         .chain(trace.negative_evidence_event_ids.iter())
                         .cloned()
+                        .chain(
+                            revoked_support_heads
+                                .iter()
+                                .flat_map(|(_, support, _)| support.iter().cloned()),
+                        )
                         .collect(),
                     input.as_of.as_str(),
                 );
+                if kind == "revoked" {
+                    trace.counterfactual.push(
+                        "an independently admissible support signed by an active registered key, or a steward republication that re-registers the key at a newer authority cursor, would restore the statement".to_owned(),
+                    );
+                }
                 trace.state = kind.to_owned();
                 trace.unknown_id = Some(unknown.unknown_id.clone());
                 if owner_identity.is_some() {
@@ -1316,13 +1550,38 @@ fn authority_owner_for_scope(
     resolved
 }
 
+/// The destination store's owner: the Company steward for Company facts,
+/// the registered repository maintainer for Codebase facts.
+fn destination_owner(
+    input: &ReducerInput,
+    group: &[&AdmittedEvent],
+) -> (&'static str, Option<String>) {
+    let company = group
+        .first()
+        .is_some_and(|admitted| admitted.event.store_kind == "company")
+        || input.store_kind == "company";
+    if company {
+        ("company-steward", input.steward_authority_id.clone())
+    } else {
+        let maintainer = repository_scope(group)
+            .and_then(|scope| input.authority_owner_by_scope.get(&scope).cloned());
+        ("repository-maintainer", maintainer)
+    }
+}
+
 fn owner_role_for_scope(input: &ReducerInput, scope: &str) -> &'static str {
     if scope.starts_with("architecture:") {
         "chief-architect"
-    } else if input.store_kind == "company" {
-        "company-steward"
     } else if scope.starts_with("environment:") {
         "deploy-owner"
+    } else if scope.starts_with("company:") {
+        "company-steward"
+    } else if scope.starts_with("codebase:") {
+        "repository-maintainer"
+    } else if scope.starts_with("approver:") {
+        "approving-principal"
+    } else if input.store_kind == "company" {
+        "company-steward"
     } else {
         "repository-maintainer"
     }

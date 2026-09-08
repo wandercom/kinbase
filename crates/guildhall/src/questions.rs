@@ -296,6 +296,63 @@ pub(crate) fn active_authority_with_repo(
     Ok(entry)
 }
 
+/// Resolve the registered authority an Unknown names as its owner.
+///
+/// The Unknown carries the stable owner identity (architecture §7: the
+/// registry maps to a named principal, public key and channel). The registry
+/// must confirm that identity as an active answering authority with exactly
+/// one key; a second key for the same identity is a registry conflict owned
+/// by the Company steward and resolves nothing. When the Unknown names no
+/// registered owner, the exact scope resolves it instead.
+fn resolve_owner_authority(
+    repo: &Path,
+    unknown: &crate::projector::UnknownOut,
+) -> Result<Value, ContractError> {
+    let by_identity: Vec<Value> = registry_entries(repo)
+        .into_iter()
+        .filter(|entry| {
+            entry
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("active")
+                == "active"
+                && entry.get("authority_id").and_then(Value::as_str)
+                    == Some(unknown.owner_identity.as_str())
+                && entry
+                    .get("capabilities")
+                    .and_then(Value::as_array)
+                    .is_some_and(|capabilities| {
+                        capabilities
+                            .iter()
+                            .any(|capability| capability.as_str() == Some("answer"))
+                    })
+        })
+        .collect();
+    if by_identity.is_empty() {
+        let question_kind = scope_kind(&unknown.scope);
+        return active_authority_with_repo(repo, &unknown.scope, question_kind);
+    }
+    let keys: BTreeSet<&str> = by_identity
+        .iter()
+        .filter_map(|entry| entry.get("public_key").and_then(Value::as_str))
+        .collect();
+    if keys.len() != 1 || keys.iter().any(|key| key.is_empty()) {
+        return Err(ContractError::new(
+            "UNKNOWN_OWNER_UNRESOLVED",
+            "the registry publishes more than one key for the Unknown's owner",
+            "The Company steward must repair the registry before guidance is trusted.",
+            true,
+            ExitCode::DegradedSafe,
+        ));
+    }
+    let scope = by_identity
+        .first()
+        .and_then(|entry| entry.get("scope").and_then(Value::as_str))
+        .unwrap_or(unknown.scope.as_str())
+        .to_owned();
+    active_authority_with_repo(repo, &scope, scope_kind(&scope))
+}
+
 pub(crate) fn ensure_question(
     repo: &Path,
     unknown: &crate::projector::UnknownOut,
@@ -303,12 +360,17 @@ pub(crate) fn ensure_question(
     evidence_examined: &[String],
     remaining_alternatives: &[String],
 ) -> Result<Option<String>, ContractError> {
-    let question_kind = scope_kind(&unknown.scope).to_owned();
-    let authority = match active_authority_with_repo(repo, &unknown.scope, &question_kind) {
+    let authority = match resolve_owner_authority(repo, unknown) {
         Ok(authority) => authority,
         Err(error) if error.code == "UNKNOWN_OWNER_UNRESOLVED" => return Ok(None),
         Err(error) => return Err(error),
     };
+    let authority_scope = authority
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or(unknown.scope.as_str())
+        .to_owned();
+    let question_kind = scope_kind(&authority_scope).to_owned();
     let authority_id = authority
         .get("authority_id")
         .and_then(Value::as_str)
@@ -353,8 +415,10 @@ pub(crate) fn ensure_question(
         "owner_identity": authority_id.clone(),
         "architect_identity": if question_kind == "architecture" { Some(Value::String(authority_id.clone())) } else { None },
         "authority_id": authority_id,
-        "authority_scope": unknown.scope,
-        "scope": unknown.scope,
+        "authority_scope": authority_scope,
+        "scope": authority_scope,
+        "unknown_scope": unknown.scope,
+        "logical_key": unknown.logical_key,
         "question_kind": question_kind,
         "channel": authority.get("channel").cloned().unwrap_or(Value::Null),
         "status": "open",
@@ -658,8 +722,16 @@ fn answer(
             ));
         }
     }
+    // The signer's registered key decides who may answer (checked above).
+    // A declared answer scope must then be the scope the authority is
+    // registered for or the exact scope of the Unknown it closes; an
+    // architect registered for an ancestor scope answers a leaf question.
+    let unknown_scope = question
+        .get("unknown_scope")
+        .and_then(Value::as_str)
+        .unwrap_or(scope);
     if let Some(answer_scope) = map.get("authority_scope").and_then(Value::as_str) {
-        if answer_scope != scope {
+        if answer_scope != scope && answer_scope != unknown_scope {
             return Err(ContractError::new(
                 "AUTHORITY_WRONG_SCOPE",
                 "answer signer does not own the exact question scope",
@@ -760,12 +832,17 @@ fn answer(
             })
             .collect()
     };
+    // An answer that declares when it was given keeps that instant. One that
+    // does not is admitted at the repository's recorded proof clock: the
+    // reducer's `as_of` for this repository is that clock (C12), so a fact the
+    // product admits now must be effective now under it, never "in the
+    // future" because the wall clock has moved on since `repo init`.
     let answered_at = map
         .get("answered_at")
         .and_then(Value::as_str)
         .or_else(|| map.get("asserted_at").and_then(Value::as_str))
         .map(str::to_owned)
-        .unwrap_or_else(now_rfc3339_millis);
+        .unwrap_or_else(|| admission_clock(&repo));
     let answer_id = format!(
         "answer_{:x}",
         Sha256::digest(format!("{question_id}\0{answer_text}\0{signature}").as_bytes())
@@ -1025,6 +1102,18 @@ fn status(question_id: &str, json: bool) -> Result<(), ContractError> {
     });
     print_value(&result, json);
     Ok(())
+}
+
+/// The instant at which this repository admits a locally written fact: its
+/// recorded proof clock when `repo init` recorded one, else the proof clock.
+fn admission_clock(repo: &Path) -> String {
+    crate::launcher::Launcher::load()
+        .ok()
+        .and_then(|launcher| {
+            let repository = crate::codebase::Repository::discover(repo).ok()?;
+            crate::repository::recorded_clock(&launcher, &repository).ok()
+        })
+        .unwrap_or_else(now_rfc3339_millis)
 }
 
 fn print_value(value: &Value, json: bool) {

@@ -547,6 +547,24 @@ impl CompanyDb {
             .map_err(sqlite_error("registry upsert"))
     }
 
+    /// R-10: an entry absent from a republished registry is revoked at the
+    /// cursor of that publication; a later publication that lists it again
+    /// re-activates it through the ordinary upsert.
+    pub fn mark_registry_entry_revoked(
+        &self,
+        authority_id: &str,
+        scope: &str,
+        cursor: i64,
+    ) -> Result<(), ContractError> {
+        self.connection
+            .execute(
+                "UPDATE registry SET status='revoked', cursor=?3 WHERE authority_id=?1 AND scope=?2",
+                params![authority_id, scope, cursor],
+            )
+            .map(|_| ())
+            .map_err(sqlite_error("registry revoke"))
+    }
+
     pub fn registry_entries(&self) -> Result<Vec<Value>, ContractError> {
         let mut statement = self
             .connection

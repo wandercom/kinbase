@@ -386,6 +386,10 @@ pub struct UnknownEvent {
     pub owner_role: String,
     pub owner_identity: String,
     pub question: String,
+    /// The evidence that closes the Unknown. Planted documents carry either
+    /// one free-text description or a list; both are read, the list form is
+    /// written. Signature verification always uses the immutable raw bytes.
+    #[serde(deserialize_with = "string_or_list")]
     pub closure_evidence: Vec<String>,
     pub status: String,
     pub response_due_at: String,
@@ -394,6 +398,31 @@ pub struct UnknownEvent {
     pub signature: String,
     #[serde(skip)]
     pub raw: Option<Value>,
+}
+
+fn string_or_list<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<String>, D::Error> {
+    match Value::deserialize(deserializer)? {
+        Value::Null => Ok(Vec::new()),
+        Value::String(text) => Ok(if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![text]
+        }),
+        Value::Array(items) => items
+            .into_iter()
+            .map(|item| match item {
+                Value::String(text) => Ok(text),
+                other => Err(serde::de::Error::custom(format!(
+                    "closure_evidence entries must be strings, got {other}"
+                ))),
+            })
+            .collect(),
+        other => Err(serde::de::Error::custom(format!(
+            "closure_evidence must be a string or a list of strings, got {other}"
+        ))),
+    }
 }
 
 /// Closed Unknown statuses and degraded policies (P-6).
