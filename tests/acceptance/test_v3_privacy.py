@@ -591,7 +591,7 @@ def test_v3_claim_is_digest_qualified_and_never_unqualified(
     payload = report.json if isinstance(report.json, dict) else {}
     reported = field(payload, "privacy_claim")
     claim = reported if isinstance(reported, str) else ""
-    forbidden = sanitised_report_claims_are_qualified(claim)
+    problems = sanitised_report_claims_are_qualified(claim)
     O.check(
         "V-3.claim",
         {
@@ -599,9 +599,12 @@ def test_v3_claim_is_digest_qualified_and_never_unqualified(
             "threat_model_sha256": manifest.artifact_digests.get(
                 "spec/threat-model.md"),
             "execution_census_digest": field(payload, "execution_census_digest"),
-            "forbidden_phrases_found": 0 if forbidden else 1,
+            "forbidden_phrases_found": len(problems),
+            "observed_claim": reported,
+            "claim_problems": problems,
         },
-        label="the V-3 claim is census and digest qualified",
+        label=("the V-3 claim is census and digest qualified; "
+               f"observed privacy_claim={reported!r}; problems={problems!r}"),
     )
 
 

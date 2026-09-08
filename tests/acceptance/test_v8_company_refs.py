@@ -39,7 +39,7 @@ from ._harness.requirements import (
     ProductFailure,
     spec_ref,
 )
-from ._harness.roots import ProofRoots, free_loopback_port
+from ._harness.roots import ProofRoots
 from ._harness.service import Blackhole
 from ._harness.worldbuilder import REPO_UUID, OpaqueIds, SignedWorld, Witness
 
@@ -496,8 +496,6 @@ def test_digest_mismatch_attribution_truth_table(
         "unavailable": "none",
     }
     scenarios = []
-    dark_port = free_loopback_port()
-    dark_url = "http://127.0.0.1:" + str(dark_port)
     for index, relation in enumerate(DIGEST_RELATIONS):
         digest_override = None
         if relation == "historical_differs":
@@ -511,7 +509,9 @@ def test_digest_mismatch_attribution_truth_table(
             # Validator ruling C28: unavailability is configured through the
             # user config, never the environment; the endpoint is a listener
             # that never answers.
-            with Blackhole(dark_port), anchors.company_endpoint(dark_url):
+            with Blackhole(0) as blackhole, anchors.company_endpoint(
+                f"http://127.0.0.1:{blackhole.port}"
+            ):
                 observed = _json(_run(guildhall, "fsck", "--repo",
                                       str(world.repo.path), "--json",
                                       cwd=world.repo.path))
@@ -526,7 +526,9 @@ def test_digest_mismatch_attribution_truth_table(
             "owner_role": owner,
             "owner_matches_expected": owner == expected_owner[relation],
         })
-    with Blackhole(dark_port), anchors.company_endpoint(dark_url):
+    with Blackhole(0) as blackhole, anchors.company_endpoint(
+        f"http://127.0.0.1:{blackhole.port}"
+    ):
         unavailable = _json(_run(guildhall, "fsck", "--repo", str(world.repo.path),
                                  "--json", cwd=world.repo.path))
     rendered = json.dumps(unavailable).lower()

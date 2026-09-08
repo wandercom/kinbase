@@ -496,10 +496,12 @@ def test_partial_fanout_failure_does_not_roll_back_committed_destination(
 
     _decide(guildhall, world.repo.path, candidate,
             "codebase:" + anchors.repository_uuid)
-    with Blackhole(roots.company_port):
+    with Blackhole(0) as blackhole, anchors.company_endpoint(
+        f"http://127.0.0.1:{blackhole.port}"
+    ):
         blackholed = _decide(guildhall, world.repo.path, candidate, "company:root")
     witness = Witness(kind="company_unreachable")
-    witness.note(port=roots.company_port, decide_exit=blackholed.returncode)
+    witness.note(port=blackhole.port, decide_exit=blackholed.returncode)
     witness.require("the Company endpoint must actually have been unreachable")
 
     status = _proposals(guildhall, world.repo.path, session)

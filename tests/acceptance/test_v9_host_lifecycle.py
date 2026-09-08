@@ -363,7 +363,7 @@ def test_session_start_p95_under_two_seconds_in_every_state(
             "state": state,
             "state_constructed": constructed,
             "invocations": len(durations),
-            "p95_seconds": sample.p95(),
+            "p95_seconds": sample.p95,
             "refusals": refusals,
         })
     O.check(
@@ -435,7 +435,7 @@ def test_blackholed_company_endpoint_degrades_loudly_inside_the_budget(
         "V-9.blackhole",
         {
             "blackhole_active": len(payloads) == 20,
-            "p95_seconds": sample.p95(),
+            "p95_seconds": sample.p95,
             "connect_budget_seconds": max(connect_durations)
             if connect_durations else float(hosts.COMPANY_CONNECT_BUDGET_SECONDS) * 2,
             "payload_count": len(payloads),

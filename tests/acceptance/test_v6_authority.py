@@ -345,7 +345,9 @@ def test_unavailable_authority_yields_declared_degraded_policy(
     witness.note(helper_exit=process.process.returncode, cache_entries_removed=removed)
     witness.require("the authority process must actually have stopped")
 
-    with Blackhole(roots.company_port):
+    with Blackhole(0) as blackhole, anchors.company_endpoint(
+        f"http://127.0.0.1:{blackhole.port}"
+    ):
         projected = _json(_run(guildhall, "project", "--repo", str(world.repo.path),
                                "--task", TASK, "--decision", DECISION, "--json",
                                cwd=world.repo.path))

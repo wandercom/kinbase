@@ -331,11 +331,17 @@ def test_diagnostics_are_executable_and_useful_after_restart(
             "command": command[0],
             "executable": result.returncode is not None,
             "useful": isinstance(payload, dict) and len(payload) > 0,
+            "argv": list(command),
+            "returncode": result.returncode,
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "payload": payload,
         })
     O.check(
         "NF.diagnostics",
         {"diagnostics": diagnostics, "survives_restart": True},
-        label="diagnostics are executable and useful after restart",
+        label=("diagnostics are executable and useful after restart; observations="
+               + json.dumps(diagnostics, ensure_ascii=False)),
     )
 
 

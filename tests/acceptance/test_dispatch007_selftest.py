@@ -192,12 +192,16 @@ def test_dispatch008_temporal_branch_preserves_plants_on_reducer_revision(tmp_pa
         admit_fact=lambda document: {"admitted": True})
     for case in W.TEMPORAL_CASES:
         W.plant_temporal_history(world, case)
+        world.verify_planted()
+        # Every intermediate reducer revision must carry all previous plants.
+        assert all(world._tracked(r["path"]) for r in world.codebase_records())
     world.verify_planted()
     assert world.repo.run("branch", "--show-current").strip() == world.repo.default_branch
     event = next(r for r in world.codebase_records() if r["logical_key"].endswith("branch-adr"))
     assert json.loads((world.repo.path / event["path"]).read_bytes())["disposition"] == "proposed"
     assert world.repo.run("ls-tree", "attacker/plant-adr", "--", event["path"]).strip()
     assert world.repo.run("ls-tree", "HEAD", "--", event["path"]).strip()
+    assert "attacker/plant-adr" not in world.repo.run("branch", "--merged", "HEAD")
     # The loss detector still rejects a genuinely missing event.
     (world.repo.path / event["path"]).unlink()
     with pytest.raises(ProductFailure, match="missing"):
@@ -345,3 +349,176 @@ def test_dispatch008_company_criticality_and_prediction_fields_follow_rulings():
         "proposed_destinations": ["company"], "confidence": "high"}]}])
     assert predictions["opaque-1"].destinations == frozenset({"company"})
     assert predictions["opaque-1"].atoms[0][0] == "constraint"
+
+
+@pytest.mark.parametrize("day,expected", [
+    (1, "2026-03-01"), (30, "2026-03-30"), (32, "2026-04-01"),
+    (60, "2026-04-29"), (307, "2027-01-01"),
+])
+@spec_ref(VERIFY("INSTRUMENT", "positive-controls", "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS."))
+def test_dispatch009_synthetic_dates_use_calendar_arithmetic(day, expected):
+    from datetime import datetime
+    from ._harness import synth
+    stamp = synth._stamp(day=day)
+    assert stamp == expected + "T00:00:00.000Z"
+    assert datetime.fromisoformat(stamp.replace("Z", "+00:00")).isoformat().startswith(expected)
+    # Transcript generators also pass unbounded minute offsets.
+    assert synth._stamp(day=31, hour=23, minute=61) == "2026-04-01T00:01:00.000Z"
+
+
+@pytest.mark.parametrize("host", ["codex", "claude"])
+@spec_ref(VERIFY("INSTRUMENT", "positive-controls", "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS."))
+def test_dispatch009_latency_gates_read_numeric_percentiles(roots, monkeypatch, host):
+    from contextlib import contextmanager
+    from . import test_v9_host_lifecycle as gates
+    from ._harness import hosts
+    from ._harness.worldbuilder import OpaqueIds
+    world = SignedWorld.create(roots.repo_root)
+    captured = {}
+    configured = []
+
+    @contextmanager
+    def blackhole(port):
+        assert port == 0
+        yield SimpleNamespace(port=43123)
+
+    @contextmanager
+    def endpoint(url):
+        configured.append(url)
+        yield
+
+    class Driver:
+        def run(self, *args, **kwargs):
+            return SimpleNamespace(returncode=0, duration_s=0.25,
+                                   json={"company_connect_seconds": 0.1,
+                                         "degraded": True})
+
+    # Transport and listener doubles only; actual gate loops, state construction,
+    # envelope construction and percentile implementation execute.
+    monkeypatch.setattr(gates, "Blackhole", blackhole)
+    monkeypatch.setattr(gates.O, "check", lambda oid, payload, **kw: captured.update({oid: payload}))
+    anchors = SimpleNamespace(company_endpoint=endpoint)
+    driver = Driver()
+    gates.test_session_start_p95_under_two_seconds_in_every_state(
+        driver, roots, (world, anchors), host, None, OpaqueIds(seed=b"latency-009"))
+    latency = captured["V-9.latency"]
+    assert {s["state"] for s in latency["states"]} == set(gates.START_STATES)
+    assert all(s["state_constructed"] and s["invocations"] == hosts.INVOCATIONS_PER_HOST_STATE
+               and s["p95_seconds"] == 0.25 for s in latency["states"])
+    gates.test_blackholed_company_endpoint_degrades_loudly_inside_the_budget(
+        driver, roots, (world, anchors), host, None, OpaqueIds(seed=b"blackhole-009"))
+    observed = captured["V-9.blackhole"]
+    assert isinstance(observed["p95_seconds"], float)
+    assert observed["payload_count"] == 20
+    assert configured == ["http://127.0.0.1:43123"]
+
+
+@spec_ref(VERIFY("INSTRUMENT", "positive-controls", "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS."))
+def test_dispatch009_claim_rejects_bad_strings_and_quotes_observation(roots):
+    from . import test_v3_privacy as privacy
+    valid = privacy.V3_CLAIM_FRAGMENT + " guildhall-atm/1"
+    manifest = SimpleNamespace(artifact_digests={"spec/threat-model.md": "a" * 64})
+
+    class Driver:
+        claim = valid
+        def run(self, *args, **kwargs):
+            return SimpleNamespace(returncode=0, json={
+                "privacy_claim": self.claim, "execution_census_digest": "b" * 64})
+
+    driver = Driver()
+    world = SimpleNamespace(repo=SimpleNamespace(path=roots.repo_root))
+    privacy.test_v3_claim_is_digest_qualified_and_never_unqualified(
+        driver, roots, (world, None), manifest)
+    for claim in (valid + " Privacy Proved", valid + " ZERO LEAKAGE",
+                  privacy.V3_CLAIM_FRAGMENT, "", None):
+        driver.claim = claim
+        with pytest.raises(ProductFailure) as failure:
+            privacy.test_v3_claim_is_digest_qualified_and_never_unqualified(
+                driver, roots, (world, None), manifest)
+        assert repr(claim) in str(failure.value)
+        assert "problems=" in str(failure.value)
+        if claim and ("Privacy Proved" in claim or "ZERO LEAKAGE" in claim):
+            assert "forbidden_phrases_found" in str(failure.value)
+            assert "forbidden phrase" in str(failure.value)
+
+
+@spec_ref(VERIFY("INSTRUMENT", "positive-controls", "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS."))
+def test_dispatch009_restart_diagnostic_failure_quotes_product_output(roots, monkeypatch):
+    from . import test_nonfunctional as nf
+    world = SimpleNamespace(repo=SimpleNamespace(path=roots.repo_root),
+                            architect=None, maintainer=None,
+                            plant_event=lambda *args, **kwargs: None)
+
+    class Driver:
+        def run(self, *args, **kwargs):
+            if args[0] == "questions":
+                return SimpleNamespace(returncode=0, json=[], stdout="[]\n",
+                                       stderr="fixture diagnostic string\n")
+            return SimpleNamespace(returncode=0, json={"ok": True},
+                                   stdout='{"ok":true}\n', stderr="")
+
+    driver = Driver()
+    monkeypatch.setattr(nf, "Guildhall", lambda **kwargs: driver)
+    with pytest.raises(ProductFailure) as failure:
+        nf.test_diagnostics_are_executable_and_useful_after_restart(
+            driver, roots, (world, None))
+    text = str(failure.value)
+    assert "[3]" in text and "useful" in text
+    assert '"stdout": "[]\\n"' in text
+    assert '"stderr": "fixture diagnostic string\\n"' in text
+    assert '"argv": ["questions", "list", "--json"]' in text
+    assert '"returncode": 0' in text
+
+
+@spec_ref(VERIFY("INSTRUMENT", "positive-controls", "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS."))
+def test_dispatch009_partial_fanout_binds_before_redirecting_company(roots, monkeypatch):
+    from contextlib import contextmanager
+    from . import test_v2_classification as gates
+    from ._harness import service
+    events = []
+    captured = []
+    world = SimpleNamespace(repo=SimpleNamespace(path=roots.repo_root))
+
+    class Socket:
+        def __init__(self, *args):
+            self.bound = False
+        def setsockopt(self, *args):
+            pass
+        def bind(self, address):
+            # Treat all explicit ports as already occupied, including Company.
+            assert address == ("127.0.0.1", 0)
+            self.bound = True
+            events.append("bind")
+        def getsockname(self):
+            assert self.bound
+            return ("127.0.0.1", 43124)
+        def listen(self, backlog):
+            events.append("listen")
+        def close(self):
+            events.append("close")
+
+    @contextmanager
+    def endpoint(url):
+        assert events == ["bind", "listen"]
+        assert url == "http://127.0.0.1:43124"
+        events.append("redirect")
+        yield
+        events.append("restore")
+
+    def decide(*args):
+        if args[-1] == "company:root":
+            assert events[-1] == "redirect"
+        return SimpleNamespace(returncode=3)
+
+    monkeypatch.setattr(service.socket, "socket", Socket)
+    monkeypatch.setattr(gates, "start_session", lambda *args: "session-issued")
+    monkeypatch.setattr(gates, "_observe", lambda *args: None)
+    monkeypatch.setattr(gates, "_proposals", lambda *args: {})
+    monkeypatch.setattr(gates, "_first_candidate", lambda *args: "candidate-issued")
+    monkeypatch.setattr(gates, "_decide", decide)
+    monkeypatch.setattr(gates.O, "check", lambda oid, payload, **kw: captured.append(oid))
+    anchors = SimpleNamespace(company_endpoint=endpoint, repository_uuid="uuid")
+    gates.test_partial_fanout_failure_does_not_roll_back_committed_destination(
+        None, (world, anchors), SimpleNamespace(path=roots.run_root / "corpus"), roots)
+    assert events == ["bind", "listen", "redirect", "restore", "close"]
+    assert captured == ["V-2.partial-fanout"]

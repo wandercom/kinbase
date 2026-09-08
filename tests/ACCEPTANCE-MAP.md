@@ -10,9 +10,10 @@ The machine-readable catalog is `tests/fixtures/catalog/obligations.json`
 threshold, positive control, negative control, product mutation and detector
 mutation. `tests/fixtures/catalog/planters.json` records the 35
 executable pre-execution planters and `tests/fixtures/controls/controls.json` the frozen raw positive and
-negative controls. 259 node ids collect; none is unbackreferenced.
+negative controls. 269 node ids collect; none is unbackreferenced.
 Kill-ledger digest: `b16d7fd1b37174a5`; frozen-controls digest: `584e528d085ba7f6`.
-The 140 selftest nodes include seven dispatch-007 and ten dispatch-008 regression guards.
+The 150 selftest nodes include seven dispatch-007, ten dispatch-008, and five
+dispatch-009 regression guards (the latter expand to ten nodes).
 
 Authority precedence (`spec/ratification-manifest.json`):
 `source-request.md > product.md > architecture.md > threat-model.md >

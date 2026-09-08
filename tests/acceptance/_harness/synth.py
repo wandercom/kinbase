@@ -34,6 +34,7 @@ import json
 import sqlite3
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -220,7 +221,8 @@ def receipt_stamp(offset_seconds: int = 0) -> str:
 
 
 def _stamp(day: int = 1, hour: int = 0, minute: int = 0) -> str:
-    return f"2026-03-{day:02d}T{hour:02d}:{minute:02d}:00.000Z"
+    stamp = datetime(2026, 3, 1) + timedelta(days=day - 1, hours=hour, minutes=minute)
+    return stamp.isoformat(timespec="milliseconds") + "Z"
 
 
 # --------------------------------------------------------------------------

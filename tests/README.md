@@ -68,7 +68,13 @@ session, native lifecycle, and hook repairs:
 oracles without a product, including ten dispatch-008 regression guards.
 Frozen controls retain their dispatch-007 digest; dispatch 008 updates catalog
 wording for R-13/R-14 without changing numeric thresholds or human-signature debt.
-The 008 handover remains in the worktree and an exact scratch patch; Git metadata
+Dispatch 009 starts at the committed 008 patch (`057cff4`). Synthetic timestamps
+use calendar arithmetic; both latency gates read the numeric p95 property.
+Blackhole probes bind an available port before redirecting the client. Privacy
+claim validation counts problems in the correct direction, and claim/diagnostic
+failures quote the product output. Five new regression guards (ten nodes) cover
+these faults; the temporal guard also verifies every intermediate reducer HEAD.
+The 009 handover remains in the worktree and an exact scratch patch; Git metadata
 is read-only and the Validator owns application and commit.
 
 ## Reviewer entrypoint
@@ -147,13 +153,13 @@ Every assertion cites an exact ratified requirement:
 
 | quantity | value |
 |---|---:|
-| collected by pytest | 259 |
+| collected by pytest | 269 |
 | catalogued obligations | 117 |
 | catalogued thresholds | 482 |
 | kill-ledger rows over frozen controls | 482 |
 | executable pre-execution planters | 35 |
 | detector mutations with a demonstrated escape | 6 |
-| product-independent self-tests | 140 |
+| product-independent self-tests | 150 |
 | unbackreferenced tests | 0 |
 
 Catalog digest `8320395313ff6f00`; kill-ledger digest `b16d7fd1b37174a5`;
