@@ -672,7 +672,55 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
 
         // Step 6: independence versus common-source repetition.
         let mut heads: Vec<Head> = Vec::new();
+        let mut revoked_support_heads: Vec<(String, Vec<String>, String)> = Vec::new();
         for (identity, members) in clusters {
+            // Revocation cascade (architecture §3): once a client has observed
+            // a cursor at or beyond a revocation, a statement whose only
+            // admissible support was the revoked key withdraws from trusted
+            // projection; one with other support stays current and records
+            // the withdrawn support.
+            let revoked_members: Vec<&AdmittedEvent> = members
+                .iter()
+                .copied()
+                .filter(|member| revoked_keys.contains_key(member.event.signer.as_str()))
+                .collect();
+            let members: Vec<&AdmittedEvent> = if revoked_members.len() == members.len() {
+                let revoked_at = revoked_members
+                    .first()
+                    .and_then(|member| revoked_keys.get(member.event.signer.as_str()))
+                    .map(|revocation| revocation.cursor.clone())
+                    .unwrap_or_default();
+                for member in &revoked_members {
+                    trace.rejected.push(json!({
+                        "event_id": member.event.event_id,
+                        "step": 6,
+                        "reason": format!(
+                            "SUPPORT_REVOKED: the signing key was revoked at authority cursor {revoked_at} and no independently admissible support remains; withdrawn from trusted projection under the destination owner"
+                        )
+                    }));
+                }
+                revoked_support_heads.push((
+                    identity,
+                    revoked_members
+                        .iter()
+                        .map(|member| member.event.event_id.clone())
+                        .collect(),
+                    revoked_at,
+                ));
+                continue;
+            } else {
+                for member in &revoked_members {
+                    support_retired_ids.insert(member.event.event_id.clone());
+                    trace.counterfactual.push(format!(
+                        "support {} was withdrawn because its signing key was revoked; the statement stays current on its remaining independent support",
+                        member.event.event_id
+                    ));
+                }
+                members
+                    .into_iter()
+                    .filter(|member| !revoked_keys.contains_key(member.event.signer.as_str()))
+                    .collect()
+            };
             let mut sources: BTreeSet<String> = BTreeSet::new();
             for member in &members {
                 sources.insert(member.source_identity.clone().unwrap_or_else(|| {
@@ -1225,6 +1273,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 || !negative.is_empty()
                 || !trace.rejected.is_empty()
                 || !support_retired_ids.is_empty()
+                || !revoked_support_heads.is_empty()
             {
                 let representative_scope = eligible
                     .first()
@@ -1235,7 +1284,9 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                             .map(|admitted| admitted.event.scope.clone())
                     })
                     .unwrap_or_else(|| "unknown".to_owned());
-                let kind = if !support_retired_ids.is_empty() {
+                let kind = if !revoked_support_heads.is_empty() {
+                    "revoked"
+                } else if !support_retired_ids.is_empty() {
                     "withdrawn"
                 } else if !trace.expired_event_ids.is_empty() {
                     "expired"
@@ -1244,13 +1295,29 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 } else {
                     "withdrawn"
                 };
-                let owner_role = owner_role_for_scope(input, &representative_scope);
-                let owner_identity = authority_owner_for_scope(
-                    input,
-                    &representative_scope,
-                    repository_scope(&group).as_deref(),
-                );
+                let (owner_role, owner_identity) = if kind == "revoked" {
+                    // The apology Unknown belongs to the destination owner
+                    // (Company steward or repository maintainer), never to
+                    // the revoked principal.
+                    destination_owner(input, &group)
+                } else {
+                    (
+                        owner_role_for_scope(input, &representative_scope),
+                        authority_owner_for_scope(
+                            input,
+                            &representative_scope,
+                            repository_scope(&group).as_deref(),
+                        ),
+                    )
+                };
                 let question = match kind {
+                    "revoked" => format!(
+                        "The only support for logical key {logical_key} was signed by a key revoked at authority cursor {}; an independently admissible support or a signed withdrawal from the destination owner closes this apology Unknown.",
+                        revoked_support_heads
+                            .first()
+                            .map(|(_, _, cursor)| cursor.as_str())
+                            .unwrap_or_default()
+                    ),
                     "expired" => format!(
                         "The only evidence for logical key {logical_key} expired. Is the workaround, incident value, or observation still in force?"
                     ),
@@ -1276,9 +1343,19 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                         .iter()
                         .chain(trace.negative_evidence_event_ids.iter())
                         .cloned()
+                        .chain(
+                            revoked_support_heads
+                                .iter()
+                                .flat_map(|(_, support, _)| support.iter().cloned()),
+                        )
                         .collect(),
                     input.as_of.as_str(),
                 );
+                if kind == "revoked" {
+                    trace.counterfactual.push(
+                        "an independently admissible support signed by an active registered key, or a steward republication that re-registers the key at a newer authority cursor, would restore the statement".to_owned(),
+                    );
+                }
                 trace.state = kind.to_owned();
                 trace.unknown_id = Some(unknown.unknown_id.clone());
                 if owner_identity.is_some() {
@@ -1465,6 +1542,25 @@ fn authority_owner_for_scope(
         prefix.push('/');
     }
     resolved
+}
+
+/// The destination store's owner: the Company steward for Company facts,
+/// the registered repository maintainer for Codebase facts.
+fn destination_owner(
+    input: &ReducerInput,
+    group: &[&AdmittedEvent],
+) -> (&'static str, Option<String>) {
+    let company = group
+        .first()
+        .is_some_and(|admitted| admitted.event.store_kind == "company")
+        || input.store_kind == "company";
+    if company {
+        ("company-steward", input.steward_authority_id.clone())
+    } else {
+        let maintainer = repository_scope(group)
+            .and_then(|scope| input.authority_owner_by_scope.get(&scope).cloned());
+        ("repository-maintainer", maintainer)
+    }
 }
 
 fn owner_role_for_scope(input: &ReducerInput, scope: &str) -> &'static str {

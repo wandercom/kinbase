@@ -584,11 +584,18 @@ pub(crate) fn load_store(
         crate::StoreKind::Company => {
             let mut events = Vec::new();
             let mut unknowns = Vec::new();
+            let mut revocations: Vec<Revocation> = Vec::new();
             if let Ok(Some((cache, _root))) = launcher.company_cache() {
                 if let Ok(Some(snapshot)) = cache.snapshot() {
                     let (snapshot_events, snapshot_unknowns) = snapshot_company_events(&snapshot);
                     events.extend(snapshot_events);
                     unknowns.extend(snapshot_unknowns);
+                    revocations.extend(
+                        crate::json::get_array(&snapshot, "revocations")
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|record| serde_json::from_value(record.clone()).ok()),
+                    );
                 }
             }
             // Local signed Company events include authority answers written by
@@ -675,7 +682,7 @@ pub(crate) fn load_store(
                 events,
                 unknowns,
                 tombstones: Vec::new(),
-                revocations: Vec::new(),
+                revocations,
                 authority_cursor: launcher
                     .company_cache()
                     .ok()

@@ -39,14 +39,35 @@ pub fn load(db: &CompanyDb, root: &PublicKey) -> Result<TrustState, ContractErro
         }
         let _ = cursor;
     }
+    let registry = db.registry_entries()?;
     for (cursor, payload, verification) in db.events_of_kind("revocation")? {
         if verification != "verified" {
             continue;
         }
         if let Some(key) = crate::json::get_str(&payload, "revoked_key") {
+            // A key the steward later republished under an active entry is
+            // authorized again from that newer publication; the earlier
+            // revocation stays in history but no longer governs.
+            let re_registered = registry.iter().any(|entry| {
+                crate::json::get_str(entry, "public_key") == Some(key)
+                    && crate::json::get_str(entry, "status") == Some("active")
+                    && crate::json::get_str(entry, "cursor")
+                        .and_then(|value| value.parse::<i64>().ok())
+                        .is_some_and(|published| published > cursor)
+            });
+            if re_registered {
+                continue;
+            }
+            // A revocation derived from a registry republication (R-10) is
+            // ordered in the authority-cursor space; an explicit revocation
+            // document keeps its own service cursor.
+            let revocation_cursor = crate::json::get_str(&payload, "authority_cursor")
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+                .unwrap_or_else(|| cursor.to_string());
             revocations.push(Revocation {
                 revoked_key: key.to_owned(),
-                cursor: cursor.to_string(),
+                cursor: revocation_cursor,
                 effective_at: crate::json::get_str(&payload, "effective_at")
                     .unwrap_or_default()
                     .to_owned(),
@@ -72,7 +93,7 @@ pub fn load(db: &CompanyDb, root: &PublicKey) -> Result<TrustState, ContractErro
         root: root.clone(),
         steward_keys,
         revocations,
-        registry: db.registry_entries()?,
+        registry,
         authority_cursor,
         cursor: db.cursor()?,
     })

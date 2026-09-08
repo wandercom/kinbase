@@ -944,6 +944,65 @@ fn admit_fact(
         ));
     }
     let digest = crate::hash::sha256_bytes(&bytes);
+    // Path-exists fast path (architecture §3, V-4 replay): bytes Company
+    // already admitted are answered with the historical receipt, and only to
+    // the client that admitted them. Nothing is re-admitted or projected,
+    // and a revocation observed since is reported on the receipt rather than
+    // refusing history that was valid when it was made. A new event under a
+    // revoked key still refuses below.
+    if let Some(existing_cursor) = db
+        .event_cursor(&event.event_id)
+        .map_err(|error| refuse(500, error))?
+    {
+        let existing = db
+            .all_events(existing_cursor - 1, 1)
+            .map_err(|error| refuse(500, error))?;
+        let existing_digest = existing
+            .first()
+            .and_then(|record| record.get("payload"))
+            .map(|payload| crate::json::digest(payload))
+            .unwrap_or_default();
+        if existing_digest == digest {
+            let record = db
+                .nonce_record("company", &digest)
+                .map_err(|error| refuse(500, error))?;
+            let same_client = record
+                .as_ref()
+                .and_then(|record| crate::json::get_str(record, "client_key"))
+                == Some(auth.client_key.as_str());
+            if !same_client {
+                return Err(refuse(
+                    409,
+                    ContractError::refused(
+                        "APPROVAL_REPLAY",
+                        "a historical receipt is returned only to the original scoped client",
+                        "Use the original client's receipt; replayed bytes are never re-admitted.",
+                    ),
+                ));
+            }
+            db.bump("retry_receipt_returned")
+                .map_err(|error| refuse(500, error))?;
+            let (revocation_observed, support_withdrawn) =
+                replay_projection(db, trust_state, &event);
+            let mut receipt =
+                receipt_for(&event, &digest, existing_cursor, "committed", "duplicate");
+            receipt["retry"] = Value::Bool(true);
+            receipt["historical_receipt"] = Value::Bool(true);
+            receipt["readmitted"] = Value::Bool(false);
+            receipt["projected"] = Value::Bool(false);
+            receipt["receipt_scope_restricted"] = Value::Bool(true);
+            receipt["revocation_observed"] = Value::Bool(revocation_observed);
+            receipt["support_withdrawn"] = Value::Bool(support_withdrawn);
+            receipt["projection_state"] = Value::String(if support_withdrawn {
+                "support_withdrawn".to_owned()
+            } else {
+                "historical".to_owned()
+            });
+            receipt["state_changed"] = Value::Bool(false);
+            receipt["ambient_clock_read"] = Value::Bool(false);
+            return Ok((200, receipt));
+        }
+    }
     let verification = trust_state.verify_fact_signer(&event);
     // A repository maintainer may request an exception, but only a Company
     // steward may relax Company-owned architecture. Signature failures retain
@@ -1038,12 +1097,32 @@ fn admit_fact(
                 .and_then(|record| crate::json::get_str(record, "client_key"))
                 == Some(auth.client_key.as_str());
             if same_bytes && same_client {
+                // Path-exists fast path: the original scoped client replays
+                // bytes Company already admitted. It receives the historical
+                // receipt for that admission and nothing is re-admitted or
+                // projected; a revocation observed since is reported on it.
                 db.bump("retry_receipt_returned")
                     .map_err(|error| refuse(500, error))?;
                 let mut receipt = record
                     .and_then(|record| record.get("receipt").cloned())
                     .unwrap_or(Value::Null);
+                if !receipt.is_object() {
+                    receipt = json!({"schema": crate::model::RECEIPT_SCHEMA, "destination": "company", "status": "committed"});
+                }
+                let (revocation_observed, support_withdrawn) =
+                    replay_projection(db, trust_state, &event);
                 receipt["retry"] = Value::Bool(true);
+                receipt["historical_receipt"] = Value::Bool(true);
+                receipt["readmitted"] = Value::Bool(false);
+                receipt["projected"] = Value::Bool(false);
+                receipt["receipt_scope_restricted"] = Value::Bool(true);
+                receipt["revocation_observed"] = Value::Bool(revocation_observed);
+                receipt["support_withdrawn"] = Value::Bool(support_withdrawn);
+                receipt["projection_state"] = Value::String(if support_withdrawn {
+                    "support_withdrawn".to_owned()
+                } else {
+                    "historical".to_owned()
+                });
                 return Ok((200, receipt));
             }
             return Err(refuse(
@@ -1612,6 +1691,10 @@ fn publish_registry(
     }
     let digest = crate::json::digest(&document);
     let event_id = format!("registry_{}", &digest[..40]);
+    let published_cursor = crate::json::get_str(&document, "authority_cursor")
+        .unwrap_or_default()
+        .to_owned();
+    let previous_entries = db.registry_entries().map_err(|error| refuse(500, error))?;
     with_immediate_transaction(db, || {
         let cursor = match db
             .append_event(
@@ -1639,9 +1722,81 @@ fn publish_registry(
             db.upsert_registry_entry(&entry, cursor)
                 .map_err(|error| refuse(500, error))?;
         }
+        // R-10: the steward republishing the registry without an entry (or
+        // with a rotated key) is the revocation event; the cursor at which
+        // the entry vanished is the revocation cursor, and the §3 cascade
+        // runs from it.
+        let listed = |entry: &Value| {
+            entries.iter().any(|published| {
+                crate::json::get_str(published, "authority_id")
+                    == crate::json::get_str(entry, "authority_id")
+                    && crate::json::get_str(published, "scope")
+                        == crate::json::get_str(entry, "scope")
+            })
+        };
+        let mut revoked_keys: BTreeSet<String> = BTreeSet::new();
+        for entry in &previous_entries {
+            if crate::json::get_str(entry, "status") != Some("active") {
+                continue;
+            }
+            let key = crate::json::get_str(entry, "public_key").unwrap_or_default();
+            let rotated = entries.iter().any(|published| {
+                crate::json::get_str(published, "authority_id")
+                    == crate::json::get_str(entry, "authority_id")
+                    && crate::json::get_str(published, "scope")
+                        == crate::json::get_str(entry, "scope")
+                    && crate::json::get_str(published, "public_key") != Some(key)
+            });
+            if listed(entry) && !rotated {
+                continue;
+            }
+            if !listed(entry) {
+                db.mark_registry_entry_revoked(
+                    crate::json::get_str(entry, "authority_id").unwrap_or_default(),
+                    crate::json::get_str(entry, "scope").unwrap_or_default(),
+                    cursor,
+                )
+                .map_err(|error| refuse(500, error))?;
+            }
+            // A key still listed under another exact scope stays authorized
+            // there; only a key no published entry carries is revoked.
+            let still_listed = entries
+                .iter()
+                .any(|published| crate::json::get_str(published, "public_key") == Some(key));
+            if !still_listed {
+                revoked_keys.insert(key.to_owned());
+            }
+        }
+        for key in &revoked_keys {
+            let revocation = json!({
+                "schema": crate::model::REVOCATION_SCHEMA,
+                "revoked_key": key,
+                "authority_cursor": published_cursor,
+                "effective_at": now,
+                "derived_from": event_id,
+                "reason": "entry absent from the steward-republished authority registry"
+            });
+            let revocation_id = format!(
+                "revocation_{}",
+                &crate::hash::sha256_text(&format!("{key}\0{published_cursor}"))[..40]
+            );
+            let revocation_cursor = db
+                .append_event(
+                    &revocation_id,
+                    "revocation",
+                    "revocation",
+                    &revocation,
+                    crate::json::get_str(&document, "signer").unwrap_or_default(),
+                    "verified",
+                    None,
+                )
+                .map_err(|error| refuse(500, error))?
+                .unwrap_or(cursor);
+            revocation_cascade(db, key, revocation_cursor, &published_cursor, now, &digest)?;
+        }
         db.audit(
             "registry-published",
-            &json!({"digest": digest, "entries": entries.len(), "cursor": cursor}),
+            &json!({"digest": digest, "entries": entries.len(), "cursor": cursor, "revoked_keys": revoked_keys.len()}),
         )
         .map_err(|error| refuse(500, error))?;
         Ok((
@@ -2409,59 +2564,75 @@ fn steward_event(
             .map_err(|error| refuse(500, error))?
             .unwrap_or(trust_state.cursor);
         if kind == "revocation" {
-            db.set_meta("revocation_cursor", &cursor.to_string())
-                .map_err(|error| refuse(500, error))?;
-            // Compromise response: enumerate affected facts and emit destination-owned apology Unknowns.
             let revoked = crate::json::get_str(&document, "revoked_key").unwrap_or_default();
-            let mut affected = 0usize;
-            for (_, payload, verification) in db
-                .events_of_kind("fact-event")
-                .map_err(|error| refuse(500, error))?
-            {
-                if verification == "verified"
-                    && crate::json::get_str(&payload, "signer") == Some(revoked)
-                {
-                    affected += 1;
-                    let fact_id = crate::json::get_str(&payload, "fact_id").unwrap_or_default();
-                    let unknown = json!({
-                        "unknown_id": format!("unknown_apology_{}", &crate::hash::sha256_text(&format!("{revoked}\0{fact_id}"))[..24]),
-                        "scope": crate::json::get_str(&payload, "authority_scope").unwrap_or_default(),
-                        "owner_identity": "company-steward",
-                        "owner_role": "company-steward",
-                        "status": "open",
-                        "question": format!("Fact {fact_id} was warranted by a key revoked at cursor {cursor}; does an independently admissible support still establish it?"),
-                        "response_due_at": crate::time::plus_seconds(now, 24 * 3600).unwrap_or_default(),
-                        "affected_fact_id": fact_id,
-                        "kind": "apology"
-                    });
-                    db.upsert_unknown(&unknown, "apology")
-                        .map_err(|error| refuse(500, error))?;
-                }
-            }
-            let residual = json!({
-                "schema": "guildhall-unreachable-clone-residual/1",
-                "revoked_key": revoked,
-                "cursor": cursor.to_string(),
-                "affected_fact_count": affected,
-                "max_offline_revocation_freshness_seconds": 900,
-                "statement": "unknown clones may keep projecting until they sync or their revocation freshness window expires"
-            });
-            db.append_event(
-                &format!("residual_{}", &digest[..32]),
-                "revocation",
-                "unreachable_clone_residual",
-                &residual,
-                "company-service",
-                "verified",
-                None,
-            )
-            .map_err(|error| refuse(500, error))?;
+            revocation_cascade(db, revoked, cursor, &cursor.to_string(), now, &digest)?;
         }
         Ok((
             201,
             json!({"status": "recorded", "kind": kind, "cursor": cursor.to_string(), "digest": digest}),
         ))
     })
+}
+
+/// Compromise response (architecture §3): advance the revocation cursor,
+/// enumerate the facts the revoked key warranted, emit destination-owned
+/// apology Unknowns, and record the immutable unreachable-clone residual.
+fn revocation_cascade(
+    db: &CompanyDb,
+    revoked: &str,
+    cursor: i64,
+    authority_cursor: &str,
+    now: &str,
+    digest: &str,
+) -> Result<(), (u16, ContractError)> {
+    db.set_meta("revocation_cursor", &cursor.to_string())
+        .map_err(|error| refuse(500, error))?;
+    let mut affected = 0usize;
+    for (_, payload, verification) in db
+        .events_of_kind("fact-event")
+        .map_err(|error| refuse(500, error))?
+    {
+        if verification == "verified" && crate::json::get_str(&payload, "signer") == Some(revoked) {
+            affected += 1;
+            let fact_id = crate::json::get_str(&payload, "fact_id").unwrap_or_default();
+            let unknown = json!({
+                "unknown_id": format!("unknown_apology_{}", &crate::hash::sha256_text(&format!("{revoked}\0{fact_id}"))[..24]),
+                "scope": crate::json::get_str(&payload, "authority_scope").unwrap_or_default(),
+                "owner_identity": "company-steward",
+                "owner_role": "company-steward",
+                "status": "open",
+                "question": format!("Fact {fact_id} was warranted by a key revoked at authority cursor {authority_cursor}; does an independently admissible support still establish it?"),
+                "response_due_at": crate::time::plus_seconds(now, 24 * 3600).unwrap_or_default(),
+                "affected_fact_id": fact_id,
+                "kind": "apology"
+            });
+            db.upsert_unknown(&unknown, "apology")
+                .map_err(|error| refuse(500, error))?;
+        }
+    }
+    let residual = json!({
+        "schema": "guildhall-unreachable-clone-residual/1",
+        "revoked_key": revoked,
+        "cursor": cursor.to_string(),
+        "authority_cursor": authority_cursor,
+        "affected_fact_count": affected,
+        "max_offline_revocation_freshness_seconds": 900,
+        "statement": "unknown clones may keep projecting until they sync or their revocation freshness window expires"
+    });
+    db.append_event(
+        &format!(
+            "residual_{}",
+            &crate::hash::sha256_text(&format!("{revoked}\0{digest}"))[..32]
+        ),
+        "revocation",
+        "unreachable_clone_residual",
+        &residual,
+        "company-service",
+        "verified",
+        None,
+    )
+    .map_err(|error| refuse(500, error))?;
+    Ok(())
 }
 
 fn issue_token(db: &CompanyDb, auth: &AuthContext, body: Option<Value>, now: &str) -> Handled {
