@@ -1467,6 +1467,23 @@ pub fn repo_arg(repo: Option<PathBuf>) -> PathBuf {
     repo.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
+/// Compatibility helpers for modules that work from a repository path.
+pub fn repository_id(repo: &Path) -> Result<String, ContractError> {
+    let repository = crate::codebase::Repository::discover(repo)?;
+    repository
+        .uuid_hint()
+        .map(str::to_owned)
+        .ok_or_else(|| ContractError::repo_uninitialized(&repository.root))
+}
+
+pub fn git_revision(repo: &Path) -> Result<String, ContractError> {
+    crate::codebase::Repository::discover(repo)?.revision()
+}
+
+pub fn git_branch(repo: &Path) -> Result<String, ContractError> {
+    crate::codebase::Repository::discover(repo)?.branch()
+}
+
 /// Verified fact events (for callers that need the admitted list).
 pub fn verified_facts(events: &[LoadedEvent]) -> Vec<&FactEvent> {
     events

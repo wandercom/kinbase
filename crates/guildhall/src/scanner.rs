@@ -579,3 +579,13 @@ pub fn hard_blocked(text: &str) -> bool {
         Err(_) => true,
     }
 }
+
+pub fn scanner(text: &str) -> ScanResult {
+    scan(text, &Registry::default()).unwrap_or_else(|_| ScanResult {
+        scanner_version: SCANNER_VERSION.to_owned(),
+        hard_block: true,
+        taints: Vec::new(),
+        findings: Vec::new(),
+        views_examined: 0,
+    })
+}

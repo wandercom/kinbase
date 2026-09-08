@@ -351,3 +351,33 @@ pub fn random_id(prefix: &str) -> String {
     rand::RngCore::fill_bytes(&mut OsRng, &mut bytes);
     format!("{prefix}_{}", crate::hash::hex_string(&bytes))
 }
+
+pub fn ensure_keypair(
+    store: crate::StoreKind,
+    repo: &std::path::Path,
+) -> Result<(std::path::PathBuf, std::path::PathBuf), ContractError> {
+    let root = crate::store::store_root(store, repo).join("local").join("keys");
+    crate::paths::ensure_private_dir(&root, "local key directory")?;
+    let private_path = root.join("ed25519.key");
+    let public_path = root.join("ed25519.pub");
+    if !private_path.exists() {
+        let key = PrivateKey::generate();
+        key.save_new(&private_path, "local Ed25519 key")?;
+        key.public().save_new(&public_path, "local Ed25519 public key")?;
+    }
+    Ok((private_path, public_path))
+}
+
+pub fn sign_message(message_type: &str, message: &[u8], key_path: &std::path::Path) -> Result<String, ContractError> {
+    PrivateKey::load_or_generate(key_path, "local Ed25519 key")?.sign(message_type, message)
+}
+
+pub fn verify_message(
+    message_type: &str,
+    message: &[u8],
+    signature: &str,
+    public_path: &std::path::Path,
+) -> Result<bool, ContractError> {
+    let key = PublicKey::load(public_path, "Ed25519 public key")?;
+    Ok(key.verify(message_type, message, signature))
+}
