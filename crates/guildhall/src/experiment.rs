@@ -97,7 +97,8 @@ fn census(manifest_path: &Path, json: bool) -> Result<(), ContractError> {
             "eligible census is below the two-repository, eight-task floor",
         ));
     }
-    let draw = deterministic_draw(&eligible, requested.max(8));
+    let public_seed = required_public_seed(&manifest)?;
+    let draw = deterministic_draw(&eligible, requested.max(8), public_seed);
     let result = json!({
         "schema": "guildhall-experiment-census/1",
         "status": "census-complete",
@@ -106,7 +107,7 @@ fn census(manifest_path: &Path, json: bool) -> Result<(), ContractError> {
         "eligible": eligible,
         "excluded": excluded,
         "drawn": draw,
-        "seed": manifest.get("public_seed").cloned().unwrap_or(Value::Null)
+        "seed": public_seed
     });
     let output = artifact(manifest_path, "census");
     write_json(&output, &result)?;
@@ -166,7 +167,7 @@ fn repositories(draw: &[Value], tasks: &[Value]) -> usize {
         .len()
 }
 
-fn deterministic_draw(tasks: &[Value], count: u64) -> Vec<Value> {
+fn deterministic_draw(tasks: &[Value], count: u64, public_seed: u64) -> Vec<Value> {
     let mut ranked: Vec<(String, &Value)> = tasks
         .iter()
         .map(|task| {
@@ -174,7 +175,10 @@ fn deterministic_draw(tasks: &[Value], count: u64) -> Vec<Value> {
                 .get("task_id")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            (crate::hash::sha256_text(id), task)
+            (
+                digest_value(&json!({"public_seed": public_seed, "task_id": id})),
+                task,
+            )
         })
         .collect();
     ranked.sort_by(|left, right| left.0.cmp(&right.0));
@@ -341,6 +345,7 @@ fn run(frozen_path: &Path, json: bool) -> Result<(), ContractError> {
         return Err(invariant("run requires a frozen experiment manifest"));
     }
     let manifest = required_object(&frozen, "manifest")?;
+    let public_seed = required_public_seed(manifest)?;
     let tasks = required_array(manifest, "measurement_tasks")?;
     let seeds = required_array(manifest, "measurement_seeds")?;
     if tasks.len() < 8 || seeds.len() < 3 {
@@ -352,12 +357,16 @@ fn run(frozen_path: &Path, json: bool) -> Result<(), ContractError> {
     let signer = signing_key()?;
     let run_dir = frozen_path.with_extension("run");
     std::fs::create_dir_all(run_dir.join("candidates")).map_err(io_error)?;
+    let frozen_digest = digest_value(&frozen);
+    std::fs::create_dir_all(run_dir.join("frozen")).map_err(io_error)?;
+    let frozen_artifact_path = run_dir.join("frozen").join(format!("{frozen_digest}.json"));
+    write_json(&frozen_artifact_path, &frozen)?;
     let census_path = run_dir.join("run-census.jsonl");
     let mut mapping = Map::new();
     let mut candidate_ids = Vec::new();
     for task in tasks {
         for seed in seeds {
-            for arm in ARMS {
+            for arm in deterministic_assignment(public_seed, task, seed) {
                 let packet = json!({
                     "task": task,
                     "arm": arm,
@@ -389,14 +398,12 @@ fn run(frozen_path: &Path, json: bool) -> Result<(), ContractError> {
         }
     }
     write_json(&run_dir.join("mapping.json"), &Value::Object(mapping))?;
-    let result = json!({
-        "schema": "guildhall-experiment-run/1",
-        "status": "run-complete",
-        "frozen_digest": digest_value(&frozen),
-        "run_directory": run_dir.to_string_lossy(),
-        "candidate_count": candidate_ids.len(),
-        "run_census_digest": digest_value(&json!({"candidate_ids": candidate_ids}))
-    });
+    let result = run_result(
+        &frozen,
+        &run_dir,
+        &frozen_artifact_path,
+        candidate_ids.clone(),
+    );
     write_json(&frozen_path.with_extension("run.json"), &result)?;
     print_result(&result, json)
 }
@@ -441,6 +448,53 @@ fn score(run_path: &Path, json: bool) -> Result<(), ContractError> {
     let result = json!({"schema":"guildhall-experiment-scores/1","status":"scored","run_digest":digest_value(&run),"score_count":candidates.len()});
     write_json(&run_dir.join("scored.json"), &result)?;
     print_result(&result, json)
+}
+
+fn run_result(
+    frozen: &Value,
+    run_dir: &Path,
+    frozen_artifact_path: &Path,
+    candidate_ids: Vec<String>,
+) -> Value {
+    json!({
+        "schema": "guildhall-experiment-run/1",
+        "status": "run-complete",
+        "frozen_digest": digest_value(frozen),
+        "frozen_manifest": frozen_artifact_path.to_string_lossy(),
+        "run_directory": run_dir.to_string_lossy(),
+        "candidate_count": candidate_ids.len(),
+        "run_census_digest": digest_value(&json!({"candidate_ids": candidate_ids}))
+    })
+}
+
+fn required_public_seed(manifest: &Value) -> Result<u64, ContractError> {
+    manifest
+        .get("public_seed")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| invariant("public_seed must be a nonnegative integer"))
+}
+
+fn deterministic_assignment(public_seed: u64, task: &Value, seed: &Value) -> Vec<&'static str> {
+    let task_id = task
+        .get("task_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let mut ranked: Vec<(String, &'static str)> = ARMS
+        .iter()
+        .map(|arm| {
+            (
+                digest_value(&json!({
+                    "public_seed": public_seed,
+                    "task_id": task_id,
+                    "seed": seed,
+                    "arm": arm
+                })),
+                *arm,
+            )
+        })
+        .collect();
+    ranked.sort_by(|left, right| left.0.cmp(&right.0));
+    ranked.into_iter().map(|(_, arm)| arm).collect()
 }
 
 fn verdict(run_path: &Path, json: bool) -> Result<(), ContractError> {
