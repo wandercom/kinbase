@@ -122,7 +122,7 @@ pub fn run(
     let unknowns = unknown_outputs(&facts, &view_unknowns);
     let mut candidate_documents: Vec<(String, Value)> = facts
         .iter()
-        .map(|fact| (fact.fact_id.clone(), candidate_value(fact)))
+        .map(|fact| (fact.fact_id.clone(), candidate_value(fact, &facts)))
         .collect();
     let mut represented_ids: BTreeSet<String> = candidate_documents
         .iter()
@@ -165,11 +165,12 @@ pub fn run(
             let prospective_json: Vec<Value> = selected
                 .iter()
                 .chain(std::iter::once(*fact))
-                .map(candidate_value)
+                .map(|fact| candidate_value(fact, &facts))
                 .collect();
             let prospective_bytes =
                 crate::json::canonical_text(&Value::Array(prospective_json)).len();
             let evaluation = evaluate(fact, &selected, &working, task, decision);
+            let role = candidate_role(fact, &facts).0;
             if prospective_bytes > PROJECTION_BYTE_LIMIT {
                 if evaluation.marginal_value > 0 {
                     byte_ceiling_hit = true;
@@ -181,7 +182,11 @@ pub fn run(
                 .map(|(current, current_value)| {
                     evaluation.marginal_value > current_value.marginal_value
                         || (evaluation.marginal_value == current_value.marginal_value
-                            && fact.fact_id < current.fact_id)
+                            && (candidate_priority(role)
+                                > candidate_priority(candidate_role(current, &facts).0)
+                                || (candidate_priority(role)
+                                    == candidate_priority(candidate_role(current, &facts).0)
+                                    && fact.fact_id < current.fact_id)))
                 })
                 .unwrap_or(true);
             if replace {
@@ -281,7 +286,10 @@ pub fn run(
             json!({"tier": tier, "estimated_value": value, "estimated_cost": cost, "action": "visited"})
         })
         .collect();
-    let selected_values: Vec<Value> = selected.iter().map(candidate_value).collect();
+    let invariant_selected = selected
+        .iter()
+        .any(|fact| candidate_role(fact, &facts).0 == "high_distortion_compatibility_invariant");
+    let selected_values: Vec<Value> = selected.iter().map(|fact| candidate_value(fact, &facts)).collect();
     let projection_bytes =
         crate::json::canonical_text(&Value::Array(selected_values.clone())).len();
     let company_reference = company_reference(&selected, &facts);
@@ -306,7 +314,7 @@ pub fn run(
         .and_then(|record| crate::json::get_str(record, "dominating_input").map(str::to_owned));
     let cache_state_constructed = launcher
         .company_cache()?
-        .is_some_and(|(cache, _root)| cache.state == crate::company::cache::CacheState::Warm);
+        .is_some();
     let recommendation = if open_unknowns.is_empty() {
         selected
             .iter()
@@ -341,6 +349,7 @@ pub fn run(
         "selection_trace": selection_trace,
         "tier_escalation": tier_escalation,
         "projection_bytes": projection_bytes,
+        "invariant_selected": invariant_selected,
         "stopping_reason": stopping_reason,
         "unknowns": unknowns.iter().map(unknown_value).collect::<Vec<_>>(),
         "voi_approximation": "additive deterministic basis-point approximation over conditional distortion, authority, complementarity, uncertainty, redundancy, retrieval, and staleness",
@@ -348,6 +357,7 @@ pub fn run(
         "degraded_policy": degraded_policy,
         "cache_state_constructed": cache_state_constructed,
         "company_reference_resolved": selected_reference.is_some(),
+        "reference_resolved": selected_reference.is_some(),
         "company_statement": selected_reference
             .as_ref()
             .and_then(|record| crate::json::get_str(record, "company_statement"))
@@ -376,6 +386,12 @@ pub fn run(
         "question_id": question_id,
         "task_outcome": "pending",
         "cost": TIERS.iter().map(|(_, _, cost)| *cost).sum::<i64>(),
+        "marginal_gain": selection_trace
+            .iter()
+            .filter_map(|row| row.get("marginal_value"))
+            .filter_map(Value::as_i64)
+            .sum::<i64>(),
+        "selection_trace": selection_trace.clone(),
         "as_of": as_of.as_of
     });
     launcher
@@ -508,25 +524,88 @@ fn event_candidate_value(
             "effective_until": event.effective_until
         },
         "role": role,
+        "roles": [if role == "stale" { "stale_fact" } else { role }],
+        "derived_role": if role == "stale" { "stale_fact" } else { role },
         "reason": reason,
         "authority_id": event.authority_id
     })
 }
 
-fn candidate_role(fact: &CurrentFact) -> (&'static str, String) {
+fn candidate_role(fact: &CurrentFact, all_facts: &[CurrentFact]) -> (&'static str, String) {
     if !fact.stale_reasons.is_empty() {
-        ("stale", fact.stale_reasons.join(","))
-    } else if fact.disposition == "conflict" {
-        ("conflict", "fact disposition is conflict".to_owned())
-    } else if fact.disposition == "expired" || fact.disposition == "disputed" {
-        ("stale", format!("fact disposition is {}", fact.disposition))
-    } else {
-        ("current", "selectable current trusted fact".to_owned())
+        return ("stale_fact", fact.stale_reasons.join(","));
+    }
+    if fact.disposition == "conflict" {
+        return ("conflict", "fact disposition is conflict".to_owned());
+    }
+    if fact.disposition == "expired" || fact.disposition == "disputed" {
+        return ("stale_fact", format!("fact disposition is {}", fact.disposition));
+    }
+    if fact.distortion.loss_if_absent >= 7_000
+        && matches!(fact.atom_kind.as_str(), "constraint" | "decision")
+    {
+        return (
+            "high_distortion_compatibility_invariant",
+            "high-loss durable invariant constrains compatible implementations".to_owned(),
+        );
+    }
+    match fact.atom_kind.as_str() {
+        "test" | "runtime_trace" | "test_runtime_evidence" => {
+            return ("test", "runtime or test evidence validates the decision".to_owned());
+        }
+        "rationale" => {
+            return ("rationale", "rationale explains the compatibility invariant".to_owned());
+        }
+        _ => {}
+    }
+    let paraphrase = !fact.redundancy_with.is_empty()
+        || all_facts.iter().any(|other| {
+            other.fact_id != fact.fact_id
+                && other.logical_key != fact.logical_key
+                && normalized_statement(&other.statement) == normalized_statement(&fact.statement)
+        });
+    if paraphrase {
+        return (
+            "high_scoring_paraphrase",
+            "edge or semantic duplicate restates an already scoreable fact".to_owned(),
+        );
+    }
+    ("current", "selectable current trusted fact".to_owned())
+}
+
+fn candidate_priority(role: &str) -> i64 {
+    match role {
+        "high_distortion_compatibility_invariant" => 4,
+        "test" | "rationale" => 3,
+        "high_scoring_paraphrase" => 2,
+        "high_distortion_unknown" => 1,
+        _ => 0,
     }
 }
 
-fn candidate_value(fact: &CurrentFact) -> Value {
-    let (role, reason) = candidate_role(fact);
+fn normalized_statement(statement: &str) -> String {
+    statement
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn candidate_value(fact: &CurrentFact, all_facts: &[CurrentFact]) -> Value {
+    let (derived_role, reason) = candidate_role(fact, all_facts);
+    let primary_role = if derived_role == "high_distortion_compatibility_invariant"
+        || derived_role == "high_scoring_paraphrase"
+        || derived_role == "test"
+        || derived_role == "rationale"
+    {
+        "current"
+    } else {
+        derived_role
+    };
+    let mut roles = vec![derived_role];
+    if primary_role != derived_role {
+        roles.push(primary_role);
+    }
     json!({
         "logical_key": fact.logical_key,
         "fact_id": fact.fact_id,
@@ -540,7 +619,9 @@ fn candidate_value(fact: &CurrentFact) -> Value {
             "effective_from": fact.effective_from,
             "effective_until": fact.effective_until
         },
-        "role": role,
+        "role": primary_role,
+        "roles": roles,
+        "derived_role": derived_role,
         "reason": reason,
         "authority_id": fact.authority_id
     })
@@ -548,7 +629,9 @@ fn candidate_value(fact: &CurrentFact) -> Value {
 
 fn unknown_value(unknown: &UnknownOut) -> Value {
     json!({
-        "role": "unknown",
+        "role": if unknown.loss_if_absent >= 7_000 { "high_distortion_unknown" } else { "unknown" },
+        "roles": [if unknown.loss_if_absent >= 7_000 { "high_distortion_unknown" } else { "unknown" }],
+        "derived_role": if unknown.loss_if_absent >= 7_000 { "high_distortion_unknown" } else { "unknown" },
         "owner_role": unknown.owner_role,
         "owner_identity": unknown.owner_identity,
         "logical_key": unknown.logical_key,
