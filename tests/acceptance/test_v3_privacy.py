@@ -49,7 +49,7 @@ from ._harness.requirements import (
 )
 from ._harness.roots import ProofRoots
 from ._harness.vault import CanaryVault, VaultEntry
-from ._harness.worldbuilder import SignedWorld, Witness
+from ._harness.worldbuilder import SignedWorld, start_session, Witness
 
 pytestmark = [pytest.mark.v3, pytest.mark.requires_product]
 
@@ -83,8 +83,8 @@ def surfaces(roots: ProofRoots, anchored) -> MX.SurfaceRoots:
     return MX.SurfaceRoots.create(roots)
 
 
-def _run(guildhall: Guildhall, *argv: str, cwd: Path):
-    result = guildhall.run(*argv, cwd=cwd, check=False)
+def _run(guildhall: Guildhall, *argv: str, cwd: Path, **kwargs):
+    result = guildhall.run(*argv, cwd=cwd, check=False, **kwargs)
     if result.returncode == 1:
         raise ProductFailure(
             "`" + " ".join(argv[:2]) + "` returned the reserved ambiguous exit 1"
@@ -100,16 +100,21 @@ def _drive_lifecycle(guildhall: Guildhall, roots: ProofRoots, world, anchors,
     driven is absent from it, so the total-coverage clause fails; the product's
     own list of stages is never consulted.
     """
+    trust.classifier_pinned(anchors, what="V-3 lifecycle classification")
     repo = world.repo.path
-    session = "s" + os.urandom(8).hex()
+    session = start_session(guildhall, world.repo.path)
     executed: dict[str, dict] = {}
 
     def stage(name: str, *argv: str, **kwargs) -> None:
         result = _run(guildhall, *argv, cwd=repo, **kwargs)
         executed[name] = {"argv": list(argv), "exit": result.returncode}
+        if argv[:2] == ("proposals", "decide") and result.returncode != 0:
+            # C19: repeated use may be consumed/expired; preserve the typed
+            # observation rather than treating a replay as a successful action.
+            code = result.code
+            result.refused(code)
+            executed[name]["refusal_code"] = code
 
-    stage("classification", "session", "start", "--host", "codex",
-          "--repo", str(repo), "--json")
     stage("classification", "session", "observe", session,
           "--event", str(corpus), "--json")
     listing = _run(guildhall, "proposals", "list", "--session", session, "--json",
@@ -414,9 +419,10 @@ def test_hard_blocking_taint_is_never_cleared_by_deidentification(
         gold_atom_label="hard_block", gold_destination_labels=("personal",),
     ))
     vault.seal()
+    trust.classifier_pinned(anchors, what="V-3 taint classification")
     corpus = roots.run_root / "corpus" / "taint.jsonl"
     corpus.parent.mkdir(parents=True, exist_ok=True)
-    session = "s" + os.urandom(8).hex()
+    session = start_session(guildhall, world.repo.path)
     corpus.write_text(
         json.dumps({"id": session, "role": "user",
                     "text": "hard blocking marker " + canary
@@ -425,8 +431,6 @@ def test_hard_blocking_taint_is_never_cleared_by_deidentification(
                     "source_kind": "codex_jsonl"}) + "\n",
         encoding="utf-8",
     )
-    _run(guildhall, "session", "start", "--host", "codex", "--repo",
-         str(world.repo.path), "--json", cwd=world.repo.path)
     _run(guildhall, "session", "observe", session, "--event", str(corpus),
          "--json", cwd=world.repo.path)
     listing = _run(guildhall, "proposals", "list", "--session", session, "--json",
@@ -461,9 +465,10 @@ def test_paraphrase_only_output_stays_private_by_taint_policy(
         gold_atom_label="hard_block", gold_destination_labels=("personal",),
     ))
     vault.seal()
+    trust.classifier_pinned(anchors, what="V-3 paraphrase classification")
     corpus = roots.run_root / "corpus" / "paraphrase.jsonl"
     corpus.parent.mkdir(parents=True, exist_ok=True)
-    session = "s" + os.urandom(8).hex()
+    session = start_session(guildhall, world.repo.path)
     corpus.write_text(
         json.dumps({"id": session, "role": "user",
                     "text": "the marker " + canary + " belongs to me personally",
@@ -471,8 +476,6 @@ def test_paraphrase_only_output_stays_private_by_taint_policy(
                     "source_kind": "codex_jsonl"}) + "\n",
         encoding="utf-8",
     )
-    _run(guildhall, "session", "start", "--host", "codex", "--repo",
-         str(world.repo.path), "--json", cwd=world.repo.path)
     observed = _run(guildhall, "session", "observe", session, "--event",
                     str(corpus), "--json", cwd=world.repo.path)
     listing = _run(guildhall, "proposals", "list", "--session", session, "--json",

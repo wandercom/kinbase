@@ -335,10 +335,6 @@ class Guildhall:
             for k in self.ENV_ALLOWLIST
             if k in os.environ
         }
-        if self.path_prefix:
-            env["PATH"] = os.pathsep.join(
-                [str(p) for p in self.path_prefix] + [env.get("PATH", "")]
-            ).rstrip(os.pathsep)
         env["HOME"] = str(self.home)
         env["XDG_CONFIG_HOME"] = str(self.xdg_config_home)
         env["XDG_DATA_HOME"] = str(self.home / ".local" / "share")
@@ -357,6 +353,13 @@ class Guildhall:
         env["PYTHONIOENCODING"] = "utf-8"
         env.update(self.extra_env)
         env.update(overrides or {})
+        # C16 applies even when a call supplies a complete environment. Keep
+        # the recorder first, without accumulating duplicate prefixes.
+        prefixes = [str(p) for p in self.path_prefix]
+        inherited = [p for p in env.get("PATH", "").split(os.pathsep)
+                     if p and p not in prefixes]
+        if prefixes:
+            env["PATH"] = os.pathsep.join(prefixes + inherited)
         return env
 
     # -- invocation -------------------------------------------------------

@@ -57,7 +57,7 @@ from ._harness.requirements import (
 )
 from ._harness.roots import ProofRoots
 from ._harness.vault import CanaryVault, VaultEntry
-from ._harness.worldbuilder import SignedWorld, Witness, witness_process_exit
+from ._harness.worldbuilder import SignedWorld, start_session, Witness, witness_process_exit
 
 pytestmark = [pytest.mark.v2, pytest.mark.requires_product]
 
@@ -77,7 +77,7 @@ TRANSITIONS: tuple[str, ...] = (
 TRANSITION_MARKERS: dict[str, str] = {
     "nonce_reservation": ".kin/nonces",
     "event_append_rename": ".kin/events",
-    "manifest": ".kin/manifest",
+    "manifest": ".kin/manifests",
     "receipt": ".kin/receipts",
     "apology": ".kin/unknowns",
 }
@@ -107,6 +107,7 @@ def gold_corpus() -> dict:
 def anchored(roots: ProofRoots, guildhall: Guildhall):
     world = SignedWorld.create(roots.repo_root)
     anchors = trust.establish(guildhall, roots, world)
+    trust.classifier_pinned(anchors, what="V-2 classification")
     return world, anchors
 
 
@@ -130,12 +131,6 @@ def held_out(roots: ProofRoots, gold_corpus: dict, vault: CanaryVault):
 
 def _observe(guildhall: Guildhall, repo: Path, corpus: Path, session: str) -> dict:
     """Drive one classifier run over a bound corpus through the real surface."""
-    started = guildhall.run(
-        "session", "start", "--host", "codex", "--repo", str(repo), "--json",
-        cwd=repo, check=False,
-    )
-    if started.returncode == 1:
-        raise ProductFailure("`session start` returned the reserved exit 1")
     result = guildhall.run(
         "session", "observe", session, "--event", str(corpus), "--json",
         cwd=repo, check=False,
@@ -166,7 +161,7 @@ def _run_pool(guildhall: Guildhall, repo: Path, corpus, *, runs: int,
     joins = []
     reported: list[dict] = []
     for index in range(runs):
-        session = corpus.ids.token(label + "-run-" + str(index))
+        session = start_session(guildhall, repo)
         observed = _observe(guildhall, repo, corpus.path, session)
         listing = _proposals(guildhall, repo, session)
         predictions = metrics.parse_predictions(field(listing, "predictions"))
@@ -391,7 +386,7 @@ def test_exact_match_atomization_and_per_label_metrics(
     guildhall: Guildhall, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = held_out.ids.token("metrics-run")
+    session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
     predictions = metrics.parse_predictions(field(listing, "predictions"))
@@ -421,7 +416,7 @@ def test_low_confidence_shared_label_demotes_to_none_or_unknown(
     guildhall: Guildhall, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = held_out.ids.token("low-confidence-run")
+    session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
     low_atoms = [
@@ -448,7 +443,7 @@ def test_independent_candidates_with_distinct_minimized_bytes(
     guildhall: Guildhall, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = held_out.ids.token("independence-run")
+    session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
     by_message: dict[str, set[str]] = {}
@@ -492,7 +487,7 @@ def test_partial_fanout_failure_does_not_roll_back_committed_destination(
     from ._harness.service import Blackhole
 
     world, anchors = anchored
-    session = held_out.ids.token("partial-fanout")
+    session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
     candidate = _first_candidate(listing)
@@ -529,7 +524,7 @@ def test_retry_returns_original_receipt_without_duplication(
     guildhall: Guildhall, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = held_out.ids.token("retry-receipt")
+    session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
     candidate = _first_candidate(listing)
@@ -566,7 +561,7 @@ def test_expired_closing_deadline_emits_one_signed_orphan_abandoned(
     guildhall: Guildhall, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = held_out.ids.token("orphan-deadline")
+    session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
     candidate = _first_candidate(listing)
@@ -649,7 +644,7 @@ def test_kill_at_every_transition_then_concurrent_retry(
     guildhall: Guildhall, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = held_out.ids.token("crash-recovery")
+    session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
     candidate = _first_candidate(listing)
@@ -697,7 +692,7 @@ def test_no_cross_store_transaction_exists(
     guildhall: Guildhall, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = held_out.ids.token("cross-store")
+    session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
     candidate = _first_candidate(listing)
@@ -731,7 +726,7 @@ def test_no_accept_all_path_is_reachable(
     guildhall: Guildhall, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = held_out.ids.token("accept-all")
+    session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
     candidate = _first_candidate(listing)
@@ -743,6 +738,8 @@ def test_no_accept_all_path_is_reachable(
         )
         if attempt.returncode == 0:
             surfaces += 1
+        else:
+            attempt.refused("CONFIG_INVARIANT", exits=(4,))
     _decide(guildhall, world.repo.path, candidate,
             "codebase:" + anchors.repository_uuid)
     status = _proposals(guildhall, world.repo.path, session)

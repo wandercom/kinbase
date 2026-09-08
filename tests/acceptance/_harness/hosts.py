@@ -211,7 +211,7 @@ def install_invocation_recorder(bin_dir: Path, name: str, real: Path) -> Path:
         encoding="utf-8",
     )
     os.chmod(wrapper, 0o755)
-    return log
+    return wrapper
 
 
 def read_invocations(log: Path) -> tuple[str, ...]:
@@ -317,3 +317,86 @@ class LatencySample:
 
     def within_budget(self, budget: float = SESSION_START_P95_SECONDS) -> bool:
         return self.p95 < budget
+
+
+def apply_planned_diff(original: str, patch: str) -> str:
+    """Apply a displayed unified diff in memory for the C9 installation oracle.
+
+    This never writes a host file or executes anything from a plan. A malformed
+    diff is a product observation; it cannot license a changed file.
+    """
+    import re
+
+    source = original.splitlines(keepends=True)
+    lines = patch.splitlines(keepends=True)
+    output: list[str] = []
+    cursor = 0
+    index = 0
+    hunks = 0
+    while index < len(lines):
+        line = lines[index]
+        match = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+        if not match:
+            index += 1
+            continue
+        old_start, old_size, _, new_size = match.groups()
+        old_size = int(old_size) if old_size is not None else 1
+        new_size = int(new_size) if new_size is not None else 1
+        start = int(old_start) - (1 if old_size else 0)
+        if start < cursor or start > len(source):
+            raise ValueError("plan diff has an invalid source range")
+        output.extend(source[cursor:start])
+        cursor = start
+        old_count = new_count = 0
+        hunks += 1
+        index += 1
+        while index < len(lines) and (old_count < old_size or new_count < new_size):
+            entry = lines[index]
+            if not entry or entry[0] not in " +-":
+                raise ValueError("plan diff has a malformed hunk")
+            mark, text = entry[0], entry[1:]
+            if index + 1 < len(lines) and lines[index + 1].startswith("\\ No newline"):
+                text = text.rstrip("\r\n")
+                index += 1
+            if mark in " -":
+                if cursor >= len(source) or source[cursor] != text:
+                    raise ValueError("plan diff does not match the pre-install file")
+                cursor += 1
+                old_count += 1
+            if mark in " +":
+                output.append(text)
+                new_count += 1
+            index += 1
+        if (old_count, new_count) != (old_size, new_size):
+            raise ValueError("plan diff hunk size mismatch")
+    if not hunks:
+        raise ValueError("plan has no displayed diff hunks")
+    output.extend(source[cursor:])
+    return "".join(output)
+
+
+def installed_files_match_plan(plan: dict, before: dict[str, str],
+                               after: dict[str, str]) -> bool:
+    """Check actual content against the displayed plan, beyond claimed digests."""
+    files = plan.get("files")
+    if not isinstance(files, list) or not files:
+        return False
+    for entry in files:
+        if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
+            return False
+        name = entry["path"]
+        if Path(name).is_absolute() or ".." in Path(name).parts:
+            return False
+        # Some renderers show the complete new content instead of diff hunks.
+        expected = entry.get("content", entry.get("new_content"))
+        if not isinstance(expected, str):
+            patch = entry.get("diff", entry.get("patch"))
+            if not isinstance(patch, str):
+                return False
+            try:
+                expected = apply_planned_diff(before.get(name, ""), patch)
+            except ValueError:
+                return False
+        if after.get(name) != expected:
+            return False
+    return True

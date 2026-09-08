@@ -5,12 +5,14 @@ resolved `@spec_ref` backreferences, not test counts; a single test may carry
 several exact citations.
 
 The machine-readable catalog is `tests/fixtures/catalog/obligations.json`
-(digest `5fb755956f3e2cca`): 117 obligations and
-479 thresholds, each freezing a
+(digest `8b0c2dd1365aa5ea`): 117 obligations and
+482 thresholds, each freezing a
 threshold, positive control, negative control, product mutation and detector
 mutation. `tests/fixtures/catalog/planters.json` records the 35
 executable pre-execution planters and `tests/fixtures/controls/controls.json` the frozen raw positive and
-negative controls. 242 node ids collect; none is unbackreferenced.
+negative controls. 249 node ids collect; none is unbackreferenced.
+Kill-ledger digest: `36c569eba96f48df`; frozen-controls digest: `584e528d085ba7f6`.
+The 130 selftest nodes include seven dispatch-007 regression guards.
 
 Authority precedence (`spec/ratification-manifest.json`):
 `source-request.md > product.md > architecture.md > threat-model.md >
@@ -55,6 +57,7 @@ verification.md > cli.md`.
 | `_harness/hosts.py` | real host resolution, native envelopes, latency and soak budgets |
 | `_harness/synth.py` | native-format source generators for all ten adapters |
 | `_harness/gitfix.py` | deterministic repository fixtures for every lifecycle cell |
+| `_harness/lifecycle_observations.py` | C15 matrix derivation from public Observation records, linked facts/Unknowns, and adapter receipts |
 
 ## Frozen numeric thresholds asserted by the suite
 

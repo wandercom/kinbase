@@ -49,7 +49,6 @@ import json
 import os
 import secrets
 import shlex
-import shutil
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -468,6 +467,14 @@ def install_repository_certificate(
             "5 and Validator ruling C2 make this the certificate installation "
             "path. Observation: " + json.dumps(record, default=str)
         )
+    cached = [p for p in roots.company_cache.rglob("*") if p.is_file()
+              and p.read_bytes() == certificate.read_bytes()]
+    repository_uuid = json.loads(certificate.read_bytes())["repository_uuid"]
+    if not any(repository_uuid in str(p.relative_to(roots.company_cache)) for p in cached):
+        raise ProductFailure("C2: repo init did not cache the certificate keyed by repository UUID")
+    if stat.S_IMODE(roots.company_cache.stat().st_mode) != 0o700:
+        raise ProductFailure("C2: Company cache root is not mode 0700 after repo init")
+    record["cached_certificate_paths"] = [str(p) for p in cached]
     to_stage = [p for p in written + changed if p not in outside]
     if to_stage:
         world.repo.run("add", "--", *to_stage)
@@ -702,14 +709,23 @@ def untrusted_clone_expectation() -> dict[str, Any]:
     }
 
 
+def cached_certificate_paths(roots: ProofRoots) -> set[Path]:
+    """Locate installed copies by exact bytes, without guessing cache filenames."""
+    expected = {p.read_bytes() for p in
+                (roots.client_root / CERTIFICATE_DIR).glob("*.json") if p.is_file()}
+    return {p for p in roots.company_cache.rglob("*")
+            if p.is_file() and p.read_bytes() in expected}
+
+
 def remove_cache(roots: ProofRoots) -> int:
-    """Delete every cached file (the 'cold' / stale-revocation construction)."""
+    """Delete derived cache material while retaining the C2 installed identity."""
+    certificates = cached_certificate_paths(roots)
     removed = 0
     for path in sorted(roots.company_cache.rglob("*")):
-        if path.is_file():
+        if path.is_file() and path not in certificates:
             path.unlink()
             removed += 1
     for path in sorted(roots.company_cache.rglob("*"), reverse=True):
-        if path.is_dir():
-            shutil.rmtree(path, ignore_errors=True)
+        if path.is_dir() and not any(path.iterdir()):
+            path.rmdir()
     return removed

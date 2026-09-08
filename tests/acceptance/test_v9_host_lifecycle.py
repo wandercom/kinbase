@@ -87,7 +87,7 @@ def host(request) -> str:
 
 
 @pytest.fixture()
-def host_binary(host: str, roots: ProofRoots) -> hosts.HostBinary:
+def host_binary(host: str, roots: ProofRoots, guildhall: Guildhall) -> hosts.HostBinary:
     """The real pinned host executable, plus an invocation recorder in front."""
     variable = "GUILDHALL_HOST_" + host.upper()
     configured = prereq.env_var(
@@ -102,8 +102,9 @@ def host_binary(host: str, roots: ProofRoots) -> hosts.HostBinary:
     bin_dir = roots.run_root / "hostbin" / host
     bin_dir.mkdir(parents=True, exist_ok=True)
     recorder = hosts.install_invocation_recorder(bin_dir, host, resolved)
+    guildhall.path_prefix.insert(0, bin_dir)
     return hosts.HostBinary(name=host, path=recorder,
-                            version=hosts.host_availability(host))
+                            version=hosts.host_availability(host).version)
 
 
 def _run(guildhall: Guildhall, *argv: str, cwd: Path, **kwargs):
@@ -143,47 +144,55 @@ def test_hooks_plan_is_read_only_and_install_requires_native_approval(
 ) -> None:
     world, anchors = anchored
     before = _tree(roots.home)
+    text_before = {str(p.relative_to(roots.home)): p.read_text(errors="replace")
+                   for p in roots.home.rglob("*") if p.is_file()}
     plan = _json(_run(guildhall, "hooks", "plan", host, "--json",
                       cwd=world.repo.path))
     after_plan = _tree(roots.home)
 
-    denied = _run(guildhall, "hooks", "install", host, "--json",
-                  cwd=world.repo.path)
-    after_denied = _tree(roots.home)
-
-    approved = _run(guildhall, "hooks", "install", host, "--approve", "--json",
-                    cwd=world.repo.path)
-    after_approved = _tree(roots.home)
-    installed = sorted(set(after_approved) - set(after_denied))
-    declared = {str(field(f, "path")) for f in rows(plan, "files")}
+    doctor = _run(guildhall, "doctor", "--repo", str(world.repo.path),
+                  "--json", cwd=world.repo.path)
+    project_before = _tree(world.repo.path)
+    installed_result = _run(guildhall, "hooks", "install", host, "--json",
+                            cwd=world.repo.path)
+    after_install = _tree(roots.home)
+    project_after = _tree(world.repo.path)
+    text_after = {str(p.relative_to(roots.home)): p.read_text(errors="replace")
+                  for p in roots.home.rglob("*") if p.is_file()}
+    changed = sorted(p for p in set(after_plan) | set(after_install)
+                     if after_plan.get(p) != after_install.get(p))
+    files = rows(plan, "files")
+    declared = {str(field(f, "path")) for f in files}
+    paths_relative = all(not Path(p).is_absolute() and ".." not in Path(p).parts
+                         for p in declared)
+    plan_digest = plan["plan_digest"] if "plan_digest" in plan else field(plan, "digest")
+    result_payload = _json(installed_result)
+    installed_digest = result_payload["plan_digest"] if "plan_digest" in result_payload else field(result_payload, "digest")
     rendered_plan = json.dumps(plan).lower()
     O.check(
         "V-9.setup",
         {
             "host_executable_resolved": host_binary.path.exists(),
-            "plan": {
-                "files": rows(plan, "files"),
-                "commands": field(plan, "commands"),
-                "permissions": field(plan, "permissions"),
-            },
-            "files_changed_by_plan": len(
-                set(after_plan.items()) ^ set(before.items())
-            ),
-            "denied_install_refusal_code": field(_json(denied), "error", "code"),
-            "files_changed_by_denied_install": len(
-                set(after_denied.items()) ^ set(after_plan.items())
-            ),
-            "approved_install_performed": approved.returncode == 0,
-            "files_installed_by_approval": installed,
-            "unexpected_files_installed": len(
-                [p for p in installed if declared and p not in declared]
-            ),
+            "plan": {"files": files, "commands": field(plan, "commands"),
+                     "permissions": field(plan, "permissions")},
+            "files_changed_by_plan": len(set(after_plan.items()) ^ set(before.items())),
+            "doctor_refusal_code": doctor.code,
+            "install_exit_code": installed_result.returncode,
+            "installed_files": changed,
+            "planned_paths_relative_to_home": paths_relative,
+            "installed_paths_match_plan": bool(declared) and set(changed) == declared,
+            "installed_contents_match_plan": hosts.installed_files_match_plan(
+                plan, text_before, text_after),
+            "installed_plan_digest_matches": bool(plan_digest)
+                and installed_digest == plan_digest,
+            "project_files_changed": len(set(project_before.items())
+                                         ^ set(project_after.items())),
             "bypass_flags_found": sum(
-                1 for flag in ("--force", "--no-approval", "--yes")
+                1 for flag in ("--approve", "--force", "--no-approval", "--yes")
                 if flag in rendered_plan
             ),
         },
-        label="plan is read-only and install requires explicit approval",
+        label="read-only plan followed by the exact user-level installation (C9)",
     )
 
 
@@ -199,7 +208,7 @@ def test_native_host_events_prime_capture_and_exclude_personal(
     world, anchors = anchored
     canary = "kx" + os.urandom(10).hex()
     roots.plant_personal_canary_file("host-probe.txt", canary)
-    _run(guildhall, "hooks", "install", host, "--approve", "--json",
+    _run(guildhall, "hooks", "install", host, "--json",
          cwd=world.repo.path)
 
     session = ids.token("native-events")
@@ -257,9 +266,12 @@ def test_matched_conversations_produce_identical_canonical_payloads(
             variable, what=name + " host executable",
             why="parity ranges over both real hosts",
         )
-        prereq.executable(configured, what=name + " host executable",
-                          why="parity ranges over both real hosts")
-        _run(guildhall, "hooks", "install", name, "--approve", "--json",
+        resolved = prereq.executable(configured, what=name + " host executable",
+                                     why="parity ranges over both real hosts")
+        bin_dir = roots.run_root / "hostbin" / name
+        hosts.install_invocation_recorder(bin_dir, name, resolved)
+        guildhall.path_prefix.insert(0, bin_dir)
+        _run(guildhall, "hooks", "install", name, "--json",
              cwd=world.repo.path)
         session = ids.token("parity-" + name)
         envelope = hosts.envelope_for(name, "SessionStart", session_id=session,
@@ -289,18 +301,17 @@ def _construct_state(guildhall: Guildhall, roots: ProofRoots, world, state: str)
              cwd=world.repo.path)
         return True
     if state == "cold":
-        cache = roots.company_cache
-        for path in sorted(cache.rglob("*")):
-            if path.is_file():
-                path.unlink()
-        return not any(p.is_file() for p in cache.rglob("*"))
-    if state == "invalid_cache":
+        trust.remove_cache(roots)
+        certificates = trust.cached_certificate_paths(roots)
+        return not any(p.is_file() and p not in certificates
+                       for p in roots.company_cache.rglob("*"))
+    if state == "invalid-cache":
         target = roots.company_cache / "facts-cache.sqlite3"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"not a database")
         return target.is_file()
-    if state == "full_fsck_required":
-        marker = world.repo.path / ".kin" / "manifest"
+    if state == "full-fsck-required":
+        marker = world.repo.path / ".kin" / "manifests"
         if marker.exists():
             shutil.rmtree(marker, ignore_errors=True)
         return not marker.exists()
@@ -318,7 +329,7 @@ def test_session_start_p95_under_two_seconds_in_every_state(
     host_binary: hosts.HostBinary, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
-    _run(guildhall, "hooks", "install", host, "--approve", "--json",
+    _run(guildhall, "hooks", "install", host, "--json",
          cwd=world.repo.path)
     measured = []
     for state in START_STATES:
@@ -381,12 +392,14 @@ def test_blackholed_company_endpoint_degrades_loudly_inside_the_budget(
     host_binary: hosts.HostBinary, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
-    _run(guildhall, "hooks", "install", host, "--approve", "--json",
+    _run(guildhall, "hooks", "install", host, "--json",
          cwd=world.repo.path)
     payloads: list[dict] = []
     durations: list[float] = []
     connect_durations: list[float] = []
-    with Blackhole(roots.company_port):
+    with Blackhole(0) as blackhole, anchors.company_endpoint(
+        f"http://127.0.0.1:{blackhole.port}"
+    ):
         for index in range(20):
             envelope = hosts.envelope_for(
                 host, "SessionStart", session_id=ids.token("blackhole" + str(index)),
@@ -403,7 +416,7 @@ def test_blackholed_company_endpoint_degrades_loudly_inside_the_budget(
             if isinstance(reported, (int, float)):
                 connect_durations.append(float(reported))
     witness = Witness(kind="company_blackhole")
-    witness.note(port=roots.company_port, invocations=len(payloads))
+    witness.note(port=blackhole.port, invocations=len(payloads))
     witness.require("the blackhole must actually have been installed")
 
     sample = hosts.LatencySample(host=host, state="blackhole",
@@ -491,7 +504,7 @@ def test_twenty_session_soak_warm_path_and_fsck_incidence(
     host_binary: hosts.HostBinary, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
-    _run(guildhall, "hooks", "install", host, "--approve", "--json",
+    _run(guildhall, "hooks", "install", host, "--json",
          cwd=world.repo.path)
     build = scale.build_event_corpus(
         world.repo.path, world.maintainer, hosts.SHARED_EVENT_CEILING,

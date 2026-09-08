@@ -37,7 +37,7 @@ from ._harness.requirements import (
     spec_ref,
 )
 from ._harness.roots import ProofRoots
-from ._harness.worldbuilder import OpaqueIds, SignedWorld, Witness
+from ._harness.worldbuilder import OpaqueIds, SignedWorld, start_session, Witness
 
 pytestmark = [pytest.mark.v9, pytest.mark.requires_product]
 
@@ -62,6 +62,7 @@ def ids() -> OpaqueIds:
 def anchored(roots: ProofRoots, guildhall: Guildhall):
     world = SignedWorld.create(roots.repo_root)
     anchors = trust.establish(guildhall, roots, world)
+    trust.classifier_pinned(anchors, what="V-9 candidate extraction")
     return world, anchors
 
 
@@ -82,8 +83,9 @@ def _json(result) -> dict:
 def _eligible_candidates(guildhall: Guildhall, world, ids: OpaqueIds,
                          count: int) -> tuple[str, list[dict]]:
     """Plant ``count`` genuinely distinct eligible candidates and list them."""
-    session = ids.token("fatigue-session")
-    corpus = world.repo.path.parent / (session + ".jsonl")
+    session = start_session(guildhall, world.repo.path)
+    corpus_id = ids.token("fatigue-corpus")
+    corpus = world.repo.path.parent / (corpus_id + ".jsonl")
     corpus.parent.mkdir(parents=True, exist_ok=True)
     lines = []
     for index in range(count):
@@ -96,8 +98,6 @@ def _eligible_candidates(guildhall: Guildhall, world, ids: OpaqueIds,
             "source_kind": "codex_jsonl",
         }))
     corpus.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    _run(guildhall, "session", "start", "--host", "codex", "--repo",
-         str(world.repo.path), "--json", cwd=world.repo.path)
     _run(guildhall, "session", "observe", session, "--event", str(corpus),
          "--json", cwd=world.repo.path)
     listing = _json(_run(guildhall, "proposals", "list", "--session", session,
@@ -432,9 +432,7 @@ def test_corpus_growth_adequacy_under_the_fatigue_ceiling(
         lines = bound.path.read_text(encoding="utf-8").splitlines()
         chunk = lines[window * per_window:(window + 1) * per_window]
         slice_path.write_text("\n".join(chunk) + "\n", encoding="utf-8")
-        session = ids.token("adequacy-" + str(window))
-        _run(guildhall, "session", "start", "--host", "codex", "--repo",
-             str(world.repo.path), "--json", cwd=world.repo.path)
+        session = start_session(guildhall, world.repo.path)
         _run(guildhall, "session", "observe", session, "--event", str(slice_path),
              "--json", cwd=world.repo.path,
              env=guildhall.base_env({

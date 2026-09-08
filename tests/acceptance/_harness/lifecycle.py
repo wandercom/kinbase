@@ -121,7 +121,7 @@ class Cell:
 
     def run(self, ctx: LifecycleContext) -> dict:
         """Perform the native transition and return an independent witness."""
-        before = _digest_tree(ctx.sources)
+        before = _digest_tree(ctx.repo.path)
         detail = self.transition(ctx)
         native = detail.get("native_path")
         if native and Path(native).is_file():
@@ -132,7 +132,7 @@ class Cell:
             if mutated is not raw:
                 Path(native).write_bytes(mutated)
                 planters.witness_path(Path(native))
-        after = _digest_tree(ctx.sources)
+        after = _digest_tree(ctx.repo.path)
         if before == after and not detail.get("tree_unchanged_is_the_point"):
             raise prereq.missing(
                 "fixture", self.key,
@@ -298,7 +298,13 @@ def _latest(ctx: LifecycleContext, host: str) -> Path:
 
 
 def _latest_name(ctx: LifecycleContext, host: str) -> str:
-    return _latest(ctx, host).stem
+    files = sorted(_transcript_dir(ctx, host).glob("*.jsonl"))
+    if files:
+        return files[-1].stem
+    markers = sorted(_transcript_dir(ctx, host).glob("*.jsonl.retention"))
+    if markers:
+        return markers[-1].name.removesuffix(".jsonl.retention")
+    raise prereq.missing("fixture", host + " restart", "no prior session identity")
 
 
 # ==========================================================================
@@ -361,6 +367,8 @@ def _code_rebase_force_push(ctx: LifecycleContext) -> dict:
 
         GitRepo.init(remote, bare=True)
     ctx.repo.push(remote, f"{ctx.repo.default_branch}:{ctx.repo.default_branch}")
+    ctx.repo.write("docs/rebase-base.txt", f"base {ctx.next_index()}\n")
+    ctx.repo.commit("advance main before rebase")
     ctx.repo.checkout("feature/lookahead")
     before = ctx.repo.head()
     ctx.repo.rebase(ctx.repo.default_branch)
@@ -466,7 +474,8 @@ def _history_reject(ctx: LifecycleContext) -> dict:
 
 def _history_revert(ctx: LifecycleContext) -> dict:
     target = ctx.repo.head()
-    ctx.repo.revert(target)
+    ctx.repo.run("revert", "--no-edit", "-n", "-m", "1", target)
+    ctx.repo.commit("revert the merged release")
     return {"reverted": target, "head": ctx.repo.head()}
 
 
@@ -707,62 +716,70 @@ def _kindex_write(ctx: LifecycleContext, nodes: Sequence[Mapping[str, Any]]) -> 
     return path
 
 
+def _kindex_node(identifier: str, content: str, *, disposition: str = "accepted",
+                 **metadata) -> dict:
+    # C21: lifecycle metadata belongs in the native export's payload column.
+    return {"id": identifier, "node_type": "decision", "title": "Lookahead",
+            "content": content,
+            "payload": canonical.jcs({"disposition": disposition, **metadata}),
+            "created_at": synth._stamp()}
+
+
 def _kindex_duplicate_import(ctx: LifecycleContext) -> dict:
-    node = {"node_id": "kx-1", "kind": "decision",
-            "body": "lookahead ceiling is 568 seconds", "version": 1}
-    path = _kindex_write(ctx, [node, dict(node)])
-    return {"native_path": str(path), "rows": 2, "distinct_node_ids": 1}
+    node = _kindex_node("kx-1", "lookahead ceiling is 568 seconds")
+    path = _kindex_write(ctx, [node])
+    # A native PK cannot contain two rows with one id. Re-import the export
+    # through the adapter twice (the gate consumes repeat_ingest), C21.
+    return {"native_path": str(path), "rows": 1, "distinct_node_ids": 1,
+            "repeat_ingest": True}
 
 
 def _kindex_supersede(ctx: LifecycleContext) -> dict:
     path = _kindex_write(ctx, [
-        {"node_id": "kx-1", "kind": "decision",
-         "body": "lookahead ceiling is 568 seconds", "version": 1},
-        {"node_id": "kx-1", "kind": "decision",
-         "body": "lookahead ceiling is adaptive", "version": 2,
-         "supersedes": "kx-1@1"},
+        _kindex_node("kx-1", "lookahead ceiling is 568 seconds",
+                     disposition="superseded"),
+        _kindex_node("kx-2", "lookahead ceiling is adaptive", supersedes=["kx-1"]),
     ])
-    return {"native_path": str(path), "supersedes": "kx-1@1"}
+    with sqlite3.connect(path) as conn:
+        conn.execute("INSERT INTO edges VALUES (?,?,?,?)",
+                     ("kx-2", "kx-1", "supersedes", "explicit replacement"))
+    return {"native_path": str(path), "supersedes": "kx-1"}
 
 
 def _kindex_retract(ctx: LifecycleContext) -> dict:
     path = _kindex_path(ctx)
     with sqlite3.connect(path) as conn:
-        conn.execute(
-            "UPDATE nodes SET body = ?, kind = ? WHERE node_id = ? AND version = ?",
-            ("", "retracted", "kx-1", 2),
-        )
-    return {"native_path": str(path), "retracted": "kx-1@2"}
+        conn.execute("UPDATE nodes SET payload = ? WHERE id = ?",
+                     (canonical.jcs({"disposition": "retracted"}), "kx-2"))
+    return {"native_path": str(path), "retracted": "kx-2"}
 
 
 def _kindex_revoke(ctx: LifecycleContext) -> dict:
-    path = _kindex_path(ctx)
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "INSERT INTO nodes (node_id, kind, body, version) VALUES (?,?,?,?)",
-            ("kx-1", "revoked", "signing key withdrawn", 3),
-        )
-    return {"native_path": str(path), "revoked": "kx-1"}
+    path = _kindex_write(ctx, [_kindex_node(
+        "kx-revocation", "signing key withdrawn", disposition="support_withdrawn",
+        parents=["kx-2"],
+    )])
+    return {"native_path": str(path), "revoked": "kx-2"}
 
 
 def _kindex_expire(ctx: LifecycleContext) -> dict:
-    path = _kindex_path(ctx)
-    with sqlite3.connect(path) as conn:
-        conn.execute(
-            "INSERT INTO nodes (node_id, kind, body, version) VALUES (?,?,?,?)",
-            ("kx-2", "observation", "expired at the publication horizon", 1),
-        )
-    return {"native_path": str(path), "expired": "kx-2"}
+    path = _kindex_write(ctx, [_kindex_node(
+        "kx-expired", "expired at the publication horizon",
+        disposition="manifest_observation_expired", effective_until=ctx.stamp(),
+    )])
+    return {"native_path": str(path), "expired": "kx-expired"}
 
 
 def _kindex_conflict(ctx: LifecycleContext) -> dict:
-    path = _kindex_path(ctx)
+    path = _kindex_write(ctx, [
+        _kindex_node("kx-conflict-a", "lookahead ceiling is 568 seconds"),
+        _kindex_node("kx-conflict-b", "lookahead ceiling is 90 seconds"),
+    ])
     with sqlite3.connect(path) as conn:
-        conn.execute(
-            "INSERT INTO nodes (node_id, kind, body, version) VALUES (?,?,?,?)",
-            ("kx-1", "decision", "lookahead ceiling is 90 seconds", 4),
-        )
-    return {"native_path": str(path), "conflicting_versions": [2, 4]}
+        conn.execute("INSERT INTO edges VALUES (?,?,?,?)",
+                     ("kx-conflict-a", "kx-conflict-b", "contradicts", "same scope"))
+    return {"native_path": str(path),
+            "conflicting_ids": ["kx-conflict-a", "kx-conflict-b"]}
 
 
 def _kindex_deterministic_rebuild(ctx: LifecycleContext) -> dict:
@@ -804,10 +821,13 @@ def _answer_parent_supersession(ctx: LifecycleContext) -> dict:
         answer="the ceiling is adaptive with a 568 second cap",
         rationale="supersedes the earlier answer under the same scope",
     )
-    payload["parents"] = ["q-lookahead-1#1"]
+    previous = json.loads(_answer_path(ctx, "answer-1").read_text())
+    parent = canonical.content_digest_hex(canonical.jcs(previous))
+    payload["parents"] = [parent]
+    payload = ctx.world.architect.sign_message("answer", payload)
     path = _answer_path(ctx, "answer-2")
     path.write_bytes(canonical.jcs(payload))
-    return {"native_path": str(path), "parents": ["q-lookahead-1#1"]}
+    return {"native_path": str(path), "parents": [parent]}
 
 
 def _answer_unparented_conflict(ctx: LifecycleContext) -> dict:
@@ -828,6 +848,7 @@ def _answer_revoke(ctx: LifecycleContext) -> dict:
     )
     payload["revocation"] = {"authority_id": ctx.world.architect.authority_id,
                              "cursor": "1001"}
+    payload = ctx.world.architect.sign_message("answer", payload)
     path = _answer_path(ctx, "answer-4")
     path.write_bytes(canonical.jcs(payload))
     return {"native_path": str(path), "revoked_authority":
@@ -841,6 +862,7 @@ def _answer_late_arrival(ctx: LifecycleContext) -> dict:
         rationale="answering a question raised before the current cursor",
     )
     payload["asserted_at"] = ctx.stamp(hour=0)
+    payload = ctx.world.architect.sign_message("answer", payload)
     path = _answer_path(ctx, "answer-5-late")
     path.write_bytes(canonical.jcs(payload))
     return {"native_path": str(path), "asserted_hour": 0,

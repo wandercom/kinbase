@@ -26,6 +26,7 @@ from pathlib import Path
 import pytest
 
 from ._harness import lifecycle as L
+from ._harness import lifecycle_observations as LO
 from ._harness import obligations as O
 from ._harness import prereq, synth, trust
 from ._harness.cli import Guildhall
@@ -103,13 +104,30 @@ def anchored(roots: ProofRoots, guildhall: Guildhall):
 
 
 @pytest.fixture()
-def matrix(anchored):
+def matrix(anchored, guildhall: Guildhall):
     """All 64 ratified cells, executed natively, with per-cell witnesses."""
     world, anchors, ctx = anchored
+    trust.classifier_pinned(anchors, what="V-1 native source extraction")
     cells = L.verify_table()
     witnesses: dict[str, dict] = {}
     for cell in cells:
-        witnesses[cell.key] = cell.run(ctx)
+        before = _status(guildhall, world.repo.path)
+        witness = cell.run(ctx)
+        target_repo = Path(witness.get("clone", world.repo.path))
+        source = ctx.sources / SOURCE_ROOTS[cell.adapter]
+        if cell.adapter == "repo_code":
+            source = target_repo / "src"
+        elif cell.adapter == "git_history":
+            source = target_repo
+        elif target_repo != world.repo.path:
+            source = target_repo / source.relative_to(world.repo.path)
+        _ingest(guildhall, target_repo, cell.adapter, source)
+        after = _status(guildhall, target_repo)
+        if witness.get("repeat_ingest"):
+            _ingest(guildhall, target_repo, cell.adapter, source)
+            witness["replay_status"] = _status(guildhall, target_repo)
+        witness["derived"] = LO.derive(cell, witness, before, after)
+        witnesses[cell.key] = witness
     prereq.corpus_at_scale(
         len(witnesses), L.CELL_COUNT, what="adapter lifecycle matrix",
         why="spec/verification.md V-1 freezes a table that sums to 64 cells",
@@ -144,6 +162,8 @@ def _ingest_all(guildhall: Guildhall, world, ctx) -> dict[str, dict]:
         source = ctx.sources / SOURCE_ROOTS[adapter]
         if adapter == "git_history":
             source = world.repo.path
+        elif adapter == "repo_code":
+            source = world.repo.path / "src"
         receipts[adapter] = _ingest(guildhall, world.repo.path, adapter, source)
     return receipts
 
@@ -347,54 +367,20 @@ def test_lifecycle_matrix_executes_every_declared_cell(
 ) -> None:
     """All 64 ratified cells, natively executed, each with its own mutation."""
     world, anchors, ctx, witnesses = matrix
-    _ingest_all(guildhall, world, ctx)
-    status = _status(guildhall, world.repo.path)
-    reported = status.get("lifecycle_cells")
-    observed: dict[str, dict] = {}
-    if isinstance(reported, list):
-        for entry in reported:
-            if isinstance(entry, dict) and "adapter" in entry and "cell" in entry:
-                observed[f"{entry['adapter']}::{entry['cell']}"] = entry
-
     declared = L.verify_table()
     require_all(
         declared, lambda c: c.key in witnesses,
         obligation="V-1.lifecycle-matrix",
         why="every declared cell must have executed its native transition",
-        minimum=L.CELL_COUNT,
-        origin=Origin.HARNESS,
+        minimum=L.CELL_COUNT, origin=Origin.HARNESS,
     )
-    rows = []
-    for cell in declared:
-        witness = witnesses[cell.key]
-        seen = observed[cell.key] if cell.key in observed else {}
-        rows.append({
-            "adapter": cell.adapter,
-            "cell": cell.cell,
-            "native_format": cell.native_format,
-            "expected_observation_state": cell.observation,
-            "expected_fact_state": cell.fact,
-            "expected_unknown_state": cell.unknown,
-            "observed_observation_state": seen.get("observation_state"),
-            "observed_fact_state": seen.get("current_fact_state"),
-            "observed_unknown_state": seen.get("unknown_state"),
-            "states_match": (
-                seen.get("observation_state") == cell.observation
-                and seen.get("current_fact_state") == cell.fact
-                and seen.get("unknown_state") == cell.unknown
-            ),
-            "transition_executed_natively": True,
-            "source_tree_before": witness["source_tree_before"],
-            "source_tree_after": witness["source_tree_after"],
-            "negative_mutation": cell.mutation_id,
-            "negative_mutation_killed": seen.get("negative_mutation_killed"),
-        })
+    derived_rows = [witnesses[cell.key]["derived"] for cell in declared]
     O.check(
         "V-1.lifecycle-matrix",
         {
             "declared_cell_count": len(declared),
             "adapters_covered": sorted({c.adapter for c in declared}),
-            "cells": rows,
+            "cells": derived_rows,
         },
         label="64 ratified lifecycle cells executed natively",
     )

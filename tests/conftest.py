@@ -393,8 +393,11 @@ def spec_root() -> Path:
 
 
 @pytest.fixture()
-def roots(tmp_path: Path) -> Iterator[ProofRoots]:
-    layout = ProofRoots.create(tmp_path / "proof")
+def roots(tmp_path: Path, request) -> Iterator[ProofRoots]:
+    # Product-independent selftests need paths/config bytes, never a listener.
+    # Port zero is explicitly unbound; product fixtures still allocate a real port.
+    selftest = request.node.get_closest_marker("selftest") is not None
+    layout = ProofRoots.create(tmp_path / "proof", company_port=0 if selftest else None)
     layout.assert_personal_is_not_a_shared_root()
     yield layout
 
@@ -414,7 +417,19 @@ def vault(tmp_path: Path, roots: ProofRoots) -> Iterator[CanaryVault]:
 @pytest.fixture()
 def guildhall(roots: ProofRoots) -> Guildhall:
     """The black-box CLI driver bound to the isolated roots."""
+    from acceptance._harness import hosts, prereq
+
+    prefixes = []
+    for host in hosts.HOSTS:
+        configured = os.environ.get("GUILDHALL_HOST_" + host.upper())
+        if configured:
+            real = prereq.executable(configured, what=host + " host",
+                                     why="C16 pins the invocation witness")
+            directory = roots.run_root / "hostbin" / host
+            hosts.install_invocation_recorder(directory, host, real)
+            prefixes.append(directory)
     return Guildhall(
+        path_prefix=prefixes,
         home=roots.home,
         xdg_config_home=roots.xdg_config_home,
         cwd=roots.repo_root,

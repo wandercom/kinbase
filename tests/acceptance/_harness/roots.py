@@ -97,7 +97,7 @@ class ProofRoots:
     user_config_kwargs: dict = field(default_factory=dict)
 
     @classmethod
-    def create(cls, base: Path) -> "ProofRoots":
+    def create(cls, base: Path, *, company_port: int | None = None) -> "ProofRoots":
         base = Path(base)
         home = base / "home"
         xdg = base / "config"
@@ -126,7 +126,7 @@ class ProofRoots:
             repo_root=repo,
             run_root=run,
             evidence_root=evidence,
-            company_port=free_loopback_port(),
+            company_port=free_loopback_port() if company_port is None else company_port,
         )
 
     def uncertified_environment(self, name: str) -> tuple[Path, Path]:

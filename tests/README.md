@@ -28,34 +28,37 @@ closed; the mechanisms are below and each is executable without the product.
 | 8–16 per-gate vacuity | real state construction, typed evidence, total quantifiers; every bare return, permissive default and tautology removed |
 | 17 no auxiliary corpus | `tests/fixtures/auxiliary/` — CC0 sources, dictionaries, correlations, decoys, digests, rights basis |
 
-## Remediation 007 — partial (seat reassigned mid-dispatch)
+## Remediation 007 — Validator conformance rulings
 
-Validator dispatch 007 audited the instrument against the ratified spec and
-issued rulings C1–C28. This lane closed the trust-anchor core before the seat
-was reassigned; the Tester report 007 in the run scratch dir lists each ruling
-as done, partial or untouched. In short:
+The instrument follows dispatch 007's binding rulings. The earlier partial
+commit established isolated launcher config, external certificate installation,
+live Company admission, registry anchors, one signing convention, closed event
+vocabularies, and content-derived event IDs. This continuation completes the
+session, native lifecycle, and hook repairs:
 
-* every anchored world now writes the launcher user config (0600, exactly the
-  `spec/cli.md` keys, isolated `HOME`/`XDG_CONFIG_HOME`), installs the steward
-  certificate from a file **outside** the worktree through
-  `repo init --repo PATH --certificate FILE`, publishes one registry document
-  signed as `authority-registry-entry`, and admits Company facts through
-  `POST /facts` as signed FactEvents; Personal material never enters `.kin/`;
-* one signing convention: `signer` inside the signed bytes, `signature`
-  outside; `event_id` is derived from the event's content;
-* `atom_kind` and `disposition` are closed vocabularies; lifecycle actions are
-  dispositions; `distortion` is exactly `{trigger, loss_if_absent, rationale}`;
-* revocation is a steward republication of the registry at a newer cursor
-  without the revoked key;
-* the Company endpoint reaches the product only through the user config; an
-  environment-supplied endpoint is an *attack input* the product must refuse;
-* "uncertified" is a launcher with no config/cache, never a deleted file.
+* Session observe/list/decision flows use the ID returned by `session start`.
+* All 64 native lifecycle transitions execute in order, with ingest/status between
+  transitions. The harness derives its matrix from per-adapter receipt counts,
+  Observation disposition/state, evidence-linked facts, and related Unknowns.
+  The product is never asked for harness cell names or mutation outcomes.
+* Kindex fixtures use the 0.36.0 `nodes(id, node_type, title, content, payload,
+  created_at)` / `edges` schema. Duplicate import re-ingests one export; it does
+  not invent duplicate primary-key rows.
+* Hook installation uses the host user config and no bypass flag. The oracle
+  checks the displayed files/content, installation digest, and unchanged project
+  settings. Host wrappers lead every invocation's PATH, including explicit envs.
+* Discovery hints change through Git remotes; manifests use `.kin/manifests/`.
+  Timeout/blackhole endpoints come from user config. Env endpoints remain refusal
+  probes with a zero-connection obligation. Cache-clearing preserves the installed
+  certificate, and `repo init` must copy the external certificate into the cache.
+* Extraction gates require the Validator-pinned classifier. Product-independent
+  selftests allocate no network listener merely to construct filesystem roots.
 
-Still open from that dispatch (untouched here): the C15 lifecycle-matrix
-derivation from observable receipts, the C21 Kindex fixture repair, the C9/C10
-host-lifecycle edits (`--approve`, `.kin/manifests/`), the C16 host wrapper on
-`PATH` (the driver supports `path_prefix`; V-9 does not yet set it), and the
-remaining C8 session-id sites in V-2/V-3/V-9.
+`test_dispatch007_selftest.py` exercises the native transitions and regression
+oracles without a product. Catalog controls were re-frozen only for the C9/C15
+ruling changes; ratified numeric thresholds and the human-signature debt remain.
+The scratch report records remaining specification ambiguities, test results,
+and the sandbox restriction preventing a commit in this session.
 
 ## Reviewer entrypoint
 
@@ -133,17 +136,17 @@ Every assertion cites an exact ratified requirement:
 
 | quantity | value |
 |---|---:|
-| collected by pytest | 242 |
+| collected by pytest | 249 |
 | catalogued obligations | 117 |
-| catalogued thresholds | 479 |
-| kill-ledger rows over frozen controls | 479 |
+| catalogued thresholds | 482 |
+| kill-ledger rows over frozen controls | 482 |
 | executable pre-execution planters | 35 |
 | detector mutations with a demonstrated escape | 6 |
-| product-independent self-tests | 123 |
+| product-independent self-tests | 130 |
 | unbackreferenced tests | 0 |
 
-Catalog digest `5fb755956f3e2cca`; kill-ledger digest `865ddcb0d58570e9`;
-frozen-controls digest `410a94c2c5d2e09c`;
+Catalog digest `8b0c2dd1365aa5ea`; kill-ledger digest `36c569eba96f48df`;
+frozen-controls digest `584e528d085ba7f6`;
 instrument-debt digest `99d8a395782c8760`.
 
 Collected node ids exceed authored functions because `@pytest.mark.parametrize`
@@ -151,11 +154,12 @@ expands one function into several, most visibly the nine frozen V-5 temporal row
 and the per-host V-9 functions. Verify with
 `tests/run-acceptance.sh --collect-only -q`.
 
-One test fails on purpose. `test_instrument_debt.py` fails while any entry in
+Two selftest nodes fail on the same open debt. `test_instrument_debt.py` fails while any entry in
 `tests/fixtures/catalog/debt.json` is open; finding 21 needs a named human
 rightsholder's signature, which the Tester must not fabricate, so V-3 and the
 instrument channel report `INVALID_HARNESS` and no gate reports a green product
-channel.
+channel. `test_auxiliary_corpus_selection_record_is_complete_and_frozen` also
+refuses the unsigned grant.
 
 ## Instrument validity comes first
 
