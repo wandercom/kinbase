@@ -2062,6 +2062,13 @@ pub fn status(
 ) -> Result<(), ContractError> {
     let context = RepoContext::load(launcher, repo_path, true, Some(&as_of.as_of))?;
     crate::proposals::emit_due_orphan_abandonments(&context.launcher, repo_path)?;
+    // Read one consistent destination generation: the shared admission lock
+    // keeps this report from straddling a writer's journal transition.
+    let _generation_read = context
+        .repo
+        .uuid_hint()
+        .map(|uuid| context.repo.admission_lock_shared(uuid))
+        .transpose()?;
     let (view, counts, references) = if context.repo.config.is_some() {
         context.current_view(&as_of.as_of, None)?
     } else {

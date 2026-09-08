@@ -564,15 +564,40 @@ impl Repository {
     /// Exclusive repository-scoped admission lock in Git's common directory,
     /// keyed by certified repository UUID.
     pub fn admission_lock(&self, repository_uuid: &str) -> Result<AdmissionLock, ContractError> {
+        self.acquire_admission_lock(repository_uuid, libc::LOCK_EX)
+    }
+
+    /// Shared (reader) form of the same lock: a consistent read of one
+    /// destination generation (journal, events, index, receipts) never
+    /// overlaps a writer's transition, and readers never block each other.
+    pub fn admission_lock_shared(
+        &self,
+        repository_uuid: &str,
+    ) -> Result<AdmissionLock, ContractError> {
+        self.acquire_admission_lock(repository_uuid, libc::LOCK_SH)
+    }
+
+    fn acquire_admission_lock(
+        &self,
+        repository_uuid: &str,
+        operation: libc::c_int,
+    ) -> Result<AdmissionLock, ContractError> {
         let path = self
             .common_dir
             .join(format!("guildhall-{repository_uuid}.lock"));
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .write(true)
-            .open(&path)
-            .map_err(|error| ContractError::io("open admission lock", error))?;
+        let turnstile_path = self
+            .common_dir
+            .join(format!("guildhall-{repository_uuid}.turnstile.lock"));
+        let open = |path: &Path| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .truncate(false)
+                .write(true)
+                .open(path)
+                .map_err(|error| ContractError::io("open admission lock", error))
+        };
+        let file = open(&path)?;
+        let turnstile = open(&turnstile_path)?;
         let configured = self
             .config
             .as_ref()
@@ -585,28 +610,54 @@ impl Repository {
             });
         let timeout_seconds = configured.unwrap_or(30).min(300);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_seconds);
+        let timed_out = |what: &str| {
+            let error = std::io::Error::last_os_error();
+            ContractError::limit(
+                format!("{what} was not acquired within {timeout_seconds}s ({error})"),
+                json!({
+                    "timeout_seconds": timeout_seconds,
+                    "retryable": true,
+                    "refused_count": 1,
+                    "omitted_count": 1,
+                    "remediation": "Retry after the holder commits or releases the lock; increase the bounded timeout if the holder is known healthy."
+                }),
+            )
+        };
+        // The turnstile is held only while waiting for the lock itself. A
+        // waiter therefore blocks every later arrival, including a writer
+        // coming back for its next journal generation, so a reader that
+        // arrives mid-transaction reads the next consistent generation
+        // instead of being starved by a long saga.
         loop {
-            // SAFETY: flock on a descriptor we own. The nonblocking form plus
+            // SAFETY: flock on descriptors we own. The nonblocking form plus
             // a bounded deadline prevents an abandoned common-dir lock from
             // making every linked worktree wait forever.
-            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            let result =
+                unsafe { libc::flock(turnstile.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
             if result == 0 {
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(timed_out("admission lock turnstile"));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+        loop {
+            let result = unsafe { libc::flock(file.as_raw_fd(), operation | libc::LOCK_NB) };
+            if result == 0 {
+                // SAFETY: releasing the turnstile descriptor we hold.
+                unsafe {
+                    libc::flock(turnstile.as_raw_fd(), libc::LOCK_UN);
+                }
                 return Ok(AdmissionLock { _file: file, path });
             }
             if std::time::Instant::now() >= deadline {
-                let error = std::io::Error::last_os_error();
-                return Err(ContractError::limit(
-                    format!("admission lock was not acquired within {timeout_seconds}s ({error})"),
-                    json!({
-                        "timeout_seconds": timeout_seconds,
-                        "retryable": true,
-                        "refused_count": 1,
-                        "omitted_count": 1,
-                        "remediation": "Retry after the holder commits or releases the lock; increase the bounded timeout if the holder is known healthy."
-                    }),
-                ));
+                unsafe {
+                    libc::flock(turnstile.as_raw_fd(), libc::LOCK_UN);
+                }
+                return Err(timed_out("admission lock"));
             }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+            std::thread::sleep(std::time::Duration::from_millis(2));
         }
     }
 

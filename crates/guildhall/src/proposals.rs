@@ -934,9 +934,10 @@ fn fanout_saga_result(
         }
     }
     let candidate_id = crate::json::get_str(record, "candidate_id").unwrap_or_default();
-    // The lock is held through every transition: competing local writers
-    // retry from the committed generation.
-    let _lock = repository.admission_lock(&repository_uuid)?;
+    // Every transition below is one generation under the exclusive
+    // admission lock; the journal carries the transaction between
+    // generations, so the lock is never held across a Company round trip
+    // and competing local writers retry from the committed generation.
     recover_fanout_journal(&repository, &repository_uuid, Some(candidate_id))?;
     let journal = FanoutJournal::open(&repository, candidate_id, destination)?;
     if destination.starts_with("codebase:") {
@@ -965,6 +966,7 @@ fn fanout_saga_result(
 /// exact bytes in the journal (nonce reservation). A replay reuses the bound
 /// bytes, so a retry can never mint a second content-addressed event.
 fn reserve_nonce(
+    repository: &crate::codebase::Repository,
     journal: &FanoutJournal,
     repository_uuid: &str,
     store: crate::StoreKind,
@@ -992,6 +994,7 @@ fn reserve_nonce(
         }
     };
     if !journal.is_complete("nonce_reservation") {
+        let _generation = repository.admission_lock(repository_uuid)?;
         journal.begin(
             "nonce_reservation",
             json!({
@@ -1031,6 +1034,7 @@ fn commit_codebase(
     receipt_id: &str,
 ) -> Result<Value, ContractError> {
     let (bytes, event) = reserve_nonce(
+        repository,
         journal,
         repository_uuid,
         crate::StoreKind::Codebase,
@@ -1045,6 +1049,7 @@ fn commit_codebase(
     let local = repository.ensure_local()?;
     // event append + atomic rename to the content-addressed path
     if !journal.is_complete("event_append_rename") {
+        let _generation = repository.admission_lock(repository_uuid)?;
         journal.begin(
             "event_append_rename",
             json!({"event_digest": event_digest, "event_path": event_path}),
@@ -1059,6 +1064,7 @@ fn commit_codebase(
     }
     // manifest: the destination's local index of admitted digests
     if !journal.is_complete("manifest") {
+        let _generation = repository.admission_lock(repository_uuid)?;
         journal.begin(
             "manifest",
             json!({"index": ".kin/local/guildhall-index.json"}),
@@ -1071,6 +1077,7 @@ fn commit_codebase(
     crate::paths::ensure_private_dir(&receipts_dir, "receipts")?;
     let receipt_path = receipts_dir.join(format!("{event_digest}.json"));
     if !journal.is_complete("receipt") {
+        let _generation = repository.admission_lock(repository_uuid)?;
         journal.begin(
             "receipt",
             json!({"receipt_path": receipt_path.to_string_lossy()}),
@@ -1100,8 +1107,8 @@ fn commit_codebase(
             )?;
         }
         journal.complete("receipt", json!({}))?;
+        journal.finish()?;
     }
-    journal.finish()?;
     let stored =
         std::fs::read(&receipt_path).map_err(|error| ContractError::io("read receipt", error))?;
     let stored = crate::json::parse_strict_value(&stored).map_err(|error| {
@@ -1133,6 +1140,7 @@ fn commit_company(
     receipt_id: &str,
 ) -> Result<Value, ContractError> {
     let (_bytes, event) = reserve_nonce(
+        repository,
         journal,
         repository_uuid,
         crate::StoreKind::Company,
@@ -1191,6 +1199,7 @@ fn commit_company(
         for sibling in committed_siblings(record) {
             let apology_id = apology_id_for(receipt_id, &sibling);
             if !journal.is_complete("apology") || !apology_exists(&apology_id) {
+                let _generation = repository.admission_lock(repository_uuid)?;
                 journal.begin("apology", json!({"apology_id": apology_id, "committed_receipt_id": sibling.get("receipt_id").cloned().unwrap_or(Value::Null)}))?;
                 let unknown_id = write_apology(
                     launcher,
@@ -1207,6 +1216,7 @@ fn commit_company(
             apology_ids.push(apology_id);
         }
     }
+    let _generation = repository.admission_lock(repository_uuid)?;
     journal.begin("receipt", json!({}))?;
     let marker = journal.complete(
         "receipt",
@@ -1362,6 +1372,16 @@ fn write_apology(
     committed: &Value,
     apology_id: &str,
 ) -> Result<String, ContractError> {
+    if let Some(existing) = current_apologies()
+        .into_iter()
+        .find(|apology| crate::json::get_str(apology, "apology_id") == Some(apology_id))
+    {
+        // A replay after a crash finds the apology already written: the
+        // same Unknown, never a second (recursive) apology.
+        return Ok(crate::json::get_str(&existing, "unknown_id")
+            .unwrap_or_default()
+            .to_owned());
+    }
     let committed_destination = crate::json::get_str(committed, "destination")
         .unwrap_or_default()
         .to_owned();
