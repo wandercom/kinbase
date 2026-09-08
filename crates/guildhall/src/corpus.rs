@@ -600,12 +600,9 @@ pub(crate) fn load_store(
         crate::StoreKind::Company => {
             let mut events = Vec::new();
             if let Ok(Some((cache, _root))) = launcher.company_cache() {
-                if let Ok(Some(snapshot)) = cache.snapshot() {
-                    let facts = snapshot
-                        .get("facts")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default();
+                // The signed snapshot publishes Company's derived current
+                // view; the cache proxies each fact into reducer input.
+                if let Ok(facts) = cache.snapshot_fact_documents() {
                     events.extend(
                         facts
                             .iter()

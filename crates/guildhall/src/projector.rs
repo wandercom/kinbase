@@ -3,6 +3,21 @@
 //! The selector is deliberately arithmetic-only: every reported term is a
 //! signed integer in basis points. It never claims a causal quantity; it is
 //! an additive approximation over admitted facts and explicit Unknowns.
+//!
+//! ```text
+//! marginal(a | S, d) =
+//!     newly_covered_distortion(d, a, S)
+//!   + authority_and_validity_gain(a)
+//!   + complementarity_gain(a, S)
+//!   + uncertainty_reduction(a, d, S)
+//!   - redundancy(a, S)
+//!   - retrieval_and_residency_cost(a)
+//!   - stale_or_conflict_risk(a)
+//! ```
+//!
+//! `S` is the current set: the caller-declared working set already resident
+//! at the dependent edit plus everything selected so far. Penalty terms are
+//! reported as the positive magnitudes the formula subtracts.
 
 use crate::error::ContractError;
 use crate::launcher::Launcher;
@@ -14,6 +29,8 @@ use std::path::Path;
 
 pub const PROJECTION_LIMIT: usize = 32;
 pub const PROJECTION_BYTE_LIMIT: usize = 128 * 1024;
+/// How many rejected evaluations of the stopping round the trace retains.
+const STOP_ROUND_TRACE_LIMIT: usize = 16;
 const TIERS: [(&str, i64, i64); 7] = [
     ("facts_and_unknowns", 0, 100),
     ("summary", 500, 100),
@@ -39,6 +56,9 @@ pub(crate) struct UnknownOut {
     pub(crate) kind: String,
 }
 
+/// One candidate scored against the current set. Gains are non-negative;
+/// `redundancy`, `retrieval_and_residency_cost` and `stale_or_conflict_risk`
+/// are the non-negative magnitudes the marginal subtracts.
 #[derive(Debug, Clone)]
 struct Evaluation {
     marginal_value: i64,
@@ -50,6 +70,42 @@ struct Evaluation {
     retrieval_and_residency_cost: i64,
     stale_or_conflict_risk: i64,
     redundancy_basis: String,
+    complementarity_basis: String,
+}
+
+impl Evaluation {
+    fn terms(&self) -> Value {
+        json!({
+            "newly_covered_distortion": self.newly_covered_distortion,
+            "authority_and_validity_gain": self.authority_and_validity_gain,
+            "complementarity_gain": self.complementarity_gain,
+            "uncertainty_reduction": self.uncertainty_reduction,
+            "redundancy": self.redundancy,
+            "retrieval_and_residency_cost": self.retrieval_and_residency_cost,
+            "stale_or_conflict_risk": self.stale_or_conflict_risk
+        })
+    }
+}
+
+fn trace_step(
+    fact: &CurrentFact,
+    evaluation: &Evaluation,
+    current_set_size: usize,
+    action: &str,
+    reason: &str,
+) -> Value {
+    json!({
+        "fact_id": fact.fact_id,
+        "logical_key": fact.logical_key,
+        "action": action,
+        "selected": action == "selected",
+        "selection_reason": reason,
+        "marginal_value": evaluation.marginal_value,
+        "current_set_size": current_set_size,
+        "redundancy_basis": evaluation.redundancy_basis,
+        "complementarity_basis": evaluation.complementarity_basis,
+        "marginal_terms": evaluation.terms()
+    })
 }
 
 pub fn run(
@@ -109,6 +165,17 @@ pub fn run(
     view_unknowns.retain(|unknown| !closed_unknown_ids.contains(&unknown.unknown_id));
     facts.sort_by(|left, right| left.fact_id.cmp(&right.fact_id));
 
+    // A `question` atom is an open Unknown owned by the authority that asserted
+    // it. It is never trusted guidance and never enters the selectable set.
+    let (question_facts, facts): (Vec<CurrentFact>, Vec<CurrentFact>) = facts
+        .into_iter()
+        .partition(|fact| fact.atom_kind == "question");
+    let question_unknowns: Vec<UnknownOut> = question_facts
+        .iter()
+        .filter(|fact| !closed_unknown_ids.contains(&question_unknown_id(fact)))
+        .map(question_unknown)
+        .collect();
+
     let working: BTreeSet<&str> = working_set.iter().map(String::as_str).collect();
     let candidates: Vec<&CurrentFact> = facts
         .iter()
@@ -122,7 +189,7 @@ pub fn run(
                 )
         })
         .collect();
-    let unknowns = unknown_outputs(&facts, &view_unknowns);
+    let unknowns = unknown_outputs(&facts, &view_unknowns, &question_unknowns);
     let mut candidate_documents: Vec<(String, Value)> = facts
         .iter()
         .map(|fact| (fact.fact_id.clone(), candidate_value(fact, &facts)))
@@ -130,6 +197,7 @@ pub fn run(
     let mut represented_ids: BTreeSet<String> = candidate_documents
         .iter()
         .map(|(id, _)| id.clone())
+        .chain(question_facts.iter().map(|fact| fact.fact_id.clone()))
         .collect();
     for event in ingested_events {
         if represented_ids.contains(&event.fact_id) {
@@ -158,91 +226,112 @@ pub fn run(
             && (unknown.decision_blocked == decision || unknown.scope.starts_with("architecture:"))
     });
 
+    // The current set S starts as the caller-declared working set: facts
+    // already resident at the dependent edit. They condition every marginal
+    // but are never re-selected; re-adding a resident fact has zero value.
+    let residents: Vec<CurrentFact> = candidates
+        .iter()
+        .filter(|fact| working.contains(fact.fact_id.as_str()))
+        .map(|fact| (*fact).clone())
+        .collect();
+    let resident_ids: BTreeSet<String> =
+        residents.iter().map(|fact| fact.fact_id.clone()).collect();
+    let working_set_unresolved: Vec<&str> = working_set
+        .iter()
+        .map(String::as_str)
+        .filter(|id| !resident_ids.contains(*id))
+        .collect();
+    let mut context: Vec<CurrentFact> = residents.clone();
     let mut selected: Vec<CurrentFact> = Vec::new();
     let mut selection_trace = Vec::new();
-    // The caller-declared working set is already resident at the dependent
-    // edit. It is the initial selected context even though it incurs no new
-    // retrieval cost in this invocation.
-    selected.extend(
-        candidates
+    for fact in &residents {
+        let evaluation = resident_evaluation();
+        selection_trace.push(trace_step(
+            fact,
+            &evaluation,
+            context.len(),
+            "resident",
+            "working_set_resident",
+        ));
+    }
+    let context_bytes = |set: &[CurrentFact], extra: Option<&CurrentFact>| -> usize {
+        let values: Vec<Value> = set
             .iter()
-            .filter(|fact| working.contains(fact.fact_id.as_str()))
-            .map(|fact| (*fact).clone()),
-    );
+            .chain(extra)
+            .map(|fact| candidate_value(fact, &facts))
+            .collect();
+        crate::json::canonical_text(&Value::Array(values)).len()
+    };
     let mut sufficiency = false;
     let mut byte_ceiling_hit = false;
-    while selected.len() < PROJECTION_LIMIT {
-        let mut best: Option<(&CurrentFact, Evaluation)> = None;
+    let mut stop_round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
+    while context.len() < PROJECTION_LIMIT {
+        let mut round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
         for fact in &candidates {
-            if selected
+            if context
                 .iter()
                 .any(|existing| existing.fact_id == fact.fact_id)
             {
                 continue;
             }
-            let prospective_json: Vec<Value> = selected
-                .iter()
-                .chain(std::iter::once(*fact))
-                .map(|fact| candidate_value(fact, &facts))
-                .collect();
-            let prospective_bytes =
-                crate::json::canonical_text(&Value::Array(prospective_json)).len();
-            let evaluation = evaluate(fact, &selected, &working, task, decision);
-            let role = candidate_role(fact, &facts).0;
-            if prospective_bytes > PROJECTION_BYTE_LIMIT {
+            let evaluation = evaluate(fact, &context, task, decision);
+            if context_bytes(&context, Some(fact)) > PROJECTION_BYTE_LIMIT {
                 if evaluation.marginal_value > 0 {
                     byte_ceiling_hit = true;
                 }
                 continue;
             }
-            let replace = best
-                .as_ref()
-                .map(|(current, current_value)| {
-                    evaluation.marginal_value > current_value.marginal_value
-                        || (evaluation.marginal_value == current_value.marginal_value
-                            && (candidate_priority(role)
-                                > candidate_priority(candidate_role(current, &facts).0)
-                                || (candidate_priority(role)
-                                    == candidate_priority(candidate_role(current, &facts).0)
-                                    && fact.fact_id < current.fact_id)))
-                })
-                .unwrap_or(true);
-            if replace {
-                best = Some((fact, evaluation));
-            }
+            round.push((fact, evaluation));
         }
-        let Some((fact, evaluation)) = best else {
+        // Deterministic order: marginal value, then role priority, then id.
+        round.sort_by(|(left, left_value), (right, right_value)| {
+            right_value
+                .marginal_value
+                .cmp(&left_value.marginal_value)
+                .then_with(|| {
+                    candidate_priority(candidate_role(right, &facts).0)
+                        .cmp(&candidate_priority(candidate_role(left, &facts).0))
+                })
+                .then_with(|| left.fact_id.cmp(&right.fact_id))
+        });
+        let Some((fact, evaluation)) = round.first().cloned() else {
             break;
         };
         if evaluation.marginal_value <= 0 {
+            // The loop stops on net marginal value: record why every
+            // remaining candidate was left out, best first.
+            stop_round = round;
             break;
         }
-        selection_trace.push(json!({
-            "fact_id": fact.fact_id,
-            "marginal_value": evaluation.marginal_value,
-            "current_set_size": selected.len(),
-            "redundancy_basis": evaluation.redundancy_basis,
-            "marginal_terms": {
-                "newly_covered_distortion": evaluation.newly_covered_distortion,
-                "authority_and_validity_gain": evaluation.authority_and_validity_gain,
-                "complementarity_gain": evaluation.complementarity_gain,
-                "uncertainty_reduction": evaluation.uncertainty_reduction,
-                "redundancy": evaluation.redundancy,
-                "retrieval_and_residency_cost": evaluation.retrieval_and_residency_cost,
-                "stale_or_conflict_risk": evaluation.stale_or_conflict_risk
-            }
-        }));
-        selected.push((*fact).clone());
+        selection_trace.push(trace_step(
+            fact,
+            &evaluation,
+            context.len(),
+            "selected",
+            "positive_conditional_marginal_value",
+        ));
+        selected.push(fact.clone());
+        context.push(fact.clone());
         if is_authority_answer(fact) && !has_blocking_unknown {
             sufficiency = true;
             break;
         }
     }
+    let rejected_count = stop_round.len();
+    for (fact, evaluation) in stop_round.iter().take(STOP_ROUND_TRACE_LIMIT) {
+        selection_trace.push(trace_step(
+            fact,
+            evaluation,
+            context.len(),
+            "rejected",
+            "nonpositive_conditional_marginal_value",
+        ));
+    }
 
     let question_id = if !has_blocking_unknown {
         None
     } else {
-        let evidence: Vec<String> = selected
+        let evidence: Vec<String> = context
             .iter()
             .map(|fact| fact.fact_id.clone())
             .chain(
@@ -254,7 +343,7 @@ pub fn run(
         let remaining: Vec<String> = candidates
             .iter()
             .filter_map(|fact| {
-                if selected
+                if context
                     .iter()
                     .any(|selected| selected.fact_id == fact.fact_id)
                 {
@@ -286,15 +375,15 @@ pub fn run(
     } else {
         "nonpositive_net_marginal_value"
     };
-    let item_ceiling_hit = selected.len() == PROJECTION_LIMIT
+    let item_ceiling_hit = context.len() == PROJECTION_LIMIT
         && candidates.iter().any(|fact| {
-            !selected
+            !context
                 .iter()
                 .any(|existing| existing.fact_id == fact.fact_id)
-                && evaluate(fact, &selected, &working, task, decision).marginal_value > 0
+                && evaluate(fact, &context, task, decision).marginal_value > 0
         });
     let omitted_count = if byte_ceiling_hit || item_ceiling_hit {
-        candidates.len().saturating_sub(selected.len())
+        candidates.len().saturating_sub(context.len())
     } else {
         0
     };
@@ -304,22 +393,18 @@ pub fn run(
             json!({"tier": tier, "estimated_value": value, "estimated_cost": cost, "action": "visited"})
         })
         .collect();
-    let invariant_selected = selected
+    let invariant_selected = context
         .iter()
         .any(|fact| candidate_role(fact, &facts).0 == "high_distortion_compatibility_invariant");
-    let selected_values: Vec<Value> = selected
-        .iter()
-        .map(|fact| candidate_value(fact, &facts))
-        .collect();
-    let projection_bytes =
-        crate::json::canonical_text(&Value::Array(selected_values.clone())).len();
-    let company_reference = company_reference(&selected, &facts);
-    let selected_ids: BTreeSet<&str> = selected.iter().map(|fact| fact.fact_id.as_str()).collect();
+    let projection_bytes = context_bytes(&selected, None);
+    let resident_bytes = context_bytes(&residents, None);
+    let company_reference = company_reference(&context, &facts);
+    let context_ids: BTreeSet<&str> = context.iter().map(|fact| fact.fact_id.as_str()).collect();
     let selected_reference = references
         .iter()
         .filter(|record| {
             crate::json::get_str(record, "fact_id")
-                .is_some_and(|fact_id| selected_ids.contains(fact_id))
+                .is_some_and(|fact_id| context_ids.contains(fact_id))
         })
         .find(|record| crate::json::get_str(record, "resolution") == Some("resolved"))
         .cloned();
@@ -340,7 +425,7 @@ pub fn run(
         .and_then(|record| crate::json::get_str(record, "dominating_input").map(str::to_owned));
     let cache_state_constructed = launcher.company_cache()?.is_some();
     let recommendation = if !has_blocking_unknown {
-        selected
+        context
             .iter()
             .find(|fact| is_authority_answer(fact))
             .map(|fact| fact.statement.clone())
@@ -376,23 +461,33 @@ pub fn run(
     } else {
         "reversible_sandbox_only_experiment"
     };
+    let selected_value = |fact: &CurrentFact| {
+        json!({
+            "fact_id": fact.fact_id,
+            "logical_key": fact.logical_key,
+            "role": candidate_role(fact, &facts).0,
+            "store_kind": fact.store_kind,
+            "resident": resident_ids.contains(&fact.fact_id),
+            "selection_reason": if resident_ids.contains(&fact.fact_id) { "working_set_resident" } else { "positive_conditional_marginal_value" }
+        })
+    };
     let result = json!({
         "decision": decision,
+        "task": task,
         "as_of": as_of.as_of,
         "as_of_source": as_of.as_of_source,
         "ambient_clock_read": false,
         "candidates": candidate_values.into_iter().chain(unknowns.iter().map(unknown_value)).collect::<Vec<_>>(),
-        "selected": selected.iter().map(|fact| json!({
-            "fact_id": fact.fact_id,
-            "logical_key": fact.logical_key,
-            "role": candidate_role(fact, &facts).0,
-            "resident": working.contains(fact.fact_id.as_str()),
-            "reselected": false,
-            "selection_reason": if working.contains(fact.fact_id.as_str()) { "working_set_resident" } else { "positive_conditional_marginal_value" }
-        })).collect::<Vec<_>>(),
+        "working_set": working_set,
+        "resident_working_set": residents.iter().map(selected_value).collect::<Vec<_>>(),
+        "working_set_unresolved": working_set_unresolved,
+        "selected": selected.iter().map(selected_value).collect::<Vec<_>>(),
+        "current_set": context.iter().map(|fact| fact.fact_id.clone()).collect::<Vec<_>>(),
         "selection_trace": selection_trace,
+        "rejected_count": rejected_count,
         "tier_escalation": tier_escalation,
         "projection_bytes": projection_bytes,
+        "resident_bytes": resident_bytes,
         "invariant_selected": invariant_selected,
         "stopping_reason": stopping_reason,
         "unknowns": unknowns.iter().map(unknown_value).collect::<Vec<_>>(),
@@ -415,6 +510,7 @@ pub fn run(
             .and_then(|record| crate::json::get_str(record, "max_rule")),
         "dominating_input": dominating_input,
         "projection_state": if has_blocking_unknown { "withheld" } else { "projected" },
+        "question_id": question_id,
         "omitted_count": omitted_count
     });
 
@@ -425,7 +521,9 @@ pub fn run(
         "selected_ids": selected.iter().map(|fact| fact.fact_id.clone()).collect::<Vec<_>>(),
         "working_set": working_set,
         "resident_at_dependent_edit": working_set,
+        "resident_ids": residents.iter().map(|fact| fact.fact_id.clone()).collect::<Vec<_>>(),
         "declared_use": decision,
+        "task": task,
         "stopping_reason": stopping_reason,
         "outcome": stopping_reason,
         "question_id": question_id,
@@ -433,6 +531,7 @@ pub fn run(
         "cost": TIERS.iter().map(|(_, _, cost)| *cost).sum::<i64>(),
         "marginal_gain": selection_trace
             .iter()
+            .filter(|row| row.get("selected") == Some(&Value::Bool(true)))
             .filter_map(|row| row.get("marginal_value"))
             .filter_map(Value::as_i64)
             .sum::<i64>(),
@@ -452,6 +551,40 @@ pub fn run(
         println!("stopping_reason: {stopping_reason}");
     }
     Ok(())
+}
+
+fn question_unknown_id(fact: &CurrentFact) -> String {
+    format!("unknown_{}", &fact.fact_id[5.min(fact.fact_id.len())..])
+}
+
+/// A `question` atom asserted by an authority is an open Unknown that
+/// authority owns; the question text is the fact statement.
+fn question_unknown(fact: &CurrentFact) -> UnknownOut {
+    UnknownOut {
+        unknown_id: question_unknown_id(fact),
+        logical_key: fact.logical_key.clone(),
+        scope: fact.authority_scope.clone(),
+        decision_blocked: fact.distortion.trigger.clone(),
+        owner_role: owner_role_for(&fact.authority_scope, &fact.store_kind).to_owned(),
+        owner_identity: fact.authority_id.clone(),
+        question: fact.statement.clone(),
+        evidence: fact.evidence_refs.clone(),
+        loss_if_absent: fact.distortion.loss_if_absent,
+        status: "open".to_owned(),
+        kind: "question".to_owned(),
+    }
+}
+
+fn owner_role_for(scope: &str, store_kind: &str) -> &'static str {
+    if scope.starts_with("architecture:") {
+        "chief-architect"
+    } else if store_kind == "company" || scope.starts_with("company:") {
+        "company-steward"
+    } else if scope.starts_with("environment:") {
+        "deploy-owner"
+    } else {
+        "repository-maintainer"
+    }
 }
 
 struct StoreView {
@@ -725,8 +858,12 @@ fn unknown_value(unknown: &UnknownOut) -> Value {
 fn unknown_outputs(
     facts: &[CurrentFact],
     view_unknowns: &[crate::reducer::DerivedUnknown],
+    question_unknowns: &[UnknownOut],
 ) -> Vec<UnknownOut> {
     let mut by_key: BTreeMap<String, UnknownOut> = BTreeMap::new();
+    for unknown in question_unknowns {
+        by_key.insert(unknown.logical_key.clone(), unknown.clone());
+    }
     for unknown in view_unknowns {
         if unknown.status != "open" && unknown.status != "asked" {
             continue;
@@ -797,14 +934,31 @@ fn unknown_outputs(
     values
 }
 
+/// A resident working-set fact re-added to its own set: every gain is already
+/// realised, nothing is retrieved, and nothing new is displaced.
+fn resident_evaluation() -> Evaluation {
+    Evaluation {
+        marginal_value: 0,
+        newly_covered_distortion: 0,
+        authority_and_validity_gain: 0,
+        complementarity_gain: 0,
+        uncertainty_reduction: 0,
+        redundancy: 0,
+        retrieval_and_residency_cost: 0,
+        stale_or_conflict_risk: 0,
+        redundancy_basis: "resident_in_working_set".to_owned(),
+        complementarity_basis: "none".to_owned(),
+    }
+}
+
+/// Score one candidate against the current set `S` (residents plus the
+/// facts selected so far) for the declared task and decision.
 fn evaluate(
     fact: &CurrentFact,
-    selected: &[CurrentFact],
-    working: &BTreeSet<&str>,
+    current_set: &[CurrentFact],
     task: &str,
     decision: &str,
 ) -> Evaluation {
-    let resident = working.contains(fact.fact_id.as_str());
     let decision_terms = terms(decision);
     let task_terms = terms(task);
     let statement_terms = terms(&fact.statement);
@@ -812,7 +966,13 @@ fn evaluate(
     let task_overlap = statement_terms.intersection(&task_terms).count().min(4) as i64;
     let relevance =
         3_000 + decision_overlap.saturating_mul(1_000) + task_overlap.saturating_mul(500);
-    let newly_covered = if resident {
+    // Distortion already covered by an equivalent member of S is not newly
+    // covered: a paraphrase of a resident fact covers nothing new.
+    let covered_by_set = current_set.iter().any(|existing| {
+        existing.logical_key == fact.logical_key
+            || normalized_statement(&existing.statement) == normalized_statement(&fact.statement)
+    });
+    let newly_covered = if covered_by_set {
         0
     } else if covers_own_trigger(fact) {
         i64::from(fact.distortion.loss_if_absent)
@@ -821,9 +981,7 @@ fn evaluate(
             .saturating_mul(relevance)
             .saturating_div(10_000)
     };
-    let authority_gain = if resident {
-        0
-    } else {
+    let authority_gain = {
         let base =
             if fact.authority_scope.starts_with("architecture") || fact.store_kind == "company" {
                 800
@@ -832,39 +990,20 @@ fn evaluate(
             };
         base + (i64::from(fact.confidence) / 20).min(500)
     };
-    let complements_selected = selected.iter().any(|existing| {
-        fact.complements.contains(&existing.fact_id)
-            || existing.complements.contains(&fact.fact_id)
-            || complementary_pair(fact, existing, decision)
-    });
-    let complementarity = if resident {
-        0
-    } else if complements_selected {
-        2_500
-    } else {
-        0
-    };
-    debug_assert!(complementarity >= 0);
-    let uncertainty = if resident {
-        0
-    } else {
-        (i64::try_from(fact.independent_support_count)
-            .unwrap_or(i64::MAX)
-            .saturating_mul(250))
-        .min(1_000)
-            + if fact.company_refs.is_empty() { 0 } else { 250 }
-    };
-    let (redundancy, basis) = redundancy(fact, selected);
-    let cost = if resident { -25 } else { -250 };
+    let (complementarity, complementarity_basis) = complementarity(fact, current_set);
+    let uncertainty = (i64::try_from(fact.independent_support_count)
+        .unwrap_or(i64::MAX)
+        .saturating_mul(250))
+    .min(1_000)
+        + if fact.company_refs.is_empty() { 0 } else { 250 };
+    let (redundancy, redundancy_basis) = redundancy(fact, current_set);
+    let cost = 250;
     let stale = 0;
     Evaluation {
-        marginal_value: newly_covered
-            + authority_gain
-            + complementarity
-            + uncertainty
-            + redundancy
-            + cost
-            + stale,
+        marginal_value: newly_covered + authority_gain + complementarity + uncertainty
+            - redundancy
+            - cost
+            - stale,
         newly_covered_distortion: newly_covered,
         authority_and_validity_gain: authority_gain,
         complementarity_gain: complementarity,
@@ -872,7 +1011,8 @@ fn evaluate(
         redundancy,
         retrieval_and_residency_cost: cost,
         stale_or_conflict_risk: stale,
-        redundancy_basis: basis,
+        redundancy_basis,
+        complementarity_basis,
     }
 }
 
@@ -885,42 +1025,99 @@ fn covers_own_trigger(fact: &CurrentFact) -> bool {
     trigger.iter().all(|term| statement.contains(term))
 }
 
-fn complementary_pair(left: &CurrentFact, right: &CurrentFact, decision: &str) -> bool {
-    let decision_terms = terms(decision);
-    let left_key = terms(&left.logical_key);
-    let right_key = terms(&right.logical_key);
-    let left_in_decision = !left_key
-        .intersection(&decision_terms)
-        .collect::<BTreeSet<_>>()
-        .is_empty();
-    let right_in_decision = !right_key
-        .intersection(&decision_terms)
-        .collect::<BTreeSet<_>>()
-        .is_empty();
-    let test = |fact: &CurrentFact| {
-        matches!(
-            fact.atom_kind.as_str(),
-            "test" | "runtime_trace" | "test_runtime_evidence"
-        )
-    };
-    let rationale = |fact: &CurrentFact| fact.atom_kind == "rationale";
-    let kind_pair = (test(left) && rationale(right)) || (rationale(left) && test(right));
-    kind_pair
-        || (test(left) && rationale(right) && left_in_decision && right_in_decision)
-        || (rationale(left) && test(right) && left_in_decision && right_in_decision)
+/// Evidence class of an atom: test/runtime/observation evidence versus the
+/// rationale, constraint or decision it can evidence. Complementarity needs
+/// one of each.
+fn evidence_class(atom_kind: &str) -> Option<&'static str> {
+    match atom_kind {
+        "observation" | "test" | "runtime_trace" | "test_runtime_evidence" => Some("evidence"),
+        "rationale" | "constraint" | "decision" => Some("explanation"),
+        _ => None,
+    }
 }
 
-fn redundancy(fact: &CurrentFact, selected: &[CurrentFact]) -> (i64, String) {
+/// The subject a hierarchical logical key names: its last path segment.
+fn key_subject(logical_key: &str) -> Option<&str> {
+    let (_, subject) = logical_key.rsplit_once('/')?;
+    if subject.is_empty() {
+        None
+    } else {
+        Some(subject)
+    }
+}
+
+const STOPWORDS: [&str; 44] = [
+    "this", "that", "with", "from", "than", "then", "they", "them", "have", "been", "were", "will",
+    "must", "into", "when", "which", "what", "where", "while", "also", "only", "over", "under",
+    "about", "because", "cannot", "remain", "should", "would", "could", "their", "there", "these",
+    "those", "here", "such", "each", "other", "some", "more", "most", "very", "after", "before",
+];
+
+fn distinctive_terms(statement: &str) -> BTreeSet<String> {
+    terms(statement)
+        .into_iter()
+        .filter(|term| term.len() >= 4 && !STOPWORDS.contains(&term.as_str()))
+        .collect()
+}
+
+/// Complementarity: a test/runtime/observation and the rationale, constraint
+/// or decision it evidences are jointly useful when they address one subject.
+/// The subject link is an explicit `complements` edge, a shared logical-key
+/// subject, or shared distinctive vocabulary; the trace names which.
+fn complementarity(fact: &CurrentFact, current_set: &[CurrentFact]) -> (i64, String) {
+    const GAIN: i64 = 2_500;
+    let fact_terms = distinctive_terms(&fact.statement);
+    for existing in current_set {
+        if fact.complements.contains(&existing.fact_id)
+            || existing.complements.contains(&fact.fact_id)
+        {
+            return (GAIN, format!("explicit_edge:{}", existing.fact_id));
+        }
+        let (Some(left), Some(right)) = (
+            evidence_class(&fact.atom_kind),
+            evidence_class(&existing.atom_kind),
+        ) else {
+            continue;
+        };
+        if left == right {
+            continue;
+        }
+        if let (Some(subject), Some(other)) = (
+            key_subject(&fact.logical_key),
+            key_subject(&existing.logical_key),
+        ) {
+            if subject == other && fact.logical_key != existing.logical_key {
+                return (GAIN, format!("shared_subject_key:{subject}"));
+            }
+        }
+        let existing_terms = distinctive_terms(&existing.statement);
+        let shared: Vec<&str> = fact_terms
+            .intersection(&existing_terms)
+            .map(String::as_str)
+            .collect();
+        if shared.len() >= 2 {
+            return (GAIN, format!("shared_subject_terms:{}", shared.join(",")));
+        }
+    }
+    (0, "none".to_owned())
+}
+
+/// Redundancy against the current set: explicit edges, shared provenance,
+/// then lexical similarity. Returns the positive penalty and its basis.
+fn redundancy(fact: &CurrentFact, current_set: &[CurrentFact]) -> (i64, String) {
     let protected_invariant = fact.distortion.loss_if_absent >= 7_000
         && matches!(fact.atom_kind.as_str(), "constraint" | "decision");
-    for existing in selected {
+    for existing in current_set {
         let explicit = fact.redundancy_with.contains(&existing.fact_id)
             || existing.redundancy_with.contains(&fact.fact_id);
         if explicit {
             return if protected_invariant {
-                (-2_000, "protected_invariant_explicit_edge".to_owned())
+                (
+                    2_000,
+                    format!("protected_invariant_explicit_edge:{}", existing.fact_id),
+                )
             } else {
-                (-8_000, "explicit_edge".to_owned())
+                (8_000, format!("explicit_edge:{}", existing.fact_id))
             };
         }
         let fact_support: BTreeSet<&str> = fact
@@ -941,15 +1138,18 @@ fn redundancy(fact: &CurrentFact, selected: &[CurrentFact]) -> (i64, String) {
             .is_empty()
         {
             return if protected_invariant {
-                (-1_000, "protected_invariant_shared_provenance".to_owned())
+                (
+                    1_000,
+                    format!("protected_invariant_shared_provenance:{}", existing.fact_id),
+                )
             } else {
-                (-3_000, "shared_provenance".to_owned())
+                (3_000, format!("shared_provenance:{}", existing.fact_id))
             };
         }
     }
     let fact_terms = terms(&fact.statement);
     let mut best = (0i64, "none".to_owned());
-    for existing in selected {
+    for existing in current_set {
         let existing_terms = terms(&existing.statement);
         let intersection = fact_terms.intersection(&existing_terms).count() as i64;
         let total = fact_terms.len() as i64 + existing_terms.len() as i64;
@@ -963,15 +1163,11 @@ fn redundancy(fact: &CurrentFact, selected: &[CurrentFact]) -> (i64, String) {
         if similarity >= 6_000 {
             // A near-duplicate may reduce value, but a distinct high-loss
             // invariant must remain recoverable. Complementary test/rationale
-            // evidence is likewise capped so its 2500-point gain is reported
+            // evidence is likewise capped so its gain is reported
             // separately instead of being erased by lexical redundancy.
-            let complementary = matches!(
-                fact.atom_kind.as_str(),
-                "test" | "runtime_trace" | "test_runtime_evidence" | "rationale"
-            ) && matches!(
-                existing.atom_kind.as_str(),
-                "test" | "runtime_trace" | "test_runtime_evidence" | "rationale"
-            ) && fact.atom_kind != existing.atom_kind;
+            let complementary = evidence_class(&fact.atom_kind).is_some()
+                && evidence_class(&existing.atom_kind).is_some()
+                && evidence_class(&fact.atom_kind) != evidence_class(&existing.atom_kind);
             let ceiling = if protected_invariant || complementary {
                 2_000
             } else {
@@ -979,11 +1175,14 @@ fn redundancy(fact: &CurrentFact, selected: &[CurrentFact]) -> (i64, String) {
             };
             let penalty = similarity.min(ceiling);
             if penalty > best.0 {
-                best = (penalty, format!("lexical_similarity:{similarity}"));
+                best = (
+                    penalty,
+                    format!("lexical_similarity:{similarity}:{}", existing.fact_id),
+                );
             }
         }
     }
-    (-best.0, best.1)
+    best
 }
 
 fn is_authority_answer(fact: &CurrentFact) -> bool {
