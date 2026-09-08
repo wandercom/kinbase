@@ -1284,7 +1284,13 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                             .map(|admitted| admitted.event.scope.clone())
                     })
                     .unwrap_or_else(|| "unknown".to_owned());
-                let kind = if !revoked_support_heads.is_empty() {
+                let revoked_at_step_1 = trace.rejected.iter().any(|entry| {
+                    entry
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .is_some_and(|reason| reason.starts_with("REVOKED"))
+                });
+                let kind = if !revoked_support_heads.is_empty() || revoked_at_step_1 {
                     "revoked"
                 } else if !support_retired_ids.is_empty() {
                     "withdrawn"
@@ -1316,7 +1322,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                         revoked_support_heads
                             .first()
                             .map(|(_, _, cursor)| cursor.as_str())
-                            .unwrap_or_default()
+                            .unwrap_or(input.authority_cursor.as_str())
                     ),
                     "expired" => format!(
                         "The only evidence for logical key {logical_key} expired. Is the workaround, incident value, or observation still in force?"

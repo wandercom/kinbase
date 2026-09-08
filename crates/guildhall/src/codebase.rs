@@ -1014,6 +1014,15 @@ impl Repository {
         let relative = paths::sharded_relative(&digest)?;
         let path = paths::contained(&self.kin.join("manifests"), &relative)?;
         paths::write_atomic(&path, &bytes, 0o644, true)?;
+        // The lineage register in Git's common directory holds a content-
+        // addressed copy of every manifest any linked worktree of this
+        // repository published, so every worktree computes the same heads
+        // under the same lock. It is a cache of the signed artefacts, never a
+        // second authority: a copy either matches its digest or is ignored.
+        let register = self.lineage_register_dir();
+        paths::ensure_private_dir(&register, "manifest lineage register")?;
+        let register_path = paths::contained(&register, &relative)?;
+        paths::write_atomic(&register_path, &bytes, 0o600, false)?;
         let mut result = signed;
         result["manifest_digest"] = Value::String(digest);
         result["manifest_path"] =
@@ -1021,13 +1030,44 @@ impl Repository {
         Ok(result)
     }
 
-    /// Manifest heads: stored manifests not referenced as a parent by any
-    /// other stored manifest.
+    /// Where this repository's worktrees register the manifests they publish.
+    pub fn lineage_register_dir(&self) -> PathBuf {
+        self.common_dir.join("guildhall").join("manifests")
+    }
+
+    /// Manifests known to this repository's lineage: those stored in this
+    /// worktree plus the register copies published from any linked worktree,
+    /// deduplicated by content digest and limited to copies whose path is
+    /// their digest.
+    pub fn lineage_manifests(&self) -> Result<Vec<StoredFile>, ContractError> {
+        let mut manifests = self.stored_manifests()?;
+        let mut seen: BTreeSet<String> = manifests
+            .iter()
+            .filter(|file| !file.path_alias)
+            .map(|file| file.digest.clone())
+            .collect();
+        let register = self.lineage_register_dir();
+        if register.is_dir() {
+            for file in stored_files(&register)? {
+                if file.path_alias || !seen.insert(file.digest.clone()) {
+                    continue;
+                }
+                manifests.push(file);
+            }
+        }
+        Ok(manifests)
+    }
+
+    /// Manifest heads: lineage manifests not referenced as a parent by any
+    /// other lineage manifest.
     pub fn manifest_heads(&self) -> Result<Vec<String>, ContractError> {
-        let manifests = self.stored_manifests()?;
+        let manifests = self.lineage_manifests()?;
         let mut referenced: BTreeSet<String> = BTreeSet::new();
         let mut all: BTreeSet<String> = BTreeSet::new();
         for file in &manifests {
+            if file.path_alias {
+                continue;
+            }
             all.insert(file.digest.clone());
             if let Ok(value) = crate::json::parse_strict_value(&file.bytes) {
                 if let Some(parents) = crate::json::get_array(&value, "manifest_head_set") {
