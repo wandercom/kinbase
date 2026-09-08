@@ -428,12 +428,34 @@ fn dispatch_event(
         // SessionStart is deterministic and host-independent: canonical fact
         // bytes come from the certified repository's reduced current view.
         if let Ok(launcher) = crate::launcher::Launcher::load()
-            && let Ok(context) = RepoContext::load(launcher, &cwd, true)
+            && let Ok(repository) = crate::codebase::Repository::discover(&cwd)
+            && let Ok(clock) = crate::repository::recorded_clock(&launcher, &repository)
+            && let Ok(context) = RepoContext::load(launcher, &cwd, true, Some(clock.as_str()))
         {
-            let now = crate::time::now_rfc3339_millis();
-            if let Ok((view, _, _)) = context.current_view(&now, None) {
+            if let Ok((view, _, _)) = context.current_view(&clock, None) {
                 canonical_facts.extend(view.facts.iter().map(crate::model::value_of));
                 unknowns.extend(view.open_unknown_ids.iter().cloned().map(Value::String));
+            }
+        }
+        // A freshly certified repository has no fact events yet, but SessionStart
+        // still needs a deterministic, host-independent canonical payload. The
+        // repository identity is already signed-by-certificate configuration and
+        // supplies that bootstrap fact without inventing prose or reading the
+        // ambient clock.
+        if canonical_facts.is_empty() {
+            if let Ok(text) = std::fs::read_to_string(cwd.join(".kin").join("config"))
+                && let Ok(config) = crate::codebase::RepoConfig::parse(&text)
+            {
+                canonical_facts.push(json!({
+                    "schema": "guildhall-repository/1",
+                    "logical_key": "guildhall/repository-identity",
+                    "atom_kind": "observation",
+                    "state": "current",
+                    "schema_version": config.schema_version,
+                    "repository_uuid": config.repository_uuid_hint,
+                    "safe_name": config.safe_name,
+                    "statement": "The certified repository identity and schema version are recorded in .kin/config."
+                }));
             }
         }
     }

@@ -121,7 +121,8 @@ pub fn ingest(
         .then(|| crate::repository::repository_id(repo))
         .transpose()?;
     let source_identity = source_identity(source_kind, source);
-    let now = now_rfc3339_millis();
+    let discovered_repository = crate::codebase::Repository::discover(repo)?;
+    let now = crate::repository::recorded_clock(launcher, &discovered_repository)?;
     let revision = (store == crate::StoreKind::Codebase)
         .then(|| crate::repository::git_revision(repo).ok())
         .flatten();
@@ -202,7 +203,7 @@ pub fn ingest(
     let mut historical_receipts = Vec::new();
     let mut revocation_observed_count = 0;
     let trust = if source_kind == "kindex" {
-        crate::repository::RepoContext::load(launcher.clone(), repo, false)
+        crate::repository::RepoContext::load(launcher.clone(), repo, false, Some(&now))
             .ok()
             .map(|context| context.trust)
     } else {

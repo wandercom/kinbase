@@ -61,7 +61,10 @@ pub fn run(
     as_of: &crate::time::AsOf,
     json: bool,
 ) -> Result<(), ContractError> {
-    crate::repository::ensure_authority_snapshot(launcher, None)?;
+    // Authority refresh is an optimization, not a command gate. When Company
+    // is unavailable, the cached projection is still emitted and the explicit
+    // degraded policy withholds the dependent decision.
+    let _ = crate::repository::ensure_authority_snapshot(launcher, None, &as_of.as_of);
     let mut facts = Vec::new();
     let mut ingested_events = Vec::new();
     let mut conflict_event_ids = BTreeSet::new();
@@ -472,6 +475,7 @@ fn load_view(
                 crate::launcher::Launcher::load()?,
                 repo,
                 true,
+                Some(&as_of.as_of),
             )?;
             let (view, _counts, store_references) = context.current_view(&as_of.as_of, None)?;
             references = store_references;

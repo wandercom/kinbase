@@ -53,7 +53,20 @@ pub struct AsOf {
 
 impl AsOf {
     pub fn explicit(value: &str) -> Result<Self, String> {
-        resolve_as_of(Some(value))
+        let parsed = parse_rfc3339_millis(value)?;
+        Ok(Self {
+            as_of: format_rfc3339_millis(parsed),
+            as_of_source: "explicit:--as-of".to_owned(),
+        })
+    }
+
+    /// Replay a proof-clock value that was persisted at repository creation.
+    pub fn recorded(value: &str) -> Result<Self, String> {
+        let parsed = parse_rfc3339_millis(value)?;
+        Ok(Self {
+            as_of: format_rfc3339_millis(parsed),
+            as_of_source: "recorded-proof-clock".to_owned(),
+        })
     }
 }
 
@@ -97,20 +110,13 @@ pub fn proof_clock() -> AsOf {
     }
 }
 
-/// Resolve the reducer instant per Validator ruling R-1: an explicit
-/// `--as-of` wins and is validated; otherwise the proof clock is read once
-/// and its exact value is recorded.
+/// Resolve an explicit reducer instant. Ambient wall-clock reads are never
+/// permitted here.
 pub fn resolve_as_of(explicit: Option<&str>) -> Result<AsOf, String> {
-    match explicit {
-        Some(text) => {
-            let parsed = parse_rfc3339_millis(text)?;
-            Ok(AsOf {
-                as_of: format_rfc3339_millis(parsed),
-                as_of_source: "explicit:--as-of".to_owned(),
-            })
-        }
-        None => Ok(proof_clock()),
-    }
+    let Some(text) = explicit else {
+        return Err("no recorded proof clock is available; pass --as-of".to_owned());
+    };
+    AsOf::explicit(text)
 }
 
 /// Seconds between two canonical instants (`later - earlier`).

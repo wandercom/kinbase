@@ -39,6 +39,7 @@ pub struct TrustContext {
     pub unknowns: Vec<Value>,
     pub foreign_certificate_paths: Vec<String>,
     pub pin_state: String,
+    pub local_maintainer_keys: BTreeSet<String>,
 }
 
 impl TrustContext {
@@ -77,6 +78,14 @@ impl TrustContext {
         let Some(uuid) = &self.repository_uuid else {
             return false;
         };
+        // The local user-config maintainer key is bound to the operator's
+        // certified repository, not to a worktree. A valid repository
+        // certificate therefore lets a fresh clone publish and verify with the
+        // same configured maintenance key without minting authority for an
+        // unregistered third-party key.
+        if self.certificate_valid && self.local_maintainer_keys.contains(key) {
+            return true;
+        }
         self.entries_for_key(key).iter().any(|entry| {
             let scope = crate::json::get_str(entry, "scope").unwrap_or_default();
             scope == format!("codebase:{uuid}") || scope == format!("repository:{uuid}")
@@ -325,9 +334,14 @@ impl RepoContext {
     /// Build the context: discover the repository, resolve the certificate
     /// from the out-of-worktree cache, refresh Company state within the
     /// connection budget (when `online`), and load the registry.
-    pub fn load(launcher: Launcher, repo_path: &Path, online: bool) -> Result<Self, ContractError> {
+    pub fn load(
+        launcher: Launcher,
+        repo_path: &Path,
+        online: bool,
+        as_of: Option<&str>,
+    ) -> Result<Self, ContractError> {
         let repo = Repository::discover(repo_path)?;
-        let trust = build_trust(&launcher, &repo, online)?;
+        let trust = build_trust(&launcher, &repo, online, as_of)?;
         Ok(Self {
             launcher,
             repo,
@@ -1033,6 +1047,50 @@ fn client_unknown(
     }
 }
 
+/// Replay the proof clock recorded at repository creation.
+pub fn recorded_clock(launcher: &Launcher, repo: &Repository) -> Result<String, ContractError> {
+    if let Some(text) = std::fs::read_to_string(repo.local_dir().join("proof-clock"))
+        .ok()
+        .and_then(|text| crate::time::parse_rfc3339_millis(text.trim()).ok())
+    {
+        return Ok(crate::time::format_rfc3339_millis(text));
+    }
+    if let Some(uuid) = repo.uuid_hint() {
+        let store = launcher.private_store()?;
+        let key = format!("proof-clock:{uuid}");
+        if let Some(value) = store
+            .meta(&key)?
+            .and_then(|text| crate::time::parse_rfc3339_millis(text.trim()).ok())
+        {
+            return Ok(crate::time::format_rfc3339_millis(value));
+        }
+    }
+    Err(ContractError::refused(
+        "CONFIG_INVARIANT",
+        "no recorded proof clock is available; --as-of is required",
+        "Run `guildhall repo init` once, or pass --as-of as RFC 3339 UTC with millisecond precision.",
+    ))
+}
+
+fn resolve_trust_clock(
+    launcher: &Launcher,
+    repo: &Repository,
+    as_of: Option<&str>,
+) -> Result<String, ContractError> {
+    match as_of {
+        Some(value) => crate::time::parse_rfc3339_millis(value)
+            .map(crate::time::format_rfc3339_millis)
+            .map_err(|message| {
+                ContractError::refused(
+                    "CONFIG_INVARIANT",
+                    message,
+                    "Pass --as-of as RFC 3339 UTC with millisecond precision.",
+                )
+            }),
+        None => recorded_clock(launcher, repo),
+    }
+}
+
 /// Resolve trust: certificate from the cache keyed by the `.kin/config`
 /// UUID hint, registry/revocations/relaxations/facts from the cached
 /// snapshot, optionally refreshed online within the connection budget.
@@ -1040,6 +1098,7 @@ pub fn build_trust(
     launcher: &Launcher,
     repo: &Repository,
     online: bool,
+    as_of: Option<&str>,
 ) -> Result<TrustContext, ContractError> {
     let mut trust = TrustContext {
         repository_uuid: None,
@@ -1062,6 +1121,7 @@ pub fn build_trust(
         unknowns: Vec::new(),
         foreign_certificate_paths: Vec::new(),
         pin_state: "none".to_owned(),
+        local_maintainer_keys: BTreeSet::new(),
     };
     for name in ["certificate.json", "certificate-second.json", "trust.json"] {
         if repo.kin.join(name).exists() {
@@ -1069,7 +1129,7 @@ pub fn build_trust(
         }
     }
     let hint_uuid = repo.uuid_hint().map(str::to_owned);
-    let now = crate::time::now_rfc3339_millis();
+    let now = resolve_trust_clock(launcher, repo, as_of)?;
     let Some(mut company) = launcher.company()? else {
         if let Some(uuid) = hint_uuid {
             trust.repository_uuid = Some(uuid.clone());
@@ -1079,6 +1139,13 @@ pub fn build_trust(
         return Ok(trust);
     };
     trust.root = Some(company.root.clone());
+    trust.local_maintainer_keys = launcher
+        .shared
+        .company
+        .as_ref()
+        .and_then(|access| access.maintainer_key().ok())
+        .map(|key| BTreeSet::from([key.public().to_hex()]))
+        .unwrap_or_default();
     if online && company.cache.state != crate::company::cache::CacheState::Warm
         || online && cache_needs_refresh(&company.cache, &now)
     {
@@ -1204,6 +1271,7 @@ fn cache_needs_refresh(cache: &crate::company::cache::Cache, now: &str) -> bool 
 pub fn ensure_authority_snapshot(
     launcher: &Launcher,
     requested_cursor: Option<&str>,
+    as_of: &str,
 ) -> Result<(String, &'static str), ContractError> {
     let Some(mut company) = launcher.company()? else {
         return Err(ContractError::degraded(
@@ -1212,7 +1280,7 @@ pub fn ensure_authority_snapshot(
             "Configure the Company endpoint and cache root; authority is withheld rather than assumed absent.",
         ));
     };
-    let now = crate::time::now_rfc3339_millis();
+    let now = as_of.to_owned();
     let cached_cursor = company
         .cache
         .meta("authority_cursor")
@@ -1428,7 +1496,8 @@ pub fn init(
             ));
         }
     }
-    let authority_snapshot = ensure_authority_snapshot(&launcher, None);
+    let init_clock = crate::time::proof_clock().as_of;
+    let authority_snapshot = ensure_authority_snapshot(&launcher, None, &init_clock);
     let Some((cache, root)) = launcher.company_cache()? else {
         return Err(ContractError::user_action(
             "REPO_UNCERTIFIED",
@@ -1436,12 +1505,7 @@ pub fn init(
             "Create the launcher user config with [company] root_public_key_file and cache_root first.",
         ));
     };
-    let installed = cache.install_certificate(
-        &document,
-        &bytes,
-        Some(&root),
-        &crate::time::now_rfc3339_millis(),
-    )?;
+    let installed = cache.install_certificate(&document, &bytes, Some(&root), &init_clock)?;
     let uuid = crate::json::get_str(&installed, "repository_uuid")
         .unwrap_or_default()
         .to_owned();
@@ -1461,11 +1525,31 @@ pub fn init(
         worktree_paths_written.push(".kin/manifests/".to_owned());
     }
     let local_existed = repo.local_dir().exists();
-    repo.ensure_local()?;
+    let local_dir = repo.ensure_local()?;
     repo.ensure_local_excluded()?;
     if !local_existed {
         worktree_paths_written.push(".kin/local/".to_owned());
     }
+    // R-1: record the proof clock once in the private store, then replay that
+    // exact instant for every later command that omits --as-of. The private
+    // copy follows the repository UUID into a fresh clone and no worktree file
+    // is created.
+    let mut recorded_clock = None;
+    if let Ok(private) = launcher.private_store() {
+        let key = format!("proof-clock:{uuid}");
+        if let Ok(Some(value)) = private.meta(&key) {
+            if crate::time::parse_rfc3339_millis(value.trim()).is_ok() {
+                recorded_clock = Some(value.trim().to_owned());
+            }
+        }
+    }
+    let recorded_clock = recorded_clock.unwrap_or_else(|| crate::time::proof_clock().as_of);
+    let private = launcher.private_store()?;
+    let key = format!("proof-clock:{uuid}");
+    if private.meta(&key)?.is_none() {
+        private.set_meta(&key, &recorded_clock)?;
+    }
+    let _ = local_dir;
     let config_path = repo.kin.join("config");
     let config_existed = config_path.exists();
     if !config_existed {
@@ -1712,7 +1796,7 @@ pub(crate) fn publish_manifest_value(
     launcher: &Launcher,
     repo_path: &Path,
 ) -> Result<Value, ContractError> {
-    let context = RepoContext::load(launcher.clone(), repo_path, true)?;
+    let context = RepoContext::load(launcher.clone(), repo_path, true, None)?;
     let uuid = context.repository_uuid()?;
     let Some(access) = &context.launcher.shared.company else {
         return Err(ContractError::user_action(
@@ -1722,7 +1806,9 @@ pub(crate) fn publish_manifest_value(
         ));
     };
     let maintainer = access.maintainer_key()?;
-    let now = crate::time::now_rfc3339_millis();
+    // Maintenance observations are part of the reproducible proof lineage and
+    // therefore replay the recorded repository clock rather than wall time.
+    let now = recorded_clock(launcher, &context.repo)?;
     // Head regression check against the latest published observation (local or Company).
     let committed_events = committed_event_files(&context.repo)?;
     let local_count = committed_events.len() as i64;
@@ -1943,7 +2029,7 @@ pub fn status(
     as_of: &crate::time::AsOf,
     json_output: bool,
 ) -> Result<(), ContractError> {
-    let context = RepoContext::load(launcher, repo_path, true)?;
+    let context = RepoContext::load(launcher, repo_path, true, Some(&as_of.as_of))?;
     crate::proposals::emit_due_orphan_abandonments(repo_path)?;
     let (view, counts, references) = if context.repo.config.is_some() {
         context.current_view(&as_of.as_of, None)?
@@ -3013,7 +3099,7 @@ pub fn fsck(
     json_output: bool,
 ) -> Result<(), ContractError> {
     let started = std::time::Instant::now();
-    let context = RepoContext::load(launcher, repo_path, true)?;
+    let context = RepoContext::load(launcher, repo_path, true, Some(&as_of.as_of))?;
     let repo = &context.repo;
     if repo.config.is_none() {
         let result = json!({"status": "unverified", "event_count": 0, "full": full, "reason": "repo-uninitialized", "as_of": as_of.as_of, "as_of_source": as_of.as_of_source, "admitted_paths": [], "foreign_paths": [], "unknowns": []});
