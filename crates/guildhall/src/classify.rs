@@ -32,7 +32,11 @@ pub fn atomize(
 ) -> Atom {
     let scan: ScanResult = scanner(statement);
     let hard_block = scan.taints.iter().any(|taint| taint.hard_block());
-    let mut taints: Vec<String> = scan.taints.iter().map(|taint| taint.as_str().to_owned()).collect();
+    let mut taints: Vec<String> = scan
+        .taints
+        .iter()
+        .map(|taint| taint.as_str().to_owned())
+        .collect();
     if let Some(provenance) = provenance_taint(source_kind) {
         let value = provenance.as_str().to_owned();
         if !taints.contains(&value) {

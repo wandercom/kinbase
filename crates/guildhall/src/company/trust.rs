@@ -44,7 +44,9 @@ pub fn load(db: &CompanyDb, root: &PublicKey) -> Result<TrustState, ContractErro
             revocations.push(Revocation {
                 revoked_key: key.to_owned(),
                 cursor: cursor.to_string(),
-                effective_at: crate::json::get_str(&payload, "effective_at").unwrap_or_default().to_owned(),
+                effective_at: crate::json::get_str(&payload, "effective_at")
+                    .unwrap_or_default()
+                    .to_owned(),
             });
             steward_keys.remove(key);
         }
@@ -64,7 +66,9 @@ impl TrustState {
     }
 
     pub fn is_revoked(&self, key_hex: &str) -> bool {
-        self.revocations.iter().any(|revocation| revocation.revoked_key == key_hex)
+        self.revocations
+            .iter()
+            .any(|revocation| revocation.revoked_key == key_hex)
     }
 
     /// Exact-scope resolution: exactly one active entry, else a registry
@@ -76,7 +80,8 @@ impl TrustState {
             .filter(|entry| {
                 crate::json::get_str(entry, "scope") == Some(scope)
                     && crate::json::get_str(entry, "status") == Some("active")
-                    && !self.is_revoked(crate::json::get_str(entry, "public_key").unwrap_or_default())
+                    && !self
+                        .is_revoked(crate::json::get_str(entry, "public_key").unwrap_or_default())
             })
             .collect();
         match active.as_slice() {
@@ -84,7 +89,10 @@ impl TrustState {
             [entry] => Ok(Some((*entry).clone())),
             _ => Err(ContractError::degraded(
                 "UNKNOWN_OWNER_UNRESOLVED",
-                format!("registry conflict: {} active authorities overlap the exact scope {scope}", active.len()),
+                format!(
+                    "registry conflict: {} active authorities overlap the exact scope {scope}",
+                    active.len()
+                ),
                 "The Company steward must repair the registry before any answer can close this scope.",
             )),
         }
@@ -116,10 +124,9 @@ impl TrustState {
             let scope = crate::json::get_str(entry, "scope").unwrap_or_default();
             scope == event.authority_scope
                 || (event.store_kind == "codebase"
-                    && event
-                        .repository_id
-                        .as_deref()
-                        .is_some_and(|repo| scope == format!("codebase:{repo}") || scope == format!("repository:{repo}")))
+                    && event.repository_id.as_deref().is_some_and(|repo| {
+                        scope == format!("codebase:{repo}") || scope == format!("repository:{repo}")
+                    }))
         });
         if authorized {
             Verification::Verified
@@ -137,9 +144,11 @@ impl TrustState {
             .iter()
             .filter(|entry| {
                 let scope = crate::json::get_str(entry, "scope").unwrap_or_default();
-                (scope == format!("repository:{repository_uuid}") || scope == format!("codebase:{repository_uuid}"))
+                (scope == format!("repository:{repository_uuid}")
+                    || scope == format!("codebase:{repository_uuid}"))
                     && crate::json::get_str(entry, "status") == Some("active")
-                    && !self.is_revoked(crate::json::get_str(entry, "public_key").unwrap_or_default())
+                    && !self
+                        .is_revoked(crate::json::get_str(entry, "public_key").unwrap_or_default())
             })
             .cloned()
             .collect()
@@ -167,7 +176,9 @@ impl TrustState {
             if crate::json::get_str(entry, "status") != Some("active") {
                 continue;
             }
-            let Some(scope) = crate::json::get_str(entry, "scope") else { continue };
+            let Some(scope) = crate::json::get_str(entry, "scope") else {
+                continue;
+            };
             if self.authority_for_scope(scope).ok().flatten().is_some() {
                 if let Some(identity) = crate::json::get_str(entry, "authority_id") {
                     owners.insert(scope.to_owned(), identity.to_owned());
@@ -210,7 +221,11 @@ pub fn entry_has_capability(entry: &Value, capability: &str) -> bool {
 
 /// Verify a steward-signed document (registry, certificate, revocation,
 /// rotation, relaxation, directory update).
-pub fn verify_steward_document(trust: &TrustState, message_type: &str, document: &Value) -> Result<PublicKey, ContractError> {
+pub fn verify_steward_document(
+    trust: &TrustState,
+    message_type: &str,
+    document: &Value,
+) -> Result<PublicKey, ContractError> {
     let key = PublicKey::verify_document(message_type, document).ok_or_else(|| {
         ContractError::integrity(
             "SIGNATURE_INVALID",

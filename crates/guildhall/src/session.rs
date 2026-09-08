@@ -43,7 +43,11 @@ pub fn record_hook_observation(
     host: &str,
     map: &Map<String, Value>,
 ) -> Result<Option<String>, ContractError> {
-    let Some(event_id) = map.get("id").and_then(Value::as_str).filter(|id| !id.is_empty()) else {
+    let Some(event_id) = map
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+    else {
         return Ok(None);
     };
     let Some(prompt) = map
@@ -63,8 +67,16 @@ pub fn record_hook_observation(
         .map(crate::time::format_rfc3339_millis)
         .unwrap_or_else(now_rfc3339_millis);
     let observation = Observation {
-        observation_id: format!("obs_{:x}", Sha256::digest(format!("hook\0{event_id}\0{digest}").as_bytes())),
-        source_kind: if host == "claude" { "claude_jsonl" } else { "codex_jsonl" }.to_owned(),
+        observation_id: format!(
+            "obs_{:x}",
+            Sha256::digest(format!("hook\0{event_id}\0{digest}").as_bytes())
+        ),
+        source_kind: if host == "claude" {
+            "claude_jsonl"
+        } else {
+            "codex_jsonl"
+        }
+        .to_owned(),
         source_identity: "hook:UserPromptSubmit".to_owned(),
         native_id: event_id.to_owned(),
         content_digest: digest.clone(),
@@ -102,7 +114,10 @@ pub fn observe(
     let records = parse_session_corpus(&bytes)?;
     if records.len() > SESSION_OBSERVATION_LIMIT {
         return Err(ContractError::limit(
-            format!("session observation batch exceeds the {}-line bound", SESSION_OBSERVATION_LIMIT),
+            format!(
+                "session observation batch exceeds the {}-line bound",
+                SESSION_OBSERVATION_LIMIT
+            ),
             json!({
                 "omitted_count": records.len(),
                 "line_limit": SESSION_OBSERVATION_LIMIT
@@ -119,16 +134,25 @@ pub fn observe(
         let recorded_at = now_rfc3339_millis();
         for record in &records {
             let event_id = record.get("id").and_then(Value::as_str).unwrap_or_default();
-            core.insert_session_event(session, event_id, "primary-task", &json!({
-                "session_id": session, "event_id": event_id, "event_type": "primary-task"
-            }), &recorded_at)?;
+            core.insert_session_event(
+                session,
+                event_id,
+                "primary-task",
+                &json!({
+                    "session_id": session, "event_id": event_id, "event_type": "primary-task"
+                }),
+                &recorded_at,
+            )?;
         }
     }
     let mut observations = Vec::new();
     for record in &records {
         let event_id = record["id"].as_str().unwrap_or_default().to_owned();
         let text = record["text"].as_str().unwrap_or_default().to_owned();
-        let observed_at = record["observed_at"].as_str().unwrap_or_default().to_owned();
+        let observed_at = record["observed_at"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
         let digest = sha256_bytes(text.as_bytes());
         let observation_id = format!(
             "obs_{:x}",
@@ -170,7 +194,10 @@ pub fn observe(
     let classifier_observations = observations
         .iter()
         .map(|(observation, event)| {
-            let native_id = event.get("event_id").and_then(Value::as_str).unwrap_or_default();
+            let native_id = event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             json!({
                 "observation_id": observation.observation_id,
                 "source_kind": observation.source_kind,
@@ -189,14 +216,20 @@ pub fn observe(
     for batch in classifier_batches(classifier_observations)? {
         let batch_atoms = pinned_classifier_atoms(classifier, &batch)?;
         for (observation_id, atoms) in batch_atoms {
-            external_atoms.entry(observation_id).or_default().extend(atoms);
+            external_atoms
+                .entry(observation_id)
+                .or_default()
+                .extend(atoms);
         }
     }
 
     let mut atom_records = Vec::new();
     let mut candidate_records = Vec::new();
     for (observation, event) in &observations {
-        let native_id = event.get("event_id").and_then(Value::as_str).unwrap_or_default();
+        let native_id = event
+            .get("event_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
         let text = session_corpus_text(&records, native_id);
         let mut atoms = Vec::new();
         if let Some(external) = external_atoms.get(&observation.observation_id) {
@@ -244,8 +277,10 @@ pub fn observe(
                 } else {
                     destination
                 };
-                let mut candidate = build_candidate(session, &destination, &atom, native_id, false)?;
-                let rendered = reserve_candidate_prompt(&candidate, principal_id, host_instance_id)?;
+                let mut candidate =
+                    build_candidate(session, &destination, &atom, native_id, false)?;
+                let rendered =
+                    reserve_candidate_prompt(&candidate, principal_id, host_instance_id)?;
                 candidate["rendered"] = Value::Bool(rendered);
                 candidate["suppressed"] = Value::Bool(!rendered);
                 candidate_records.push(candidate);
@@ -287,10 +322,13 @@ pub fn observe(
 /// A host session token is caller-supplied and opaque.  Record it as active
 /// when it has not been seen before so Stop/SessionEnd can checkpoint it.
 fn ensure_session_record(session: &str) -> Result<(), ContractError> {
-    if personal_records("sessions.jsonl").into_iter().any(|record| {
-        record.get("session_id").and_then(Value::as_str) == Some(session)
-            && record.get("status").and_then(Value::as_str) != Some("ended")
-    }) {
+    if personal_records("sessions.jsonl")
+        .into_iter()
+        .any(|record| {
+            record.get("session_id").and_then(Value::as_str) == Some(session)
+                && record.get("status").and_then(Value::as_str) != Some("ended")
+        })
+    {
         return Ok(());
     }
     let repo = std::env::current_dir().map_err(io_error)?;
@@ -313,10 +351,22 @@ fn reserve_candidate_prompt(
     principal_id: &str,
     host_instance_id: &str,
 ) -> Result<bool, ContractError> {
-    let candidate_id = record.get("candidate_id").and_then(Value::as_str).unwrap_or_default();
-    let destination = record.get("destination").and_then(Value::as_str).unwrap_or_default();
-    let content_digest = record.get("payload_digest").and_then(Value::as_str).unwrap_or_default();
-    let source_revision = record.get("source_revision").and_then(Value::as_str).unwrap_or_default();
+    let candidate_id = record
+        .get("candidate_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let destination = record
+        .get("destination")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let content_digest = record
+        .get("payload_digest")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let source_revision = record
+        .get("source_revision")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let principal = principal_id.to_owned();
     let host_instance = host_instance_id.to_owned();
     let now = now_rfc3339_millis();
@@ -340,8 +390,12 @@ fn reserve_candidate_prompt(
 }
 
 fn parse_session_corpus(bytes: &[u8]) -> Result<Vec<Map<String, Value>>, ContractError> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|error| host_error(format!("corpus is not valid UTF-8: {}", error.valid_up_to())))?;
+    let text = std::str::from_utf8(bytes).map_err(|error| {
+        host_error(format!(
+            "corpus is not valid UTF-8: {}",
+            error.valid_up_to()
+        ))
+    })?;
     let mut records = Vec::new();
     for (index, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
@@ -355,27 +409,46 @@ fn parse_session_corpus(bytes: &[u8]) -> Result<Vec<Map<String, Value>>, Contrac
             .ok_or_else(|| host_error(format!("line {} is not a JSON object", index + 1)))?;
         for key in map.keys() {
             if !SESSION_OBSERVATION_KEYS.contains(&key.as_str()) {
-                return Err(host_error(format!("line {} has unknown key `{key}`", index + 1)));
+                return Err(host_error(format!(
+                    "line {} has unknown key `{key}`",
+                    index + 1
+                )));
             }
         }
         for key in SESSION_OBSERVATION_KEYS {
             if !map.get(key).is_some_and(Value::is_string) {
-                return Err(host_error(format!("line {} field `{key}` must be a string", index + 1)));
+                return Err(host_error(format!(
+                    "line {} field `{key}` must be a string",
+                    index + 1
+                )));
             }
         }
         let id = map["id"].as_str().unwrap_or_default();
         if id.is_empty() {
-            return Err(host_error(format!("line {} id must be nonempty", index + 1)));
+            return Err(host_error(format!(
+                "line {} id must be nonempty",
+                index + 1
+            )));
         }
         if !matches!(map["role"].as_str(), Some("user" | "assistant")) {
-            return Err(host_error(format!("line {} role must be user or assistant", index + 1)));
+            return Err(host_error(format!(
+                "line {} role must be user or assistant",
+                index + 1
+            )));
         }
         if map["source_kind"].as_str() != Some("codex_jsonl") {
-            return Err(host_error(format!("line {} source_kind must be codex_jsonl", index + 1)));
+            return Err(host_error(format!(
+                "line {} source_kind must be codex_jsonl",
+                index + 1
+            )));
         }
         let observed_at = map["observed_at"].as_str().unwrap_or_default();
-        crate::time::parse_rfc3339_millis(observed_at)
-            .map_err(|error| host_error(format!("line {} observed_at is invalid: {error}", index + 1)))?;
+        crate::time::parse_rfc3339_millis(observed_at).map_err(|error| {
+            host_error(format!(
+                "line {} observed_at is invalid: {error}",
+                index + 1
+            ))
+        })?;
         records.push(map);
     }
     if records.is_empty() {
@@ -454,7 +527,9 @@ fn classifier_batches(observations: Vec<Value>) -> Result<Vec<Value>, ContractEr
         let bytes = crate::json::canonical_bytes(&json!({ "observations": candidate })).len();
         if bytes > CLASSIFIER_REQUEST_LIMIT {
             return Err(ContractError::limit(
-                format!("a single classifier observation exceeds the {CLASSIFIER_REQUEST_LIMIT}-byte request bound"),
+                format!(
+                    "a single classifier observation exceeds the {CLASSIFIER_REQUEST_LIMIT}-byte request bound"
+                ),
                 json!({
                     "omitted_count": 1,
                     "bytes": bytes,
@@ -480,8 +555,17 @@ fn atom_from_classifier(
     let text = external
         .get("text")
         .and_then(Value::as_str)
-        .ok_or_else(|| ContractError::integrity("PROCESSOR_UNAUTHORIZED", "classifier atom has no text", "Repair the pinned classifier; no output was promoted."))?;
-    let scope = external.get("scope").and_then(Value::as_str).unwrap_or("host-session");
+        .ok_or_else(|| {
+            ContractError::integrity(
+                "PROCESSOR_UNAUTHORIZED",
+                "classifier atom has no text",
+                "Repair the pinned classifier; no output was promoted.",
+            )
+        })?;
+    let scope = external
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("host-session");
     let confidence = match external.get("confidence").and_then(Value::as_str) {
         Some("high") => 8_000,
         Some("medium") => 6_000,
@@ -506,9 +590,18 @@ fn atom_from_classifier(
     let external_taints: Vec<crate::scanner::Taint> = external
         .get("taint")
         .and_then(Value::as_array)
-        .map(|values| values.iter().filter_map(|value| value.as_str()).filter_map(crate::scanner::Taint::parse).collect())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| value.as_str())
+                .filter_map(crate::scanner::Taint::parse)
+                .collect()
+        })
         .unwrap_or_default();
-    if let Some(values) = external.get("proposed_destinations").and_then(Value::as_array) {
+    if let Some(values) = external
+        .get("proposed_destinations")
+        .and_then(Value::as_array)
+    {
         let mut destinations = values
             .iter()
             .filter_map(Value::as_str)
@@ -520,9 +613,14 @@ fn atom_from_classifier(
             })
             .collect::<Vec<_>>();
         if atom.hard_blocked
-            || external_taints
-                .iter()
-                .any(|taint| taint.hard_block() || matches!(taint, crate::scanner::Taint::PersonalSession | crate::scanner::Taint::CompanyConfidential))
+            || external_taints.iter().any(|taint| {
+                taint.hard_block()
+                    || matches!(
+                        taint,
+                        crate::scanner::Taint::PersonalSession
+                            | crate::scanner::Taint::CompanyConfidential
+                    )
+            })
         {
             destinations.retain(|destination| destination == "personal");
             if destinations.is_empty() {
@@ -544,9 +642,16 @@ fn atom_from_classifier(
             .collect();
     }
     if let Some(values) = external.get("taint").and_then(Value::as_array) {
-        atom.taints = values.iter().filter_map(Value::as_str).map(str::to_owned).collect();
+        atom.taints = values
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
     }
-    if let Some(value) = external.get("unresolved_uncertainty").and_then(Value::as_str) {
+    if let Some(value) = external
+        .get("unresolved_uncertainty")
+        .and_then(Value::as_str)
+    {
         atom.unresolved_uncertainty = (!value.is_empty()).then(|| value.to_owned());
     }
     Ok(atom)
@@ -557,7 +662,11 @@ fn classifier_fingerprint(classifier: Option<&crate::config::SharedClassifier>) 
         Some(classifier) => format!(
             "sha256:{}:{}",
             classifier.executable_sha256,
-            if classifier.model.starts_with("ollama:") { "ollama" } else { "deterministic" }
+            if classifier.model.starts_with("ollama:") {
+                "ollama"
+            } else {
+                "deterministic"
+            }
         ),
         None => {
             let executable = std::env::current_exe().unwrap_or_else(|_| "guildhall".into());
@@ -644,7 +753,8 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
     let observations = personal_records("observations.jsonl")
         .into_iter()
         .filter(|record| {
-            record.get("source_identity").and_then(Value::as_str) == Some(&format!("session:{session}"))
+            record.get("source_identity").and_then(Value::as_str)
+                == Some(&format!("session:{session}"))
         })
         .collect::<Vec<_>>();
     let observation_ids = observations
@@ -666,9 +776,16 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
         let personal = atom
             .get("proposed_destinations")
             .and_then(Value::as_array)
-            .map(|destinations| destinations.iter().any(|value| value.as_str() == Some("personal")))
+            .map(|destinations| {
+                destinations
+                    .iter()
+                    .any(|value| value.as_str() == Some("personal"))
+            })
             .unwrap_or(false);
-        let hard_blocked = atom.get("hard_blocked").and_then(Value::as_bool).unwrap_or(false);
+        let hard_blocked = atom
+            .get("hard_blocked")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         if !personal || hard_blocked {
             continue;
         }

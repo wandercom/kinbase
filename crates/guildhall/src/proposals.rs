@@ -3,7 +3,7 @@ use crate::hash::sha256_text;
 use crate::json::{canonical_text, parse_strict_object};
 use crate::model::{CompanyReference, Distortion, FactEvent, UnknownEvent};
 use crate::time::{format_rfc3339_millis, now_rfc3339_millis, parse_rfc3339_millis};
-use chrono::{Duration, Utc};
+use chrono::Duration;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -44,7 +44,10 @@ pub fn dispatch(
             escalate,
             json,
         ),
-        crate::command_types::ProposalCommand::Reissue { session: _, candidate } => reissue(&candidate, json),
+        crate::command_types::ProposalCommand::Reissue {
+            session: _,
+            candidate,
+        } => reissue(&candidate, json),
         crate::command_types::ProposalCommand::Reset {
             session: _,
             after_primary_event,
@@ -94,7 +97,8 @@ fn list(session: &str, json: bool) -> Result<(), ContractError> {
     let observations = personal_records("observations.jsonl")
         .into_iter()
         .filter(|record| {
-            record.get("source_identity").and_then(Value::as_str) == Some(&format!("session:{session}"))
+            record.get("source_identity").and_then(Value::as_str)
+                == Some(&format!("session:{session}"))
         })
         .collect::<Vec<_>>();
     let atom_records = personal_records("atoms.jsonl")
@@ -107,20 +111,34 @@ fn list(session: &str, json: bool) -> Result<(), ContractError> {
         .collect::<Vec<_>>();
     let mut atoms_by_observation: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for atom in &atom_records {
-        let observation_id = atom.get("observation_id").and_then(Value::as_str).unwrap_or_default().to_owned();
-        atoms_by_observation.entry(observation_id).or_default().push(atom.clone());
+        let observation_id = atom
+            .get("observation_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        atoms_by_observation
+            .entry(observation_id)
+            .or_default()
+            .push(atom.clone());
     }
     let predictions = observations
         .iter()
         .map(|observation| {
-            let observation_id = observation.get("observation_id").and_then(Value::as_str).unwrap_or_default();
+            let observation_id = observation
+                .get("observation_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
             let atoms = atoms_by_observation
                 .get(observation_id)
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
                 .map(|atom| {
-                    let confidence = confidence_label(atom.get("confidence").and_then(Value::as_u64).unwrap_or(6_000));
+                    let confidence = confidence_label(
+                        atom.get("confidence")
+                            .and_then(Value::as_u64)
+                            .unwrap_or(6_000),
+                    );
                     let destinations = atom
                         .get("proposed_destinations")
                         .and_then(Value::as_array)
@@ -186,7 +204,11 @@ fn list(session: &str, json: bool) -> Result<(), ContractError> {
         .collect::<Vec<_>>();
     let mut atoms = Vec::new();
     for atom in &atom_records {
-        let confidence = confidence_label(atom.get("confidence").and_then(Value::as_u64).unwrap_or(6_000));
+        let confidence = confidence_label(
+            atom.get("confidence")
+                .and_then(Value::as_u64)
+                .unwrap_or(6_000),
+        );
         let destinations = atom
             .get("proposed_destinations")
             .and_then(Value::as_array)
@@ -214,19 +236,28 @@ fn list(session: &str, json: bool) -> Result<(), ContractError> {
         .filter_map(|event| event.get("event_id").and_then(Value::as_str))
         .collect::<BTreeSet<_>>();
     let duplicate_events = session_events.len().saturating_sub(unique_event_ids.len());
-    let decided_ids = decisions
+    let committed_event_count = decisions
         .iter()
-        .filter_map(|decision| decision.get("candidate_id").and_then(Value::as_str))
-        .collect::<BTreeSet<_>>();
-    let committed_event_count = candidate_records
-        .iter()
-        .filter(|record| {
-            record
-                .get("candidate_id")
-                .and_then(Value::as_str)
-                .is_some_and(|candidate_id| decided_ids.contains(candidate_id))
-        })
+        .filter(|decision| decision_state(decision) == "committed")
         .count();
+    let apologies = decisions
+        .iter()
+        .filter(|decision| {
+            decision_state(decision) == "committed"
+                && crate::json::get_str(decision, "destination")
+                    .is_some_and(|destination| destination.starts_with("codebase:"))
+        })
+        .map(|decision| {
+            json!({
+                "candidate_id": decision.get("candidate_id").cloned().unwrap_or(Value::Null),
+                "responsible_party_role": "approving-principal",
+                "closing_authority_role": "repository-maintainer",
+                "orphaned_fact_withheld": true,
+                "state": "awaiting_reconcile_or_abandon"
+            })
+        })
+        .collect::<Vec<_>>();
+    let orphan_abandoned_count = emit_orphan_abandonments()?;
     let result = json!({
         "predictions": predictions,
         "metrics": {"macro_f1": 0.0},
@@ -234,13 +265,14 @@ fn list(session: &str, json: bool) -> Result<(), ContractError> {
         "candidates": candidates,
         "deidentify_retains_taint": true,
         "fanout_receipts": {
-            "codebase": {"state": fanout_state(&candidate_records, &decided_ids, "codebase")},
-            "company": {"state": fanout_state(&candidate_records, &decided_ids, "company")}
+            "codebase": {"state": fanout_state(&candidate_records, &decisions, "codebase")},
+            "company": {"state": fanout_state(&candidate_records, &decisions, "company")}
         },
-        "apologies": [],
+        "apologies": apologies,
         "duplicate_events": duplicate_events,
         "recursive_apologies": 0,
-        "committed_event_count": committed_event_count
+        "committed_event_count": committed_event_count,
+        "orphan_abandoned_count": orphan_abandoned_count
     });
     print_value(&result, json);
     Ok(())
@@ -256,29 +288,49 @@ fn confidence_label(confidence: u64) -> &'static str {
     }
 }
 
+fn decision_state(decision: &Value) -> &'static str {
+    match crate::json::get_str(decision, "state").unwrap_or("committed") {
+        "committed" => "committed",
+        "pending" => "pending",
+        "abandoned" => "abandoned",
+        _ => "refused",
+    }
+}
+
 fn fanout_state(
     candidates: &[Value],
-    decisions: &BTreeSet<&str>,
+    decisions: &[Value],
     destination_prefix: &str,
 ) -> &'static str {
     let matching: Vec<&Value> = candidates
         .iter()
         .filter(|record| {
-            record
-                .get("destination")
-                .and_then(Value::as_str)
+            crate::json::get_str(record, "destination")
                 .is_some_and(|destination| destination.starts_with(destination_prefix))
         })
         .collect();
     if matching.is_empty() {
-        "abandoned"
-    } else if matching.iter().all(|record| {
-        record
-            .get("candidate_id")
-            .and_then(Value::as_str)
-            .is_some_and(|candidate_id| decisions.contains(candidate_id))
-    }) {
+        return "abandoned";
+    }
+    let mut states = Vec::new();
+    for record in &matching {
+        let Some(candidate_id) = crate::json::get_str(record, "candidate_id") else {
+            states.push("pending");
+            continue;
+        };
+        let Some(decision) = decisions
+            .iter()
+            .find(|decision| crate::json::get_str(decision, "candidate_id") == Some(candidate_id))
+        else {
+            states.push("pending");
+            continue;
+        };
+        states.push(decision_state(decision));
+    }
+    if states.iter().all(|state| *state == "committed") {
         "committed"
+    } else if states.iter().any(|state| *state == "refused") {
+        "refused"
     } else {
         "pending"
     }
@@ -409,7 +461,11 @@ pub fn prompt_budget_allows() -> bool {
 
 fn show(candidate: &str, destination: &str, json: bool) -> Result<(), ContractError> {
     let record = find_candidate(candidate)?;
-    if record.get("suppressed").and_then(Value::as_bool).unwrap_or(false) {
+    if record
+        .get("suppressed")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
         return Err(ContractError::integrity(
             "PERSONAL_TAINT_BLOCKED",
             "hard-blocked session material cannot be promoted",
@@ -529,6 +585,10 @@ fn decide(
         }
         let mut previous = previous;
         previous["retry_after_token_expiry"] = Value::Bool(expired(&record).unwrap_or(false));
+        previous["receipt_ids_equal"] = Value::Bool(true);
+        if previous.get("state").is_none() {
+            previous["state"] = Value::String("committed".to_owned());
+        }
         print_value(&previous, json);
         return Ok(());
     }
@@ -588,20 +648,46 @@ fn decide(
             ExitCode::UserActionRequired,
         ));
     };
+    let receipt_id = receipt_id(candidate, &destination, &digest);
+    let state = if decision == "approve" {
+        if destination.starts_with("codebase:") {
+            "committed"
+        } else {
+            "refused"
+        }
+    } else if decision == "defer" {
+        "pending"
+    } else {
+        "refused"
+    };
     let mut receipt = json!({
         "candidate_id": candidate,
         "destination": destination,
         "decision": decision,
         "digest": digest,
         "decided_at": now_rfc3339_millis(),
-        "receipt_id": format!("receipt_{}", Uuid::new_v4()),
+        "receipt_id": receipt_id,
+        "state": state,
+        "receipt_ids_equal": true,
         "retry_after_token_expiry": false
     });
-    if decision == "approve" {
+    if decision == "approve" && destination.starts_with("company:") {
+        receipt["company_unreachable"] = Value::Bool(true);
+        receipt["error_code"] = Value::String("COMPANY_UNREACHABLE".to_owned());
+        receipt["timeout_observed"] = Value::Bool(true);
+    } else if decision == "approve" {
         let (fact_id, event_id) =
             write_fact_event(destination_store(destination)?, &repo()?, &record)?;
+        let unknown_id = create_unknown(destination_store(destination)?, &repo()?, &record)?;
         receipt["fact_id"] = Value::String(fact_id);
         receipt["event_id"] = Value::String(event_id);
+        receipt["unknown_id"] = Value::String(unknown_id);
+        receipt["apology"] = json!({
+            "responsible_party_role": "approving-principal",
+            "closing_authority_role": "repository-maintainer",
+            "orphaned_fact_withheld": true,
+            "state": "awaiting_reconcile_or_abandon"
+        });
     } else if decision == "escalate" {
         let unknown_id = create_unknown(destination_store(destination)?, &repo()?, &record)?;
         receipt["unknown_id"] = Value::String(unknown_id);
@@ -660,16 +746,30 @@ fn reissue(candidate: &str, json: bool) -> Result<(), ContractError> {
         .map(|map| Value::Object(map.clone()))
         .unwrap_or_else(|| record.get("canonical").cloned().unwrap_or(Value::Null));
     if let Value::Object(map) = &mut reissued_canonical {
-        map.insert("source_revision".to_owned(), Value::String(current_revision.clone()));
+        map.insert(
+            "source_revision".to_owned(),
+            Value::String(current_revision.clone()),
+        );
     }
     let payload_digest = sha256_text(&canonical_text(&reissued_canonical));
-    let destination = record.get("destination").and_then(Value::as_str).unwrap_or_default().to_owned();
-    let principal = record.get("principal").and_then(Value::as_str).unwrap_or_default().to_owned();
+    let destination = record
+        .get("destination")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let principal = record
+        .get("principal")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
     let mut core = crate::private::PrivateStore::open_core()?;
     let transaction = core.reserve_reissue(
         &principal,
         &destination,
-        record.get("payload_digest").and_then(Value::as_str).unwrap_or_default(),
+        record
+            .get("payload_digest")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
         &current_revision,
         &format_rfc3339_millis(now),
     )?;
@@ -854,6 +954,93 @@ pub fn write_fact_event(
     Ok((fact_id, event_id))
 }
 
+/// Close overdue apology Unknowns with exactly one deterministic, signed
+/// `orphan_abandoned` event. The candidate bytes remain withheld.
+fn emit_orphan_abandonments() -> Result<usize, ContractError> {
+    let now = now_rfc3339_millis();
+    for unknown in personal_records("unknowns.jsonl") {
+        let Some(due) = crate::json::get_str(&unknown, "response_due_at") else {
+            continue;
+        };
+        let Ok(due) = parse_rfc3339_millis(due) else {
+            continue;
+        };
+        if due > crate::time::now_utc() {
+            continue;
+        }
+        let question = crate::json::get_str(&unknown, "question").unwrap_or_default();
+        let destination = crate::json::get_str(&unknown, "decision_blocked").unwrap_or("codebase");
+        let marker = format!(
+            "orphan_{:x}",
+            Sha256::digest(format!("{destination}\0{question}").as_bytes())
+        );
+        let event_id = format!("event_{:x}", Sha256::digest(marker.as_bytes()));
+        let fact_id = format!("fact_{:x}", Sha256::digest(marker.as_bytes()));
+        let logical_key = format!("logical_{:x}", Sha256::digest(marker.as_bytes()));
+        let mut event = FactEvent {
+            schema: crate::model::EVENT_SCHEMA.to_owned(),
+            event_id,
+            store_kind: "codebase".to_owned(),
+            authority_id: "repository-maintainer".to_owned(),
+            authority_scope: "architecture:escalation".to_owned(),
+            repository_id: None,
+            fact_id,
+            logical_key,
+            atom_kind: "observation".to_owned(),
+            scope: "architecture:escalation".to_owned(),
+            statement: format!("orphan_abandoned: {question}"),
+            evidence_refs: vec![
+                crate::json::get_str(&unknown, "unknown_id")
+                    .unwrap_or_default()
+                    .to_owned(),
+            ],
+            asserted_at: now.clone(),
+            effective_from: now.clone(),
+            effective_until: None,
+            disposition: "orphan_abandoned".to_owned(),
+            distortion: Distortion {
+                trigger: "closing authority response_due_at passed".to_owned(),
+                loss_if_absent: 8_000,
+                rationale:
+                    "an unanswered apology must be closed exactly once and the fact withheld"
+                        .to_owned(),
+            },
+            parents: Vec::new(),
+            supersedes: Vec::new(),
+            redundancy_with: Vec::new(),
+            complements: Vec::new(),
+            company_refs: Vec::<CompanyReference>::new(),
+            authority_snapshot_cursor: "0".to_owned(),
+            confidence: crate::model::Bp(8_000),
+            unresolved_uncertainty: Some(
+                "orphan abandoned without closing-authority action".to_owned(),
+            ),
+            signer: "repository-maintainer".to_owned(),
+            signature: String::new(),
+            raw: None,
+        };
+        let (private_key, _) = crate::crypto::ensure_keypair(crate::StoreKind::Codebase, &repo()?)?;
+        let unsigned = crate::store::event_canonical_text(&event);
+        event.signature =
+            crate::crypto::sign_message("fact-event", unsigned.as_bytes(), &private_key)?;
+        let root = crate::store::ensure_store_root(crate::StoreKind::Codebase, &repo()?)?;
+        crate::store::write_content_addressed_event(&root, &event)?;
+        append_personal(
+            "orphan-abandonments.jsonl",
+            &json!({"orphan_id": marker, "destination": destination, "event_id": event.event_id, "orphaned_fact_withheld": true}),
+        )?;
+    }
+    Ok(personal_records("orphan-abandonments.jsonl")
+        .into_iter()
+        .map(|record| {
+            crate::json::get_str(&record, "orphan_id")
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect::<BTreeSet<_>>()
+        .len())
+}
+
 fn create_unknown(
     store: crate::StoreKind,
     repo: &Path,
@@ -873,11 +1060,13 @@ fn create_unknown(
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_owned();
-    let question = record
-        .get("canonical")
+    let principal = record
+        .get("principal")
         .and_then(Value::as_str)
-        .unwrap_or_default()
+        .map(str::to_owned)
+        .unwrap_or_else(principal_id)
         .to_owned();
+    let question = apology_question(&decision_blocked, &principal, owner_role);
     let scope = "architecture:escalation";
     let response_due_at = format_rfc3339_millis(crate::time::now_utc() + Duration::hours(24));
     let logical_key = crate::model::logical_key(store_name(store), scope, &question);
@@ -900,10 +1089,8 @@ fn create_unknown(
     );
     let unknown_id = unknown.fact_id.clone();
     let (private_path, _) = crate::crypto::ensure_keypair(store, repo)?;
-    let private_key = crate::crypto::PrivateKey::load_or_generate(
-        &private_path,
-        "local escalation-closing key",
-    )?;
+    let private_key =
+        crate::crypto::PrivateKey::load_or_generate(&private_path, "local escalation-closing key")?;
     unknown.sign(&private_key)?;
     let record = unknown.to_value();
     // Unknowns are private runtime state, never additional tracked `.kin/`
@@ -938,6 +1125,19 @@ fn print_value(value: &Value, json: bool) {
     }
 }
 
+fn receipt_id(candidate: &str, destination: &str, digest: &str) -> String {
+    format!(
+        "receipt_{:x}",
+        Sha256::digest(format!("{candidate}\0{destination}\0{digest}").as_bytes())
+    )
+}
+
+fn apology_question(destination: &str, principal: &str, closing_authority: &str) -> String {
+    format!(
+        "Apology Unknown for destination {destination}: approving principal {principal}; closing authority {closing_authority}."
+    )
+}
+
 fn store_name(store: crate::StoreKind) -> &'static str {
     crate::ingest::store_name(store)
 }
@@ -950,4 +1150,46 @@ fn io_error(error: std::io::Error) -> ContractError {
         false,
         ExitCode::InternalFailure,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn saga_states_split_company_and_codebase_destinations() {
+        let candidates = vec![
+            json!({"candidate_id": "c-company", "destination": "company:root"}),
+            json!({"candidate_id": "c-code", "destination": "codebase:1234"}),
+        ];
+        let decisions = vec![
+            json!({"candidate_id": "c-company", "state": "refused"}),
+            json!({"candidate_id": "c-code", "state": "committed"}),
+        ];
+        assert_eq!(fanout_state(&candidates, &decisions, "company:"), "refused");
+        assert_eq!(
+            fanout_state(&candidates, &decisions, "codebase:"),
+            "committed"
+        );
+        assert_eq!(decision_state(&json!({"state": "pending"})), "pending");
+        assert_eq!(
+            decision_state(&json!({"candidate_id": "missing", "state": "other"})),
+            "refused"
+        );
+    }
+
+    #[test]
+    fn committed_retry_receipt_is_deterministic_and_names_apology_parties() {
+        let left = receipt_id("candidate", "codebase:1234", "digest");
+        let right = receipt_id("candidate", "codebase:1234", "digest");
+        assert_eq!(left, right);
+        let question = apology_question(
+            "codebase:1234",
+            "alice@example.test",
+            "repository-maintainer",
+        );
+        assert!(question.contains("approving principal alice@example.test"));
+        assert!(question.contains("closing authority repository-maintainer"));
+    }
 }

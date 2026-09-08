@@ -107,7 +107,9 @@ impl PrivateKey {
             serde_json::Value::String(self.public().to_hex()),
         );
         let bytes = crate::json::try_canonical_bytes(&copy).map_err(|error| {
-            ContractError::invariant(format!("document violates the canonical data model: {error}"))
+            ContractError::invariant(format!(
+                "document violates the canonical data model: {error}"
+            ))
         })?;
         let signature = self.sign(message_type, &bytes)?;
         if let Some(map) = copy.as_object_mut() {
@@ -122,13 +124,16 @@ impl PrivateKey {
         let bytes = read_private_bytes(path, role)?;
         if bytes.len() == 32 {
             let Ok(seed) = bytes.as_slice().try_into() else {
-                return Err(signature_invalid("private key file does not contain a 32-byte seed"));
+                return Err(signature_invalid(
+                    "private key file does not contain a 32-byte seed",
+                ));
             };
             return Ok(Self {
                 key: SigningKey::from_bytes(&seed),
             });
         }
-        let text = String::from_utf8(bytes).map_err(|_| signature_invalid("private key file is neither raw seed bytes nor hex"))?;
+        let text = String::from_utf8(bytes)
+            .map_err(|_| signature_invalid("private key file is neither raw seed bytes nor hex"))?;
         Self::from_seed_text(&text)
     }
 
@@ -201,7 +206,9 @@ impl PublicKey {
     /// Returns the signer key when valid.
     pub fn verify_document(message_type: &str, document: &serde_json::Value) -> Option<PublicKey> {
         let signer = document.get("signer").and_then(serde_json::Value::as_str)?;
-        let signature = document.get("signature").and_then(serde_json::Value::as_str)?;
+        let signature = document
+            .get("signature")
+            .and_then(serde_json::Value::as_str)?;
         let key = PublicKey::from_hex(signer).ok()?;
         let bytes = crate::json::unsigned_bytes(document).ok()?;
         key.verify(message_type, &bytes, signature).then_some(key)
@@ -266,8 +273,8 @@ pub fn read_private_text(path: &Path, role: &str) -> Result<String, ContractErro
 }
 
 pub fn read_private_bytes(path: &Path, role: &str) -> Result<Vec<u8>, ContractError> {
-    let metadata = std::fs::symlink_metadata(path)
-        .map_err(|error| ContractError::unreadable(role, &error))?;
+    let metadata =
+        std::fs::symlink_metadata(path).map_err(|error| ContractError::unreadable(role, &error))?;
     if metadata.file_type().is_symlink() {
         return Err(ContractError::refused(
             "CONFIG_INVARIANT",
@@ -358,19 +365,26 @@ pub fn ensure_keypair(
     store: crate::StoreKind,
     repo: &std::path::Path,
 ) -> Result<(std::path::PathBuf, std::path::PathBuf), ContractError> {
-    let root = crate::store::store_root(store, repo).join("local").join("keys");
+    let root = crate::store::store_root(store, repo)
+        .join("local")
+        .join("keys");
     crate::paths::ensure_private_dir(&root, "local key directory")?;
     let private_path = root.join("ed25519.key");
     let public_path = root.join("ed25519.pub");
     if !private_path.exists() {
         let key = PrivateKey::generate();
         key.save_new(&private_path, "local Ed25519 key")?;
-        key.public().save_new(&public_path, "local Ed25519 public key")?;
+        key.public()
+            .save_new(&public_path, "local Ed25519 public key")?;
     }
     Ok((private_path, public_path))
 }
 
-pub fn sign_message(message_type: &str, message: &[u8], key_path: &std::path::Path) -> Result<String, ContractError> {
+pub fn sign_message(
+    message_type: &str,
+    message: &[u8],
+    key_path: &std::path::Path,
+) -> Result<String, ContractError> {
     PrivateKey::load_or_generate(key_path, "local Ed25519 key")?.sign(message_type, message)
 }
 

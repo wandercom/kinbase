@@ -143,7 +143,8 @@ fn views(text: &str) -> Result<Vec<(String, String)>, String> {
     out.push(("squeezed".to_owned(), squeeze(text)));
     let mut decoded = Vec::new();
     for token in tokens(text) {
-        if token.len() >= 16 && token.bytes().all(|b| b.is_ascii_hexdigit()) && token.len() % 2 == 0 {
+        if token.len() >= 16 && token.bytes().all(|b| b.is_ascii_hexdigit()) && token.len() % 2 == 0
+        {
             if let Some(bytes) = crate::hash::hex_decode(&token.to_lowercase()) {
                 if let Ok(value) = String::from_utf8(bytes) {
                     decoded.push(("hex".to_owned(), value));
@@ -178,17 +179,22 @@ fn views(text: &str) -> Result<Vec<(String, String)>, String> {
     }
     for (name, value) in decoded {
         out.push((format!("{name}:squeezed"), squeeze(&value)));
-        out.push((format!("{name}:lower"), value.nfc().collect::<String>().to_lowercase()));
+        out.push((
+            format!("{name}:lower"),
+            value.nfc().collect::<String>().to_lowercase(),
+        ));
         out.push((name, value));
     }
     Ok(out)
 }
 
 fn tokens(text: &str) -> Vec<String> {
-    text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=' || c == '-' || c == '_'))
-        .filter(|token| !token.is_empty())
-        .map(str::to_owned)
-        .collect()
+    text.split(|c: char| {
+        !(c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=' || c == '-' || c == '_')
+    })
+    .filter(|token| !token.is_empty())
+    .map(str::to_owned)
+    .collect()
 }
 
 fn percent_decode(text: &str) -> String {
@@ -229,7 +235,8 @@ fn json_unescape(text: &str) -> String {
                             {
                                 let low: String = chars[index + 8..index + 12].iter().collect();
                                 if let Ok(low_unit) = u16::from_str_radix(&low, 16) {
-                                    if let Some(Ok(c)) = char::decode_utf16([unit, low_unit]).next() {
+                                    if let Some(Ok(c)) = char::decode_utf16([unit, low_unit]).next()
+                                    {
                                         out.push(c);
                                         index += 12;
                                         continue;
@@ -346,10 +353,7 @@ fn scan_inner(text: &str, registry: &Registry) -> Result<ScanResult, String> {
             STANDARD_NO_PAD.encode(canary.as_bytes()),
             URL_SAFE_NO_PAD.encode(canary.as_bytes()),
         ];
-        let percent_form: String = canary
-            .bytes()
-            .map(|b| format!("%{b:02X}"))
-            .collect();
+        let percent_form: String = canary.bytes().map(|b| format!("%{b:02X}")).collect();
         let json_form: String = canary
             .encode_utf16()
             .map(|unit| format!("\\u{unit:04x}"))
@@ -357,24 +361,54 @@ fn scan_inner(text: &str, registry: &Registry) -> Result<ScanResult, String> {
         for (family, view) in &all_views {
             let view_lower = view.to_lowercase();
             if view.contains(canary.as_str()) {
-                add(&mut findings, "canary-exact", family, Taint::ConfiguredCanary);
+                add(
+                    &mut findings,
+                    "canary-exact",
+                    family,
+                    Taint::ConfiguredCanary,
+                );
             } else if view_lower.contains(&lower) {
-                add(&mut findings, "canary-case", family, Taint::ConfiguredCanary);
+                add(
+                    &mut findings,
+                    "canary-case",
+                    family,
+                    Taint::ConfiguredCanary,
+                );
             }
             if squeeze(view).contains(&squeezed) {
-                add(&mut findings, "canary-normalized", family, Taint::ConfiguredCanary);
+                add(
+                    &mut findings,
+                    "canary-normalized",
+                    family,
+                    Taint::ConfiguredCanary,
+                );
             }
             if view_lower.contains(&hex_form) {
                 add(&mut findings, "canary-hex", family, Taint::ConfiguredCanary);
             }
             if base64_forms.iter().any(|form| view.contains(form.as_str())) {
-                add(&mut findings, "canary-base64", family, Taint::ConfiguredCanary);
+                add(
+                    &mut findings,
+                    "canary-base64",
+                    family,
+                    Taint::ConfiguredCanary,
+                );
             }
             if view.to_uppercase().contains(&percent_form) {
-                add(&mut findings, "canary-percent", family, Taint::ConfiguredCanary);
+                add(
+                    &mut findings,
+                    "canary-percent",
+                    family,
+                    Taint::ConfiguredCanary,
+                );
             }
             if view_lower.contains(&json_form) {
-                add(&mut findings, "canary-json-escape", family, Taint::ConfiguredCanary);
+                add(
+                    &mut findings,
+                    "canary-json-escape",
+                    family,
+                    Taint::ConfiguredCanary,
+                );
             }
             if squeezed.len() >= 20 {
                 let view_squeezed = squeeze(view);
@@ -382,7 +416,12 @@ fn scan_inner(text: &str, registry: &Registry) -> Result<ScanResult, String> {
                 for window in chars.windows(16) {
                     let piece: String = window.iter().collect();
                     if view_squeezed.contains(&piece) {
-                        add(&mut findings, "canary-partial", family, Taint::ConfiguredCanary);
+                        add(
+                            &mut findings,
+                            "canary-partial",
+                            family,
+                            Taint::ConfiguredCanary,
+                        );
                         break;
                     }
                 }
@@ -394,12 +433,22 @@ fn scan_inner(text: &str, registry: &Registry) -> Result<ScanResult, String> {
         for (family, view) in &all_views {
             for token in view.split(|c: char| !c.is_alphanumeric()) {
                 if token.len() >= 6 && registry.canary_digests.contains(&canary_digest(token)) {
-                    add(&mut findings, "canary-digest", family, Taint::ConfiguredCanary);
+                    add(
+                        &mut findings,
+                        "canary-digest",
+                        family,
+                        Taint::ConfiguredCanary,
+                    );
                 }
             }
             let squeezed = squeeze(view);
             if squeezed.len() >= 6 && registry.canary_digests.contains(&canary_digest(&squeezed)) {
-                add(&mut findings, "canary-digest-whole", family, Taint::ConfiguredCanary);
+                add(
+                    &mut findings,
+                    "canary-digest-whole",
+                    family,
+                    Taint::ConfiguredCanary,
+                );
             }
         }
     }
@@ -411,7 +460,12 @@ fn scan_inner(text: &str, registry: &Registry) -> Result<ScanResult, String> {
         }
         for (family, view) in &all_views {
             if squeeze(view).contains(&squeezed) {
-                add(&mut findings, "identifier-registered", family, Taint::ForbiddenIdentifier);
+                add(
+                    &mut findings,
+                    "identifier-registered",
+                    family,
+                    Taint::ForbiddenIdentifier,
+                );
             }
         }
     }
@@ -438,12 +492,23 @@ fn scan_inner(text: &str, registry: &Registry) -> Result<ScanResult, String> {
 fn credential_formats(view: &str, family: &str, findings: &mut Vec<Finding>) {
     for token in tokens(view) {
         let t = token.as_str();
-        let matched = (t.starts_with("AKIA") && t.len() == 20 && t[4..].bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()))
+        let matched = (t.starts_with("AKIA")
+            && t.len() == 20
+            && t[4..]
+                .bytes()
+                .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit()))
             || (t.starts_with("ghp_") && t.len() >= 30)
             || (t.starts_with("gho_") && t.len() >= 30)
             || (t.starts_with("github_pat_") && t.len() >= 30)
-            || (t.starts_with("sk-") && t.len() >= 20 && t[3..].bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
-            || (t.starts_with("xox") && t.len() >= 20 && t.as_bytes().get(3).is_some_and(|b| b"baprs".contains(b)) && t.as_bytes().get(4) == Some(&b'-'))
+            || (t.starts_with("sk-")
+                && t.len() >= 20
+                && t[3..]
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'))
+            || (t.starts_with("xox")
+                && t.len() >= 20
+                && t.as_bytes().get(3).is_some_and(|b| b"baprs".contains(b))
+                && t.as_bytes().get(4) == Some(&b'-'))
             || (t.starts_with("AIza") && t.len() == 39)
             || (t.starts_with("eyJ") && t.matches('.').count() == 2 && t.len() >= 40)
             || (t.starts_with("glpat-") && t.len() >= 20)
@@ -485,12 +550,17 @@ fn secret_fields(view: &str, family: &str, findings: &mut Vec<Finding>) {
             let start = search + found + key.len();
             let rest = &lower[start..];
             let trimmed = rest.trim_start();
-            if let Some(after) = trimmed.strip_prefix(':').or_else(|| trimmed.strip_prefix('=')) {
+            if let Some(after) = trimmed
+                .strip_prefix(':')
+                .or_else(|| trimmed.strip_prefix('='))
+            {
                 let value: String = after
                     .trim_start()
                     .trim_start_matches(['"', '\''])
                     .chars()
-                    .take_while(|c| !c.is_whitespace() && *c != '"' && *c != '\'' && *c != ',' && *c != ';')
+                    .take_while(|c| {
+                        !c.is_whitespace() && *c != '"' && *c != '\'' && *c != ',' && *c != ';'
+                    })
                     .collect();
                 if value.len() >= 6 && value != "<redacted>" && !value.starts_with("${") {
                     add(findings, "secret-field", family, Taint::Secret);
@@ -511,22 +581,45 @@ fn identifier_formats(view: &str, family: &str, findings: &mut Vec<Finding>) {
             && window[4..6].iter().all(u8::is_ascii_digit)
             && window[7..].iter().all(u8::is_ascii_digit)
         {
-            add(findings, "identifier-ssn-format", family, Taint::ForbiddenIdentifier);
+            add(
+                findings,
+                "identifier-ssn-format",
+                family,
+                Taint::ForbiddenIdentifier,
+            );
             break;
         }
     }
     // Email addresses.
-    for token in view.split(|c: char| c.is_whitespace() || c == '<' || c == '>' || c == '(' || c == ')' || c == ',' || c == ';' || c == '"') {
+    for token in view.split(|c: char| {
+        c.is_whitespace()
+            || c == '<'
+            || c == '>'
+            || c == '('
+            || c == ')'
+            || c == ','
+            || c == ';'
+            || c == '"'
+    }) {
         if let Some((local, domain)) = token.split_once('@') {
             if !local.is_empty()
                 && domain.contains('.')
-                && local.bytes().all(|b| b.is_ascii_alphanumeric() || b".+_-".contains(&b))
-                && domain.bytes().all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
+                && local
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b".+_-".contains(&b))
+                && domain
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
                 && !domain.ends_with('.')
                 && domain != "example.com"
                 && !domain.ends_with(".example")
             {
-                add(findings, "identifier-email", family, Taint::ForbiddenIdentifier);
+                add(
+                    findings,
+                    "identifier-email",
+                    family,
+                    Taint::ForbiddenIdentifier,
+                );
                 break;
             }
         }
@@ -545,7 +638,12 @@ fn identifier_formats(view: &str, family: &str, findings: &mut Vec<Finding>) {
             run = 0;
         }
         if digits >= 10 && run <= 4 && digits <= 15 && view.contains('-') && view.contains('+') {
-            add(findings, "identifier-phone-format", family, Taint::ForbiddenIdentifier);
+            add(
+                findings,
+                "identifier-phone-format",
+                family,
+                Taint::ForbiddenIdentifier,
+            );
             break;
         }
     }
@@ -559,15 +657,28 @@ fn correlation_ids(view: &str, family: &str, findings: &mut Vec<Finding>) {
         "transcript_path",
     ] {
         if view.contains(marker) {
-            add(findings, "correlation-transcript-path", family, Taint::ForbiddenIdentifier);
+            add(
+                findings,
+                "correlation-transcript-path",
+                family,
+                Taint::ForbiddenIdentifier,
+            );
         }
     }
     for token in tokens(view) {
         let t = token.as_str();
-        if (t.starts_with("session_") || t.starts_with("obs_") || t.starts_with("cand_") || t.starts_with("rollout-20"))
+        if (t.starts_with("session_")
+            || t.starts_with("obs_")
+            || t.starts_with("cand_")
+            || t.starts_with("rollout-20"))
             && t.len() >= 24
         {
-            add(findings, "correlation-private-id", family, Taint::ForbiddenIdentifier);
+            add(
+                findings,
+                "correlation-private-id",
+                family,
+                Taint::ForbiddenIdentifier,
+            );
         }
     }
 }

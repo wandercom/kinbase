@@ -51,10 +51,7 @@ fn host_relative_config(host: &str) -> &'static str {
     }
 }
 
-fn host_range(
-    host: &str,
-    ranges: &crate::config::SharedHosts,
-) -> String {
+fn host_range(host: &str, ranges: &crate::config::SharedHosts) -> String {
     if host == "claude" {
         ranges.claude_version.clone()
     } else {
@@ -99,7 +96,11 @@ fn version_text(bytes: &[u8]) -> String {
     }
     versions
         .into_iter()
-        .find(|value| value.chars().any(|character| character != '0' && character != '.'))
+        .find(|value| {
+            value
+                .chars()
+                .any(|character| character != '0' && character != '.')
+        })
         .unwrap_or_default()
 }
 
@@ -107,7 +108,11 @@ fn version_components(value: &str) -> Vec<u64> {
     value
         .trim_start_matches('v')
         .split('.')
-        .map(|part| part.trim_start_matches(|character: char| !character.is_ascii_digit()).parse::<u64>().unwrap_or(0))
+        .map(|part| {
+            part.trim_start_matches(|character: char| !character.is_ascii_digit())
+                .parse::<u64>()
+                .unwrap_or(0)
+        })
         .collect()
 }
 
@@ -145,11 +150,13 @@ fn probe_host(host: &str) -> Result<Value, ContractError> {
     let output = std::process::Command::new(&path)
         .arg("--version")
         .output()
-        .map_err(|error| ContractError::degraded(
-            "UNSUPPORTED_HOST_VERSION",
-            format!("host version probe failed: {}", error.kind()),
-            "Repair the host executable or its approved wrapper on PATH.",
-        ))?;
+        .map_err(|error| {
+            ContractError::degraded(
+                "UNSUPPORTED_HOST_VERSION",
+                format!("host version probe failed: {}", error.kind()),
+                "Repair the host executable or its approved wrapper on PATH.",
+            )
+        })?;
     let version = version_text(&output.stdout);
     if !output.status.success() || version.is_empty() {
         return Err(ContractError::degraded(
@@ -213,7 +220,10 @@ fn plan(
     if json {
         println!("{}", crate::json::canonical_text(&result));
     } else {
-        println!("{}", serde_json::to_string_pretty(&result).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&result).unwrap_or_default()
+        );
     }
     Ok(())
 }
@@ -229,7 +239,9 @@ fn install(
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
         .filter(|value| !value.as_os_str().is_empty())
-        .ok_or_else(|| ContractError::invariant("HOME is required for user-level hook installation"))?;
+        .ok_or_else(|| {
+            ContractError::invariant("HOME is required for user-level hook installation")
+        })?;
     let destination = home.join(relative);
     if let Some(parent) = destination.parent() {
         std::fs::create_dir_all(parent).map_err(io_error)?;
@@ -251,7 +263,10 @@ fn install(
     if json {
         println!("{}", crate::json::canonical_text(&receipt));
     } else {
-        println!("{}", serde_json::to_string_pretty(&receipt).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&receipt).unwrap_or_default()
+        );
     }
     Ok(())
 }
@@ -259,62 +274,73 @@ fn install(
 fn install_codex(path: &Path, host: &str, program: &str) -> Result<(), ContractError> {
     let mut table: toml::Value = if path.exists() {
         let text = std::fs::read_to_string(path).map_err(io_error)?;
-        text.parse::<toml::Value>().map_err(|error| ContractError::invariant(format!("existing Codex config is not valid TOML: {error}")))?
+        text.parse::<toml::Value>().map_err(|error| {
+            ContractError::invariant(format!("existing Codex config is not valid TOML: {error}"))
+        })?
     } else {
         toml::Value::Table(toml::map::Map::new())
     };
     let toml::Value::Table(root) = &mut table else {
-        return Err(ContractError::invariant("existing Codex config must be a TOML table"));
+        return Err(ContractError::invariant(
+            "existing Codex config must be a TOML table",
+        ));
     };
     let hooks = root
         .entry("hooks".to_owned())
         .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
     let toml::Value::Table(hooks) = hooks else {
-        return Err(ContractError::invariant("existing Codex [hooks] must be a table"));
+        return Err(ContractError::invariant(
+            "existing Codex [hooks] must be a table",
+        ));
     };
     for event in HOOK_EVENTS {
-        let command = format!(
-            "{} hooks dispatch {} {}",
-            shell_quote(program),
-            host,
-            event
-        );
+        let command = format!("{} hooks dispatch {} {}", shell_quote(program), host, event);
         let mut entry = toml::map::Map::new();
         entry.insert("type".to_owned(), toml::Value::String("command".to_owned()));
         entry.insert("command".to_owned(), toml::Value::String(command));
-        hooks.insert(event.to_owned(), toml::Value::Array(vec![toml::Value::Table(entry)]));
+        hooks.insert(
+            event.to_owned(),
+            toml::Value::Array(vec![toml::Value::Table(entry)]),
+        );
     }
-    let rendered = toml::to_string_pretty(&table)
-        .map_err(|error| ContractError::internal(format!("Codex config serialization failed: {error}")))?;
+    let rendered = toml::to_string_pretty(&table).map_err(|error| {
+        ContractError::internal(format!("Codex config serialization failed: {error}"))
+    })?;
     std::fs::write(path, rendered.as_bytes()).map_err(io_error)
 }
 
 fn install_claude(path: &Path, host: &str, program: &str) -> Result<(), ContractError> {
     let mut document: Value = if path.exists() {
         let bytes = std::fs::read(path).map_err(io_error)?;
-        crate::json::parse_strict_value(&bytes).map_err(|error| ContractError::invariant(format!("existing Claude settings are not strict JSON: {error}")))?
+        crate::json::parse_strict_value(&bytes).map_err(|error| {
+            ContractError::invariant(format!(
+                "existing Claude settings are not strict JSON: {error}"
+            ))
+        })?
     } else {
         json!({})
     };
     let Value::Object(settings) = &mut document else {
-        return Err(ContractError::invariant("existing Claude settings must be a JSON object"));
+        return Err(ContractError::invariant(
+            "existing Claude settings must be a JSON object",
+        ));
     };
     let hooks = settings
         .entry("hooks".to_owned())
         .or_insert_with(|| json!({}));
     let Value::Object(hooks) = hooks else {
-        return Err(ContractError::invariant("existing Claude hooks setting must be an object"));
+        return Err(ContractError::invariant(
+            "existing Claude hooks setting must be an object",
+        ));
     };
     for event in HOOK_EVENTS {
-        let command = format!(
-            "{} hooks dispatch {} {}",
-            shell_quote(program),
-            host,
-            event
+        let command = format!("{} hooks dispatch {} {}", shell_quote(program), host, event);
+        hooks.insert(
+            event.to_owned(),
+            json!([
+                {"hooks": [{"type": "command", "command": command}]}
+            ]),
         );
-        hooks.insert(event.to_owned(), json!([
-            {"hooks": [{"type": "command", "command": command}]}
-        ]));
     }
     std::fs::write(path, crate::json::canonical_bytes(&document)).map_err(io_error)
 }
@@ -328,7 +354,13 @@ fn supported_event(event: &str) -> bool {
     HOOK_EVENTS.contains(&event)
         || matches!(
             event,
-            "session-start" | "prompt" | "Prompt" | "pre-edit" | "session-end" | "primary-task" | "observation"
+            "session-start"
+                | "prompt"
+                | "Prompt"
+                | "pre-edit"
+                | "session-end"
+                | "primary-task"
+                | "observation"
         )
 }
 
@@ -340,25 +372,29 @@ fn dispatch_event(
 ) -> Result<(), ContractError> {
     let host = host_name(host_arg);
     let mut stdin = Vec::new();
-    std::io::stdin()
-        .read_to_end(&mut stdin)
-        .map_err(|error| ContractError::invariant(format!("host hook stdin is unreadable: {error}")))?;
+    std::io::stdin().read_to_end(&mut stdin).map_err(|error| {
+        ContractError::invariant(format!("host hook stdin is unreadable: {error}"))
+    })?;
     let map: Map<String, Value> = if stdin.is_empty() {
         Map::new()
     } else {
         crate::json::parse_strict_value(&stdin)
-            .map_err(|error| ContractError::degraded(
-                "UNSUPPORTED_HOST_VERSION",
-                format!("native host envelope is invalid: {error}"),
-                "Send one strict JSON envelope on stdin.",
-            ))?
+            .map_err(|error| {
+                ContractError::degraded(
+                    "UNSUPPORTED_HOST_VERSION",
+                    format!("native host envelope is invalid: {error}"),
+                    "Send one strict JSON envelope on stdin.",
+                )
+            })?
             .as_object()
             .cloned()
-            .ok_or_else(|| ContractError::degraded(
-                "UNSUPPORTED_HOST_VERSION",
-                "native host envelope must be a JSON object",
-                "Send one strict JSON object on stdin.",
-            ))?
+            .ok_or_else(|| {
+                ContractError::degraded(
+                    "UNSUPPORTED_HOST_VERSION",
+                    "native host envelope must be a JSON object",
+                    "Send one strict JSON object on stdin.",
+                )
+            })?
     };
     let event_type = if supported_event(event) {
         event.to_owned()
@@ -431,13 +467,16 @@ fn dispatch_event(
     });
     match event_type.as_str() {
         "UserPromptSubmit" | "prompt" | "Prompt" => {
-            merge(&mut response, json!({
-                "capture_active": true,
-                "personal_root_readable": false,
-                "sandbox_enforced": true,
-                "sandbox_disabled_loudly": false,
-                "stolen_bytes_promoted": false
-            }));
+            merge(
+                &mut response,
+                json!({
+                    "capture_active": true,
+                    "personal_root_readable": false,
+                    "sandbox_enforced": true,
+                    "sandbox_disabled_loudly": false,
+                    "stolen_bytes_promoted": false
+                }),
+            );
         }
         "Stop" | "SessionEnd" | "session-end" => {
             let session_id = map
@@ -448,10 +487,16 @@ fn dispatch_event(
             merge(&mut response, checkpoint);
         }
         "PreToolUse" | "pre-edit" => {
-            merge(&mut response, json!({"tool_use_allowed": true, "personal_queried": false}));
+            merge(
+                &mut response,
+                json!({"tool_use_allowed": true, "personal_queried": false}),
+            );
         }
         "PreCompact" => {
-            merge(&mut response, json!({"compact_allowed": true, "personal_queried": false}));
+            merge(
+                &mut response,
+                json!({"compact_allowed": true, "personal_queried": false}),
+            );
         }
         _ => {}
     }
@@ -479,7 +524,9 @@ fn dispatch_event(
 }
 
 fn merge(target: &mut Value, additions: Value) {
-    let Value::Object(additions) = additions else { return; };
+    let Value::Object(additions) = additions else {
+        return;
+    };
     if let Value::Object(target) = target {
         for (key, value) in additions {
             target.insert(key, value);
@@ -512,7 +559,8 @@ pub fn hook_state(host: &str, ranges: &crate::config::SharedHosts) -> Value {
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| hook_config_has_entries(host, &text))
         .unwrap_or(false);
-    let plan = plan_payload(host_arg(host), ranges).unwrap_or_else(|_| json!({"plan_digest": Value::Null}));
+    let plan = plan_payload(host_arg(host), ranges)
+        .unwrap_or_else(|_| json!({"plan_digest": Value::Null}));
     if configured {
         json!({
             "host": host,
@@ -537,10 +585,7 @@ pub fn hook_state(host: &str, ranges: &crate::config::SharedHosts) -> Value {
     }
 }
 
-pub fn hook_approval_error(
-    host: &str,
-    ranges: &crate::config::SharedHosts,
-) -> ContractError {
+pub fn hook_approval_error(host: &str, ranges: &crate::config::SharedHosts) -> ContractError {
     let state = hook_state(host, ranges);
     ContractError::user_action(
         "HOOK_APPROVAL_REQUIRED",
@@ -554,21 +599,23 @@ pub fn hook_approval_error(
 }
 
 fn hook_config_has_entries(host: &str, text: &str) -> Option<bool> {
-    let has_command = |event: &str| {
-        text.contains(&format!("hooks dispatch {host} {event}"))
-    };
+    let has_command = |event: &str| text.contains(&format!("hooks dispatch {host} {event}"));
     if host == "claude" {
         let document: Value = serde_json::from_str(text).ok()?;
         let hooks = document.get("hooks")?;
-        return Some(HOOK_EVENTS.iter().all(|event| {
-            hooks.get(*event).is_some_and(Value::is_array) && has_command(event)
-        }));
+        return Some(
+            HOOK_EVENTS
+                .iter()
+                .all(|event| hooks.get(*event).is_some_and(Value::is_array) && has_command(event)),
+        );
     }
     let table: toml::Value = text.parse().ok()?;
     let hooks = table.get("hooks")?;
-    Some(HOOK_EVENTS.iter().all(|event| {
-        hooks.get(*event).is_some_and(toml::Value::is_array) && has_command(event)
-    }))
+    Some(
+        HOOK_EVENTS.iter().all(|event| {
+            hooks.get(*event).is_some_and(toml::Value::is_array) && has_command(event)
+        }),
+    )
 }
 
 pub fn host_version(host: &str) -> String {

@@ -10,7 +10,10 @@ pub enum Command {
     Status {
         #[arg(long)]
         repo: Option<PathBuf>,
-        #[arg(long = "as-of", help = "Explicit RFC 3339 UTC millisecond reducer instant; defaults to the recorded proof clock")]
+        #[arg(
+            long = "as-of",
+            help = "Explicit RFC 3339 UTC millisecond reducer instant; defaults to the recorded proof clock"
+        )]
         as_of: Option<String>,
     },
     Doctor {
@@ -27,7 +30,12 @@ pub enum Command {
         #[arg(long)]
         checkpoint: Option<String>,
     },
-    Classifier {},
+    Classifier {
+        #[arg(long)]
+        provider: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+    },
     #[command(subcommand)]
     Corpus(CorpusCommand),
     Fsck {
@@ -231,7 +239,10 @@ pub enum ExperimentCommand {
     },
     Run {
         frozen_manifest: PathBuf,
-        #[arg(long, help = "Validate admission and append the run census without launching candidates")]
+        #[arg(
+            long,
+            help = "Validate admission and append the run census without launching candidates"
+        )]
         smoke: bool,
     },
     Score {

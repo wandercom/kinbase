@@ -29,14 +29,19 @@ impl CompanyDb {
             ContractError::refused(
                 "CONFIG_INVARIANT",
                 format!("Company SQLite cannot be opened ({error})"),
-                format!("Make {} writable by the service user; no partial schema was created.", path.display()),
+                format!(
+                    "Make {} writable by the service user; no partial schema was created.",
+                    path.display()
+                ),
             )
         })?;
         connection
             .busy_timeout(std::time::Duration::from_secs(10))
             .map_err(sqlite_error("busy timeout"))?;
         connection
-            .execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;")
+            .execute_batch(
+                "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;",
+            )
             .map_err(sqlite_error("pragma"))?;
         {
             use std::os::unix::fs::PermissionsExt;
@@ -140,14 +145,19 @@ impl CompanyDb {
             )
             .map_err(sqlite_error("schema version"))?;
         self.connection
-            .execute("INSERT OR IGNORE INTO meta(key, value) VALUES ('revocation_cursor', '0')", [])
+            .execute(
+                "INSERT OR IGNORE INTO meta(key, value) VALUES ('revocation_cursor', '0')",
+                [],
+            )
             .map_err(sqlite_error("revocation cursor"))?;
         Ok(())
     }
 
     pub fn meta(&self, key: &str) -> Result<Option<String>, ContractError> {
         self.connection
-            .query_row("SELECT value FROM meta WHERE key=?1", params![key], |row| row.get(0))
+            .query_row("SELECT value FROM meta WHERE key=?1", params![key], |row| {
+                row.get(0)
+            })
             .optional()
             .map_err(sqlite_error("meta"))
     }
@@ -165,12 +175,16 @@ impl CompanyDb {
     /// Current change cursor: the highest event cursor (0 when empty).
     pub fn cursor(&self) -> Result<i64, ContractError> {
         self.connection
-            .query_row("SELECT COALESCE(MAX(cursor), 0) FROM events", [], |row| row.get(0))
+            .query_row("SELECT COALESCE(MAX(cursor), 0) FROM events", [], |row| {
+                row.get(0)
+            })
             .map_err(sqlite_error("cursor"))
     }
 
     pub fn revocation_cursor(&self) -> Result<String, ContractError> {
-        Ok(self.meta("revocation_cursor")?.unwrap_or_else(|| "0".to_owned()))
+        Ok(self
+            .meta("revocation_cursor")?
+            .unwrap_or_else(|| "0".to_owned()))
     }
 
     pub fn append_event(
@@ -208,7 +222,11 @@ impl CompanyDb {
 
     pub fn event_cursor(&self, event_id: &str) -> Result<Option<i64>, ContractError> {
         self.connection
-            .query_row("SELECT cursor FROM events WHERE event_id=?1", params![event_id], |row| row.get(0))
+            .query_row(
+                "SELECT cursor FROM events WHERE event_id=?1",
+                params![event_id],
+                |row| row.get(0),
+            )
             .optional()
             .map_err(sqlite_error("event cursor"))
     }
@@ -216,32 +234,51 @@ impl CompanyDb {
     pub fn events_of_kind(&self, kind: &str) -> Result<Vec<(i64, Value, String)>, ContractError> {
         let mut statement = self
             .connection
-            .prepare("SELECT cursor, payload, verification FROM events WHERE kind=?1 ORDER BY cursor")
+            .prepare(
+                "SELECT cursor, payload, verification FROM events WHERE kind=?1 ORDER BY cursor",
+            )
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
-            .query_map(params![kind], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
+            .query_map(params![kind], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
             .map_err(sqlite_error("query"))?;
         let mut output = Vec::new();
         for row in rows {
             let (cursor, payload, verification) = row.map_err(sqlite_error("row"))?;
-            let value: Value = serde_json::from_str(&payload).map_err(|error| ContractError::internal(error.to_string()))?;
+            let value: Value = serde_json::from_str(&payload)
+                .map_err(|error| ContractError::internal(error.to_string()))?;
             output.push((cursor, value, verification));
         }
         Ok(output)
     }
 
-    pub fn events_of_message_type(&self, message_type: &str) -> Result<Vec<(i64, Value, String)>, ContractError> {
+    pub fn events_of_message_type(
+        &self,
+        message_type: &str,
+    ) -> Result<Vec<(i64, Value, String)>, ContractError> {
         let mut statement = self
             .connection
             .prepare("SELECT cursor, payload, verification FROM events WHERE message_type=?1 ORDER BY cursor")
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
-            .query_map(params![message_type], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
+            .query_map(params![message_type], |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
             .map_err(sqlite_error("query"))?;
         let mut output = Vec::new();
         for row in rows {
             let (cursor, payload, verification) = row.map_err(sqlite_error("row"))?;
-            let value: Value = serde_json::from_str(&payload).map_err(|error| ContractError::internal(error.to_string()))?;
+            let value: Value = serde_json::from_str(&payload)
+                .map_err(|error| ContractError::internal(error.to_string()))?;
             output.push((cursor, value, verification));
         }
         Ok(output)
@@ -265,7 +302,8 @@ impl CompanyDb {
                 }))
             })
             .map_err(sqlite_error("query"))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error("rows"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("rows"))
     }
 
     // ----- tokens -----
@@ -325,7 +363,11 @@ impl CompanyDb {
 
     /// First-use binding (Validator ruling R-4): bind on first successful
     /// authentication; refuse a different key afterwards.
-    pub fn bind_token_key(&self, token_digest: &str, client_key: &str) -> Result<bool, ContractError> {
+    pub fn bind_token_key(
+        &self,
+        token_digest: &str,
+        client_key: &str,
+    ) -> Result<bool, ContractError> {
         let existing: Option<Option<String>> = self
             .connection
             .query_row(
@@ -337,7 +379,10 @@ impl CompanyDb {
             .map_err(sqlite_error("token binding"))?;
         match existing {
             None => Ok(false),
-            Some(Some(bound)) => Ok(crate::crypto::constant_time_equal(bound.as_bytes(), client_key.as_bytes())),
+            Some(Some(bound)) => Ok(crate::crypto::constant_time_equal(
+                bound.as_bytes(),
+                client_key.as_bytes(),
+            )),
             Some(None) => {
                 self.connection
                     .execute(
@@ -352,7 +397,12 @@ impl CompanyDb {
 
     /// R-17: record each successful `(token, client key)` pair for audit.
     /// Several keys may use one token; read ceilings are keyed by pair.
-    pub fn record_token_client_pair(&self, token_digest: &str, client_key: &str, now: &str) -> Result<bool, ContractError> {
+    pub fn record_token_client_pair(
+        &self,
+        token_digest: &str,
+        client_key: &str,
+        now: &str,
+    ) -> Result<bool, ContractError> {
         let inserted = self
             .connection
             .execute(
@@ -387,7 +437,11 @@ impl CompanyDb {
     pub fn auth_failures(&self, minute: i64) -> Result<i64, ContractError> {
         Ok(self
             .connection
-            .query_row("SELECT count FROM auth_failures WHERE minute=?1", params![minute], |row| row.get(0))
+            .query_row(
+                "SELECT count FROM auth_failures WHERE minute=?1",
+                params![minute],
+                |row| row.get(0),
+            )
             .optional()
             .map_err(sqlite_error("auth failures"))?
             .unwrap_or(0))
@@ -419,7 +473,13 @@ impl CompanyDb {
             .map_err(sqlite_error("request rate read"))
     }
 
-    pub fn add_read_volume(&self, principal_key: &str, hour: i64, count: i64, bytes: i64) -> Result<(i64, i64), ContractError> {
+    pub fn add_read_volume(
+        &self,
+        principal_key: &str,
+        hour: i64,
+        count: i64,
+        bytes: i64,
+    ) -> Result<(i64, i64), ContractError> {
         self.connection
             .execute(
                 "INSERT INTO read_volume(principal_key, hour, count, bytes) VALUES (?1, ?2, ?3, ?4)
@@ -436,9 +496,18 @@ impl CompanyDb {
             .map_err(sqlite_error("read volume read"))
     }
 
-    pub fn consume_request_nonce(&self, client_key: &str, nonce: &str, expires_at: &str, now: &str) -> Result<bool, ContractError> {
+    pub fn consume_request_nonce(
+        &self,
+        client_key: &str,
+        nonce: &str,
+        expires_at: &str,
+        now: &str,
+    ) -> Result<bool, ContractError> {
         self.connection
-            .execute("DELETE FROM request_nonces WHERE expires_at <= ?1", params![now])
+            .execute(
+                "DELETE FROM request_nonces WHERE expires_at <= ?1",
+                params![now],
+            )
             .map_err(sqlite_error("prune request nonces"))?;
         let inserted = self
             .connection
@@ -496,10 +565,17 @@ impl CompanyDb {
                 }))
             })
             .map_err(sqlite_error("query"))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error("rows"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("rows"))
     }
 
-    pub fn upsert_directory(&self, authority_id: &str, display_name: &str, contact: &str, retention_until: &str) -> Result<(), ContractError> {
+    pub fn upsert_directory(
+        &self,
+        authority_id: &str,
+        display_name: &str,
+        contact: &str,
+        retention_until: &str,
+    ) -> Result<(), ContractError> {
         self.connection
             .execute(
                 "INSERT INTO directory(authority_id, display_name, contact, retention_until, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
@@ -531,7 +607,12 @@ impl CompanyDb {
 
     // ----- questions / answers / unknowns -----
 
-    pub fn insert_question(&self, document: &Value, asked_by: &str, delivery: &Value) -> Result<bool, ContractError> {
+    pub fn insert_question(
+        &self,
+        document: &Value,
+        asked_by: &str,
+        delivery: &Value,
+    ) -> Result<bool, ContractError> {
         let inserted = self
             .connection
             .execute(
@@ -560,9 +641,11 @@ impl CompanyDb {
                 "SELECT document, status, delivery FROM questions WHERE question_id=?1",
                 params![question_id],
                 |row| {
-                    let mut document: Value = serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
+                    let mut document: Value =
+                        serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
                     document["status"] = Value::String(row.get::<_, String>(1)?);
-                    document["delivery"] = serde_json::from_str(&row.get::<_, String>(2)?).unwrap_or(Value::Null);
+                    document["delivery"] =
+                        serde_json::from_str(&row.get::<_, String>(2)?).unwrap_or(Value::Null);
                     Ok(document)
                 },
             )
@@ -577,23 +660,38 @@ impl CompanyDb {
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
             .query_map(params![authority_id], |row| {
-                let mut document: Value = serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
+                let mut document: Value =
+                    serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
                 document["status"] = Value::String(row.get::<_, String>(1)?);
-                document["delivery"] = serde_json::from_str(&row.get::<_, String>(2)?).unwrap_or(Value::Null);
+                document["delivery"] =
+                    serde_json::from_str(&row.get::<_, String>(2)?).unwrap_or(Value::Null);
                 Ok(document)
             })
             .map_err(sqlite_error("query"))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error("rows"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("rows"))
     }
 
-    pub fn set_question_status(&self, question_id: &str, status: &str) -> Result<(), ContractError> {
+    pub fn set_question_status(
+        &self,
+        question_id: &str,
+        status: &str,
+    ) -> Result<(), ContractError> {
         self.connection
-            .execute("UPDATE questions SET status=?2 WHERE question_id=?1", params![question_id, status])
+            .execute(
+                "UPDATE questions SET status=?2 WHERE question_id=?1",
+                params![question_id, status],
+            )
             .map(|_| ())
             .map_err(sqlite_error("question status"))
     }
 
-    pub fn insert_answer(&self, document: &Value, cursor: i64, supersedes: Option<&str>) -> Result<bool, ContractError> {
+    pub fn insert_answer(
+        &self,
+        document: &Value,
+        cursor: i64,
+        supersedes: Option<&str>,
+    ) -> Result<bool, ContractError> {
         let inserted = self
             .connection
             .execute(
@@ -621,13 +719,18 @@ impl CompanyDb {
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
             .query_map(params![question_id], |row| {
-                let mut document: Value = serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
+                let mut document: Value =
+                    serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
                 document["cursor"] = Value::String(row.get::<_, i64>(1)?.to_string());
-                document["supersedes"] = row.get::<_, Option<String>>(2)?.map(Value::String).unwrap_or(Value::Null);
+                document["supersedes"] = row
+                    .get::<_, Option<String>>(2)?
+                    .map(Value::String)
+                    .unwrap_or(Value::Null);
                 Ok(document)
             })
             .map_err(sqlite_error("query"))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error("rows"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("rows"))
     }
 
     pub fn upsert_unknown(&self, document: &Value, kind: &str) -> Result<(), ContractError> {
@@ -659,13 +762,15 @@ impl CompanyDb {
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
             .query_map(params![status], |row| {
-                let mut document: Value = serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
+                let mut document: Value =
+                    serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
                 document["status"] = Value::String(row.get::<_, String>(1)?);
                 document["kind"] = Value::String(row.get::<_, String>(2)?);
                 Ok(document)
             })
             .map_err(sqlite_error("query"))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error("rows"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("rows"))
     }
 
     pub fn unknown(&self, unknown_id: &str) -> Result<Option<Value>, ContractError> {
@@ -674,7 +779,8 @@ impl CompanyDb {
                 "SELECT document, status FROM unknowns WHERE unknown_id=?1",
                 params![unknown_id],
                 |row| {
-                    let mut document: Value = serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
+                    let mut document: Value =
+                        serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
                     document["status"] = Value::String(row.get::<_, String>(1)?);
                     Ok(document)
                 },
@@ -685,7 +791,11 @@ impl CompanyDb {
 
     // ----- nonces (destination-owned retry records) -----
 
-    pub fn nonce_record(&self, destination: &str, nonce: &str) -> Result<Option<Value>, ContractError> {
+    pub fn nonce_record(
+        &self,
+        destination: &str,
+        nonce: &str,
+    ) -> Result<Option<Value>, ContractError> {
         self.connection
             .query_row(
                 "SELECT payload_digest, client_key, authority_scope, receipt, consumed_at, expires_at FROM nonces WHERE destination=?1 AND nonce=?2",
@@ -713,7 +823,12 @@ impl CompanyDb {
 
     // ----- certificates -----
 
-    pub fn upsert_certificate(&self, document: &Value, hint: Option<&str>, cursor: i64) -> Result<(), ContractError> {
+    pub fn upsert_certificate(
+        &self,
+        document: &Value,
+        hint: Option<&str>,
+        cursor: i64,
+    ) -> Result<(), ContractError> {
         self.connection
             .execute(
                 "INSERT INTO certificates(repository_uuid, document, hint, digest, issued_at, status, lineage_parent, cursor)
@@ -740,8 +855,12 @@ impl CompanyDb {
                 "SELECT document, hint, digest, status FROM certificates WHERE repository_uuid=?1",
                 params![repository_uuid],
                 |row| {
-                    let mut document: Value = serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
-                    document["discovery_hint"] = row.get::<_, Option<String>>(1)?.map(Value::String).unwrap_or(Value::Null);
+                    let mut document: Value =
+                        serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
+                    document["discovery_hint"] = row
+                        .get::<_, Option<String>>(1)?
+                        .map(Value::String)
+                        .unwrap_or(Value::Null);
                     document["certificate_digest"] = Value::String(row.get::<_, String>(2)?);
                     document["status"] = Value::String(row.get::<_, String>(3)?);
                     Ok(document)
@@ -758,34 +877,47 @@ impl CompanyDb {
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
             .query_map(params![hint], |row| {
-                let mut document: Value = serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
+                let mut document: Value =
+                    serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
                 document["certificate_digest"] = Value::String(row.get::<_, String>(1)?);
                 Ok(document)
             })
             .map_err(sqlite_error("query"))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error("rows"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("rows"))
     }
 
     pub fn all_certificates(&self) -> Result<Vec<Value>, ContractError> {
         let mut statement = self
             .connection
-            .prepare("SELECT document, hint, digest, status FROM certificates ORDER BY repository_uuid")
+            .prepare(
+                "SELECT document, hint, digest, status FROM certificates ORDER BY repository_uuid",
+            )
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
             .query_map([], |row| {
-                let mut document: Value = serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
-                document["discovery_hint"] = row.get::<_, Option<String>>(1)?.map(Value::String).unwrap_or(Value::Null);
+                let mut document: Value =
+                    serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
+                document["discovery_hint"] = row
+                    .get::<_, Option<String>>(1)?
+                    .map(Value::String)
+                    .unwrap_or(Value::Null);
                 document["certificate_digest"] = Value::String(row.get::<_, String>(2)?);
                 document["status"] = Value::String(row.get::<_, String>(3)?);
                 Ok(document)
             })
             .map_err(sqlite_error("query"))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error("rows"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("rows"))
     }
 
     // ----- manifest observations -----
 
-    pub fn latest_manifest_observation(&self, repository_uuid: &str, branch: &str) -> Result<Option<Value>, ContractError> {
+    pub fn latest_manifest_observation(
+        &self,
+        repository_uuid: &str,
+        branch: &str,
+    ) -> Result<Option<Value>, ContractError> {
         self.connection
             .query_row(
                 "SELECT document, status, event_count, event_digests, fresh_until, id FROM manifest_observations
@@ -805,7 +937,11 @@ impl CompanyDb {
             .map_err(sqlite_error("manifest observation"))
     }
 
-    pub fn insert_manifest_observation(&self, document: &Value, cursor: i64) -> Result<i64, ContractError> {
+    pub fn insert_manifest_observation(
+        &self,
+        document: &Value,
+        cursor: i64,
+    ) -> Result<i64, ContractError> {
         self.connection
             .execute(
                 "INSERT INTO manifest_observations(repository_uuid, branch, revision, event_count, merkle_root, event_digests, observed_at, fresh_until, document, status, cursor)
@@ -849,12 +985,18 @@ impl CompanyDb {
                 Ok(json!({"observation_id": row.get::<_, i64>(0)?, "repository_uuid": row.get::<_, String>(1)?, "branch": row.get::<_, String>(2)?, "fresh_until": row.get::<_, String>(3)?}))
             })
             .map_err(sqlite_error("query"))?;
-        let expired: Vec<Value> = rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error("rows"))?;
+        let expired: Vec<Value> = rows
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("rows"))?;
         for item in &expired {
             self.connection
                 .execute(
                     "UPDATE manifest_observations SET status='historical' WHERE id=?1",
-                    params![item.get("observation_id").and_then(Value::as_i64).unwrap_or(0)],
+                    params![
+                        item.get("observation_id")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(0)
+                    ],
                 )
                 .map_err(sqlite_error("retire observation"))?;
         }
@@ -863,7 +1005,13 @@ impl CompanyDb {
 
     // ----- fact versions -----
 
-    pub fn record_fact_version(&self, fact_id: &str, semantic_digest: &str, event_id: &str, cursor: i64) -> Result<i64, ContractError> {
+    pub fn record_fact_version(
+        &self,
+        fact_id: &str,
+        semantic_digest: &str,
+        event_id: &str,
+        cursor: i64,
+    ) -> Result<i64, ContractError> {
         let next: i64 = self
             .connection
             .query_row(
@@ -898,12 +1046,19 @@ impl CompanyDb {
                 }))
             })
             .map_err(sqlite_error("query"))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error("rows"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("rows"))
     }
 
     // ----- steward queue, relaxations, audit, metrics -----
 
-    pub fn queue_for_steward(&self, event_id: &str, document: &Value, approval: &Value, submitted_by: &str) -> Result<bool, ContractError> {
+    pub fn queue_for_steward(
+        &self,
+        event_id: &str,
+        document: &Value,
+        approval: &Value,
+        submitted_by: &str,
+    ) -> Result<bool, ContractError> {
         let inserted = self
             .connection
             .execute(
@@ -934,7 +1089,8 @@ impl CompanyDb {
                 Ok(json!({"event_id": row.get::<_, String>(0)?, "status": row.get::<_, String>(1)?, "queued_at": row.get::<_, String>(2)?, "submitted_by": row.get::<_, String>(3)?}))
             })
             .map_err(sqlite_error("query"))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error("rows"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("rows"))
     }
 
     pub fn insert_relaxation(&self, document: &Value, cursor: i64) -> Result<(), ContractError> {
@@ -964,20 +1120,26 @@ impl CompanyDb {
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
             .query_map([], |row| {
-                let mut document: Value = serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
+                let mut document: Value =
+                    serde_json::from_str(&row.get::<_, String>(0)?).unwrap_or(Value::Null);
                 document["expires_at"] = Value::String(row.get::<_, String>(1)?);
                 document["status"] = Value::String(row.get::<_, String>(2)?);
                 Ok(document)
             })
             .map_err(sqlite_error("query"))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error("rows"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("rows"))
     }
 
     pub fn audit(&self, kind: &str, record: &Value) -> Result<(), ContractError> {
         self.connection
             .execute(
                 "INSERT INTO audit(kind, record, recorded_at) VALUES (?1, ?2, ?3)",
-                params![kind, crate::json::canonical_text(record), crate::time::now_rfc3339_millis()],
+                params![
+                    kind,
+                    crate::json::canonical_text(record),
+                    crate::time::now_rfc3339_millis()
+                ],
             )
             .map(|_| ())
             .map_err(sqlite_error("audit"))
@@ -999,7 +1161,9 @@ impl CompanyDb {
             .prepare("SELECT name, count FROM metrics ORDER BY name")
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
             .map_err(sqlite_error("query"))?;
         let mut map = serde_json::Map::new();
         for row in rows {
@@ -1009,7 +1173,12 @@ impl CompanyDb {
         Ok(Value::Object(map))
     }
 
-    pub fn authority_call_count(&self, task_id: &str, arm: &str, seed: &str) -> Result<i64, ContractError> {
+    pub fn authority_call_count(
+        &self,
+        task_id: &str,
+        arm: &str,
+        seed: &str,
+    ) -> Result<i64, ContractError> {
         Ok(self
             .connection
             .query_row(
@@ -1022,7 +1191,12 @@ impl CompanyDb {
             .unwrap_or(0))
     }
 
-    pub fn bump_authority_call(&self, task_id: &str, arm: &str, seed: &str) -> Result<i64, ContractError> {
+    pub fn bump_authority_call(
+        &self,
+        task_id: &str,
+        arm: &str,
+        seed: &str,
+    ) -> Result<i64, ContractError> {
         self.connection
             .execute(
                 "INSERT INTO authority_calls(task_id, arm, seed, count) VALUES (?1, ?2, ?3, 1) ON CONFLICT(task_id, arm, seed) DO UPDATE SET count=count+1",

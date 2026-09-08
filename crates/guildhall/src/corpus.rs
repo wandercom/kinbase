@@ -30,19 +30,58 @@ pub fn rebuild(
     json: bool,
 ) -> Result<(), ContractError> {
     let data = load_store(launcher, repo, store)?;
-    let event_ids: Vec<String> = data.events.iter().map(|event| event.event.event_id.clone()).collect::<BTreeSet<_>>().into_iter().collect();
+    let private_observations = launcher.private_store()?.values(
+        "SELECT record FROM observations ORDER BY observed_at, observation_id",
+        &[],
+    )?;
+    let adapter_receipts: BTreeMap<&str, usize> = private_observations
+        .iter()
+        .filter_map(|observation| {
+            crate::json::get_str(observation, "source_kind").map(|kind| (kind, ()))
+        })
+        .fold(
+            BTreeMap::new(),
+            |mut counts: BTreeMap<&str, usize>, (kind, ())| {
+                *counts.entry(kind).or_insert(0) += 1;
+                counts
+            },
+        );
+    let stored_observation_ids = private_observations
+        .iter()
+        .filter_map(|observation| {
+            crate::json::get_str(observation, "observation_id").map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    let event_ids: Vec<String> = data
+        .events
+        .iter()
+        .map(|event| event.event.event_id.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let event_inputs: Vec<Value> = data
         .events
         .iter()
         .map(|event| crate::model::value_of(event))
         .collect();
-    let authority_cursor_value = authority_cursor.map(|cursor| cursor.to_string()).unwrap_or_else(|| data.authority_cursor.clone());
-    let view = reduce(data, store_name(store), as_of, reducer_version, Some(authority_cursor_value.clone()))?;
-    let observation_ids: Vec<_> = view
-        .facts
-        .iter()
-        .flat_map(|fact| fact.support_event_ids.clone())
-        .collect();
+    let authority_cursor_value = authority_cursor
+        .map(|cursor| cursor.to_string())
+        .unwrap_or_else(|| data.authority_cursor.clone());
+    let view = reduce(
+        data,
+        store_name(store),
+        as_of,
+        reducer_version,
+        Some(authority_cursor_value.clone()),
+    )?;
+    let observation_ids = if stored_observation_ids.is_empty() {
+        view.facts
+            .iter()
+            .flat_map(|fact| fact.support_event_ids.clone())
+            .collect::<Vec<_>>()
+    } else {
+        stored_observation_ids
+    };
     let source_revisions = if store == crate::StoreKind::Codebase {
         vec![Repository::discover(repo)?.revision()?]
     } else {
@@ -55,21 +94,30 @@ pub fn rebuild(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let current_view_digest = crate::hash::sha256_bytes(crate::json::canonical_bytes(&crate::reducer::view_value(&view, &as_of.as_of_source)).as_slice());
-    let canonical_digest = crate::hash::sha256_bytes(crate::json::canonical_bytes(&json!({
-        "as_of": view.as_of,
-        "reducer_version": view.reducer_version,
-        "authority_cursor": view.authority_cursor,
-        "facts": view.facts,
-        "unknowns": view.unknowns
-    })).as_slice());
-    let inputs_digest = crate::hash::sha256_bytes(crate::json::canonical_bytes(&json!({
-        "as_of": as_of.as_of,
-        "as_of_source": as_of.as_of_source,
-        "reducer_version": view.reducer_version,
-        "authority_cursor": authority_cursor_value,
-        "admitted_events": event_inputs
-    })).as_slice());
+    let current_view_digest = crate::hash::sha256_bytes(
+        crate::json::canonical_bytes(&crate::reducer::view_value(&view, &as_of.as_of_source))
+            .as_slice(),
+    );
+    let canonical_digest = crate::hash::sha256_bytes(
+        crate::json::canonical_bytes(&json!({
+            "as_of": view.as_of,
+            "reducer_version": view.reducer_version,
+            "authority_cursor": view.authority_cursor,
+            "facts": view.facts,
+            "unknowns": view.unknowns
+        }))
+        .as_slice(),
+    );
+    let inputs_digest = crate::hash::sha256_bytes(
+        crate::json::canonical_bytes(&json!({
+            "as_of": as_of.as_of,
+            "as_of_source": as_of.as_of_source,
+            "reducer_version": view.reducer_version,
+            "authority_cursor": authority_cursor_value,
+            "admitted_events": event_inputs
+        }))
+        .as_slice(),
+    );
     let result = json!({
         "status": "rebuilt",
         "as_of": view.as_of,
@@ -83,7 +131,9 @@ pub fn rebuild(
             "source_revisions": source_revisions,
             "digests": digests,
             "checkpoints": [{"as_of": view.as_of, "authority_cursor": view.authority_cursor}],
-            "fact_derivations": view.facts
+            "fact_derivations": view.facts,
+            "adapter_receipts": adapter_receipts,
+            "reducer_digest": current_view_digest
         },
         "current_view_digest": current_view_digest,
         "view_digest": current_view_digest,
@@ -125,12 +175,21 @@ pub fn explain(
     let (authority_snapshot_cursor, authority_snapshot_source) =
         crate::repository::ensure_authority_snapshot(
             launcher,
-            authority_cursor.map(|cursor| cursor.to_string()).as_deref().or(Some(cached_cursor.as_str())),
+            authority_cursor
+                .map(|cursor| cursor.to_string())
+                .as_deref()
+                .or(Some(cached_cursor.as_str())),
         )?;
     let mut codebase = load_store(launcher, repo, crate::StoreKind::Codebase)?;
     let mut company = load_store(launcher, repo, crate::StoreKind::Company)?;
-    let has_codebase = codebase.events.iter().any(|event| event.event.logical_key == logical_key);
-    let has_company = company.events.iter().any(|event| event.event.logical_key == logical_key);
+    let has_codebase = codebase
+        .events
+        .iter()
+        .any(|event| event.event.logical_key == logical_key);
+    let has_company = company
+        .events
+        .iter()
+        .any(|event| event.event.logical_key == logical_key);
     let mut data = if has_codebase {
         codebase.events.extend(company.events);
         codebase.unknowns.extend(company.unknowns);
@@ -141,9 +200,15 @@ pub fn explain(
         company.events.extend(Vec::<AdmittedEvent>::new());
         company
     };
-    data.events.retain(|event| event.event.logical_key == logical_key);
-    data.unknowns.retain(|unknown| unknown.logical_key == logical_key);
-    data.tombstones.retain(|tombstone| data.events.iter().any(|event| event.event.event_id == tombstone.target_event_id));
+    data.events
+        .retain(|event| event.event.logical_key == logical_key);
+    data.unknowns
+        .retain(|unknown| unknown.logical_key == logical_key);
+    data.tombstones.retain(|tombstone| {
+        data.events
+            .iter()
+            .any(|event| event.event.event_id == tombstone.target_event_id)
+    });
     let mixed = has_codebase && has_company;
     let store = if mixed {
         crate::StoreKind::Personal // marker only; reduce receives the mixed store name
@@ -152,8 +217,18 @@ pub fn explain(
     } else {
         crate::StoreKind::Codebase
     };
-    let store_name_value = if mixed { "mixed".to_owned() } else { store_name(store).to_owned() };
-    let view = reduce(data, &store_name_value, as_of, None, authority_cursor.map(|cursor| cursor.to_string()))?;
+    let store_name_value = if mixed {
+        "mixed".to_owned()
+    } else {
+        store_name(store).to_owned()
+    };
+    let view = reduce(
+        data,
+        &store_name_value,
+        as_of,
+        None,
+        authority_cursor.map(|cursor| cursor.to_string()),
+    )?;
     let mut references = Vec::new();
     let mut resolved_current: Option<crate::model::CurrentFact> = None;
     let mut resolved_unknowns: Vec<crate::reducer::DerivedUnknown> = Vec::new();
@@ -161,24 +236,47 @@ pub fn explain(
     if has_codebase {
         if let Ok(repository) = Repository::discover(repo) {
             let _ = repository;
-            if let Ok(context) = crate::repository::RepoContext::load(crate::launcher::Launcher::load()?, repo, true) {
-                if let Ok((resolved_view, _counts, company_references)) = context.current_view(&as_of.as_of, authority_cursor.map(|cursor| cursor.to_string()).as_deref()) {
+            if let Ok(context) =
+                crate::repository::RepoContext::load(crate::launcher::Launcher::load()?, repo, true)
+            {
+                if let Ok((resolved_view, _counts, company_references)) = context.current_view(
+                    &as_of.as_of,
+                    authority_cursor.map(|cursor| cursor.to_string()).as_deref(),
+                ) {
                     resolved_current = resolved_view.facts.first().cloned();
-                    resolved_unknowns = resolved_view.unknowns.iter().filter(|unknown| unknown.logical_key == logical_key).cloned().collect();
-                    resolved_trace = resolved_view.traces.iter().find(|trace| trace.logical_key == logical_key).cloned();
+                    resolved_unknowns = resolved_view
+                        .unknowns
+                        .iter()
+                        .filter(|unknown| unknown.logical_key == logical_key)
+                        .cloned()
+                        .collect();
+                    resolved_trace = resolved_view
+                        .traces
+                        .iter()
+                        .find(|trace| trace.logical_key == logical_key)
+                        .cloned();
                     references = company_references;
                 }
             }
         }
     }
-    let trace = resolved_trace.as_ref().or_else(|| view.traces.iter().find(|trace| trace.logical_key == logical_key));
+    let trace = resolved_trace.as_ref().or_else(|| {
+        view.traces
+            .iter()
+            .find(|trace| trace.logical_key == logical_key)
+    });
     let current = resolved_current.as_ref().or_else(|| view.facts.first());
     let unknown = resolved_unknowns
         .iter()
         .find(|unknown| unknown.logical_key == logical_key)
-        .or_else(|| view.unknowns.iter().find(|unknown| unknown.logical_key == logical_key));
+        .or_else(|| {
+            view.unknowns
+                .iter()
+                .find(|unknown| unknown.logical_key == logical_key)
+        });
     let trace_state = trace.map(|trace| trace.state.as_str()).unwrap_or("missing");
-    let state = if current.is_some_and(|fact| fact.status == "current") && trace_state == "current" {
+    let state = if current.is_some_and(|fact| fact.status == "current") && trace_state == "current"
+    {
         "current"
     } else if trace_state == "conflict" {
         "conflict"
@@ -192,7 +290,16 @@ pub fn explain(
             } else if !trace.expired_event_ids.is_empty() {
                 format!("expired events {}", trace.expired_event_ids.join(", "))
             } else if !trace.rejected.is_empty() {
-                format!("rejected events {}", trace.rejected.iter().filter_map(|event| event.get("event_id")).filter_map(Value::as_str).collect::<Vec<_>>().join(", "))
+                format!(
+                    "rejected events {}",
+                    trace
+                        .rejected
+                        .iter()
+                        .filter_map(|event| event.get("event_id"))
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
             } else {
                 "the surviving admitted event set".to_owned()
             }
@@ -220,10 +327,14 @@ pub fn explain(
     let unknown_owner_roles: Vec<Value> = view
         .unknowns
         .iter()
-        .map(|unknown| json!({"logical_key": unknown.logical_key, "owner_role": unknown.owner_role}))
+        .map(
+            |unknown| json!({"logical_key": unknown.logical_key, "owner_role": unknown.owner_role}),
+        )
         .collect();
     let notice_admitted = trace.is_some_and(|trace| trace.notice_admitted);
-    let approver_minted_accepted = trace.and_then(|trace| trace.approver_minted_accepted).unwrap_or(true);
+    let approver_minted_accepted = trace
+        .and_then(|trace| trace.approver_minted_accepted)
+        .unwrap_or(true);
     let free_form_owner_admitted = trace
         .and_then(|trace| trace.free_form_owner_admitted)
         .unwrap_or(current.is_some());
@@ -366,7 +477,11 @@ pub(crate) fn load_store(
             let mut events = Vec::new();
             if let Ok(Some((cache, _root))) = launcher.company_cache() {
                 if let Ok(Some(snapshot)) = cache.snapshot() {
-                    let facts = snapshot.get("facts").and_then(Value::as_array).cloned().unwrap_or_default();
+                    let facts = snapshot
+                        .get("facts")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
                     events.extend(
                         facts
                             .iter()
@@ -391,7 +506,9 @@ pub(crate) fn load_store(
                 }));
             }
             let mut unknowns = Vec::new();
-            if let Ok(records) = crate::store::read_records(crate::StoreKind::Company, repo, "unknowns.jsonl") {
+            if let Ok(records) =
+                crate::store::read_records(crate::StoreKind::Company, repo, "unknowns.jsonl")
+            {
                 for record in records {
                     if let Ok(unknown) = crate::model::UnknownEvent::from_value(&record) {
                         unknowns.push(unknown);
@@ -404,26 +521,37 @@ pub(crate) fn load_store(
                 .flatten()
                 .and_then(|(cache, _root)| cache.snapshot().ok().flatten())
                 .map(|snapshot| {
-                    let revoked: BTreeSet<String> = crate::json::get_array(&snapshot, "revocations")
+                    let revoked: BTreeSet<String> =
+                        crate::json::get_array(&snapshot, "revocations")
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|record| {
+                                crate::json::get_str(record, "revoked_key").map(str::to_owned)
+                            })
+                            .collect();
+                    let mut active: BTreeMap<String, Option<String>> = BTreeMap::new();
+                    for entry in crate::json::get_array(&snapshot, "registry")
                         .into_iter()
                         .flatten()
-                        .filter_map(|record| crate::json::get_str(record, "revoked_key").map(str::to_owned))
-                        .collect();
-                    let mut active: BTreeMap<String, Option<String>> = BTreeMap::new();
-                    for entry in crate::json::get_array(&snapshot, "registry").into_iter().flatten() {
+                    {
                         if crate::json::get_str(entry, "status") != Some("active") {
                             continue;
                         }
-                        let Some(scope) = crate::json::get_str(entry, "scope") else { continue; };
-                        let revoked_key = crate::json::get_str(entry, "public_key").unwrap_or_default();
+                        let Some(scope) = crate::json::get_str(entry, "scope") else {
+                            continue;
+                        };
+                        let revoked_key =
+                            crate::json::get_str(entry, "public_key").unwrap_or_default();
                         if revoked.contains(revoked_key) {
                             continue;
                         }
-                        let identity = crate::json::get_str(entry, "authority_id").map(str::to_owned);
+                        let identity =
+                            crate::json::get_str(entry, "authority_id").map(str::to_owned);
                         active
                             .entry(scope.to_owned())
                             .and_modify(|existing| {
-                                if existing.is_none() || existing.as_deref() != identity.as_deref() {
+                                if existing.is_none() || existing.as_deref() != identity.as_deref()
+                                {
                                     *existing = None;
                                 }
                             })
@@ -433,7 +561,8 @@ pub(crate) fn load_store(
                         .into_iter()
                         .filter_map(|(scope, owner)| Some((scope, owner?)))
                         .collect::<BTreeMap<String, String>>();
-                    let steward_authority_id = authority_owner_by_scope.get("company:root").cloned();
+                    let steward_authority_id =
+                        authority_owner_by_scope.get("company:root").cloned();
                     (authority_owner_by_scope, steward_authority_id)
                 })
                 .unwrap_or_default();
@@ -449,7 +578,11 @@ pub(crate) fn load_store(
             })
         }
         crate::StoreKind::Codebase => {
-            let context = crate::repository::RepoContext::load(crate::launcher::Launcher::load()?, repo, false)?;
+            let context = crate::repository::RepoContext::load(
+                crate::launcher::Launcher::load()?,
+                repo,
+                false,
+            )?;
             let (events, unknowns, tombstones, revocations) = context.reducer_parts()?;
             Ok(StoreData {
                 events,
@@ -468,7 +601,13 @@ pub(crate) fn load_store(
 fn proxy_event(record: &Value) -> Option<Result<AdmittedEvent, ContractError>> {
     let event = match crate::model::FactEvent::from_value(record) {
         Ok(event) => event,
-        Err(error) => return Some(Err(ContractError::integrity("DIGEST_MISMATCH", error, "Quarantine the malformed event."))),
+        Err(error) => {
+            return Some(Err(ContractError::integrity(
+                "DIGEST_MISMATCH",
+                error,
+                "Quarantine the malformed event.",
+            )));
+        }
     };
     Some(Ok(AdmittedEvent {
         event,

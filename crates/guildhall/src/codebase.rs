@@ -23,7 +23,12 @@ pub const GIT_ATTRIBUTES: [&str; 2] = [
 ];
 /// Paths Guildhall reserves under `.kin/`; a pinned-Kindex inventory that
 /// collides with one refuses `repo init` (architecture §11).
-pub const RESERVED_PATHS: [&str; 4] = ["config", "events", "manifests", "local/guildhall-index.json"];
+pub const RESERVED_PATHS: [&str; 4] = [
+    "config",
+    "events",
+    "manifests",
+    "local/guildhall-index.json",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepoConfig {
@@ -45,15 +50,28 @@ impl RepoConfig {
             )
         })?;
         for key in table.keys() {
-            if !["schema_version", "repository_uuid_hint", "safe_name", "domains", "local_policy"].contains(&key.as_str()) {
+            if ![
+                "schema_version",
+                "repository_uuid_hint",
+                "safe_name",
+                "domains",
+                "local_policy",
+            ]
+            .contains(&key.as_str())
+            {
                 return Err(ContractError::integrity(
                     "DIGEST_MISMATCH",
-                    format!(".kin/config contains unknown key `{key}`; it cannot name roots, keys, authorities, or endpoints"),
+                    format!(
+                        ".kin/config contains unknown key `{key}`; it cannot name roots, keys, authorities, or endpoints"
+                    ),
                     "Remove the key; unknown keys fail closed.",
                 ));
             }
         }
-        let schema = table.get("schema_version").and_then(toml::Value::as_str).unwrap_or_default();
+        let schema = table
+            .get("schema_version")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_default();
         if schema != REPO_CONFIG_SCHEMA {
             return Err(ContractError::integrity(
                 "DIGEST_MISMATCH",
@@ -61,7 +79,10 @@ impl RepoConfig {
                 "Preserve the bytes; an incompatible schema blocks and is never overwritten.",
             ));
         }
-        let hint = table.get("repository_uuid_hint").and_then(toml::Value::as_str).unwrap_or_default();
+        let hint = table
+            .get("repository_uuid_hint")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_default();
         if uuid::Uuid::parse_str(hint).is_err() {
             return Err(ContractError::integrity(
                 "DIGEST_MISMATCH",
@@ -69,8 +90,15 @@ impl RepoConfig {
                 "Reinstall the steward-issued certificate with `guildhall repo init`.",
             ));
         }
-        let safe_name = table.get("safe_name").and_then(toml::Value::as_str).unwrap_or_default();
-        if safe_name.is_empty() || !safe_name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.') {
+        let safe_name = table
+            .get("safe_name")
+            .and_then(toml::Value::as_str)
+            .unwrap_or_default();
+        if safe_name.is_empty()
+            || !safe_name
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+        {
             return Err(ContractError::integrity(
                 "DIGEST_MISMATCH",
                 ".kin/config safe_name must be a non-empty ASCII identifier",
@@ -116,7 +144,10 @@ impl RepoConfig {
                 local_policy.insert(key.clone(), value.to_owned());
             }
         }
-        for value in local_policy.values().chain(std::iter::once(&safe_name.to_owned())) {
+        for value in local_policy
+            .values()
+            .chain(std::iter::once(&safe_name.to_owned()))
+        {
             if value.starts_with('/') || value.contains("http://") || value.contains("https://") {
                 return Err(ContractError::integrity(
                     "DIGEST_MISMATCH",
@@ -177,7 +208,11 @@ pub fn git(repo: &Path, args: &[&str]) -> Result<String, ContractError> {
     if !output.status.success() {
         return Err(ContractError::user_action(
             "REPO_UNCERTIFIED",
-            format!("git {} failed: {}", args.first().unwrap_or(&""), String::from_utf8_lossy(&output.stderr).trim()),
+            format!(
+                "git {} failed: {}",
+                args.first().unwrap_or(&""),
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
             "Run the command inside a Git worktree; an ordinary non-repository Personal session may continue.",
         ));
     }
@@ -200,7 +235,9 @@ impl Repository {
         let start = if path.is_absolute() {
             path.to_path_buf()
         } else {
-            std::env::current_dir().map_err(|error| ContractError::io("current dir", error))?.join(path)
+            std::env::current_dir()
+                .map_err(|error| ContractError::io("current dir", error))?
+                .join(path)
         };
         if !start.exists() {
             return Err(ContractError::user_action(
@@ -237,7 +274,9 @@ impl Repository {
     }
 
     pub fn uuid_hint(&self) -> Option<&str> {
-        self.config.as_ref().map(|config| config.repository_uuid_hint.as_str())
+        self.config
+            .as_ref()
+            .map(|config| config.repository_uuid_hint.as_str())
     }
 
     pub fn require_initialized(&self) -> Result<&RepoConfig, ContractError> {
@@ -255,18 +294,42 @@ impl Repository {
     }
 
     pub fn default_branch(&self) -> String {
-        git(&self.root, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
-            .map(|value| value.trim_start_matches("origin/").to_owned())
-            .or_else(|_| git(&self.root, &["config", "--get", "init.defaultBranch"]))
-            .ok()
-            .filter(|value| !value.is_empty() && git_ok(&self.root, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{value}")]))
-            .or_else(|| {
-                ["main", "master"]
-                    .into_iter()
-                    .find(|name| git_ok(&self.root, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{name}")]))
-                    .map(str::to_owned)
-            })
-            .unwrap_or_else(|| self.branch().unwrap_or_else(|_| "HEAD".to_owned()))
+        git(
+            &self.root,
+            &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+        )
+        .map(|value| value.trim_start_matches("origin/").to_owned())
+        .or_else(|_| git(&self.root, &["config", "--get", "init.defaultBranch"]))
+        .ok()
+        .filter(|value| {
+            !value.is_empty()
+                && git_ok(
+                    &self.root,
+                    &[
+                        "rev-parse",
+                        "--verify",
+                        "--quiet",
+                        &format!("refs/heads/{value}"),
+                    ],
+                )
+        })
+        .or_else(|| {
+            ["main", "master"]
+                .into_iter()
+                .find(|name| {
+                    git_ok(
+                        &self.root,
+                        &[
+                            "rev-parse",
+                            "--verify",
+                            "--quiet",
+                            &format!("refs/heads/{name}"),
+                        ],
+                    )
+                })
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| self.branch().unwrap_or_else(|_| "HEAD".to_owned()))
     }
 
     pub fn default_branch_revision(&self) -> Result<String, ContractError> {
@@ -276,7 +339,10 @@ impl Repository {
 
     pub fn is_reachable_from_default(&self, revision: &str) -> bool {
         let default = self.default_branch();
-        git_ok(&self.root, &["merge-base", "--is-ancestor", revision, &default])
+        git_ok(
+            &self.root,
+            &["merge-base", "--is-ancestor", revision, &default],
+        )
     }
 
     /// Origin trust class for a path (architecture §4): canonicalize and
@@ -293,7 +359,10 @@ impl Repository {
             return "uncommitted-worktree".to_owned();
         };
         let relative = relative.to_string_lossy();
-        if !git_ok(&self.root, &["ls-files", "--error-unmatch", "--", &relative]) {
+        if !git_ok(
+            &self.root,
+            &["ls-files", "--error-unmatch", "--", &relative],
+        ) {
             return "uncommitted-worktree".to_owned();
         }
         let dirty = git(&self.root, &["status", "--porcelain", "--", &relative])
@@ -302,17 +371,19 @@ impl Repository {
         if dirty {
             return "uncommitted-worktree".to_owned();
         }
-        let last_path_commit = git(
-            &self.root,
-            &["log", "-1", "--format=%H", "--", &relative],
-        )
-        .unwrap_or_default();
+        let last_path_commit =
+            git(&self.root, &["log", "-1", "--format=%H", "--", &relative]).unwrap_or_default();
         if last_path_commit.trim().is_empty() {
             return "uncommitted-worktree".to_owned();
         }
         if git_ok(
             &self.root,
-            &["merge-base", "--is-ancestor", last_path_commit.trim(), &self.default_branch()],
+            &[
+                "merge-base",
+                "--is-ancestor",
+                last_path_commit.trim(),
+                &self.default_branch(),
+            ],
         ) {
             return "merged-default".to_owned();
         }
@@ -333,7 +404,12 @@ impl Repository {
             .any(|reference| {
                 git_ok(
                     &self.root,
-                    &["merge-base", "--is-ancestor", last_path_commit.trim(), reference],
+                    &[
+                        "merge-base",
+                        "--is-ancestor",
+                        last_path_commit.trim(),
+                        reference,
+                    ],
                 )
             })
         {
@@ -355,9 +431,18 @@ impl Repository {
 
     /// Effective Git attributes for the event and manifest trees.
     pub fn attributes_effective(&self) -> Result<bool, ContractError> {
-        for probe in [".kin/events/aa/bb/probe.json", ".kin/manifests/aa/bb/probe.json"] {
-            let output = git(&self.root, &["check-attr", "text", "diff", "merge", "--", probe])?;
-            let unset = output.lines().filter(|line| line.ends_with(": unset")).count();
+        for probe in [
+            ".kin/events/aa/bb/probe.json",
+            ".kin/manifests/aa/bb/probe.json",
+        ] {
+            let output = git(
+                &self.root,
+                &["check-attr", "text", "diff", "merge", "--", probe],
+            )?;
+            let unset = output
+                .lines()
+                .filter(|line| line.ends_with(": unset"))
+                .count();
             if unset != 3 {
                 return Ok(false);
             }
@@ -377,7 +462,9 @@ impl Repository {
                 if trimmed.starts_with(pattern) && trimmed != rule {
                     return Err(ContractError::refused(
                         "CONFIG_INVARIANT",
-                        format!(".gitattributes already carries a contradictory rule for {pattern}"),
+                        format!(
+                            ".gitattributes already carries a contradictory rule for {pattern}"
+                        ),
                         "Reconcile the existing .gitattributes rule manually; repo init never replaces the file.",
                     ));
                 }
@@ -443,7 +530,11 @@ impl Repository {
     }
 
     /// Intake ceiling check (architecture §11, verification limits).
-    pub fn check_intake_ceiling(&self, incoming: usize, incoming_bytes: u64) -> Result<(), ContractError> {
+    pub fn check_intake_ceiling(
+        &self,
+        incoming: usize,
+        incoming_bytes: u64,
+    ) -> Result<(), ContractError> {
         let files = self.stored_events()?;
         let count = files.len();
         let bytes: u64 = files.iter().map(|file| file.bytes.len() as u64).sum();
@@ -468,7 +559,9 @@ impl Repository {
     /// Exclusive repository-scoped admission lock in Git's common directory,
     /// keyed by certified repository UUID.
     pub fn admission_lock(&self, repository_uuid: &str) -> Result<AdmissionLock, ContractError> {
-        let path = self.common_dir.join(format!("guildhall-{repository_uuid}.lock"));
+        let path = self
+            .common_dir
+            .join(format!("guildhall-{repository_uuid}.lock"));
         let file = std::fs::OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -480,7 +573,11 @@ impl Repository {
             .as_ref()
             .and_then(|config| config.local_policy.get("admission_lock_timeout_seconds"))
             .and_then(|value| value.parse::<u64>().ok())
-            .or_else(|| std::env::var("GUILDHALL_ADMISSION_LOCK_TIMEOUT_SECONDS").ok().and_then(|value| value.parse().ok()));
+            .or_else(|| {
+                std::env::var("GUILDHALL_ADMISSION_LOCK_TIMEOUT_SECONDS")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+            });
         let timeout_seconds = configured.unwrap_or(30).min(300);
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_seconds);
         loop {
@@ -533,23 +630,38 @@ impl Repository {
         paths::ensure_private_dir(&receipts_dir, "receipts")?;
         let _lock = self.admission_lock(repository_uuid)?;
         self.recover_journal(repository_uuid)?;
-        let receipt_path = receipts_dir.join(repository_uuid).join(format!("{digest}.json"));
+        let receipt_path = receipts_dir
+            .join(repository_uuid)
+            .join(format!("{digest}.json"));
         if receipt_path.exists() {
-            let bytes = std::fs::read(&receipt_path).map_err(|error| ContractError::io("read receipt", error))?;
+            let bytes = std::fs::read(&receipt_path)
+                .map_err(|error| ContractError::io("read receipt", error))?;
             if let Ok(mut existing) = crate::json::parse_strict_value(&bytes) {
                 let expected_destination = format!("codebase:{repository_uuid}");
-                let stored_destination = crate::json::get_str(&existing, "destination").unwrap_or_default();
-                let stored_repository = crate::json::get_str(&existing, "repository_uuid").unwrap_or_default();
-                if stored_destination != expected_destination || stored_repository != repository_uuid {
+                let stored_destination =
+                    crate::json::get_str(&existing, "destination").unwrap_or_default();
+                let stored_repository =
+                    crate::json::get_str(&existing, "repository_uuid").unwrap_or_default();
+                if stored_destination != expected_destination
+                    || stored_repository != repository_uuid
+                {
                     return Err(ContractError::integrity(
                         "DIGEST_MISMATCH",
-                        format!("receipt lookup for digest {digest} is bound to {stored_destination}/{stored_repository}, not {expected_destination}/{repository_uuid}"),
+                        format!(
+                            "receipt lookup for digest {digest} is bound to {stored_destination}/{stored_repository}, not {expected_destination}/{repository_uuid}"
+                        ),
                         "Do not reuse a receipt across repositories or destinations; run fsck if the local receipt store moved.",
                     ));
                 }
                 let event_value = crate::json::parse_strict_value(canonical).ok();
-                let signer = event_value.as_ref().and_then(|value| crate::json::get_str(value, "signer")).map(str::to_owned);
-                let logical_key = event_value.as_ref().and_then(|value| crate::json::get_str(value, "logical_key")).map(str::to_owned);
+                let signer = event_value
+                    .as_ref()
+                    .and_then(|value| crate::json::get_str(value, "signer"))
+                    .map(str::to_owned);
+                let logical_key = event_value
+                    .as_ref()
+                    .and_then(|value| crate::json::get_str(value, "logical_key"))
+                    .map(str::to_owned);
                 let revoked_signers: Vec<&str> = receipt_extra
                     .get("revoked_signers")
                     .and_then(Value::as_array)
@@ -559,9 +671,15 @@ impl Repository {
                     .get("revocation")
                     .and_then(|value| value.get("revoked_key"))
                     .and_then(Value::as_str);
-                let revocation_observed = receipt_extra.get("revocation_observed") == Some(&Value::Bool(true))
-                    || signer.as_deref().is_some_and(|signer| revoked_signers.contains(&signer))
-                    || signer.as_deref().zip(revocation_key).is_some_and(|(signer, key)| signer == key);
+                let revocation_observed = receipt_extra.get("revocation_observed")
+                    == Some(&Value::Bool(true))
+                    || signer
+                        .as_deref()
+                        .is_some_and(|signer| revoked_signers.contains(&signer))
+                    || signer
+                        .as_deref()
+                        .zip(revocation_key)
+                        .is_some_and(|(signer, key)| signer == key);
                 let sole_support = logical_key.as_deref().is_some_and(|logical_key| {
                     self.stored_events()
                         .map(|events| {
@@ -573,7 +691,8 @@ impl Repository {
                                         ParsedEvent::Fact(event) if event.logical_key == logical_key
                                     )
                                 })
-                                .count() <= 1
+                                .count()
+                                <= 1
                         })
                         .unwrap_or(true)
                 });
@@ -582,9 +701,11 @@ impl Repository {
                 existing["readmitted"] = Value::Bool(false);
                 existing["revocation_observed"] = Value::Bool(revocation_observed);
                 existing["support_withdrawn"] = Value::Bool(support_withdrawn);
-                existing["projection_state"] = Value::String(
-                    if support_withdrawn { "support_withdrawn".to_owned() } else { "current".to_owned() }
-                );
+                existing["projection_state"] = Value::String(if support_withdrawn {
+                    "support_withdrawn".to_owned()
+                } else {
+                    "current".to_owned()
+                });
                 return Ok(existing);
             }
         }
@@ -606,17 +727,33 @@ impl Repository {
             "updated_at": crate::time::now_rfc3339_millis()
         });
         paths::write_atomic(&staged, canonical, 0o600, false)?;
-        paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
+        paths::write_atomic(
+            &journal_path,
+            &crate::json::canonical_bytes(&entry),
+            0o600,
+            false,
+        )?;
         // renamed
         let created = paths::write_atomic(&final_path, canonical, 0o644, true)?;
-        std::fs::remove_file(&staged).map_err(|error| ContractError::io("remove staged event after rename", error))?;
+        std::fs::remove_file(&staged)
+            .map_err(|error| ContractError::io("remove staged event after rename", error))?;
         entry["state"] = Value::String("renamed".to_owned());
         entry["created"] = Value::Bool(created);
-        paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
+        paths::write_atomic(
+            &journal_path,
+            &crate::json::canonical_bytes(&entry),
+            0o600,
+            false,
+        )?;
         // indexed
         self.update_index_cache()?;
         entry["state"] = Value::String("indexed".to_owned());
-        paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
+        paths::write_atomic(
+            &journal_path,
+            &crate::json::canonical_bytes(&entry),
+            0o600,
+            false,
+        )?;
         // receipted
         let mut receipt = json!({
             "schema": crate::model::RECEIPT_SCHEMA,
@@ -640,11 +777,26 @@ impl Repository {
                 receipt[key] = value;
             }
         }
-        paths::write_atomic(&receipt_path, &crate::json::canonical_bytes(&receipt), 0o600, false)?;
+        paths::write_atomic(
+            &receipt_path,
+            &crate::json::canonical_bytes(&receipt),
+            0o600,
+            false,
+        )?;
         entry["state"] = Value::String("receipted".to_owned());
-        paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
+        paths::write_atomic(
+            &journal_path,
+            &crate::json::canonical_bytes(&entry),
+            0o600,
+            false,
+        )?;
         entry["state"] = Value::String("done".to_owned());
-        paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
+        paths::write_atomic(
+            &journal_path,
+            &crate::json::canonical_bytes(&entry),
+            0o600,
+            false,
+        )?;
         Ok(receipt)
     }
 
@@ -660,41 +812,63 @@ impl Repository {
         let mut replayed = Vec::new();
         for relative in paths::list_files(&journal_dir)? {
             let path = journal_dir.join(&relative);
-            let bytes = std::fs::read(&path).map_err(|error| ContractError::io("read journal", error))?;
+            let bytes =
+                std::fs::read(&path).map_err(|error| ContractError::io("read journal", error))?;
             let Ok(mut entry) = crate::json::parse_strict_value(&bytes) else {
                 return Err(ContractError::integrity(
                     "DIGEST_MISMATCH",
-                    format!("journal entry {} is not canonical JSON", relative.to_string_lossy()),
+                    format!(
+                        "journal entry {} is not canonical JSON",
+                        relative.to_string_lossy()
+                    ),
                     "Preserve the journal bytes and repair the destination explicitly; recovery never ignores a malformed marker.",
                 ));
             };
-            let state = crate::json::get_str(&entry, "state").unwrap_or_default().to_owned();
+            let state = crate::json::get_str(&entry, "state")
+                .unwrap_or_default()
+                .to_owned();
             if state == "done" {
                 continue;
             }
-            if crate::json::get_str(&entry, "repository_uuid").unwrap_or_default() != repository_uuid {
+            if crate::json::get_str(&entry, "repository_uuid").unwrap_or_default()
+                != repository_uuid
+            {
                 return Err(ContractError::refused(
                     "FOREIGN_REPO_EVENTS",
-                    format!("journal entry {} belongs to another repository", relative.to_string_lossy()),
+                    format!(
+                        "journal entry {} belongs to another repository",
+                        relative.to_string_lossy()
+                    ),
                     "Preserve the foreign journal and repair this repository explicitly; recovery never adopts another identity.",
                 ));
             }
-            if !["staged", "prepared", "renamed", "indexed", "receipted"].contains(&state.as_str()) {
+            if !["staged", "prepared", "renamed", "indexed", "receipted"].contains(&state.as_str())
+            {
                 return Err(ContractError::integrity(
                     "DIGEST_MISMATCH",
-                    format!("journal entry {} has unknown state {state:?}", relative.to_string_lossy()),
+                    format!(
+                        "journal entry {} has unknown state {state:?}",
+                        relative.to_string_lossy()
+                    ),
                     "Preserve the journal bytes; the closed recovery state machine refuses an unknown transition.",
                 ));
             }
-            let digest = crate::json::get_str(&entry, "digest").unwrap_or_default().to_owned();
-            let rel = PathBuf::from(crate::json::get_str(&entry, "relative_path").unwrap_or_default());
+            let digest = crate::json::get_str(&entry, "digest")
+                .unwrap_or_default()
+                .to_owned();
+            let rel =
+                PathBuf::from(crate::json::get_str(&entry, "relative_path").unwrap_or_default());
             let final_path = paths::contained(&self.kin.join("events"), &rel)?;
             let staged = local.join("staging").join(format!("{digest}.json"));
-            let receipt_path = local.join("receipts").join(repository_uuid).join(format!("{digest}.json"));
+            let receipt_path = local
+                .join("receipts")
+                .join(repository_uuid)
+                .join(format!("{digest}.json"));
             let mut action = "completed";
             if state == "staged" || state == "prepared" {
                 if staged.exists() {
-                    let staged_bytes = std::fs::read(&staged).map_err(|error| ContractError::io("read staged", error))?;
+                    let staged_bytes = std::fs::read(&staged)
+                        .map_err(|error| ContractError::io("read staged", error))?;
                     if crate::hash::sha256_bytes(&staged_bytes) == digest {
                         paths::write_atomic(&final_path, &staged_bytes, 0o644, true)?;
                     } else {
@@ -708,7 +882,10 @@ impl Repository {
             } else if !final_path.exists() {
                 return Err(ContractError::integrity(
                     "DIGEST_MISMATCH",
-                    format!("journal entry {} claims {state} but the content-addressed event is absent", relative.to_string_lossy()),
+                    format!(
+                        "journal entry {} claims {state} but the content-addressed event is absent",
+                        relative.to_string_lossy()
+                    ),
                     "Preserve the journal and event tree; recovery never invents admitted bytes.",
                 ));
             }
@@ -727,7 +904,12 @@ impl Repository {
                         "committed_at": crate::time::now_rfc3339_millis(),
                         "journal_generation": entry.get("generation").cloned().unwrap_or(Value::Null)
                     });
-                    paths::write_atomic(&receipt_path, &crate::json::canonical_bytes(&receipt), 0o600, false)?;
+                    paths::write_atomic(
+                        &receipt_path,
+                        &crate::json::canonical_bytes(&receipt),
+                        0o600,
+                        false,
+                    )?;
                 }
             }
             entry["state"] = Value::String("done".to_owned());
@@ -753,9 +935,12 @@ impl Repository {
         if !path.exists() {
             return Ok(None);
         }
-        let bytes = std::fs::read(&path).map_err(|error| ContractError::io("read index cache", error))?;
+        let bytes =
+            std::fs::read(&path).map_err(|error| ContractError::io("read index cache", error))?;
         let files = self.stored_events()?;
-        Ok(Some(bytes == crate::json::canonical_bytes(&index_value(&files))))
+        Ok(Some(
+            bytes == crate::json::canonical_bytes(&index_value(&files)),
+        ))
     }
 
     // ----- manifests -----
@@ -770,7 +955,13 @@ impl Repository {
         fresh_seconds: i64,
     ) -> Result<Value, ContractError> {
         let events = self.stored_events()?;
-        self.publish_manifest_with_events(repository_uuid, signer, observed_at, fresh_seconds, &events)
+        self.publish_manifest_with_events(
+            repository_uuid,
+            signer,
+            observed_at,
+            fresh_seconds,
+            &events,
+        )
     }
 
     /// Build, sign, and store a manifest over an explicitly supplied event
@@ -790,7 +981,8 @@ impl Repository {
         // publishers observe one parent head and form one lineage.
         let _lock = self.admission_lock(repository_uuid)?;
         let heads = self.manifest_heads()?;
-        let clock_skew = crate::time::receipt_clock_skew(observed_at, &crate::time::now_rfc3339_millis());
+        let clock_skew =
+            crate::time::receipt_clock_skew(observed_at, &crate::time::now_rfc3339_millis());
         let branch = self.branch()?;
         let revision = self.default_branch_revision()?;
         let mut manifest = json!({
@@ -819,7 +1011,8 @@ impl Repository {
         paths::write_atomic(&path, &bytes, 0o644, true)?;
         let mut result = signed;
         result["manifest_digest"] = Value::String(digest);
-        result["manifest_path"] = Value::String(format!(".kin/manifests/{}", relative.to_string_lossy()));
+        result["manifest_path"] =
+            Value::String(format!(".kin/manifests/{}", relative.to_string_lossy()));
         Ok(result)
     }
 
@@ -885,7 +1078,8 @@ fn stored_files(root: &Path) -> Result<Vec<StoredFile>, ContractError> {
     let mut output = Vec::new();
     for relative in paths::list_files(root)? {
         let path = root.join(&relative);
-        let bytes = std::fs::read(&path).map_err(|error| ContractError::io("read stored file", error))?;
+        let bytes =
+            std::fs::read(&path).map_err(|error| ContractError::io("read stored file", error))?;
         let content_digest = crate::hash::sha256_bytes(&bytes);
         let path_digest = paths::digest_from_sharded(&relative);
         let path_alias = path_digest.as_deref() != Some(content_digest.as_str());
@@ -912,7 +1106,10 @@ pub fn merkle_root(leaves: &[Vec<u8>]) -> String {
     if leaves.is_empty() {
         return crate::hash::sha256_bytes(&[]);
     }
-    let mut level: Vec<[u8; 32]> = leaves.iter().map(|leaf| crate::hash::sha256_raw(leaf)).collect();
+    let mut level: Vec<[u8; 32]> = leaves
+        .iter()
+        .map(|leaf| crate::hash::sha256_raw(leaf))
+        .collect();
     while level.len() > 1 {
         let mut next = Vec::with_capacity(level.len().div_ceil(2));
         for pair in level.chunks(2) {

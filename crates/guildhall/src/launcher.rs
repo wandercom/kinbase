@@ -72,7 +72,9 @@ impl Launcher {
     }
 
     pub fn personal_root(&self) -> Option<PathBuf> {
-        self.user.as_ref().map(|user| user.personal.data_root.clone())
+        self.user
+            .as_ref()
+            .map(|user| user.personal.data_root.clone())
     }
 
     /// Raw canary/identifier registry for the private routing path.
@@ -110,7 +112,13 @@ impl Launcher {
         };
         let root = access.root_key()?;
         let cache = Cache::open(&access.cache_root)?;
-        let client = Client::new(&access.url, access.facts_token.clone(), access.client_key()?, Some(root.clone()), access.cache_root.clone())?;
+        let client = Client::new(
+            &access.url,
+            access.facts_token.clone(),
+            access.client_key()?,
+            Some(root.clone()),
+            access.cache_root.clone(),
+        )?;
         Ok(Some(CompanyAccess {
             client,
             cache,
@@ -183,8 +191,13 @@ impl Launcher {
     }
 }
 
-fn serialized_shared_config_mentions_personal(shared: &SharedConfig, personal_root: Option<&std::path::Path>) -> bool {
-    let Some(root) = personal_root else { return false };
+fn serialized_shared_config_mentions_personal(
+    shared: &SharedConfig,
+    personal_root: Option<&std::path::Path>,
+) -> bool {
+    let Some(root) = personal_root else {
+        return false;
+    };
     let text = serde_json::to_string(shared).unwrap_or_default();
     text.contains(&root.to_string_lossy().to_string())
 }

@@ -65,7 +65,10 @@ pub fn read_request(stream: &TcpStream, body_limit: usize) -> Result<Request, Re
         ));
     }
     if !path.starts_with('/') || path.len() > 2048 {
-        return Err(ReadError::Bad(400, ContractError::invariant("malformed request path")));
+        return Err(ReadError::Bad(
+            400,
+            ContractError::invariant("malformed request path"),
+        ));
     }
     let mut headers = Vec::new();
     loop {
@@ -74,13 +77,19 @@ pub fn read_request(stream: &TcpStream, body_limit: usize) -> Result<Request, Re
             Ok(0) => break,
             Ok(n) => total += n,
             Err(_) => {
-                return Err(ReadError::Bad(400, ContractError::invariant("unreadable request headers")));
+                return Err(ReadError::Bad(
+                    400,
+                    ContractError::invariant("unreadable request headers"),
+                ));
             }
         }
         if total > MAX_HEADER_BYTES {
             return Err(ReadError::Bad(
                 431,
-                ContractError::limit("request headers exceed the 16 KiB bound", serde_json::json!({"refused_count": 1, "omitted_count": 1})),
+                ContractError::limit(
+                    "request headers exceed the 16 KiB bound",
+                    serde_json::json!({"refused_count": 1, "omitted_count": 1}),
+                ),
             ));
         }
         let trimmed = line.trim_end_matches(['\r', '\n']);
@@ -88,7 +97,10 @@ pub fn read_request(stream: &TcpStream, body_limit: usize) -> Result<Request, Re
             break;
         }
         let Some((name, value)) = trimmed.split_once(':') else {
-            return Err(ReadError::Bad(400, ContractError::invariant("malformed header line")));
+            return Err(ReadError::Bad(
+                400,
+                ContractError::invariant("malformed header line"),
+            ));
         };
         headers.push((name.trim().to_ascii_lowercase(), value.trim().to_owned()));
     }
@@ -99,8 +111,13 @@ pub fn read_request(stream: &TcpStream, body_limit: usize) -> Result<Request, Re
         .transpose()
         .map_err(|_| ReadError::Bad(400, ContractError::invariant("malformed content-length")))?
         .unwrap_or(0);
-    if headers.iter().any(|(name, value)| name == "transfer-encoding" && value.to_ascii_lowercase().contains("chunked")) {
-        return Err(ReadError::Bad(411, ContractError::invariant("chunked bodies are not accepted; send content-length")));
+    if headers.iter().any(|(name, value)| {
+        name == "transfer-encoding" && value.to_ascii_lowercase().contains("chunked")
+    }) {
+        return Err(ReadError::Bad(
+            411,
+            ContractError::invariant("chunked bodies are not accepted; send content-length"),
+        ));
     }
     if content_length > body_limit {
         return Err(ReadError::Bad(
@@ -113,11 +130,17 @@ pub fn read_request(stream: &TcpStream, body_limit: usize) -> Result<Request, Re
     }
     let mut body = vec![0u8; content_length];
     if content_length > 0 {
-        reader
-            .read_exact(&mut body)
-            .map_err(|_| ReadError::Bad(400, ContractError::invariant("request body shorter than content-length")))?;
+        reader.read_exact(&mut body).map_err(|_| {
+            ReadError::Bad(
+                400,
+                ContractError::invariant("request body shorter than content-length"),
+            )
+        })?;
     }
-    let (route, query_text) = path.split_once('?').map(|(r, q)| (r.to_owned(), q.to_owned())).unwrap_or((path.clone(), String::new()));
+    let (route, query_text) = path
+        .split_once('?')
+        .map(|(r, q)| (r.to_owned(), q.to_owned()))
+        .unwrap_or((path.clone(), String::new()));
     let mut query = BTreeMap::new();
     for pair in query_text.split('&').filter(|pair| !pair.is_empty()) {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
@@ -190,7 +213,9 @@ pub fn respond(stream: &mut TcpStream, status: u16, body: &Value) -> std::io::Re
     let mut bytes = crate::json::try_canonical_bytes(body)
         .unwrap_or_else(|_| b"{\"error\":{\"code\":\"RUN_INTEGRITY_FAILED\",\"message\":\"response serialization failed\",\"remediation\":\"Preserve evidence.\",\"retryable\":false,\"evidence_id\":\"err_serialize\"}}".to_vec());
     if status >= 400 && bytes.len() > MAX_ERROR_BODY_BYTES {
-        let truncated = crate::error::ContractError::internal("error body exceeded the 4096-byte bound and was replaced");
+        let truncated = crate::error::ContractError::internal(
+            "error body exceeded the 4096-byte bound and was replaced",
+        );
         bytes = crate::json::canonical_bytes(&serde_json::json!({"error": truncated}));
     }
     let head = format!(
@@ -220,15 +245,29 @@ pub fn parse_url(url: &str) -> Result<(String, u16, String), ContractError> {
     let rest = url
         .strip_prefix("http://")
         .ok_or_else(|| ContractError::invariant("Company URL must use http:// over loopback"))?;
-    let (authority, path) = rest.split_once('/').map(|(a, p)| (a, format!("/{p}"))).unwrap_or((rest, String::new()));
+    let (authority, path) = rest
+        .split_once('/')
+        .map(|(a, p)| (a, format!("/{p}")))
+        .unwrap_or((rest, String::new()));
     let (host, port) = authority.rsplit_once(':').unwrap_or((authority, "80"));
     let host = host.trim_start_matches('[').trim_end_matches(']');
-    let port: u16 = port.parse().map_err(|_| ContractError::invariant("Company URL port is not a number"))?;
-    let loopback = host == "localhost" || host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback());
+    let port: u16 = port
+        .parse()
+        .map_err(|_| ContractError::invariant("Company URL port is not a number"))?;
+    let loopback = host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback());
     if !loopback {
-        return Err(ContractError::invariant("Company URL must name a loopback host"));
+        return Err(ContractError::invariant(
+            "Company URL must name a loopback host",
+        ));
     }
-    let host = if host == "localhost" { "127.0.0.1".to_owned() } else { host.to_owned() };
+    let host = if host == "localhost" {
+        "127.0.0.1".to_owned()
+    } else {
+        host.to_owned()
+    };
     Ok((host, port, path.trim_end_matches('/').to_owned()))
 }
 
@@ -252,11 +291,17 @@ pub fn request(
 ) -> Result<Response, ContractError> {
     let address = (host, port)
         .to_socket_addrs()
-        .map_err(|error| ContractError::unreachable(format!("Company endpoint does not resolve ({error})")))?
+        .map_err(|error| {
+            ContractError::unreachable(format!("Company endpoint does not resolve ({error})"))
+        })?
         .next()
         .ok_or_else(|| ContractError::unreachable("Company endpoint does not resolve"))?;
-    let mut stream = TcpStream::connect_timeout(&address, CONNECT_BUDGET)
-        .map_err(|error| ContractError::unreachable(format!("Company endpoint did not accept a connection within 250 ms ({})", error.kind())))?;
+    let mut stream = TcpStream::connect_timeout(&address, CONNECT_BUDGET).map_err(|error| {
+        ContractError::unreachable(format!(
+            "Company endpoint did not accept a connection within 250 ms ({})",
+            error.kind()
+        ))
+    })?;
     stream
         .set_read_timeout(Some(read_timeout))
         .map_err(|error| ContractError::io("read timeout", error))?;
@@ -264,7 +309,10 @@ pub fn request(
         .set_write_timeout(Some(read_timeout))
         .map_err(|error| ContractError::io("write timeout", error))?;
     let _ = stream.set_nodelay(true);
-    let mut text = format!("{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\nContent-Length: {}\r\n", body.len());
+    let mut text = format!(
+        "{method} {path} HTTP/1.1\r\nHost: {host}:{port}\r\nConnection: close\r\nContent-Length: {}\r\n",
+        body.len()
+    );
     if !body.is_empty() {
         text.push_str("Content-Type: application/json\r\n");
     }
@@ -278,26 +326,45 @@ pub fn request(
     stream
         .write_all(text.as_bytes())
         .and_then(|_| stream.write_all(body))
-        .map_err(|error| ContractError::unreachable(format!("Company endpoint refused the request bytes ({})", error.kind())))?;
+        .map_err(|error| {
+            ContractError::unreachable(format!(
+                "Company endpoint refused the request bytes ({})",
+                error.kind()
+            ))
+        })?;
     let mut reader = BufReader::new(stream);
     let mut status_line = String::new();
-    reader
-        .read_line(&mut status_line)
-        .map_err(|error| ContractError::unreachable(format!("Company endpoint did not answer within the read budget ({})", error.kind())))?;
+    reader.read_line(&mut status_line).map_err(|error| {
+        ContractError::unreachable(format!(
+            "Company endpoint did not answer within the read budget ({})",
+            error.kind()
+        ))
+        .with_detail(serde_json::json!({
+            "timeout_observed": true,
+            "omitted_count": 1
+        }))
+    })?;
     if status_line.is_empty() {
-        return Err(ContractError::unreachable("Company endpoint closed the connection without a response"));
+        return Err(ContractError::unreachable(
+            "Company endpoint closed the connection without a response",
+        ));
     }
     let status: u16 = status_line
         .split_whitespace()
         .nth(1)
         .and_then(|value| value.parse().ok())
-        .ok_or_else(|| ContractError::unreachable("Company endpoint answered with a malformed status line"))?;
+        .ok_or_else(|| {
+            ContractError::unreachable("Company endpoint answered with a malformed status line")
+        })?;
     let mut content_length = 0usize;
     loop {
         let mut line = String::new();
-        let read = reader
-            .read_line(&mut line)
-            .map_err(|error| ContractError::unreachable(format!("Company endpoint headers unreadable ({})", error.kind())))?;
+        let read = reader.read_line(&mut line).map_err(|error| {
+            ContractError::unreachable(format!(
+                "Company endpoint headers unreadable ({})",
+                error.kind()
+            ))
+        })?;
         if read == 0 || line.trim().is_empty() {
             break;
         }
@@ -315,14 +382,15 @@ pub fn request(
     }
     let mut raw = vec![0u8; content_length];
     if content_length > 0 {
-        reader
-            .read_exact(&mut raw)
-            .map_err(|error| ContractError::unreachable(format!("Company response truncated ({})", error.kind())))?;
+        reader.read_exact(&mut raw).map_err(|error| {
+            ContractError::unreachable(format!("Company response truncated ({})", error.kind()))
+        })?;
     }
     let body = if raw.is_empty() {
         Value::Null
     } else {
-        crate::json::parse_strict_value(&raw).unwrap_or_else(|_| serde_json::from_slice(&raw).unwrap_or(Value::Null))
+        crate::json::parse_strict_value(&raw)
+            .unwrap_or_else(|_| serde_json::from_slice(&raw).unwrap_or(Value::Null))
     };
     Ok(Response { status, body, raw })
 }

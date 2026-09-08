@@ -72,7 +72,9 @@ fn descriptor_path(fd: i32) -> Option<PathBuf> {
         return None;
     }
     let end = buffer.iter().position(|b| *b == 0).unwrap_or(buffer.len());
-    Some(PathBuf::from(String::from_utf8_lossy(&buffer[..end]).into_owned()))
+    Some(PathBuf::from(
+        String::from_utf8_lossy(&buffer[..end]).into_owned(),
+    ))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -97,8 +99,10 @@ pub fn attest_descriptors(personal_root: Option<&Path>) -> Result<Value, Contrac
     let personal_canonical = personal_root.and_then(|root| root.canonicalize().ok());
     let mut extra = Vec::new();
     for descriptor in &descriptors {
-        let under_personal = personal_identity.is_some_and(|(dev, ino)| descriptor.dev == dev && descriptor.ino == ino)
-            || (personal_canonical.as_ref().zip(descriptor.path.as_ref())).is_some_and(|(root, path)| path.starts_with(root));
+        let under_personal = personal_identity
+            .is_some_and(|(dev, ino)| descriptor.dev == dev && descriptor.ino == ino)
+            || (personal_canonical.as_ref().zip(descriptor.path.as_ref()))
+                .is_some_and(|(root, path)| path.starts_with(root));
         if under_personal {
             return Err(ContractError::refused(
                 "CONFIG_INVARIANT",
@@ -130,7 +134,11 @@ pub fn attest_descriptors(personal_root: Option<&Path>) -> Result<Value, Contrac
 /// macOS sandbox profile denying the Personal root and all unrelated user
 /// paths while allowing only the declared Company cache and one repository
 /// root (plus the system toolchain paths the binary needs to run).
-pub fn profile(personal_root: &Path, allowed_roots: &[PathBuf], company_port: Option<u16>) -> String {
+pub fn profile(
+    personal_root: &Path,
+    allowed_roots: &[PathBuf],
+    company_port: Option<u16>,
+) -> String {
     let mut lines = vec![
         "(version 1)".to_owned(),
         "(deny default)".to_owned(),
@@ -142,13 +150,19 @@ pub fn profile(personal_root: &Path, allowed_roots: &[PathBuf], company_port: Op
     ];
     for root in allowed_roots {
         let quoted = root.to_string_lossy().replace('"', "\\\"");
-        lines.push(format!("(allow file-read* file-write* (subpath \"{quoted}\"))"));
+        lines.push(format!(
+            "(allow file-read* file-write* (subpath \"{quoted}\"))"
+        ));
     }
     if let Some(port) = company_port {
-        lines.push(format!("(allow network-outbound (remote ip \"localhost:{port}\"))"));
+        lines.push(format!(
+            "(allow network-outbound (remote ip \"localhost:{port}\"))"
+        ));
     }
     let personal = personal_root.to_string_lossy().replace('"', "\\\"");
-    lines.push(format!("(deny file-read* file-write* file-read-metadata (subpath \"{personal}\"))"));
+    lines.push(format!(
+        "(deny file-read* file-write* file-read-metadata (subpath \"{personal}\"))"
+    ));
     lines.join("\n")
 }
 
@@ -166,7 +180,11 @@ pub struct ProbeResult {
 
 /// Run the startup denial probe: a child under the sandbox profile attempts
 /// to read the Personal root. Success is a hard failure of the boundary.
-pub fn denial_probe(personal_root: &Path, allowed_roots: &[PathBuf], company_port: Option<u16>) -> ProbeResult {
+pub fn denial_probe(
+    personal_root: &Path,
+    allowed_roots: &[PathBuf],
+    company_port: Option<u16>,
+) -> ProbeResult {
     if !sandbox_available() {
         return ProbeResult {
             enforced: false,
@@ -256,7 +274,8 @@ pub fn run_shared(
     args: &[String],
     shared_config: &[u8],
 ) -> Result<std::process::Output, ContractError> {
-    let exe = std::env::current_exe().map_err(|error| ContractError::io("current executable", error))?;
+    let exe =
+        std::env::current_exe().map_err(|error| ContractError::io("current executable", error))?;
     let profile = profile(personal_root, allowed_roots, company_port);
     let mut command = if sandbox_available() {
         let mut command = Command::new("/usr/bin/sandbox-exec");
@@ -281,10 +300,15 @@ pub fn run_shared(
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let child = command.spawn().map_err(|error| ContractError::io("spawn shared helper", error))?;
-    std::io::Write::write_all(&mut writer, shared_config).map_err(|error| ContractError::io("write shared config", error))?;
+    let child = command
+        .spawn()
+        .map_err(|error| ContractError::io("spawn shared helper", error))?;
+    std::io::Write::write_all(&mut writer, shared_config)
+        .map_err(|error| ContractError::io("write shared config", error))?;
     drop(writer);
-    let output = child.wait_with_output().map_err(|error| ContractError::io("wait shared helper", error))?;
+    let output = child
+        .wait_with_output()
+        .map_err(|error| ContractError::io("wait shared helper", error))?;
     let _ = std::io::Read::read(&mut reader, &mut [0u8; 1]);
     Ok(output)
 }
@@ -303,13 +327,21 @@ fn pipe() -> Result<(std::fs::File, std::fs::File), ContractError> {
         }
     }
     // SAFETY: the descriptors are fresh and owned by this process.
-    Ok(unsafe { (std::fs::File::from_raw_fd(fds[0]), std::fs::File::from_raw_fd(fds[1])) })
+    Ok(unsafe {
+        (
+            std::fs::File::from_raw_fd(fds[0]),
+            std::fs::File::from_raw_fd(fds[1]),
+        )
+    })
 }
 
 fn clear_cloexec(fd: i32) -> Result<(), ContractError> {
     // SAFETY: clearing CLOEXEC on a descriptor we own so one child inherits it.
     if unsafe { libc::fcntl(fd, libc::F_SETFD, 0) } != 0 {
-        return Err(ContractError::io("clear cloexec", std::io::Error::last_os_error()));
+        return Err(ContractError::io(
+            "clear cloexec",
+            std::io::Error::last_os_error(),
+        ));
     }
     Ok(())
 }
@@ -328,23 +360,47 @@ pub fn run_verified_executable(
 ) -> Result<Vec<u8>, ContractError> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     if !executable.is_absolute() {
-        return Err(ContractError::integrity("PROCESSOR_UNAUTHORIZED", "classifier executable must be an absolute path", "Configure an absolute regular-file path; no PATH or shell resolution exists."));
+        return Err(ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            "classifier executable must be an absolute path",
+            "Configure an absolute regular-file path; no PATH or shell resolution exists.",
+        ));
     }
-    let file = std::fs::File::open(executable).map_err(|error| ContractError::integrity("PROCESSOR_UNAUTHORIZED", format!("classifier executable cannot be opened ({})", error.kind()), "Configure a readable absolute executable."))?;
-    let metadata = file.metadata().map_err(|error| ContractError::io("fstat classifier", error))?;
+    let file = std::fs::File::open(executable).map_err(|error| {
+        ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            format!("classifier executable cannot be opened ({})", error.kind()),
+            "Configure a readable absolute executable.",
+        )
+    })?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| ContractError::io("fstat classifier", error))?;
     // SAFETY: geteuid has no preconditions.
     let euid = unsafe { libc::geteuid() };
     if !metadata.is_file() || metadata.uid() != euid || metadata.permissions().mode() & 0o022 != 0 {
-        return Err(ContractError::integrity("PROCESSOR_UNAUTHORIZED", "classifier executable is not a regular file owned by the effective user without group/other write", "Fix ownership and mode of the classifier executable."));
+        return Err(ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            "classifier executable is not a regular file owned by the effective user without group/other write",
+            "Fix ownership and mode of the classifier executable.",
+        ));
     }
     let mut ancestor = executable.parent();
     while let Some(dir) = ancestor {
         if let Ok(dir_metadata) = std::fs::symlink_metadata(dir) {
             if dir_metadata.file_type().is_symlink() {
-                return Err(ContractError::integrity("PROCESSOR_UNAUTHORIZED", "classifier containing-directory chain traverses a symlink", "Place the classifier under a symlink-free directory chain."));
+                return Err(ContractError::integrity(
+                    "PROCESSOR_UNAUTHORIZED",
+                    "classifier containing-directory chain traverses a symlink",
+                    "Place the classifier under a symlink-free directory chain.",
+                ));
             }
             if dir_metadata.permissions().mode() & 0o022 != 0 && dir != Path::new("/") {
-                return Err(ContractError::integrity("PROCESSOR_UNAUTHORIZED", "classifier containing directory is writable by group or other", "Tighten the directory chain to 0755 or stricter."));
+                return Err(ContractError::integrity(
+                    "PROCESSOR_UNAUTHORIZED",
+                    "classifier containing directory is writable by group or other",
+                    "Tighten the directory chain to 0755 or stricter.",
+                ));
             }
         }
         ancestor = dir.parent();
@@ -352,10 +408,15 @@ pub fn run_verified_executable(
     let mut bytes = Vec::new();
     {
         let mut reader = &file;
-        std::io::Read::read_to_end(&mut reader, &mut bytes).map_err(|error| ContractError::io("read classifier", error))?;
+        std::io::Read::read_to_end(&mut reader, &mut bytes)
+            .map_err(|error| ContractError::io("read classifier", error))?;
     }
     if crate::hash::sha256_bytes(&bytes) != expected_sha256 {
-        return Err(ContractError::integrity("PROCESSOR_UNAUTHORIZED", "classifier executable digest differs from the pinned SHA-256", "Update the pinned digest only through a reviewed configuration change; no input was sent."));
+        return Err(ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            "classifier executable digest differs from the pinned SHA-256",
+            "Update the pinned digest only through a reviewed configuration change; no input was sent.",
+        ));
     }
     let fd = file.as_raw_fd();
     clear_cloexec(fd)?;
@@ -372,15 +433,28 @@ pub fn run_verified_executable(
         .spawn();
     let mut child = match spawn {
         Ok(child) => child,
-        Err(error) if matches!(error.kind(), std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotFound) => {
+        Err(error)
+            if matches!(
+                error.kind(),
+                std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotFound
+            ) =>
+        {
             // Darwin does not permit executing a regular file through /dev/fd.
             // The descriptor above still performed ownership/mode/digest pinning;
             // refuse to fall back unless the pathname still names the same inode.
             let fallback = std::fs::File::open(executable)
                 .map_err(|error| ContractError::io("reopen classifier", error))?;
-            let fallback_metadata = fallback.metadata().map_err(|error| ContractError::io("fstat classifier", error))?;
-            if fallback_metadata.dev() != metadata.dev() || fallback_metadata.ino() != metadata.ino() {
-                return Err(ContractError::integrity("PROCESSOR_UNAUTHORIZED", "classifier pathname changed after descriptor verification", "Repin the classifier digest; the changed executable was not run."));
+            let fallback_metadata = fallback
+                .metadata()
+                .map_err(|error| ContractError::io("fstat classifier", error))?;
+            if fallback_metadata.dev() != metadata.dev()
+                || fallback_metadata.ino() != metadata.ino()
+            {
+                return Err(ContractError::integrity(
+                    "PROCESSOR_UNAUTHORIZED",
+                    "classifier pathname changed after descriptor verification",
+                    "Repin the classifier digest; the changed executable was not run.",
+                ));
             }
             Command::new(executable)
                 .args(args)
@@ -394,7 +468,13 @@ pub fn run_verified_executable(
                 .spawn()
                 .map_err(|error| ContractError::integrity("PROCESSOR_UNAUTHORIZED", format!("descriptor-backed execution failed ({})", error.kind()), "A platform without verified descriptor-backed execution disables the external classifier."))?
         }
-        Err(error) => return Err(ContractError::integrity("PROCESSOR_UNAUTHORIZED", format!("descriptor-backed execution failed ({})", error.kind()), "A platform without verified descriptor-backed execution disables the external classifier.")),
+        Err(error) => {
+            return Err(ContractError::integrity(
+                "PROCESSOR_UNAUTHORIZED",
+                format!("descriptor-backed execution failed ({})", error.kind()),
+                "A platform without verified descriptor-backed execution disables the external classifier.",
+            ));
+        }
     };
     // Write stdin independently and read both pipes concurrently. A
     // classifier can emit more than a pipe buffer of atoms before consuming
@@ -431,7 +511,11 @@ pub fn run_verified_executable(
                     let _ = stdin_writer.map(std::thread::JoinHandle::join);
                     let _ = stdout_reader.map(std::thread::JoinHandle::join);
                     let _ = stderr_reader.map(std::thread::JoinHandle::join);
-                    return Err(ContractError::degraded("UNKNOWN_OWNER_UNRESOLVED", "classifier exceeded its wall timeout; extraction abstained", "Increase classifier.timeout_seconds or use a faster local processor."));
+                    return Err(ContractError::degraded(
+                        "UNKNOWN_OWNER_UNRESOLVED",
+                        "classifier exceeded its wall timeout; extraction abstained",
+                        "Increase classifier.timeout_seconds or use a faster local processor.",
+                    ));
                 }
                 std::thread::sleep(std::time::Duration::from_millis(20));
             }
@@ -445,7 +529,11 @@ pub fn run_verified_executable(
         .unwrap_or_default();
     let _ = stderr_reader.map(std::thread::JoinHandle::join);
     if !status.success() {
-        return Err(ContractError::degraded("UNKNOWN_OWNER_UNRESOLVED", format!("classifier exited with {status}; extraction abstained"), "Repair the classifier; abstention creates a private Unknown."));
+        return Err(ContractError::degraded(
+            "UNKNOWN_OWNER_UNRESOLVED",
+            format!("classifier exited with {status}; extraction abstained"),
+            "Repair the classifier; abstention creates a private Unknown.",
+        ));
     }
     Ok(stdout)
 }

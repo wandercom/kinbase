@@ -216,7 +216,9 @@ pub fn unescape_exact(rendered: &str) -> Result<String, String> {
 fn read_unit(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<u16, String> {
     let mut value = 0u16;
     for _ in 0..4 {
-        let digit = chars.next().ok_or_else(|| "truncated \\u escape".to_owned())?;
+        let digit = chars
+            .next()
+            .ok_or_else(|| "truncated \\u escape".to_owned())?;
         let nibble = match digit {
             '0'..='9' => digit as u16 - '0' as u16,
             'a'..='f' => digit as u16 - 'a' as u16 + 10,

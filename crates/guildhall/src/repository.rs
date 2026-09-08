@@ -58,18 +58,25 @@ impl TrustContext {
     }
 
     pub fn is_revoked(&self, key: &str) -> bool {
-        self.revocations.iter().any(|revocation| revocation.revoked_key == key)
+        self.revocations
+            .iter()
+            .any(|revocation| revocation.revoked_key == key)
     }
 
     pub fn entries_for_key(&self, key: &str) -> Vec<&Value> {
         self.registry
             .iter()
-            .filter(|entry| crate::json::get_str(entry, "public_key") == Some(key) && crate::json::get_str(entry, "status").unwrap_or("active") == "active")
+            .filter(|entry| {
+                crate::json::get_str(entry, "public_key") == Some(key)
+                    && crate::json::get_str(entry, "status").unwrap_or("active") == "active"
+            })
             .collect()
     }
 
     pub fn is_maintainer(&self, key: &str) -> bool {
-        let Some(uuid) = &self.repository_uuid else { return false };
+        let Some(uuid) = &self.repository_uuid else {
+            return false;
+        };
         self.entries_for_key(key).iter().any(|entry| {
             let scope = crate::json::get_str(entry, "scope").unwrap_or_default();
             scope == format!("codebase:{uuid}") || scope == format!("repository:{uuid}")
@@ -88,12 +95,17 @@ impl TrustContext {
                 crate::json::get_str(entry, "scope"),
                 crate::json::get_str(entry, "authority_id"),
             ) {
-                by_scope.entry(scope.to_owned()).or_default().push(identity.to_owned());
+                by_scope
+                    .entry(scope.to_owned())
+                    .or_default()
+                    .push(identity.to_owned());
             }
         }
         by_scope
             .into_iter()
-            .filter_map(|(scope, identities)| (identities.len() == 1).then(|| (scope, identities.into_iter().next().unwrap())))
+            .filter_map(|(scope, identities)| {
+                (identities.len() == 1).then(|| (scope, identities.into_iter().next().unwrap()))
+            })
             .collect()
     }
 
@@ -111,7 +123,9 @@ impl TrustContext {
     }
 
     pub fn maintainer_entries(&self) -> Vec<Value> {
-        let Some(uuid) = &self.repository_uuid else { return Vec::new() };
+        let Some(uuid) = &self.repository_uuid else {
+            return Vec::new();
+        };
         self.registry
             .iter()
             .filter(|entry| {
@@ -143,10 +157,9 @@ impl TrustContext {
         if self.steward_keys().contains(&event.signer) || self.is_maintainer(&event.signer) {
             return Verification::Verified;
         }
-        let in_scope = self
-            .entries_for_key(&event.signer)
-            .iter()
-            .any(|entry| crate::json::get_str(entry, "scope") == Some(event.authority_scope.as_str()));
+        let in_scope = self.entries_for_key(&event.signer).iter().any(|entry| {
+            crate::json::get_str(entry, "scope") == Some(event.authority_scope.as_str())
+        });
         if in_scope {
             Verification::Verified
         } else if self.entries_for_key(&event.signer).is_empty() {
@@ -158,13 +171,16 @@ impl TrustContext {
 
     pub fn environment_registered(&self, environment_id: &str) -> bool {
         let scope = format!("environment:{environment_id}");
-        self.registry
-            .iter()
-            .any(|entry| crate::json::get_str(entry, "scope") == Some(scope.as_str()) && crate::json::get_str(entry, "status").unwrap_or("active") == "active")
+        self.registry.iter().any(|entry| {
+            crate::json::get_str(entry, "scope") == Some(scope.as_str())
+                && crate::json::get_str(entry, "status").unwrap_or("active") == "active"
+        })
     }
 
     pub fn company_fact(&self, fact_id: &str) -> Option<&Value> {
-        self.company_facts.iter().find(|fact| crate::json::get_str(fact, "fact_id") == Some(fact_id))
+        self.company_facts
+            .iter()
+            .find(|fact| crate::json::get_str(fact, "fact_id") == Some(fact_id))
     }
 }
 
@@ -260,7 +276,14 @@ fn merged_pr_review_evidence(repo: &Path, branch: &str) -> bool {
         return false;
     }
     let message = git_text(repo, &["log", "-1", "--format=%B", branch]).to_ascii_lowercase();
-    ["reviewed-by:", "approved-by:", "review evidence", "pull request #"].iter().any(|marker| message.contains(marker))
+    [
+        "reviewed-by:",
+        "approved-by:",
+        "review evidence",
+        "pull request #",
+    ]
+    .iter()
+    .any(|marker| message.contains(marker))
 }
 
 fn repository_origin_class(repo: &Repository, head_reachable: Option<bool>) -> String {
@@ -305,7 +328,11 @@ impl RepoContext {
     pub fn load(launcher: Launcher, repo_path: &Path, online: bool) -> Result<Self, ContractError> {
         let repo = Repository::discover(repo_path)?;
         let trust = build_trust(&launcher, &repo, online)?;
-        Ok(Self { launcher, repo, trust })
+        Ok(Self {
+            launcher,
+            repo,
+            trust,
+        })
     }
 
     /// Load and verify every stored event.
@@ -313,7 +340,11 @@ impl RepoContext {
         let mut counts = LoadCounts::default();
         let mut loaded = Vec::new();
         let head = self.repo.revision().unwrap_or_default();
-        let head_reachable = if head.is_empty() { None } else { Some(self.repo.is_reachable_from_default(&head)) };
+        let head_reachable = if head.is_empty() {
+            None
+        } else {
+            Some(self.repo.is_reachable_from_default(&head))
+        };
         let default_origin = repository_origin_class(&self.repo, head_reachable);
         let tracked_paths = tracked_event_paths(&self.repo.root);
         let dirty_paths = dirty_event_paths(&self.repo.root);
@@ -321,7 +352,9 @@ impl RepoContext {
             counts.total_files += 1;
             if file.path_alias {
                 counts.path_alias += 1;
-                counts.foreign_paths.push(format!(".kin/events/{}", file.relative.to_string_lossy()));
+                counts
+                    .foreign_paths
+                    .push(format!(".kin/events/{}", file.relative.to_string_lossy()));
                 // Keep the aliased bytes in the loaded list so fsck can report
                 // the exact refusal reason, but mark them malformed so no
                 // reducer path can admit a non-content-addressed event.
@@ -334,7 +367,9 @@ impl RepoContext {
                 );
                 loaded.push(LoadedEvent {
                     file,
-                    parsed: ParsedEvent::Malformed("event path is not its content digest".to_owned()),
+                    parsed: ParsedEvent::Malformed(
+                        "event path is not its content digest".to_owned(),
+                    ),
                     verification: None,
                     origin_trust: origin,
                     reachable: head_reachable,
@@ -364,7 +399,11 @@ impl RepoContext {
                 ParsedEvent::Unknown(unknown) => {
                     counts.unknown_events += 1;
                     let ok = unknown.verify_signature().is_some() && self.trust.certificate_valid;
-                    Some(if ok { Verification::Verified } else { Verification::Unverified })
+                    Some(if ok {
+                        Verification::Verified
+                    } else {
+                        Verification::Unverified
+                    })
                 }
                 ParsedEvent::Tombstone(_) => Some(Verification::Verified),
                 ParsedEvent::Malformed(_) => {
@@ -388,7 +427,11 @@ impl RepoContext {
             });
         }
         // Non-reserved artefacts under .kin/ are foreign paths (C24).
-        for entry in std::fs::read_dir(&self.repo.kin).into_iter().flatten().flatten() {
+        for entry in std::fs::read_dir(&self.repo.kin)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
             let name = entry.file_name().to_string_lossy().into_owned();
             if !["config", "events", "manifests", "local"].contains(&name.as_str()) {
                 counts.foreign_paths.push(format!(".kin/{name}"));
@@ -403,7 +446,15 @@ impl RepoContext {
     /// including lifecycle tombstones and the authority snapshot.
     pub fn reducer_parts(
         &self,
-    ) -> Result<(Vec<AdmittedEvent>, Vec<UnknownEvent>, Vec<Tombstone>, Vec<Revocation>), ContractError> {
+    ) -> Result<
+        (
+            Vec<AdmittedEvent>,
+            Vec<UnknownEvent>,
+            Vec<Tombstone>,
+            Vec<Revocation>,
+        ),
+        ContractError,
+    > {
         let (loaded, _) = self.load_events()?;
         let mut fact_by_id: BTreeMap<&str, &FactEvent> = BTreeMap::new();
         for item in &loaded {
@@ -417,19 +468,35 @@ impl RepoContext {
         for (index, item) in loaded.iter().enumerate() {
             match &item.parsed {
                 ParsedEvent::Fact(event) => {
-                    let verification = item.verification.clone().unwrap_or(Verification::Unverified);
+                    let verification = item
+                        .verification
+                        .clone()
+                        .unwrap_or(Verification::Unverified);
                     if let Some(action) = crate::model::action_of(event) {
                         if matches!(action, "misextraction" | "never_true" | "support_withdrawn") {
-                            let target_id = event.parents.iter().chain(event.supersedes.iter()).next().cloned();
-                            let target = target_id.as_deref().and_then(|id| fact_by_id.get(id).copied());
+                            let target_id = event
+                                .parents
+                                .iter()
+                                .chain(event.supersedes.iter())
+                                .next()
+                                .cloned();
+                            let target = target_id
+                                .as_deref()
+                                .and_then(|id| fact_by_id.get(id).copied());
                             let authorized = match action {
                                 "misextraction" => {
                                     verification == Verification::Verified
                                         && (event.authority_scope.starts_with("approver:")
-                                            || self.trust.entries_for_key(&event.signer).iter().any(|entry| {
-                                                crate::json::get_str(entry, "scope")
-                                                    .is_some_and(|scope| scope.starts_with("approver:"))
-                                            }))
+                                            || self
+                                                .trust
+                                                .entries_for_key(&event.signer)
+                                                .iter()
+                                                .any(|entry| {
+                                                    crate::json::get_str(entry, "scope")
+                                                        .is_some_and(|scope| {
+                                                            scope.starts_with("approver:")
+                                                        })
+                                                }))
                                 }
                                 "never_true" => {
                                     verification == Verification::Verified
@@ -488,16 +555,31 @@ impl RepoContext {
                 _ => {}
             }
         }
-        Ok((admitted, unknowns, tombstones, self.trust.revocations.clone()))
+        Ok((
+            admitted,
+            unknowns,
+            tombstones,
+            self.trust.revocations.clone(),
+        ))
     }
 
     /// Reduce the repository's admitted events into its current view,
     /// resolving Company references (P-8) against the cached Company view.
-    pub fn current_view(&self, as_of: &str, cursor_override: Option<&str>) -> Result<(crate::reducer::CurrentView, LoadCounts, Vec<Value>), ContractError> {
+    pub fn current_view(
+        &self,
+        as_of: &str,
+        cursor_override: Option<&str>,
+    ) -> Result<(crate::reducer::CurrentView, LoadCounts, Vec<Value>), ContractError> {
         let (loaded, counts) = self.load_events()?;
         let (admitted, unknowns, tombstones, revocations) = self.reducer_parts()?;
-        let cursor = cursor_override.map(str::to_owned).unwrap_or_else(|| self.trust.authority_cursor.clone());
-        let effective_freshness = self.trust.freshness.as_ref().map(|freshness| freshness.at(as_of));
+        let cursor = cursor_override
+            .map(str::to_owned)
+            .unwrap_or_else(|| self.trust.authority_cursor.clone());
+        let effective_freshness = self
+            .trust
+            .freshness
+            .as_ref()
+            .map(|freshness| freshness.at(as_of));
         let input = ReducerInput {
             store_kind: "codebase".to_owned(),
             events: admitted,
@@ -506,8 +588,13 @@ impl RepoContext {
             revocations,
             as_of: as_of.to_owned(),
             authority_cursor: cursor,
-            revocation_fresh: effective_freshness.as_ref().map(|freshness| freshness.revocation_fresh).unwrap_or(true),
-            fact_valid_until: effective_freshness.as_ref().and_then(|freshness| freshness.fact_valid_until.clone()),
+            revocation_fresh: effective_freshness
+                .as_ref()
+                .map(|freshness| freshness.revocation_fresh)
+                .unwrap_or(true),
+            fact_valid_until: effective_freshness
+                .as_ref()
+                .and_then(|freshness| freshness.fact_valid_until.clone()),
             certificate_valid: self.trust.certificate_valid,
             authority_owner_by_scope: self.trust.authority_owner_by_scope(),
             steward_authority_id: self.trust.steward_authority_id(),
@@ -520,7 +607,7 @@ impl RepoContext {
                     (event.atom_kind == "dependence"
                         || (event.atom_kind == "constraint"
                             && event.logical_key.ends_with("/local_dependence_class")))
-                        .then(|| event.clone())
+                    .then(|| event.clone())
                 } else {
                     None
                 }
@@ -532,13 +619,19 @@ impl RepoContext {
                 if let ParsedEvent::Fact(event) = &item.parsed {
                     (crate::model::action_of(event) == Some("exception_request")
                         && item.verification == Some(Verification::Verified))
-                        .then(|| event.clone())
+                    .then(|| event.clone())
                 } else {
                     None
                 }
             })
             .collect();
-        let references = self.resolve_company_references(&mut view, &dependence_events, &exception_requests, effective_freshness.as_ref(), as_of);
+        let references = self.resolve_company_references(
+            &mut view,
+            &dependence_events,
+            &exception_requests,
+            effective_freshness.as_ref(),
+            as_of,
+        );
         dependence_events.clear();
         Ok((view, counts, references))
     }
@@ -564,9 +657,11 @@ impl RepoContext {
                 .iter()
                 .filter(|event| {
                     (event.atom_kind == "dependence"
-                        && (event.parents.contains(&fact.event_id) || event.parents.contains(&fact.fact_id)))
+                        && (event.parents.contains(&fact.event_id)
+                            || event.parents.contains(&fact.fact_id)))
                         || (event.atom_kind == "constraint"
-                            && event.logical_key == format!("{}/local_dependence_class", fact.logical_key))
+                            && event.logical_key
+                                == format!("{}/local_dependence_class", fact.logical_key))
                 })
                 .max_by_key(|event| event.asserted_at.clone());
             let local_class = local.and_then(|event| local_dependence_class(&event.statement));
@@ -595,7 +690,12 @@ impl RepoContext {
                     continue;
                 }
                 let company_fact = self.trust.company_fact(&reference.fact_id).cloned();
-                let versions = self.trust.fact_versions.get(&reference.fact_id).cloned().unwrap_or_default();
+                let versions = self
+                    .trust
+                    .fact_versions
+                    .get(&reference.fact_id)
+                    .cloned()
+                    .unwrap_or_default();
                 let request = exception_requests.iter().find(|event| {
                     event.repository_id.as_deref() == Some(repository_uuid.as_str())
                         && (crate::json::get_str(&event.document(), "relaxed_fact_id")
@@ -631,15 +731,23 @@ impl RepoContext {
                     .as_ref()
                     .and_then(|value| crate::json::get_str(value, "digest_alg_version"))
                     .unwrap_or(crate::model::DIGEST_ALG_VERSION);
-                let company_statement = company_fact.as_ref().and_then(|value| crate::json::get_str(value, "statement").map(str::to_owned));
+                let company_statement = company_fact
+                    .as_ref()
+                    .and_then(|value| crate::json::get_str(value, "statement").map(str::to_owned));
                 let live_company_class = company_fact
                     .as_ref()
                     .and_then(|value| crate::json::get_str(value, "company_criticality"))
                     .unwrap_or(reference.company_criticality.as_str());
                 record["company_criticality"] = Value::String(live_company_class.to_owned());
                 record["published_digest_alg_version"] = Value::String(live_digest_alg.to_owned());
-                let effective_company_class = self.effective_company_class(&repository_uuid, reference, live_company_class, as_of);
-                if let Some(relaxation) = self.active_relaxation(&repository_uuid, reference, as_of) {
+                let effective_company_class = self.effective_company_class(
+                    &repository_uuid,
+                    reference,
+                    live_company_class,
+                    as_of,
+                );
+                if let Some(relaxation) = self.active_relaxation(&repository_uuid, reference, as_of)
+                {
                     record["relaxation"] = json!({
                         "owner": crate::json::get_str(relaxation, "authority_id").unwrap_or("company-steward"),
                         "scope": format!("codebase:{repository_uuid}"),
@@ -650,14 +758,26 @@ impl RepoContext {
                         "changes_effective_class": true
                     });
                 }
-                let stricter = if crate::model::criticality_is_safety(&effective_company_class) || local_class.as_deref().is_some_and(crate::model::criticality_is_safety) {
+                let stricter = if crate::model::criticality_is_safety(&effective_company_class)
+                    || local_class
+                        .as_deref()
+                        .is_some_and(crate::model::criticality_is_safety)
+                {
                     "safety_critical"
                 } else {
                     "advisory"
                 };
-                let dominating = if crate::model::criticality_is_safety(&effective_company_class) && !local_class.as_deref().is_some_and(crate::model::criticality_is_safety) {
+                let dominating = if crate::model::criticality_is_safety(&effective_company_class)
+                    && !local_class
+                        .as_deref()
+                        .is_some_and(crate::model::criticality_is_safety)
+                {
                     "company"
-                } else if local_class.as_deref().is_some_and(crate::model::criticality_is_safety) && !crate::model::criticality_is_safety(&effective_company_class) {
+                } else if local_class
+                    .as_deref()
+                    .is_some_and(crate::model::criticality_is_safety)
+                    && !crate::model::criticality_is_safety(&effective_company_class)
+                {
                     "local"
                 } else {
                     "equal"
@@ -672,7 +792,9 @@ impl RepoContext {
                 }
                 match (company_fact.as_ref(), live_digest.as_deref()) {
                     (None, _) => {
-                        if self.trust.company_reachable == Some(false) || self.trust.company_facts.is_empty() {
+                        if self.trust.company_reachable == Some(false)
+                            || self.trust.company_facts.is_empty()
+                        {
                             record["resolution"] = Value::String("company-unavailable".to_owned());
                             record["digest_attribution"] = json!({"owner_role": "none", "reason": "Company unavailable; withheld without accusation"});
                             fact.trust = "withheld".to_owned();
@@ -681,34 +803,46 @@ impl RepoContext {
                             record["resolution"] = Value::String("company-fact-missing".to_owned());
                             record["digest_attribution"] = json!({"owner_role": "company-steward", "reason": "referenced Company fact is not in the current authorized view (superseded or revoked)"});
                             fact.trust = "withheld".to_owned();
-                            fact.stale_reasons.push("company-reference-unresolved".to_owned());
+                            fact.stale_reasons
+                                .push("company-reference-unresolved".to_owned());
                             view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, "company-steward", "the referenced Company fact is no longer in the authorized current view; update or retire the reference"));
                         }
                     }
                     (Some(_), Some(digest)) if digest == reference.semantic_digest => {
                         record["resolution"] = Value::String("resolved".to_owned());
-                        record["company_statement"] = Value::String(company_statement.clone().unwrap_or_default());
+                        record["company_statement"] =
+                            Value::String(company_statement.clone().unwrap_or_default());
                         record["digest_attribution"] = json!({"owner_role": "none"});
                         if let Some(freshness) = freshness {
-                            let (projection, reasons) = freshness.projection(stricter == "safety_critical", self.trust.certificate_valid);
+                            let (projection, reasons) = freshness.projection(
+                                stricter == "safety_critical",
+                                self.trust.certificate_valid,
+                            );
                             if projection != "trusted" {
                                 fact.trust = projection.to_owned();
-                                fact.stale_reasons.extend(reasons.iter().map(|r| (*r).to_owned()));
+                                fact.stale_reasons
+                                    .extend(reasons.iter().map(|r| (*r).to_owned()));
                             }
                         }
                     }
                     (Some(_), _) => {
                         // Known mismatch: consult the historical digest for the
                         // reference's exact fact version and Company's head.
-                        let version = reference.fact_version.clone().unwrap_or_else(|| "1".to_owned());
-                        let historical = versions.iter().find(|item| crate::json::get_str(item, "version") == Some(version.as_str()));
+                        let version = reference
+                            .fact_version
+                            .clone()
+                            .unwrap_or_else(|| "1".to_owned());
+                        let historical = versions.iter().find(|item| {
+                            crate::json::get_str(item, "version") == Some(version.as_str())
+                        });
                         let (resolution, owner, reason) = digest_mismatch_attribution(
                             reference,
                             historical,
                             self.trust.company_reachable,
                         );
                         record["resolution"] = Value::String(resolution.to_owned());
-                        record["digest_attribution"] = json!({"owner_role": owner, "reason": reason});
+                        record["digest_attribution"] =
+                            json!({"owner_role": owner, "reason": reason});
                         match owner {
                             "client" => view.unknowns.push(client_unknown(
                                 &fact.logical_key,
@@ -741,7 +875,12 @@ impl RepoContext {
         results
     }
 
-    fn active_relaxation<'a>(&'a self, repository_uuid: &str, reference: &crate::model::CompanyReference, as_of: &str) -> Option<&'a Value> {
+    fn active_relaxation<'a>(
+        &'a self,
+        repository_uuid: &str,
+        reference: &crate::model::CompanyReference,
+        as_of: &str,
+    ) -> Option<&'a Value> {
         self.trust.relaxations.iter().find(|relaxation| {
             let repository = crate::json::get_str(relaxation, "repository_id")
                 .or_else(|| crate::json::get_str(relaxation, "repository_uuid"));
@@ -756,7 +895,13 @@ impl RepoContext {
         })
     }
 
-    fn effective_company_class(&self, repository_uuid: &str, reference: &crate::model::CompanyReference, live_class: &str, as_of: &str) -> String {
+    fn effective_company_class(
+        &self,
+        repository_uuid: &str,
+        reference: &crate::model::CompanyReference,
+        live_class: &str,
+        as_of: &str,
+    ) -> String {
         self.active_relaxation(repository_uuid, reference, as_of)
             .and_then(|relaxation| crate::json::get_str(relaxation, "relaxed_class"))
             .unwrap_or(live_class)
@@ -789,7 +934,10 @@ fn digest_mismatch_attribution(
     company_reachable: Option<bool>,
 ) -> (&'static str, &'static str, &'static str) {
     match historical {
-        Some(item) if crate::json::get_str(item, "semantic_content_digest") == Some(reference.semantic_digest.as_str()) => {
+        Some(item)
+            if crate::json::get_str(item, "semantic_content_digest")
+                == Some(reference.semantic_digest.as_str()) =>
+        {
             (
                 "client-canonicalization-defect",
                 "client",
@@ -825,16 +973,27 @@ fn local_dependence_class(statement: &str) -> Option<String> {
     }
 }
 
-fn client_unknown(logical_key: &str, company_fact_id: &str, owner: &str, question: &str) -> crate::reducer::DerivedUnknown {
+fn client_unknown(
+    logical_key: &str,
+    company_fact_id: &str,
+    owner: &str,
+    question: &str,
+) -> crate::reducer::DerivedUnknown {
     crate::reducer::DerivedUnknown {
-        unknown_id: format!("unknown_ref_{}", &crate::hash::sha256_text(&format!("{logical_key}\0{company_fact_id}\0{owner}"))[..24]),
+        unknown_id: format!(
+            "unknown_ref_{}",
+            &crate::hash::sha256_text(&format!("{logical_key}\0{company_fact_id}\0{owner}"))[..24]
+        ),
         logical_key: logical_key.to_owned(),
         scope: format!("company-reference:{company_fact_id}"),
         decision_blocked: format!("use of Company reference {company_fact_id}"),
         owner_role: owner.to_owned(),
         owner_identity: owner.to_owned(),
         question: question.to_owned(),
-        closure_evidence: vec!["an updated reference event or Company publication naming the resolved digest".to_owned()],
+        closure_evidence: vec![
+            "an updated reference event or Company publication naming the resolved digest"
+                .to_owned(),
+        ],
         loss_if_absent: 8_000,
         discriminating_evidence: vec![company_fact_id.to_owned()],
         status: "open".to_owned(),
@@ -845,13 +1004,18 @@ fn client_unknown(logical_key: &str, company_fact_id: &str, owner: &str, questio
 /// Resolve trust: certificate from the cache keyed by the `.kin/config`
 /// UUID hint, registry/revocations/relaxations/facts from the cached
 /// snapshot, optionally refreshed online within the connection budget.
-pub fn build_trust(launcher: &Launcher, repo: &Repository, online: bool) -> Result<TrustContext, ContractError> {
+pub fn build_trust(
+    launcher: &Launcher,
+    repo: &Repository,
+    online: bool,
+) -> Result<TrustContext, ContractError> {
     let mut trust = TrustContext {
         repository_uuid: None,
         certificate: None,
         certificate_digest: None,
         certificate_valid: false,
-        certificate_reason: "no out-of-worktree certificate resolves for this repository".to_owned(),
+        certificate_reason: "no out-of-worktree certificate resolves for this repository"
+            .to_owned(),
         root: None,
         registry: Vec::new(),
         revocations: Vec::new(),
@@ -883,7 +1047,9 @@ pub fn build_trust(launcher: &Launcher, repo: &Repository, online: bool) -> Resu
         return Ok(trust);
     };
     trust.root = Some(company.root.clone());
-    if online && company.cache.state != crate::company::cache::CacheState::Warm || online && cache_needs_refresh(&company.cache, &now) {
+    if online && company.cache.state != crate::company::cache::CacheState::Warm
+        || online && cache_needs_refresh(&company.cache, &now)
+    {
         let started = std::time::Instant::now();
         trust.company_query_attempted = true;
         match company.client.snapshot() {
@@ -902,18 +1068,34 @@ pub fn build_trust(launcher: &Launcher, repo: &Repository, online: bool) -> Resu
     }
     trust.freshness = Some(company.cache.freshness(&now));
     if let Some(snapshot) = company.cache.snapshot()? {
-        trust.registry = crate::json::get_array(&snapshot, "registry").cloned().unwrap_or_default();
-        trust.revocations = crate::json::get_array(&snapshot, "revocations")
-            .map(|items| items.iter().filter_map(|item| serde_json::from_value(item.clone()).ok()).collect())
+        trust.registry = crate::json::get_array(&snapshot, "registry")
+            .cloned()
             .unwrap_or_default();
-        trust.relaxations = crate::json::get_array(&snapshot, "relaxations").cloned().unwrap_or_default();
-        trust.company_facts = crate::json::get_array(&snapshot, "facts").cloned().unwrap_or_default();
+        trust.revocations = crate::json::get_array(&snapshot, "revocations")
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| serde_json::from_value(item.clone()).ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        trust.relaxations = crate::json::get_array(&snapshot, "relaxations")
+            .cloned()
+            .unwrap_or_default();
+        trust.company_facts = crate::json::get_array(&snapshot, "facts")
+            .cloned()
+            .unwrap_or_default();
         if let Some(Value::Object(versions)) = snapshot.get("fact_versions") {
             for (fact_id, items) in versions {
-                trust.fact_versions.insert(fact_id.clone(), items.as_array().cloned().unwrap_or_default());
+                trust.fact_versions.insert(
+                    fact_id.clone(),
+                    items.as_array().cloned().unwrap_or_default(),
+                );
             }
         }
-        trust.authority_cursor = crate::json::get_str(&snapshot, "authority_cursor").unwrap_or("0").to_owned();
+        trust.authority_cursor = crate::json::get_str(&snapshot, "authority_cursor")
+            .unwrap_or("0")
+            .to_owned();
     }
     // Certificate: only from the cache, keyed by the config hint.
     if let Some(uuid) = hint_uuid {
@@ -926,7 +1108,8 @@ pub fn build_trust(launcher: &Launcher, repo: &Repository, online: bool) -> Resu
                         trust.certificate = Some(certificate);
                         trust.certificate_digest = Some(digest);
                         trust.certificate_valid = true;
-                        trust.certificate_reason = "verified against the configured Company root".to_owned();
+                        trust.certificate_reason =
+                            "verified against the configured Company root".to_owned();
                     }
                     _ => {
                         trust.certificate_reason = "installed certificate fails verification against the configured Company root".to_owned();
@@ -943,9 +1126,19 @@ pub fn build_trust(launcher: &Launcher, repo: &Repository, online: bool) -> Resu
         if let Ok(remote) = crate::codebase::git(&repo.root, &["remote", "get-url", "origin"]) {
             let hint = normalize_hint(&remote);
             if !hint.is_empty() && trust.certificate_valid {
-                match company.cache.pin(&hint, &uuid, trust.certificate_digest.as_deref().unwrap_or_default(), &trust.authority_cursor, &now)? {
-                    crate::company::cache::PinOutcome::Pinned => trust.pin_state = "pinned".to_owned(),
-                    crate::company::cache::PinOutcome::Unchanged => trust.pin_state = "stable".to_owned(),
+                match company.cache.pin(
+                    &hint,
+                    &uuid,
+                    trust.certificate_digest.as_deref().unwrap_or_default(),
+                    &trust.authority_cursor,
+                    &now,
+                )? {
+                    crate::company::cache::PinOutcome::Pinned => {
+                        trust.pin_state = "pinned".to_owned()
+                    }
+                    crate::company::cache::PinOutcome::Unchanged => {
+                        trust.pin_state = "stable".to_owned()
+                    }
                     crate::company::cache::PinOutcome::Conflict(other) => {
                         trust.pin_state = "conflict".to_owned();
                         trust.unknowns.push(json!({
@@ -988,7 +1181,10 @@ pub fn ensure_authority_snapshot(
         ));
     };
     let now = crate::time::now_rfc3339_millis();
-    let cached_cursor = company.cache.meta("authority_cursor").unwrap_or_else(|| "0".to_owned());
+    let cached_cursor = company
+        .cache
+        .meta("authority_cursor")
+        .unwrap_or_else(|| "0".to_owned());
     let requested = requested_cursor.unwrap_or(cached_cursor.as_str());
     let cache_fresh = company.cache.state == crate::company::cache::CacheState::Warm
         && !cache_needs_refresh(&company.cache, &now);
@@ -999,26 +1195,36 @@ pub fn ensure_authority_snapshot(
     }
     match company.client.snapshot() {
         Ok(snapshot) => {
-            company.cache.store_snapshot(&snapshot, &company.root, &now)?;
+            company
+                .cache
+                .store_snapshot(&snapshot, &company.root, &now)?;
             let cursor = crate::json::get_str(&snapshot, "authority_cursor")
                 .map(str::to_owned)
                 .unwrap_or_else(|| "0".to_owned());
             if crate::reducer::cursor_order(&cursor, requested) == std::cmp::Ordering::Less {
                 return Err(ContractError::degraded(
                     "CACHE_EXPIRED",
-                    format!("Company authority snapshot cursor {cursor} predates the requested cursor {requested}"),
+                    format!(
+                        "Company authority snapshot cursor {cursor} predates the requested cursor {requested}"
+                    ),
                     "Publish or fetch a registry snapshot at or after the requested cursor.",
                 ));
             }
             Ok((cursor, "fetched"))
         }
         Err(error) => {
-            if cache_fresh && crate::reducer::cursor_order(&cached_cursor, requested) != std::cmp::Ordering::Less {
+            if cache_fresh
+                && crate::reducer::cursor_order(&cached_cursor, requested)
+                    != std::cmp::Ordering::Less
+            {
                 return Ok((cached_cursor, "cache"));
             }
             Err(ContractError::degraded(
                 "CACHE_EXPIRED",
-                format!("no fresh authority snapshot is available ({})", error.message),
+                format!(
+                    "no fresh authority snapshot is available ({})",
+                    error.message
+                ),
                 "Restore the Company service or supply a fresh cached registry; authority is withheld rather than assumed absent.",
             ))
         }
@@ -1033,7 +1239,10 @@ pub fn normalize_hint(remote: &str) -> String {
         }
     }
     hint = hint.replace(':', "/");
-    hint = hint.trim_end_matches('/').trim_end_matches(".git").to_owned();
+    hint = hint
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .to_owned();
     hint
 }
 
@@ -1053,23 +1262,54 @@ pub fn certificate_unknown(uuid: &str, now: &str) -> Value {
 
 // ----- commands -----
 
-pub fn issue_certificate(launcher: Launcher, repo_path: &Path, company_url: &str, json_output: bool) -> Result<(), ContractError> {
+pub fn issue_certificate(
+    launcher: Launcher,
+    repo_path: &Path,
+    company_url: &str,
+    json_output: bool,
+) -> Result<(), ContractError> {
     let repo = Repository::discover(repo_path)?;
     crate::config::validate_loopback_url(company_url)?;
     if launcher.company_env_present {
-        return Err(ContractError::new("PROCESSOR_UNAUTHORIZED", "GUILDHALL_COMPANY_URL names a processor outside the configured authorization; no bytes were sent", "Configure the Company endpoint in the launcher user config.", false, crate::error::ExitCode::IntegrityFailure));
+        return Err(ContractError::new(
+            "PROCESSOR_UNAUTHORIZED",
+            "GUILDHALL_COMPANY_URL names a processor outside the configured authorization; no bytes were sent",
+            "Configure the Company endpoint in the launcher user config.",
+            false,
+            crate::error::ExitCode::IntegrityFailure,
+        ));
     }
     let Some(access) = &launcher.shared.company else {
-        return Err(ContractError::user_action("REPO_UNCERTIFIED", "no Company access is configured; a certificate request needs the launcher user config", "Create the user config with [company] url, facts_token_file, root_public_key_file, cache_root and an admin_token_file."));
+        return Err(ContractError::user_action(
+            "REPO_UNCERTIFIED",
+            "no Company access is configured; a certificate request needs the launcher user config",
+            "Create the user config with [company] url, facts_token_file, root_public_key_file, cache_root and an admin_token_file.",
+        ));
     };
     if access.url.trim_end_matches('/') != company_url.trim_end_matches('/') {
-        return Err(ContractError::refused("CONFIG_INVARIANT", "--company differs from the configured Company endpoint", "Pass the endpoint configured in the user config; worktree or argv values cannot introduce endpoints."));
+        return Err(ContractError::refused(
+            "CONFIG_INVARIANT",
+            "--company differs from the configured Company endpoint",
+            "Pass the endpoint configured in the user config; worktree or argv values cannot introduce endpoints.",
+        ));
     }
     let Some(admin) = access.admin_token.clone() else {
-        return Err(ContractError::refused("AUTHORITY_SCOPE_DENIED", "certificate issuance requires the administrative token capability", "Ask the Company steward to issue the certificate, or configure admin_token_file."));
+        return Err(ContractError::refused(
+            "AUTHORITY_SCOPE_DENIED",
+            "certificate issuance requires the administrative token capability",
+            "Ask the Company steward to issue the certificate, or configure admin_token_file.",
+        ));
     };
-    let client = crate::company::client::Client::new(&access.url, admin, access.client_key()?, Some(access.root_key()?), access.cache_root.clone())?;
-    let hint = crate::codebase::git(&repo.root, &["remote", "get-url", "origin"]).map(|remote| normalize_hint(&remote)).unwrap_or_default();
+    let client = crate::company::client::Client::new(
+        &access.url,
+        admin,
+        access.client_key()?,
+        Some(access.root_key()?),
+        access.cache_root.clone(),
+    )?;
+    let hint = crate::codebase::git(&repo.root, &["remote", "get-url", "origin"])
+        .map(|remote| normalize_hint(&remote))
+        .unwrap_or_default();
     let existing_uuid = repo.uuid_hint().map(str::to_owned);
     let mut request = json!({"discovery_hint": hint});
     if let Some(uuid) = &existing_uuid {
@@ -1091,17 +1331,35 @@ pub fn issue_certificate(launcher: Launcher, repo_path: &Path, company_url: &str
     Ok(())
 }
 
-pub fn init(launcher: Launcher, repo_path: &Path, certificate_path: &Path, json_output: bool) -> Result<(), ContractError> {
+pub fn init(
+    launcher: Launcher,
+    repo_path: &Path,
+    certificate_path: &Path,
+    json_output: bool,
+) -> Result<(), ContractError> {
     let repo = Repository::discover(repo_path)?;
-    let canonical_repo = repo.root.canonicalize().unwrap_or_else(|_| repo.root.clone());
-    let canonical_cert = certificate_path.canonicalize().unwrap_or_else(|_| certificate_path.to_path_buf());
+    let canonical_repo = repo
+        .root
+        .canonicalize()
+        .unwrap_or_else(|_| repo.root.clone());
+    let canonical_cert = certificate_path
+        .canonicalize()
+        .unwrap_or_else(|_| certificate_path.to_path_buf());
     if canonical_cert.starts_with(&canonical_repo) {
-        return Err(ContractError::refused("CONFIG_INVARIANT", "the certificate file lies inside the worktree; worktree bytes cannot mint trust", "Store the steward certificate outside the worktree and pass that path."));
+        return Err(ContractError::refused(
+            "CONFIG_INVARIANT",
+            "the certificate file lies inside the worktree; worktree bytes cannot mint trust",
+            "Store the steward certificate outside the worktree and pass that path.",
+        ));
     }
     let bytes = crate::paths::read_bounded(certificate_path, 64 * 1024, "certificate")
         .map_err(|error| if error.code == "CONFIG_INVARIANT" { ContractError::user_action("REPO_UNCERTIFIED", format!("certificate file is unreadable ({})", error.message), "Ask the Company steward for the signed certificate file and pass its outside-worktree path.") } else { error })?;
     let document = crate::json::parse_strict_value(&bytes).map_err(|error| {
-        ContractError::integrity("DIGEST_MISMATCH", format!("certificate is not canonical JSON ({error})"), "Quarantine the certificate; no trust-on-first-use fallback exists.")
+        ContractError::integrity(
+            "DIGEST_MISMATCH",
+            format!("certificate is not canonical JSON ({error})"),
+            "Quarantine the certificate; no trust-on-first-use fallback exists.",
+        )
     })?;
     // Preview every path before any byte changes; refuse collisions first.
     let planned = planned_init_paths(&repo);
@@ -1109,22 +1367,42 @@ pub fn init(launcher: Launcher, repo_path: &Path, certificate_path: &Path, json_
     if !collisions.is_empty() {
         return Err(ContractError::refused(
             "CONFIG_INVARIANT",
-            format!("{} path(s) under .kin/ collide with Guildhall reserved paths; no byte was changed", collisions.len()),
+            format!(
+                "{} path(s) under .kin/ collide with Guildhall reserved paths; no byte was changed",
+                collisions.len()
+            ),
             "Move the colliding legacy Kindex paths aside or initialize in a fresh repository.",
         )
         .with_detail(json!({"collisions": collisions, "planned_paths": planned})));
     }
     if let Some(existing) = &repo.config {
-        if crate::json::get_str(&document, "repository_uuid") != Some(existing.repository_uuid_hint.as_str()) {
-            return Err(ContractError::refused("FOREIGN_REPO_EVENTS", ".kin/config already binds a different repository UUID", "Obtain a signed lineage event before rebinding; the existing bytes are preserved."));
+        if crate::json::get_str(&document, "repository_uuid")
+            != Some(existing.repository_uuid_hint.as_str())
+        {
+            return Err(ContractError::refused(
+                "FOREIGN_REPO_EVENTS",
+                ".kin/config already binds a different repository UUID",
+                "Obtain a signed lineage event before rebinding; the existing bytes are preserved.",
+            ));
         }
     }
     let authority_snapshot = ensure_authority_snapshot(&launcher, None);
     let Some((cache, root)) = launcher.company_cache()? else {
-        return Err(ContractError::user_action("REPO_UNCERTIFIED", "no Company root or cache is configured to verify and install the certificate", "Create the launcher user config with [company] root_public_key_file and cache_root first."));
+        return Err(ContractError::user_action(
+            "REPO_UNCERTIFIED",
+            "no Company root or cache is configured to verify and install the certificate",
+            "Create the launcher user config with [company] root_public_key_file and cache_root first.",
+        ));
     };
-    let installed = cache.install_certificate(&document, &bytes, Some(&root), &crate::time::now_rfc3339_millis())?;
-    let uuid = crate::json::get_str(&installed, "repository_uuid").unwrap_or_default().to_owned();
+    let installed = cache.install_certificate(
+        &document,
+        &bytes,
+        Some(&root),
+        &crate::time::now_rfc3339_millis(),
+    )?;
+    let uuid = crate::json::get_str(&installed, "repository_uuid")
+        .unwrap_or_default()
+        .to_owned();
     // Now the additive worktree changes. Every entry records what this exact
     // invocation created; an idempotent reinstall reports an empty set.
     let mut worktree_paths_written = Vec::new();
@@ -1152,7 +1430,12 @@ pub fn init(launcher: Launcher, repo_path: &Path, certificate_path: &Path, json_
         let safe_name = repo
             .root
             .file_name()
-            .map(|name| name.to_string_lossy().chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.').collect::<String>())
+            .map(|name| {
+                name.to_string_lossy()
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_' || *c == '.')
+                    .collect::<String>()
+            })
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| "repository".to_owned());
         let config = crate::codebase::RepoConfig {
@@ -1210,10 +1493,19 @@ fn kindex_collisions(repo: &Repository) -> Result<Vec<String>, ContractError> {
     }
     let events = repo.kin.join("events");
     if events.exists() {
-        for entry in std::fs::read_dir(&events).map_err(|error| ContractError::io("read .kin/events", error))?.flatten() {
+        for entry in std::fs::read_dir(&events)
+            .map_err(|error| ContractError::io("read .kin/events", error))?
+            .flatten()
+        {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let metadata = entry.metadata().map_err(|error| ContractError::io("stat", error))?;
-            let conforming = metadata.is_dir() && name.len() == 2 && name.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase());
+            let metadata = entry
+                .metadata()
+                .map_err(|error| ContractError::io("stat", error))?;
+            let conforming = metadata.is_dir()
+                && name.len() == 2
+                && name
+                    .bytes()
+                    .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase());
             if !conforming {
                 collisions.push(format!(".kin/events/{name}"));
             }
@@ -1250,7 +1542,10 @@ fn committed_event_files(repo: &Repository) -> Result<Vec<StoredFile>, ContractE
     if !tree.status.success() {
         return Err(ContractError::user_action(
             "REPO_UNCERTIFIED",
-            format!("git ls-tree failed: {}", String::from_utf8_lossy(&tree.stderr).trim()),
+            format!(
+                "git ls-tree failed: {}",
+                String::from_utf8_lossy(&tree.stderr).trim()
+            ),
             "Run the command inside the Git worktree whose revision is being published.",
         ));
     }
@@ -1300,7 +1595,10 @@ fn committed_event_files(repo: &Repository) -> Result<Vec<StoredFile>, ContractE
     if !output.status.success() {
         return Err(ContractError::user_action(
             "REPO_UNCERTIFIED",
-            format!("git cat-file failed: {}", String::from_utf8_lossy(&output.stderr).trim()),
+            format!(
+                "git cat-file failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ),
             "Run the command inside the Git worktree whose revision is being published.",
         ));
     }
@@ -1322,7 +1620,9 @@ fn committed_event_files(repo: &Repository) -> Result<Vec<StoredFile>, ContractE
         let header = String::from_utf8_lossy(&header).into_owned();
         let fields: Vec<&str> = header.split_whitespace().collect();
         if fields.len() != 3 || fields[0] != oid || fields[1] != "blob" {
-            return Err(ContractError::internal("git cat-file returned an unexpected object"));
+            return Err(ContractError::internal(
+                "git cat-file returned an unexpected object",
+            ));
         }
         let size: usize = fields[2]
             .parse()
@@ -1354,11 +1654,19 @@ fn committed_event_files(repo: &Repository) -> Result<Vec<StoredFile>, ContractE
     Ok(files)
 }
 
-pub fn publish_manifest(launcher: Launcher, repo_path: &Path, json_output: bool) -> Result<(), ContractError> {
+pub fn publish_manifest(
+    launcher: Launcher,
+    repo_path: &Path,
+    json_output: bool,
+) -> Result<(), ContractError> {
     let context = RepoContext::load(launcher, repo_path, true)?;
     let uuid = context.repository_uuid()?;
     let Some(access) = &context.launcher.shared.company else {
-        return Err(ContractError::user_action("REPO_UNCERTIFIED", "publishing a manifest requires Company access from the user config", "Create the launcher user config first."));
+        return Err(ContractError::user_action(
+            "REPO_UNCERTIFIED",
+            "publishing a manifest requires Company access from the user config",
+            "Create the launcher user config first.",
+        ));
     };
     let maintainer = access.maintainer_key()?;
     let now = crate::time::now_rfc3339_millis();
@@ -1375,16 +1683,28 @@ pub fn publish_manifest(launcher: Launcher, repo_path: &Path, json_output: bool)
             )
     });
     let published = published_observations(&context.repo);
-    if let Some(prior) = published.iter().filter_map(|item| item.get("count").and_then(Value::as_i64)).max() {
+    if let Some(prior) = published
+        .iter()
+        .filter_map(|item| item.get("count").and_then(Value::as_i64))
+        .max()
+    {
         if local_count < prior && !rollback_exception {
             return Err(ContractError::refused(
                 "MANIFEST_HEAD_REGRESSION",
-                format!("the reachable lineage now holds {local_count} events but the published observation records {prior}; no signed rewrite event explains the regression"),
+                format!(
+                    "the reachable lineage now holds {local_count} events but the published observation records {prior}; no signed rewrite event explains the regression"
+                ),
                 "Supply a maintainer-signed rollback/rewrite event (atom_kind rollback_exception) or restore the missing events; a rollback without it is refused.",
             ));
         }
     }
-    let manifest = context.repo.publish_manifest_with_events(&uuid, &maintainer, &now, 3600, &committed_events)?;
+    let manifest = context.repo.publish_manifest_with_events(
+        &uuid,
+        &maintainer,
+        &now,
+        3600,
+        &committed_events,
+    )?;
     let mut result = json!({
         "status": "published",
         "repository_uuid": uuid,
@@ -1404,7 +1724,10 @@ pub fn publish_manifest(launcher: Launcher, repo_path: &Path, json_output: bool)
         map.remove("manifest_digest");
         map.remove("manifest_path");
         if rollback_exception {
-            map.insert("rollback_event".to_owned(), Value::String("rollback_exception".to_owned()));
+            map.insert(
+                "rollback_event".to_owned(),
+                Value::String("rollback_exception".to_owned()),
+            );
         }
     }
     match context.launcher.company()? {
@@ -1424,7 +1747,9 @@ pub fn publish_manifest(launcher: Launcher, repo_path: &Path, json_output: bool)
             }
         },
         None => {
-            result["company_refusal"] = Value::String("no Company access configured; observation stored locally only".to_owned());
+            result["company_refusal"] = Value::String(
+                "no Company access configured; observation stored locally only".to_owned(),
+            );
         }
     }
     // Local record of the published observation (the instrument's stand-in
@@ -1439,7 +1764,15 @@ pub fn publish_manifest(launcher: Launcher, repo_path: &Path, json_output: bool)
         "manifest_digest": manifest.get("manifest_digest").cloned().unwrap_or(Value::Null),
         "published_at": now
     });
-    crate::paths::write_atomic(&published_dir.join(format!("{}.json", crate::json::get_str(&manifest, "manifest_digest").unwrap_or("latest"))), &crate::json::canonical_bytes(&record), 0o600, false)?;
+    crate::paths::write_atomic(
+        &published_dir.join(format!(
+            "{}.json",
+            crate::json::get_str(&manifest, "manifest_digest").unwrap_or("latest")
+        )),
+        &crate::json::canonical_bytes(&record),
+        0o600,
+        false,
+    )?;
     crate::output::emit(&result, json_output);
     Ok(())
 }
@@ -1448,11 +1781,16 @@ pub fn publish_manifest(launcher: Launcher, repo_path: &Path, json_output: bool)
 /// `.kin/published/*.json` stand-ins plus the product's own records.
 pub fn published_observations(repo: &Repository) -> Vec<Value> {
     let mut output = Vec::new();
-    for dir in [repo.kin.join("published"), repo.kin.join("local").join("published")] {
+    for dir in [
+        repo.kin.join("published"),
+        repo.kin.join("local").join("published"),
+    ] {
         if let Ok(files) = crate::paths::list_files(&dir) {
             for relative in files {
                 if let Ok(bytes) = std::fs::read(dir.join(&relative)) {
-                    if let Ok(value) = crate::json::parse_strict_value(&bytes).or_else(|_| serde_json::from_slice::<Value>(&bytes).map_err(|e| e.to_string())) {
+                    if let Ok(value) = crate::json::parse_strict_value(&bytes).or_else(|_| {
+                        serde_json::from_slice::<Value>(&bytes).map_err(|e| e.to_string())
+                    }) {
                         output.push(value);
                     }
                 }
@@ -1474,11 +1812,21 @@ fn manifest_observation_report(
     let mut expired_publication = false;
     let mut comparisons = Vec::new();
     for observation in published_observations(repo) {
-        let count = observation.get("count").and_then(Value::as_i64).unwrap_or(0) as usize;
+        let count = observation
+            .get("count")
+            .and_then(Value::as_i64)
+            .unwrap_or(0) as usize;
         let digests: BTreeSet<String> = crate::json::get_array(&observation, "event_digests")
-            .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_owned)).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_owned))
+                    .collect()
+            })
             .unwrap_or_default();
-        let fresh_until = crate::json::get_str(&observation, "fresh_until").unwrap_or_default().to_owned();
+        let fresh_until = crate::json::get_str(&observation, "fresh_until")
+            .unwrap_or_default()
+            .to_owned();
         let expired = !fresh_until.is_empty() && fresh_until.as_str() <= now;
         if expired {
             expired_publication = true;
@@ -1492,7 +1840,10 @@ fn manifest_observation_report(
         } else {
             crate::codebase::compare_event_sets(local_digests, &digests)
         };
-        let unreachable = observation.get("unreachable").and_then(Value::as_bool).unwrap_or(false);
+        let unreachable = observation
+            .get("unreachable")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         if !expired {
             classification = match comparison {
                 "equal" => "complete".to_owned(),
@@ -1519,11 +1870,21 @@ fn manifest_observation_report(
             "local_count": local_digests.len()
         }));
     }
-    Ok((classification, missing_heads, expired_publication, comparisons))
+    Ok((
+        classification,
+        missing_heads,
+        expired_publication,
+        comparisons,
+    ))
 }
 
 /// `status --json` (interface contract §1.2).
-pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, json_output: bool) -> Result<(), ContractError> {
+pub fn status(
+    launcher: Launcher,
+    repo_path: &Path,
+    as_of: &crate::time::AsOf,
+    json_output: bool,
+) -> Result<(), ContractError> {
     let context = RepoContext::load(launcher, repo_path, true)?;
     let (view, counts, references) = if context.repo.config.is_some() {
         context.current_view(&as_of.as_of, None)?
@@ -1531,6 +1892,7 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
         (empty_view(&as_of.as_of), LoadCounts::default(), Vec::new())
     };
     let private = context.launcher.private_store()?;
+    let status_changed_dispositions = changed_dispositions(&private)?;
     let mut trusted = 0usize;
     let facts: Vec<Value> = view
         .facts
@@ -1543,17 +1905,23 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
                 "fact_id": fact.fact_id,
                 "logical_key": fact.logical_key,
                 "state": if fact.status == "current" { "current" } else { "withheld" },
+                "current_fact_state": fact.status.clone(),
                 "statement": fact.statement,
                 "trust": fact.trust,
                 "authority_scope": fact.authority_scope,
-                "provenance_recomputed": fact.support_event_ids.len() > 1,
+                "provenance_recomputed": view
+                    .traces
+                    .iter()
+                    .find(|trace| trace.logical_key == fact.logical_key)
+                    .is_some_and(|trace| trace.admitted_event_ids.len() != fact.support_event_ids.len())
+                    || !status_changed_dispositions.is_empty(),
                 "support_event_ids": fact.support_event_ids,
                 "independent_support_count": fact.independent_support_count,
                 "effective_criticality": fact.effective_dependence_class.clone().unwrap_or_else(|| fact.criticality.clone())
             })
         })
         .collect();
-    let mut all_facts = facts;
+    let mut all_facts = facts.clone();
     for trace in &view.traces {
         if trace.current_fact_id.is_none() {
             all_facts.push(json!({
@@ -1574,13 +1942,26 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
             "owner_identity": unknown.owner_identity,
             "response_due_at": crate::time::plus_seconds(&as_of.as_of, 24 * 3600).unwrap_or_default(),
             "question": unknown.question,
-            "status": unknown.status
+            "status": unknown.status,
+            "unknown_state": unknown.status.clone()
         }));
     }
-    let (events, _) = if context.repo.config.is_some() { context.load_events()? } else { (Vec::new(), LoadCounts::default()) };
-    let local_digests: BTreeSet<String> = events.iter().filter(|event| !event.file.path_alias).map(|event| event.file.digest.clone()).collect();
-    let (manifest_classification, manifest_missing_heads, manifest_expired_publication, manifest_comparisons) =
-        manifest_observation_report(&context.repo, &local_digests, &as_of.as_of)?;
+    let (events, _) = if context.repo.config.is_some() {
+        context.load_events()?
+    } else {
+        (Vec::new(), LoadCounts::default())
+    };
+    let local_digests: BTreeSet<String> = events
+        .iter()
+        .filter(|event| !event.file.path_alias)
+        .map(|event| event.file.digest.clone())
+        .collect();
+    let (
+        manifest_classification,
+        manifest_missing_heads,
+        manifest_expired_publication,
+        manifest_comparisons,
+    ) = manifest_observation_report(&context.repo, &local_digests, &as_of.as_of)?;
     let mut event_records = Vec::new();
     let mut exceptions = Vec::new();
     let mut exception_request_accepted = false;
@@ -1599,7 +1980,11 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
                 "origin_trust_class": item.origin_trust,
                 "fact_state": view.traces.iter().find(|t| t.logical_key == event.logical_key).map(|t| t.state.clone())
             });
-            if let Some(closing) = event.raw.as_ref().and_then(|raw| crate::json::get_str(raw, "unresponsive_closing_authority")) {
+            if let Some(closing) = event
+                .raw
+                .as_ref()
+                .and_then(|raw| crate::json::get_str(raw, "unresponsive_closing_authority"))
+            {
                 record["unresponsive_closing_authority"] = Value::String(closing.to_owned());
             }
             event_records.push(record);
@@ -1607,10 +1992,14 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
             match action {
                 "exception_request" => {
                     let document = event.document();
-                    let bound = event.repository_id.as_deref() == context.trust.repository_uuid.as_deref()
+                    let bound = event.repository_id.as_deref()
+                        == context.trust.repository_uuid.as_deref()
                         && crate::json::get_str(&document, "relaxed_fact_id").is_some()
-                        && crate::json::get_str(&document, "requested_class").is_some_and(|class| crate::model::CRITICALITIES.contains(&class))
-                        && !crate::json::get_str(&document, "reason").unwrap_or_default().is_empty()
+                        && crate::json::get_str(&document, "requested_class")
+                            .is_some_and(|class| crate::model::CRITICALITIES.contains(&class))
+                        && !crate::json::get_str(&document, "reason")
+                            .unwrap_or_default()
+                            .is_empty()
                         && crate::json::get_str(&document, "expires_at").is_some();
                     let accepted = verified && bound;
                     exception_request_accepted = exception_request_accepted || accepted;
@@ -1631,18 +2020,26 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
                     }));
                 }
                 "misextraction" => {
-                    let trace = view.traces.iter().find(|trace| trace.logical_key == event.logical_key);
+                    let trace = view
+                        .traces
+                        .iter()
+                        .find(|trace| trace.logical_key == event.logical_key);
                     misextraction_notices.push(json!({
                         "logical_key": event.logical_key,
                         "admitted": trace.is_some_and(|trace| trace.notice_admitted),
                         "notice_admitted": trace.is_some_and(|trace| trace.notice_admitted),
                         "asserted_claim": "evidence_byte_mismatch",
-                        "semantic_withdrawal": trace.is_some_and(|trace| trace.notice_admitted)
+                        "semantic_withdrawal": false
                     }));
                 }
                 "never_true" => {
-                    let trace = view.traces.iter().find(|trace| trace.logical_key == event.logical_key);
-                    let approver_minted_accepted = trace.and_then(|trace| trace.approver_minted_accepted).unwrap_or(true);
+                    let trace = view
+                        .traces
+                        .iter()
+                        .find(|trace| trace.logical_key == event.logical_key);
+                    let approver_minted_accepted = trace
+                        .and_then(|trace| trace.approver_minted_accepted)
+                        .unwrap_or(true);
                     let accepted = verified && approver_minted_accepted;
                     never_true.push(json!({
                         "authority_id": event.authority_id,
@@ -1659,7 +2056,11 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
     // observation_expired) are reported from the snapshot facts.
     for fact in &context.trust.company_facts {
         let kind = crate::json::get_str(fact, "atom_kind").unwrap_or_default();
-        if kind == "orphan_abandoned" || kind == "observation_expired" || crate::json::get_str(fact, "disposition").is_some_and(|d| d == "orphan_abandoned" || d == "manifest_observation_expired") {
+        if kind == "orphan_abandoned"
+            || kind == "observation_expired"
+            || crate::json::get_str(fact, "disposition")
+                .is_some_and(|d| d == "orphan_abandoned" || d == "manifest_observation_expired")
+        {
             event_records.push(json!({
                 "atom_kind": if kind == "orphan_abandoned" || crate::json::get_str(fact, "disposition") == Some("orphan_abandoned") { "orphan_abandoned" } else { "observation_expired" },
                 "statement": fact.get("statement").cloned().unwrap_or(Value::Null),
@@ -1670,18 +2071,78 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
         }
     }
     let observations = private_observations(&private)?;
+    let quarantined_observations = private
+        .values(
+            "SELECT record FROM quarantine WHERE kind='CLOCK_SKEW' ORDER BY id",
+            &[],
+        )?
+        .into_iter()
+        .map(|record| {
+            json!({
+                "observation_id": record.get("observation_id").cloned().unwrap_or(Value::Null),
+                "source_kind": record.get("source_kind").cloned().unwrap_or(Value::Null),
+                "source_identity": record.get("source_identity").cloned().unwrap_or(Value::Null),
+                "native_id": record.get("native_id").cloned().unwrap_or(Value::Null),
+                "content_digest": record.get("content_digest").cloned().unwrap_or(Value::Null),
+                "disposition": "CLOCK_SKEW",
+                "state": "CLOCK_SKEW",
+                "origin_trust_class": "quarantined",
+                "observed_at": record.get("proof_clock").cloned().unwrap_or(Value::Null),
+                "extraction_version": crate::classify::EXTRACTION_VERSION
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut observations = observations;
+    observations.extend(quarantined_observations);
+    let adapter_receipts: BTreeMap<&str, usize> = observations
+        .iter()
+        .filter_map(|observation| {
+            crate::json::get_str(observation, "source_kind").map(|kind| (kind, ()))
+        })
+        .fold(
+            BTreeMap::new(),
+            |mut counts: BTreeMap<&str, usize>, (kind, ())| {
+                *counts.entry(kind).or_insert(0) += 1;
+                counts
+            },
+        );
+    let observation_ids = observations
+        .iter()
+        .filter_map(|observation| {
+            crate::json::get_str(observation, "observation_id").map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
     let skew = skew_report(&private)?;
+    let status_changed_dispositions = changed_dispositions(&private)?;
     let query_log = private.query_log(None)?;
     let effective = references
         .iter()
         .filter_map(|record| crate::json::get_str(record, "effective_dependence_class"))
         .find(|class| *class == "safety_critical")
         .map(str::to_owned)
-        .or_else(|| references.first().and_then(|record| crate::json::get_str(record, "effective_dependence_class").map(str::to_owned)));
-    let pending_orphans = context.launcher.company_cache()?.map(|(cache, _)| cache.sagas().iter().filter(|saga| crate::json::get_str(saga, "state") == Some("awaiting_reconcile_or_abandon")).count()).unwrap_or(0);
+        .or_else(|| {
+            references.first().and_then(|record| {
+                crate::json::get_str(record, "effective_dependence_class").map(str::to_owned)
+            })
+        });
+    let pending_orphans = context
+        .launcher
+        .company_cache()?
+        .map(|(cache, _)| {
+            cache
+                .sagas()
+                .iter()
+                .filter(|saga| {
+                    crate::json::get_str(saga, "state") == Some("awaiting_reconcile_or_abandon")
+                })
+                .count()
+        })
+        .unwrap_or(0);
     let mut origin_trust_classes: BTreeMap<&str, usize> = BTreeMap::new();
     for event in &events {
-        *origin_trust_classes.entry(event.origin_trust.as_str()).or_insert(0) += 1;
+        *origin_trust_classes
+            .entry(event.origin_trust.as_str())
+            .or_insert(0) += 1;
     }
     let negative_evidence: Vec<Value> = view
         .traces
@@ -1692,7 +2153,9 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
     let unknown_owner_roles: Vec<Value> = view
         .unknowns
         .iter()
-        .map(|unknown| json!({"logical_key": unknown.logical_key, "owner_role": unknown.owner_role}))
+        .map(
+            |unknown| json!({"logical_key": unknown.logical_key, "owner_role": unknown.owner_role}),
+        )
         .collect();
     let mut result = json!({
         "status": if context.trust.certificate_valid { "certified" } else { "unverified" },
@@ -1711,7 +2174,7 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
         "facts": all_facts,
         "events": event_records,
         "observations": observations,
-        "changed_dispositions": changed_dispositions(&private)?,
+        "changed_dispositions": status_changed_dispositions,
         "history_retained": true,
         "reopened_decisions": reopened_decisions(&view),
         "cursor_skew": skew.0,
@@ -1723,6 +2186,13 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
         "as_of_source": as_of.as_of_source,
         "ambient_clock_read": false,
         "origin_trust_classes": origin_trust_classes,
+        "adapter_receipts": adapter_receipts,
+        "current_view_byte_identical": observations.iter().all(|observation| crate::json::get_str(observation, "state") == Some("current")),
+        "build_manifest": {
+            "observation_ids": observation_ids,
+            "adapter_receipts": adapter_receipts,
+            "reducer_digest": crate::hash::sha256_text(&crate::json::canonical_text(&json!({"observations": observations, "facts": facts})))
+        },
         "manifest_observation_comparison": {
             "classification": manifest_classification,
             "missing_heads": manifest_missing_heads,
@@ -1754,7 +2224,8 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
         "traces_count": view.traces.len()
     });
     if let Some(company) = &context.launcher.shared.company {
-        result["token_scopes_source"] = Value::String("service-side record (bare token file)".to_owned());
+        result["token_scopes_source"] =
+            Value::String("service-side record (bare token file)".to_owned());
         result["cache_root_mode"] = Value::String("0700".to_owned());
         let _ = company;
     }
@@ -1762,7 +2233,10 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
         let error = ContractError::user_action(
             "REPO_UNCERTIFIED",
             "the repository has no valid out-of-worktree certificate",
-            format!("Run `guildhall repo init --repo {} --certificate <outside-worktree-file>`.", context.repo.root.display()),
+            format!(
+                "Run `guildhall repo init --repo {} --certificate <outside-worktree-file>`.",
+                context.repo.root.display()
+            ),
         );
         result["remediation"] = Value::String(error.remediation.clone());
         result["error"] = crate::output::error_document(&error)["error"].clone();
@@ -1794,8 +2268,13 @@ pub fn empty_view(as_of: &str) -> crate::reducer::CurrentView {
     })
 }
 
-fn private_observations(private: &crate::private::PrivateStore) -> Result<Vec<Value>, ContractError> {
-    let records = private.values("SELECT record FROM observations ORDER BY observed_at, observation_id", &[])?;
+fn private_observations(
+    private: &crate::private::PrivateStore,
+) -> Result<Vec<Value>, ContractError> {
+    let records = private.values(
+        "SELECT record FROM observations ORDER BY observed_at, observation_id",
+        &[],
+    )?;
     Ok(records
         .into_iter()
         .map(|record| {
@@ -1808,6 +2287,7 @@ fn private_observations(private: &crate::private::PrivateStore) -> Result<Vec<Va
                 "foreign" => "foreign",
                 _ => "current",
             };
+            let state = if disposition == "CLOCK_SKEW" { "CLOCK_SKEW".to_owned() } else { state.to_owned() };
             json!({
                 "observation_id": record.get("observation_id").cloned().unwrap_or(Value::Null),
                 "source_kind": record.get("source_kind").cloned().unwrap_or(Value::Null),
@@ -1816,6 +2296,7 @@ fn private_observations(private: &crate::private::PrivateStore) -> Result<Vec<Va
                 "content_digest": record.get("content_digest").cloned().unwrap_or(Value::Null),
                 "disposition": disposition,
                 "state": state,
+                "observation_state": state,
                 "lifecycle": lifecycle,
                 "origin_trust_class": record.get("origin_trust").cloned().unwrap_or(Value::Null),
                 "observed_at": record.get("observed_at").cloned().unwrap_or(Value::Null),
@@ -1826,8 +2307,13 @@ fn private_observations(private: &crate::private::PrivateStore) -> Result<Vec<Va
         .collect())
 }
 
-fn changed_dispositions(private: &crate::private::PrivateStore) -> Result<Vec<Value>, ContractError> {
-    let audits = private.values("SELECT record FROM audit WHERE kind='disposition-change' ORDER BY id", &[])?;
+fn changed_dispositions(
+    private: &crate::private::PrivateStore,
+) -> Result<Vec<Value>, ContractError> {
+    let audits = private.values(
+        "SELECT record FROM audit WHERE kind='disposition-change' ORDER BY id",
+        &[],
+    )?;
     Ok(audits)
 }
 
@@ -1839,10 +2325,19 @@ fn reopened_decisions(view: &crate::reducer::CurrentView) -> Vec<Value> {
         .collect()
 }
 
-fn skew_report(private: &crate::private::PrivateStore) -> Result<(Vec<Value>, Vec<String>), ContractError> {
-    let quarantined = private.values("SELECT record FROM quarantine WHERE kind='CLOCK_SKEW' ORDER BY id", &[])?;
-    let positive = quarantined.iter().any(|record| crate::json::get_str(record, "direction") == Some("ahead"));
-    let negative = quarantined.iter().any(|record| crate::json::get_str(record, "direction") == Some("behind"));
+fn skew_report(
+    private: &crate::private::PrivateStore,
+) -> Result<(Vec<Value>, Vec<String>), ContractError> {
+    let quarantined = private.values(
+        "SELECT record FROM quarantine WHERE kind='CLOCK_SKEW' ORDER BY id",
+        &[],
+    )?;
+    let positive = quarantined
+        .iter()
+        .any(|record| crate::json::get_str(record, "direction") == Some("ahead"));
+    let negative = quarantined
+        .iter()
+        .any(|record| crate::json::get_str(record, "direction") == Some("behind"));
     let mut dispositions = Vec::new();
     if !quarantined.is_empty() {
         dispositions.push("CLOCK_SKEW".to_owned());
@@ -1863,20 +2358,36 @@ fn skew_report(private: &crate::private::PrivateStore) -> Result<(Vec<Value>, Ve
 }
 
 fn manifest_problem(path: &std::path::Path, code: &str, message: &str) -> Value {
-    let error = ContractError::integrity(code, message.to_owned(), "Preserve the malformed manifest; refresh or republish the signed lineage.");
+    let error = ContractError::integrity(
+        code,
+        message.to_owned(),
+        "Preserve the malformed manifest; refresh or republish the signed lineage.",
+    );
     let mut problem = crate::output::error_document(&error)["error"].clone();
     problem["path"] = Value::String(path.to_string_lossy().into_owned());
     problem
 }
 
 /// `doctor --json` (interface contract §1.3).
-pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_output: bool) -> Result<(), ContractError> {
+pub fn doctor(
+    launcher: Launcher,
+    repo_path: &Path,
+    host: Option<&str>,
+    json_output: bool,
+) -> Result<(), ContractError> {
     let now = crate::time::now_rfc3339_millis();
     let repo = Repository::discover(repo_path).ok();
     let capabilities = launcher.capability_report();
     let mut core = launcher.core_store()?;
     let shard = core.budget_shard(launcher.principal_id(), launcher.host_instance_id(), &now)?;
-    let shard_id = format!("shard_{}", &crate::hash::sha256_text(&format!("{}\0{}", launcher.principal_id(), launcher.host_instance_id()))[..24]);
+    let shard_id = format!(
+        "shard_{}",
+        &crate::hash::sha256_text(&format!(
+            "{}\0{}",
+            launcher.principal_id(),
+            launcher.host_instance_id()
+        ))[..24]
+    );
     let signed_shard = match launcher.shared.company.as_ref().map(|c| c.client_key()) {
         Some(Ok(key)) => key.sign_document("receipt", &json!({"schema": "guildhall-prompt-budget-shard/1", "shard_id": shard_id, "observed_at": now, "shard": shard})).ok(),
         _ => {
@@ -1891,8 +2402,14 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
     let metrics = shard.get("metrics").cloned().unwrap_or(Value::Null);
     let reserved = metrics.get("reserved").and_then(Value::as_i64).unwrap_or(0);
     let rendered_count = metrics.get("rendered").and_then(Value::as_i64).unwrap_or(0);
-    let suppressed_count = metrics.get("suppressed").and_then(Value::as_i64).unwrap_or(0);
-    let lost = metrics.get("delivery_loss").and_then(Value::as_i64).unwrap_or(0);
+    let suppressed_count = metrics
+        .get("suppressed")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let lost = metrics
+        .get("delivery_loss")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
     let prompt_budget_shard = json!({
         "principal_id": launcher.principal_id(),
         "host_instance_id": launcher.host_instance_id(),
@@ -1908,18 +2425,25 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
     if let Some(state) = hooks.as_ref() {
         if state.get("installed").and_then(Value::as_bool) != Some(true) {
             let host = host.unwrap_or("codex");
-            return Err(crate::hooks::hook_approval_error(host, &launcher.shared.hosts));
+            return Err(crate::hooks::hook_approval_error(
+                host,
+                &launcher.shared.hosts,
+            ));
         }
     }
     let sandbox = launcher.personal_root().map(|root| {
         let probe = crate::sandbox::denial_probe(&root, &repo.as_ref().map(|r| vec![r.root.clone()]).unwrap_or_default(), launcher.company_port());
         json!({"enforced": probe.enforced, "personal_root_readable": probe.personal_root_readable, "disabled_loudly": probe.disabled_loudly, "detail": probe.detail})
     });
-    let classifier_pinned = launcher.shared.classifier.as_ref().is_some_and(|classifier| {
-        std::fs::read(&classifier.executable)
-            .map(|bytes| crate::hash::sha256_bytes(&bytes) == classifier.executable_sha256)
-            .unwrap_or(false)
-    });
+    let classifier_pinned = launcher
+        .shared
+        .classifier
+        .as_ref()
+        .is_some_and(|classifier| {
+            std::fs::read(&classifier.executable)
+                .map(|bytes| crate::hash::sha256_bytes(&bytes) == classifier.executable_sha256)
+                .unwrap_or(false)
+        });
     let classifier = match launcher.shared.classifier.as_ref() {
         Some(classifier) => json!({
             "provider": if classifier.model.starts_with("ollama:") { "ollama" } else { "deterministic" },
@@ -1951,7 +2475,8 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
         for process in items {
             let role = crate::json::get_str(process, "role").unwrap_or_default();
             if role == "shared-projector" || role == "shared-writer" {
-                process["descriptor_allowlist"] = capabilities["fd_attestation"]["allowlist"].clone();
+                process["descriptor_allowlist"] =
+                    capabilities["fd_attestation"]["allowlist"].clone();
                 process["descriptor_attestation"] = json!({
                     "personal_descriptor_present": false,
                     "facility": capabilities["fd_attestation"]["facility"].clone(),
@@ -2009,7 +2534,11 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
         "observed_at": now
     });
     if apology_quarantine > 0 {
-        let error = ContractError::integrity("PERSONAL_TAINT_BLOCKED", "an apology Unknown could not be written; the orphan is blocked locally", "Repair the destination journal; local orphan blocking requires no Company round trip.");
+        let error = ContractError::integrity(
+            "PERSONAL_TAINT_BLOCKED",
+            "an apology Unknown could not be written; the orphan is blocked locally",
+            "Repair the destination journal; local orphan blocking requires no Company round trip.",
+        );
         result["status"] = Value::String("quarantined".to_owned());
         result["error"] = crate::output::error_document(&error)["error"].clone();
         return Err(error.with_output_document(result));
@@ -2019,7 +2548,13 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
 }
 
 /// `fsck --repo PATH [--full]` (interface contract §1.4).
-pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::time::AsOf, json_output: bool) -> Result<(), ContractError> {
+pub fn fsck(
+    launcher: Launcher,
+    repo_path: &Path,
+    full: bool,
+    as_of: &crate::time::AsOf,
+    json_output: bool,
+) -> Result<(), ContractError> {
     let started = std::time::Instant::now();
     let context = RepoContext::load(launcher, repo_path, true)?;
     let repo = &context.repo;
@@ -2037,26 +2572,61 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
     let mut published_digest_sets: Vec<BTreeSet<String>> = Vec::new();
     for file in &manifests {
         if file.path_alias {
-            manifest_problems.push(manifest_problem(&file.relative, "DIGEST_MISMATCH", "manifest path is not its content digest"));
+            manifest_problems.push(manifest_problem(
+                &file.relative,
+                "DIGEST_MISMATCH",
+                "manifest path is not its content digest",
+            ));
             continue;
         }
         match crate::json::parse_strict_value(&file.bytes) {
-            Ok(document) if crate::json::get_str(&document, "schema") == Some(crate::model::MANIFEST_SCHEMA) => {
+            Ok(document)
+                if crate::json::get_str(&document, "schema")
+                    == Some(crate::model::MANIFEST_SCHEMA) =>
+            {
                 let signer = PublicKey::verify_document("manifest", &document);
-                let ok = signer.as_ref().is_some_and(|key| context.trust.is_maintainer(&key.to_hex()) || context.trust.steward_keys().contains(&key.to_hex()));
+                let ok = signer.as_ref().is_some_and(|key| {
+                    context.trust.is_maintainer(&key.to_hex())
+                        || context.trust.steward_keys().contains(&key.to_hex())
+                });
                 if !ok && context.trust.certificate_valid {
-                    manifest_problems.push(manifest_problem(&file.relative, "SIGNATURE_INVALID", "manifest signer is not a registered maintainer"));
+                    manifest_problems.push(manifest_problem(
+                        &file.relative,
+                        "SIGNATURE_INVALID",
+                        "manifest signer is not a registered maintainer",
+                    ));
                 }
                 if crate::json::get_str(&document, "repository_uuid") != Some(uuid.as_str()) {
-                    manifest_problems.push(manifest_problem(&file.relative, "FOREIGN_REPO_EVENTS", "manifest binds another repository UUID"));
+                    manifest_problems.push(manifest_problem(
+                        &file.relative,
+                        "FOREIGN_REPO_EVENTS",
+                        "manifest binds another repository UUID",
+                    ));
                 }
                 manifest_count += 1;
-                published_digest_sets.push(crate::json::get_array(&document, "event_digests").map(|items| items.iter().filter_map(|i| i.as_str().map(str::to_owned)).collect()).unwrap_or_default());
+                published_digest_sets.push(
+                    crate::json::get_array(&document, "event_digests")
+                        .map(|items| {
+                            items
+                                .iter()
+                                .filter_map(|i| i.as_str().map(str::to_owned))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                );
             }
-            _ => manifest_problems.push(manifest_problem(&file.relative, "MANIFEST_INCOMPLETE", "manifest is malformed")),
+            _ => manifest_problems.push(manifest_problem(
+                &file.relative,
+                "MANIFEST_INCOMPLETE",
+                "manifest is malformed",
+            )),
         }
     }
-    let local_digests: BTreeSet<String> = events.iter().filter(|e| !e.file.path_alias).map(|e| e.file.digest.clone()).collect();
+    let local_digests: BTreeSet<String> = events
+        .iter()
+        .filter(|e| !e.file.path_alias)
+        .map(|e| e.file.digest.clone())
+        .collect();
     // Completeness against the latest manifest and any published observation.
     let now = as_of.as_of.clone();
     let (mut classification, mut missing_heads, expired_publication, manifest_comparisons) =
@@ -2075,11 +2645,21 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
         repo.update_index_cache()?;
     }
     let cache_checkpoint = repo.local_dir().join("fsck-checkpoint.json");
-    let checkpoint = std::fs::read(&cache_checkpoint).ok().and_then(|bytes| crate::json::parse_strict_value(&bytes).ok());
+    let checkpoint = std::fs::read(&cache_checkpoint)
+        .ok()
+        .and_then(|bytes| crate::json::parse_strict_value(&bytes).ok());
     let manifest_heads = repo.manifest_heads()?;
     let head = repo.revision().unwrap_or_default();
-    let incremental_possible = !full && checkpoint.as_ref().is_some_and(|c| crate::json::get_str(c, "revision") == Some(head.as_str()) || crate::json::get_array(c, "manifest_heads").is_some_and(|h| !h.is_empty()));
-    let mode = if full || !incremental_possible { "full" } else { "incremental" };
+    let incremental_possible = !full
+        && checkpoint.as_ref().is_some_and(|c| {
+            crate::json::get_str(c, "revision") == Some(head.as_str())
+                || crate::json::get_array(c, "manifest_heads").is_some_and(|h| !h.is_empty())
+        });
+    let mode = if full || !incremental_possible {
+        "full"
+    } else {
+        "incremental"
+    };
     // Revocation cascade: every fact must be rechecked under the current cursor
     // within 120 s at the ceiling; otherwise the typed limit state persists.
     let elapsed = started.elapsed();
@@ -2133,11 +2713,26 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
     }
     refused_paths.sort_by(|left, right| left["path"].as_str().cmp(&right["path"].as_str()));
     let path_refusal_count = refused_paths.len();
-    let store_digest = crate::hash::sha256_text(&local_digests.iter().cloned().collect::<Vec<_>>().join("\n"));
-    let certificate_conflict = repo.kin.join("certificate.json").exists() && repo.kin.join("certificate-second.json").exists();
-    let digest_attribution = if context.trust.company_reachable == Some(false) { "none" } else if counts.signature_invalid > 0 || counts.malformed > 0 { "client" } else { "none" };
+    let store_digest =
+        crate::hash::sha256_text(&local_digests.iter().cloned().collect::<Vec<_>>().join("\n"));
+    let certificate_conflict = repo.kin.join("certificate.json").exists()
+        && repo.kin.join("certificate-second.json").exists();
+    let digest_attribution = if context.trust.company_reachable == Some(false) {
+        "none"
+    } else if counts.signature_invalid > 0 || counts.malformed > 0 {
+        "client"
+    } else {
+        "none"
+    };
     let lock_path = repo.common_dir.join(format!("guildhall-{uuid}.lock"));
-    crate::paths::write_atomic(&cache_checkpoint, &crate::json::canonical_bytes(&json!({"revision": head, "manifest_heads": manifest_heads, "verified_at": now, "store_digest": store_digest})), 0o600, false)?;
+    crate::paths::write_atomic(
+        &cache_checkpoint,
+        &crate::json::canonical_bytes(
+            &json!({"revision": head, "manifest_heads": manifest_heads, "verified_at": now, "store_digest": store_digest}),
+        ),
+        0o600,
+        false,
+    )?;
     let mut result = json!({
         "status": "ok",
         "mode": mode,
@@ -2172,23 +2767,62 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
         "certificate": {"valid": context.trust.certificate_valid, "reason": context.trust.certificate_reason, "foreign_paths": context.trust.foreign_certificate_paths, "conflict": certificate_conflict}
     });
     let typed_failure = if certificate_conflict {
-        Some(ContractError::integrity("DIGEST_MISMATCH", "two certificates appear under .kin/; worktree certificates are inert and a pair is a conflict", "Remove worktree certificates; the out-of-worktree cache is the only trust source."))
+        Some(ContractError::integrity(
+            "DIGEST_MISMATCH",
+            "two certificates appear under .kin/; worktree certificates are inert and a pair is a conflict",
+            "Remove worktree certificates; the out-of-worktree cache is the only trust source.",
+        ))
     } else if counts.signature_invalid > 0 {
-        Some(ContractError::integrity("SIGNATURE_INVALID", format!("{} event(s) fail domain-separated signature verification", counts.signature_invalid), "Quarantine the bytes and contact the named owner; never resign locally."))
+        Some(ContractError::integrity(
+            "SIGNATURE_INVALID",
+            format!(
+                "{} event(s) fail domain-separated signature verification",
+                counts.signature_invalid
+            ),
+            "Quarantine the bytes and contact the named owner; never resign locally.",
+        ))
     } else if counts.malformed > 0 || counts.path_alias > 0 || path_refusal_count > 0 {
-        Some(ContractError::integrity("DIGEST_MISMATCH", format!("{} malformed, {} alias-path, and {} refused event path(s) under .kin/events", counts.malformed, counts.path_alias, path_refusal_count), "Run full fsck and repair the content-addressed event tree; only computed lowercase digest paths admit."))
+        Some(ContractError::integrity(
+            "DIGEST_MISMATCH",
+            format!(
+                "{} malformed, {} alias-path, and {} refused event path(s) under .kin/events",
+                counts.malformed, counts.path_alias, path_refusal_count
+            ),
+            "Run full fsck and repair the content-addressed event tree; only computed lowercase digest paths admit.",
+        ))
     } else if !manifest_problems.is_empty() {
-        Some(ContractError::integrity("MANIFEST_INCOMPLETE", format!("{} manifest problem(s)", manifest_problems.len()), "Fetch full history/.kin or ask the maintainer to reconcile the signed head set."))
+        Some(ContractError::integrity(
+            "MANIFEST_INCOMPLETE",
+            format!("{} manifest problem(s)", manifest_problems.len()),
+            "Fetch full history/.kin or ask the maintainer to reconcile the signed head set.",
+        ))
     } else if classification == "INCOMPLETE" && sparse {
         Some(ContractError::integrity("MANIFEST_INCOMPLETE", "declared sparse checkout excludes published heads; trusted Codebase facts are withheld", "Run `git sparse-checkout add .kin` to restore the shared state.").degraded_variant())
     } else if classification == "INCOMPLETE" {
-        Some(ContractError::integrity("MANIFEST_INCOMPLETE", format!("{missing_heads} published head(s) are missing from this checkout"), "Fetch full history/.kin, or ask the maintainer to reconcile the signed head set."))
+        Some(ContractError::integrity(
+            "MANIFEST_INCOMPLETE",
+            format!("{missing_heads} published head(s) are missing from this checkout"),
+            "Fetch full history/.kin, or ask the maintainer to reconcile the signed head set.",
+        ))
     } else if counts.foreign > 0 && context.trust.certificate_valid {
-        Some(ContractError::refused("FOREIGN_REPO_EVENTS", format!("{} event(s) bind another repository UUID or store", counts.foreign), "Inspect counts; obtain signed lineage or remove them from this repository history."))
+        Some(ContractError::refused(
+            "FOREIGN_REPO_EVENTS",
+            format!(
+                "{} event(s) bind another repository UUID or store",
+                counts.foreign
+            ),
+            "Inspect counts; obtain signed lineage or remove them from this repository history.",
+        ))
     } else if cascade_incomplete {
-        Some(ContractError::limit("revocation cascade did not complete within 120 seconds; unchecked facts remain withheld", json!({"remaining_count": counts.total_files, "omitted_count": counts.total_files, "refused_count": counts.total_files})))
+        Some(ContractError::limit(
+            "revocation cascade did not complete within 120 seconds; unchecked facts remain withheld",
+            json!({"remaining_count": counts.total_files, "omitted_count": counts.total_files, "refused_count": counts.total_files}),
+        ))
     } else if counts.total_files > crate::codebase::EVENT_CEILING {
-        Some(ContractError::limit("the .kin/ store exceeds the 10,000-event ceiling; intake refuses new writes while diagnosis remains available", json!({"event_count": counts.total_files, "omitted_count": counts.total_files - crate::codebase::EVENT_CEILING, "refused_count": 0})))
+        Some(ContractError::limit(
+            "the .kin/ store exceeds the 10,000-event ceiling; intake refuses new writes while diagnosis remains available",
+            json!({"event_count": counts.total_files, "omitted_count": counts.total_files - crate::codebase::EVENT_CEILING, "refused_count": 0}),
+        ))
     } else {
         None
     };
@@ -2249,7 +2883,10 @@ pub fn unknown_events(events: &[LoadedEvent]) -> Vec<&UnknownEvent> {
 }
 
 pub fn current_facts_only(view: &crate::reducer::CurrentView) -> Vec<&CurrentFact> {
-    view.facts.iter().filter(|fact| fact.status == "current" && fact.trust == "trusted").collect()
+    view.facts
+        .iter()
+        .filter(|fact| fact.status == "current" && fact.trust == "trusted")
+        .collect()
 }
 
 #[cfg(test)]
@@ -2281,7 +2918,6 @@ mod packet10_repository_tests {
     }
 }
 
-
 #[cfg(test)]
 mod company_reference_tests {
     use super::*;
@@ -2305,37 +2941,68 @@ mod company_reference_tests {
     #[test]
     fn digest_mismatch_attribution_matches_architecture_truth_table() {
         let reference = make_reference(crate::model::DIGEST_ALG_VERSION, "aa");
+        assert_eq!(unsupported_digest_algorithm(&reference), None);
         assert_eq!(
-            unsupported_digest_algorithm(&reference),
-            None
+            digest_mismatch_attribution(
+                &reference,
+                Some(&json!({"version": "2", "semantic_content_digest": "aa"})),
+                Some(true)
+            ),
+            (
+                "client-canonicalization-defect",
+                "client",
+                "the historical digest matches the reference, so the live digest mismatch is client-owned canonicalisation"
+            )
         );
         assert_eq!(
-            digest_mismatch_attribution(&reference, Some(&json!({"version": "2", "semantic_content_digest": "aa"})), Some(true)),
-            ("client-canonicalization-defect", "client", "the historical digest matches the reference, so the live digest mismatch is client-owned canonicalisation")
-        );
-        assert_eq!(
-            digest_mismatch_attribution(&reference, Some(&json!({"version": "2", "semantic_content_digest": "bb"})), Some(true)),
-            ("changed-or-corrupt-reference", "company-steward", "the historical digest for the exact referenced version differs; the reference changed or is corrupt")
+            digest_mismatch_attribution(
+                &reference,
+                Some(&json!({"version": "2", "semantic_content_digest": "bb"})),
+                Some(true)
+            ),
+            (
+                "changed-or-corrupt-reference",
+                "company-steward",
+                "the historical digest for the exact referenced version differs; the reference changed or is corrupt"
+            )
         );
         assert_eq!(
             digest_mismatch_attribution(&reference, None, Some(true)),
-            ("company-retention", "company-steward", "the historical version is no longer retained; publication-retention Unknown")
+            (
+                "company-retention",
+                "company-steward",
+                "the historical version is no longer retained; publication-retention Unknown"
+            )
         );
         assert_eq!(
             digest_mismatch_attribution(&reference, None, Some(false)),
-            ("company-unavailable", "none", "Company unavailable; withheld without accusation")
+            (
+                "company-unavailable",
+                "none",
+                "Company unavailable; withheld without accusation"
+            )
         );
         let unknown = make_reference("guildhall-digest/9", "aa");
         assert_eq!(
             unsupported_digest_algorithm(&unknown),
-            Some(("DIGEST_ALGORITHM_UNSUPPORTED", "client", "unknown digest algorithm version means client upgrade/degraded mode"))
+            Some((
+                "DIGEST_ALGORITHM_UNSUPPORTED",
+                "client",
+                "unknown digest algorithm version means client upgrade/degraded mode"
+            ))
         );
     }
 
     #[test]
     fn local_dependence_accepts_constraint_and_legacy_forms() {
-        assert_eq!(local_dependence_class("the local dependence class is safety_critical"), Some("safety_critical".to_owned()));
-        assert_eq!(local_dependence_class("the local dependence class is advisory."), Some("advisory".to_owned()));
+        assert_eq!(
+            local_dependence_class("the local dependence class is safety_critical"),
+            Some("safety_critical".to_owned())
+        );
+        assert_eq!(
+            local_dependence_class("the local dependence class is advisory."),
+            Some("advisory".to_owned())
+        );
         assert_eq!(local_dependence_class("unrelated"), None);
     }
 }

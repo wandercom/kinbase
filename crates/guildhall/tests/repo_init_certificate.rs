@@ -1,5 +1,5 @@
 use guildhall::crypto::PrivateKey;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
@@ -265,10 +265,12 @@ fn repo_init_caches_certificate_outside_worktree() {
         serde_json::from_slice(&uncertified.stdout).expect("uncertified status is JSON");
     assert_eq!(uncertified_status["trusted_fact_count"], 0);
     assert_eq!(uncertified_status["error"]["code"], "REPO_UNCERTIFIED");
-    assert!(uncertified_status["error"]["remediation"]
-        .as_str()
-        .expect("status remediation")
-        .contains("repo init --repo"));
+    assert!(
+        uncertified_status["error"]["remediation"]
+            .as_str()
+            .expect("status remediation")
+            .contains("repo init --repo")
+    );
     assert_eq!(
         uncertified_status["unknowns"]
             .as_array()
@@ -485,10 +487,12 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
 
     assert_eq!(codex["status"], "verified");
     assert_eq!(claude["status"], "verified");
-    assert!(!codex["canonical_facts"]
-        .as_array()
-        .expect("codex facts")
-        .is_empty());
+    assert!(
+        !codex["canonical_facts"]
+            .as_array()
+            .expect("codex facts")
+            .is_empty()
+    );
     assert_eq!(codex["canonical_facts"], claude["canonical_facts"]);
     assert_eq!(
         guildhall::json::canonical_text(&codex["canonical_facts"]),
@@ -634,9 +638,14 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
     let signed_snapshot = root_key
         .sign_document("receipt", &unsigned_snapshot)
         .expect("sign authority snapshot");
-    let mut cache = guildhall::company::cache::Cache::open(&cache_root).expect("open authority cache");
+    let mut cache =
+        guildhall::company::cache::Cache::open(&cache_root).expect("open authority cache");
     cache
-        .store_snapshot(&signed_snapshot, &root_key.public(), "2026-09-08T12:00:00.000Z")
+        .store_snapshot(
+            &signed_snapshot,
+            &root_key.public(),
+            "2026-09-08T12:00:00.000Z",
+        )
         .expect("store fresh authority snapshot");
 
     let mut facts = vec![

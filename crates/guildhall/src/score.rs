@@ -65,9 +65,17 @@ impl Rational {
         let num = self
             .num
             .checked_mul(other.den)
-            .and_then(|left| other.num.checked_mul(self.den).and_then(|right| left.checked_add(right)))
+            .and_then(|left| {
+                other
+                    .num
+                    .checked_mul(self.den)
+                    .and_then(|right| left.checked_add(right))
+            })
             .ok_or_else(|| overflow("add"))?;
-        let den = self.den.checked_mul(other.den).ok_or_else(|| overflow("add"))?;
+        let den = self
+            .den
+            .checked_mul(other.den)
+            .ok_or_else(|| overflow("add"))?;
         Self { num, den }.reduce()
     }
 
@@ -79,8 +87,14 @@ impl Rational {
     }
 
     pub fn mul(self, other: Self) -> Result<Self, ContractError> {
-        let num = self.num.checked_mul(other.num).ok_or_else(|| overflow("mul"))?;
-        let den = self.den.checked_mul(other.den).ok_or_else(|| overflow("mul"))?;
+        let num = self
+            .num
+            .checked_mul(other.num)
+            .ok_or_else(|| overflow("mul"))?;
+        let den = self
+            .den
+            .checked_mul(other.den)
+            .ok_or_else(|| overflow("mul"))?;
         Self { num, den }.reduce()
     }
 
@@ -88,8 +102,14 @@ impl Rational {
         if other.num == 0 {
             return Err(overflow("division by zero"));
         }
-        let num = self.num.checked_mul(other.den).ok_or_else(|| overflow("div"))?;
-        let den = self.den.checked_mul(other.num).ok_or_else(|| overflow("div"))?;
+        let num = self
+            .num
+            .checked_mul(other.den)
+            .ok_or_else(|| overflow("div"))?;
+        let den = self
+            .den
+            .checked_mul(other.num)
+            .ok_or_else(|| overflow("div"))?;
         Self { num, den }.reduce()
     }
 
@@ -170,9 +190,9 @@ pub fn evaluate(terms: &[Term]) -> Result<i64, ContractError> {
     let mut total = Rational::int(0);
     for term in terms {
         let signed = Rational::int(term.value_bp).mul(Rational::int(i64::from(term.sign)))?;
-        total = total.add(signed).map_err(|error| {
-            error.with_detail(serde_json::json!({"subexpression": term.name}))
-        })?;
+        total = total
+            .add(signed)
+            .map_err(|error| error.with_detail(serde_json::json!({"subexpression": term.name})))?;
     }
     total.round_half_even()
 }
@@ -203,7 +223,10 @@ pub fn wilson_bounds_bp(successes: u64, trials: u64) -> (i64, i64) {
     let half_num = 19_600i128 * sqrt_inner / 10_000; // z * sqrt, scaled by 10^4
     let lower = ((centre_num - half_num) * scale) / denominator;
     let upper = ((centre_num + half_num) * scale) / denominator;
-    (lower.clamp(0, BP_ONE as i128) as i64, upper.clamp(0, BP_ONE as i128) as i64)
+    (
+        lower.clamp(0, BP_ONE as i128) as i64,
+        upper.clamp(0, BP_ONE as i128) as i64,
+    )
 }
 
 fn isqrt(value: i128) -> i128 {

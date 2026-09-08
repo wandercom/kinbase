@@ -117,7 +117,10 @@ pub fn ensure_private_dir(path: &Path, role: &str) -> Result<(), ContractError> 
             ContractError::refused(
                 "CONFIG_INVARIANT",
                 format!("{role} directory cannot be created ({})", error.kind()),
-                format!("Make {} writable by the current user; no partial schema was created.", path.display()),
+                format!(
+                    "Make {} writable by the current user; no partial schema was created.",
+                    path.display()
+                ),
             )
         })?;
     }
@@ -132,7 +135,10 @@ pub fn ensure_private_dir(path: &Path, role: &str) -> Result<(), ContractError> 
     fs::set_permissions(path, fs::Permissions::from_mode(0o700)).map_err(|error| {
         ContractError::refused(
             "CONFIG_INVARIANT",
-            format!("{role} directory mode cannot be set to 0700 ({})", error.kind()),
+            format!(
+                "{role} directory mode cannot be set to 0700 ({})",
+                error.kind()
+            ),
             format!("Run `chmod 0700 {}` and retry.", path.display()),
         )
     })?;
@@ -147,7 +153,12 @@ pub fn ensure_dir(path: &Path, role: &str) -> Result<(), ContractError> {
 /// Durable atomic write: temp file in the same directory, fsync, rename,
 /// fsync directory. Never overwrites an existing content-addressed file
 /// with different bytes when `immutable` is set.
-pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32, immutable: bool) -> Result<bool, ContractError> {
+pub fn write_atomic(
+    path: &Path,
+    bytes: &[u8],
+    mode: u32,
+    immutable: bool,
+) -> Result<bool, ContractError> {
     let parent = path
         .parent()
         .ok_or_else(|| ContractError::internal("atomic write target has no parent"))?;
@@ -177,7 +188,8 @@ pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32, immutable: bool) -> Re
             .map_err(|error| ContractError::io("create temp", error))?;
         std::io::Write::write_all(&mut file, bytes)
             .map_err(|error| ContractError::io("write temp", error))?;
-        file.sync_all().map_err(|error| ContractError::io("sync temp", error))?;
+        file.sync_all()
+            .map_err(|error| ContractError::io("sync temp", error))?;
     }
     if let Err(error) = fs::rename(&temp, path) {
         let _ = fs::remove_file(&temp);
@@ -190,7 +202,8 @@ pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32, immutable: bool) -> Re
 }
 
 pub fn read_bounded(path: &Path, limit: usize, role: &str) -> Result<Vec<u8>, ContractError> {
-    let metadata = fs::symlink_metadata(path).map_err(|error| ContractError::unreadable(role, &error))?;
+    let metadata =
+        fs::symlink_metadata(path).map_err(|error| ContractError::unreadable(role, &error))?;
     if metadata.file_type().is_symlink() {
         return Err(ContractError::refused(
             "CONFIG_INVARIANT",
@@ -226,7 +239,8 @@ fn walk(root: &Path, current: &Path, output: &mut Vec<PathBuf>) -> Result<(), Co
         .map_err(|error| ContractError::io("read directory entry", error))?;
     children.sort();
     for child in children {
-        let metadata = fs::symlink_metadata(&child).map_err(|error| ContractError::io("stat", error))?;
+        let metadata =
+            fs::symlink_metadata(&child).map_err(|error| ContractError::io("stat", error))?;
         if metadata.file_type().is_symlink() {
             return Err(ContractError::integrity(
                 "DIGEST_MISMATCH",

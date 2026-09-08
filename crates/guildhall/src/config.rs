@@ -180,7 +180,11 @@ fn closed_keys(table: &toml::Table, allowed: &[&str], section: &str) -> Result<(
     Ok(())
 }
 
-fn required_str<'a>(table: &'a toml::Table, key: &str, section: &str) -> Result<&'a str, ContractError> {
+fn required_str<'a>(
+    table: &'a toml::Table,
+    key: &str,
+    section: &str,
+) -> Result<&'a str, ContractError> {
     table
         .get(key)
         .and_then(toml::Value::as_str)
@@ -188,7 +192,11 @@ fn required_str<'a>(table: &'a toml::Table, key: &str, section: &str) -> Result<
         .ok_or_else(|| config_error(format!("{section}.{key} is required")))
 }
 
-fn optional_path(table: &toml::Table, key: &str, section: &str) -> Result<Option<PathBuf>, ContractError> {
+fn optional_path(
+    table: &toml::Table,
+    key: &str,
+    section: &str,
+) -> Result<Option<PathBuf>, ContractError> {
     match table.get(key) {
         None => Ok(None),
         Some(value) => {
@@ -239,12 +247,20 @@ pub fn load_user_config() -> Result<Option<UserConfig>, ContractError> {
 }
 
 pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, ContractError> {
-    let table: toml::Table = text
-        .parse()
-        .map_err(|error: toml::de::Error| config_error(format!("user config is not valid TOML: {error}")))?;
+    let table: toml::Table = text.parse().map_err(|error: toml::de::Error| {
+        config_error(format!("user config is not valid TOML: {error}"))
+    })?;
     closed_keys(
         &table,
-        &["schema_version", "personal", "company", "classifier", "hosts", "scanner", "identity"],
+        &[
+            "schema_version",
+            "personal",
+            "company",
+            "classifier",
+            "hosts",
+            "scanner",
+            "identity",
+        ],
         "user config",
     )?;
     if table.get("schema_version").and_then(toml::Value::as_str) != Some(USER_CONFIG_SCHEMA) {
@@ -255,8 +271,14 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
         .and_then(toml::Value::as_table)
         .ok_or_else(|| config_error("[personal] is required"))?;
     closed_keys(personal_table, &["data_root"], "[personal]")?;
-    let data_root = absolute(required_str(personal_table, "data_root", "personal")?, "personal.data_root")?;
-    let config_dir = path.parent().map(Path::to_path_buf).unwrap_or_else(paths::config_dir);
+    let data_root = absolute(
+        required_str(personal_table, "data_root", "personal")?,
+        "personal.data_root",
+    )?;
+    let config_dir = path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(paths::config_dir);
 
     let company = match table.get("company") {
         None => None,
@@ -283,9 +305,18 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
             validate_loopback_url(&url)?;
             Some(CompanyConfig {
                 url,
-                facts_token_file: absolute(required_str(section, "facts_token_file", "company")?, "company.facts_token_file")?,
-                root_public_key_file: absolute(required_str(section, "root_public_key_file", "company")?, "company.root_public_key_file")?,
-                cache_root: absolute(required_str(section, "cache_root", "company")?, "company.cache_root")?,
+                facts_token_file: absolute(
+                    required_str(section, "facts_token_file", "company")?,
+                    "company.facts_token_file",
+                )?,
+                root_public_key_file: absolute(
+                    required_str(section, "root_public_key_file", "company")?,
+                    "company.root_public_key_file",
+                )?,
+                cache_root: absolute(
+                    required_str(section, "cache_root", "company")?,
+                    "company.cache_root",
+                )?,
                 admin_token_file: optional_path(section, "admin_token_file", "company")?,
                 directory_token_file: optional_path(section, "directory_token_file", "company")?,
                 authority_token_file: optional_path(section, "authority_token_file", "company")?,
@@ -305,7 +336,14 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                 .ok_or_else(|| config_error("[classifier] must be a table"))?;
             closed_keys(
                 section,
-                &["model", "executable", "executable_sha256", "args", "timeout_seconds", "processor_scope"],
+                &[
+                    "model",
+                    "executable",
+                    "executable_sha256",
+                    "args",
+                    "timeout_seconds",
+                    "processor_scope",
+                ],
                 "[classifier]",
             )?;
             let model = section
@@ -314,12 +352,19 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                 .unwrap_or("deterministic")
                 .to_owned();
             if !model.starts_with("deterministic") && !model.starts_with("ollama:") {
-                return Err(config_error("classifier.model must be \"deterministic\" or \"ollama:<name>\""));
+                return Err(config_error(
+                    "classifier.model must be \"deterministic\" or \"ollama:<name>\"",
+                ));
             }
-            let executable = absolute(required_str(section, "executable", "classifier")?, "classifier.executable")?;
+            let executable = absolute(
+                required_str(section, "executable", "classifier")?,
+                "classifier.executable",
+            )?;
             let digest = required_str(section, "executable_sha256", "classifier")?.to_owned();
             if !crate::hash::is_sha256(&digest) {
-                return Err(config_error("classifier.executable_sha256 must be a lowercase 64-hex digest"));
+                return Err(config_error(
+                    "classifier.executable_sha256 must be a lowercase 64-hex digest",
+                ));
             }
             let args = section
                 .get("args")
@@ -342,7 +387,9 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                 .and_then(toml::Value::as_integer)
                 .ok_or_else(|| config_error("classifier.timeout_seconds is required"))?;
             if !(1..=600).contains(&timeout_seconds) {
-                return Err(config_error("classifier.timeout_seconds must be within 1..=600"));
+                return Err(config_error(
+                    "classifier.timeout_seconds must be within 1..=600",
+                ));
             }
             let processor_scope = section
                 .get("processor_scope")
@@ -366,7 +413,9 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
             claude_version: ">=0.0.0".to_owned(),
         },
         Some(value) => {
-            let section = value.as_table().ok_or_else(|| config_error("[hosts] must be a table"))?;
+            let section = value
+                .as_table()
+                .ok_or_else(|| config_error("[hosts] must be a table"))?;
             closed_keys(section, &["codex_version", "claude_version"], "[hosts]")?;
             HostsConfig {
                 codex_version: section
@@ -389,11 +438,21 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
             forbidden_identifier_file: None,
         },
         Some(value) => {
-            let section = value.as_table().ok_or_else(|| config_error("[scanner] must be a table"))?;
-            closed_keys(section, &["canary_file", "forbidden_identifier_file"], "[scanner]")?;
+            let section = value
+                .as_table()
+                .ok_or_else(|| config_error("[scanner] must be a table"))?;
+            closed_keys(
+                section,
+                &["canary_file", "forbidden_identifier_file"],
+                "[scanner]",
+            )?;
             ScannerConfig {
                 canary_file: optional_path(section, "canary_file", "scanner")?,
-                forbidden_identifier_file: optional_path(section, "forbidden_identifier_file", "scanner")?,
+                forbidden_identifier_file: optional_path(
+                    section,
+                    "forbidden_identifier_file",
+                    "scanner",
+                )?,
             }
         }
     };
@@ -401,7 +460,9 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
     let (principal_id, host_instance_id) = match table.get("identity") {
         None => (default_principal(), default_host_instance()),
         Some(value) => {
-            let section = value.as_table().ok_or_else(|| config_error("[identity] must be a table"))?;
+            let section = value
+                .as_table()
+                .ok_or_else(|| config_error("[identity] must be a table"))?;
             closed_keys(section, &["principal_id", "host_instance_id"], "[identity]")?;
             (
                 section
@@ -431,9 +492,8 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
 }
 
 fn default_principal() -> String {
-    std::env::var("GUILDHALL_PRINCIPAL").unwrap_or_else(|_| {
-        std::env::var("USER").unwrap_or_else(|_| "local-principal".to_owned())
-    })
+    std::env::var("GUILDHALL_PRINCIPAL")
+        .unwrap_or_else(|_| std::env::var("USER").unwrap_or_else(|_| "local-principal".to_owned()))
 }
 
 fn default_host_instance() -> String {
@@ -452,7 +512,10 @@ pub fn validate_loopback_url(url: &str) -> Result<(), ContractError> {
         .strip_prefix("http://")
         .ok_or_else(|| config_error("company.url must be an http:// loopback URL in this proof"))?;
     let authority = rest.split('/').next().unwrap_or_default();
-    let host = authority.rsplit_once(':').map(|(host, _)| host).unwrap_or(authority);
+    let host = authority
+        .rsplit_once(':')
+        .map(|(host, _)| host)
+        .unwrap_or(authority);
     let host = host.trim_start_matches('[').trim_end_matches(']');
     let loopback = host == "localhost"
         || host
@@ -488,13 +551,14 @@ impl UserConfig {
                     .as_ref()
                     .map(|path| TokenRecord::load(path, "authority token"))
                     .transpose()?;
-                let root_public_key = PublicKey::load(&company.root_public_key_file, "Company root public key")?;
+                let root_public_key =
+                    PublicKey::load(&company.root_public_key_file, "Company root public key")?;
                 paths::ensure_private_dir(&company.cache_root, "Company cache root")?;
                 let client_key = match std::env::var("GUILDHALL_CLIENT_KEY_FD") {
                     Ok(fd) => {
-                        let fd: i32 = fd
-                            .parse()
-                            .map_err(|_| config_error("GUILDHALL_CLIENT_KEY_FD must be an integer"))?;
+                        let fd: i32 = fd.parse().map_err(|_| {
+                            config_error("GUILDHALL_CLIENT_KEY_FD must be an integer")
+                        })?;
                         PrivateKey::load_fd(fd, "client key")?
                     }
                     Err(_) => PrivateKey::load_or_generate(&company.client_key_file, "client key")?,
@@ -609,9 +673,9 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
     enforce_private_file(path, "service config")?;
     let text = std::fs::read_to_string(path)
         .map_err(|error| ContractError::unreadable("service config", &error))?;
-    let table: toml::Table = text
-        .parse()
-        .map_err(|error: toml::de::Error| config_error(format!("service config is not valid TOML: {error}")))?;
+    let table: toml::Table = text.parse().map_err(|error: toml::de::Error| {
+        config_error(format!("service config is not valid TOML: {error}"))
+    })?;
     closed_keys(
         &table,
         &[
@@ -658,7 +722,9 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
         .parse()
         .map_err(|_| config_error("bind must be an IP:port address"))?;
     if !bind.ip().is_loopback() {
-        return Err(config_error("bind must be a loopback address in this proof"));
+        return Err(config_error(
+            "bind must be a loopback address in this proof",
+        ));
     }
     let lifetime = integer("candidate_lifetime_seconds", None, 1)?;
     let skew = integer("clock_skew_seconds", None, 0)?;

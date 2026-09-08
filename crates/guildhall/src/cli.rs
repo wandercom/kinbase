@@ -1,8 +1,8 @@
+use crate::Cli;
 use crate::command_types::*;
 use crate::error::ContractError;
-use crate::Cli;
-use clap::error::ErrorKind;
 use clap::Parser;
+use clap::error::ErrorKind;
 use std::path::PathBuf;
 
 /// Parse the CLI while preserving the process contract.
@@ -174,21 +174,35 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             )
             .map_err(internal)?;
         }
-        Command::Classifier {} => {
-            let model = launcher
+        Command::Classifier { provider, model } => {
+            let configured = launcher
                 .shared
                 .classifier
                 .as_ref()
                 .map(|classifier| classifier.model.clone())
                 .unwrap_or_else(|| "deterministic".to_owned());
-            crate::classifier::run(&model, json)?;
+            crate::classifier::run(provider.as_deref(), model.as_deref(), &configured, json)?;
         }
-        Command::Corpus(CorpusCommand::Rebuild { store, repo, as_of, reducer_version, authority_cursor }) => {
+        Command::Corpus(CorpusCommand::Rebuild {
+            store,
+            repo,
+            as_of,
+            reducer_version,
+            authority_cursor,
+        }) => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             let as_of = resolve_as_of(as_of.as_deref())?;
-            crate::corpus::rebuild(&launcher, &repo, store_to_kind(store), &as_of, reducer_version, authority_cursor, json)
-                .map_err(internal)?;
+            crate::corpus::rebuild(
+                &launcher,
+                &repo,
+                store_to_kind(store),
+                &as_of,
+                reducer_version,
+                authority_cursor,
+                json,
+            )
+            .map_err(internal)?;
         }
         Command::Fsck { repo, full, as_of } => {
             let repo = repo
@@ -206,8 +220,16 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             let as_of = resolve_as_of(as_of.as_deref())?;
-            crate::corpus::explain(&launcher, &repo, &logical_key, &decision, &as_of, authority_cursor, json)
-                .map_err(internal)?;
+            crate::corpus::explain(
+                &launcher,
+                &repo,
+                &logical_key,
+                &decision,
+                &as_of,
+                authority_cursor,
+                json,
+            )
+            .map_err(internal)?;
         }
         Command::Project {
             repo,
@@ -219,8 +241,16 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             let as_of = resolve_as_of(as_of.as_deref())?;
-            crate::projector::run(&launcher, &repo, &task, &decision, &working_set, &as_of, json)
-                .map_err(internal)?;
+            crate::projector::run(
+                &launcher,
+                &repo,
+                &task,
+                &decision,
+                &working_set,
+                &as_of,
+                json,
+            )
+            .map_err(internal)?;
         }
         Command::Session(SessionCommand::Start { host, repo }) => {
             let repo = repo
@@ -235,7 +265,8 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
                 &session,
                 &event,
                 json,
-            ).map_err(internal)?;
+            )
+            .map_err(internal)?;
         }
         Command::Session(SessionCommand::Checkpoint { session }) => {
             crate::session::checkpoint(&session, json).map_err(internal)?;

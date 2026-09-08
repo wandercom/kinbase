@@ -8,7 +8,7 @@ use crate::error::ContractError;
 use crate::launcher::Launcher;
 use crate::model::{CurrentFact, FactEvent};
 use crate::reducer::{CurrentView, ReducerInput};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -288,19 +288,24 @@ pub fn run(
     let selected_ids: BTreeSet<&str> = selected.iter().map(|fact| fact.fact_id.as_str()).collect();
     let selected_reference = references
         .iter()
-        .filter(|record| crate::json::get_str(record, "fact_id").is_some_and(|fact_id| selected_ids.contains(fact_id)))
+        .filter(|record| {
+            crate::json::get_str(record, "fact_id")
+                .is_some_and(|fact_id| selected_ids.contains(fact_id))
+        })
         .find(|record| crate::json::get_str(record, "resolution") == Some("resolved"))
         .cloned();
-    let effective_reference = selected_reference.clone().or_else(|| references.first().cloned());
+    let effective_reference = selected_reference
+        .clone()
+        .or_else(|| references.first().cloned());
     let company_owner = effective_reference
         .as_ref()
         .and_then(|record| crate::json::get_str(record, "company_owner").map(str::to_owned));
     let local_owner = effective_reference
         .as_ref()
         .and_then(|record| crate::json::get_str(record, "local_owner").map(str::to_owned));
-    let effective_criticality = effective_reference
-        .as_ref()
-        .and_then(|record| crate::json::get_str(record, "effective_dependence_class").map(str::to_owned));
+    let effective_criticality = effective_reference.as_ref().and_then(|record| {
+        crate::json::get_str(record, "effective_dependence_class").map(str::to_owned)
+    });
     let dominating_input = effective_reference
         .as_ref()
         .and_then(|record| crate::json::get_str(record, "dominating_input").map(str::to_owned));
@@ -316,15 +321,28 @@ pub fn run(
         None
     };
     let safety_is_degraded = facts.iter().any(|fact| {
-        crate::model::criticality_is_safety(fact.effective_dependence_class.as_deref().unwrap_or(&fact.criticality))
-            && fact.trust != "trusted"
-            && fact.stale_reasons.iter().any(|reason| reason == "CACHE_EXPIRED" || reason == "REVOCATION_STALE")
+        crate::model::criticality_is_safety(
+            fact.effective_dependence_class
+                .as_deref()
+                .unwrap_or(&fact.criticality),
+        ) && fact.trust != "trusted"
+            && fact
+                .stale_reasons
+                .iter()
+                .any(|reason| reason == "CACHE_EXPIRED" || reason == "REVOCATION_STALE")
     });
     let advisory_is_degraded = facts.iter().any(|fact| {
-        !crate::model::criticality_is_safety(fact.effective_dependence_class.as_deref().unwrap_or(&fact.criticality))
-            && fact.trust == "excluded"
+        !crate::model::criticality_is_safety(
+            fact.effective_dependence_class
+                .as_deref()
+                .unwrap_or(&fact.criticality),
+        ) && fact.trust == "excluded"
     });
-    let degraded_policy = if safety_is_degraded || open_unknowns.iter().any(|unknown| unknown.loss_if_absent >= 7_500) {
+    let degraded_policy = if safety_is_degraded
+        || open_unknowns
+            .iter()
+            .any(|unknown| unknown.loss_if_absent >= 7_500)
+    {
         "block_dependent_decision"
     } else if open_unknowns.is_empty() && !advisory_is_degraded {
         "block_dependent_decision"
@@ -459,7 +477,10 @@ fn load_view(
         revocations: data.revocations,
         as_of: as_of.as_of.clone(),
         authority_cursor: data.authority_cursor,
-        revocation_fresh: cache_freshness.as_ref().map(|freshness| freshness.revocation_fresh).unwrap_or(true),
+        revocation_fresh: cache_freshness
+            .as_ref()
+            .map(|freshness| freshness.revocation_fresh)
+            .unwrap_or(true),
         fact_valid_until: cache_freshness.and_then(|freshness| freshness.fact_valid_until),
         certificate_valid: data.certificate_valid,
         authority_owner_by_scope: data.authority_owner_by_scope,

@@ -36,11 +36,15 @@ impl Cache {
         crate::paths::reject_symlink(&path, "Company cache")?;
         let existed = path.exists();
         if existed {
-            let bytes = std::fs::read(&path).map_err(|error| ContractError::io("read cache", error))?;
+            let bytes =
+                std::fs::read(&path).map_err(|error| ContractError::io("read cache", error))?;
             if bytes.len() < 16 || !bytes.starts_with(b"SQLite format 3\0") {
                 // An invalid cache is cold, never trusted, and never repaired
                 // silently: it is renamed aside so the next refresh is clean.
-                let quarantine = root.join(format!("{CACHE_FILE}.invalid-{}", crate::time::now_utc().timestamp_millis()));
+                let quarantine = root.join(format!(
+                    "{CACHE_FILE}.invalid-{}",
+                    crate::time::now_utc().timestamp_millis()
+                ));
                 let _ = std::fs::rename(&path, &quarantine);
                 return Ok(Self {
                     root: root.to_path_buf(),
@@ -49,7 +53,8 @@ impl Cache {
                 });
             }
         }
-        let connection = Connection::open(&path).map_err(|error| ContractError::internal(format!("open cache: {error}")))?;
+        let connection = Connection::open(&path)
+            .map_err(|error| ContractError::internal(format!("open cache: {error}")))?;
         {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
@@ -66,7 +71,10 @@ impl Cache {
              CREATE TABLE IF NOT EXISTS pending_sagas(candidate_id TEXT PRIMARY KEY, record TEXT NOT NULL, updated_at TEXT NOT NULL);",
         );
         if migrated.is_err() {
-            let quarantine = root.join(format!("{CACHE_FILE}.invalid-{}", crate::time::now_utc().timestamp_millis()));
+            let quarantine = root.join(format!(
+                "{CACHE_FILE}.invalid-{}",
+                crate::time::now_utc().timestamp_millis()
+            ));
             drop(connection);
             let _ = std::fs::rename(&path, &quarantine);
             return Ok(Self {
@@ -81,20 +89,30 @@ impl Cache {
         Ok(Self {
             root: root.to_path_buf(),
             connection: Some(connection),
-            state: if has_snapshot > 0 { CacheState::Warm } else { CacheState::Cold },
+            state: if has_snapshot > 0 {
+                CacheState::Warm
+            } else {
+                CacheState::Cold
+            },
         })
     }
 
     fn connection(&self) -> Result<&Connection, ContractError> {
-        self.connection
-            .as_ref()
-            .ok_or_else(|| ContractError::degraded("CACHE_EXPIRED", "the Company cache is invalid and was quarantined", "Refresh Company state; no cached fact is used."))
+        self.connection.as_ref().ok_or_else(|| {
+            ContractError::degraded(
+                "CACHE_EXPIRED",
+                "the Company cache is invalid and was quarantined",
+                "Refresh Company state; no cached fact is used.",
+            )
+        })
     }
 
     pub fn meta(&self, key: &str) -> Option<String> {
         self.connection
             .as_ref()?
-            .query_row("SELECT value FROM meta WHERE key=?1", params![key], |row| row.get(0))
+            .query_row("SELECT value FROM meta WHERE key=?1", params![key], |row| {
+                row.get(0)
+            })
             .optional()
             .ok()
             .flatten()
@@ -113,24 +131,42 @@ impl Cache {
     /// The locally sealed cursor high-water mark (never trusted offline
     /// after deletion; a cold cache must refetch at least this cursor).
     pub fn high_water(&self) -> String {
-        self.meta("high_water_cursor").unwrap_or_else(|| "0".to_owned())
+        self.meta("high_water_cursor")
+            .unwrap_or_else(|| "0".to_owned())
     }
 
     /// Store a verified snapshot. A snapshot whose cursor is older than the
     /// sealed high-water mark is a replay and is refused.
-    pub fn store_snapshot(&mut self, snapshot: &Value, root: &PublicKey, now: &str) -> Result<(), ContractError> {
+    pub fn store_snapshot(
+        &mut self,
+        snapshot: &Value,
+        root: &PublicKey,
+        now: &str,
+    ) -> Result<(), ContractError> {
         let signer = PublicKey::verify_document("receipt", snapshot).ok_or_else(|| {
-            ContractError::integrity("SIGNATURE_INVALID", "snapshot signature failed", "Quarantine the snapshot and contact the Company steward.")
+            ContractError::integrity(
+                "SIGNATURE_INVALID",
+                "snapshot signature failed",
+                "Quarantine the snapshot and contact the Company steward.",
+            )
         })?;
         if signer != *root {
-            return Err(ContractError::integrity("SIGNATURE_INVALID", "snapshot is not signed by the configured root", "Verify the root public key."));
+            return Err(ContractError::integrity(
+                "SIGNATURE_INVALID",
+                "snapshot is not signed by the configured root",
+                "Verify the root public key.",
+            ));
         }
-        let cursor = crate::json::get_str(snapshot, "cursor").unwrap_or("0").to_owned();
+        let cursor = crate::json::get_str(snapshot, "cursor")
+            .unwrap_or("0")
+            .to_owned();
         let high_water = self.high_water();
         if crate::reducer::cursor_order(&cursor, &high_water) == std::cmp::Ordering::Less {
             return Err(ContractError::integrity(
                 "SIGNATURE_INVALID",
-                format!("snapshot cursor {cursor} is older than the sealed high-water mark {high_water} (replay)"),
+                format!(
+                    "snapshot cursor {cursor} is older than the sealed high-water mark {high_water} (replay)"
+                ),
                 "Refresh from the live Company; a replayed snapshot cannot rebuild trust.",
             ));
         }
@@ -143,7 +179,15 @@ impl Cache {
                 params![bytes, digest, now],
             )
             .map_err(sqlite_error("store snapshot"))?;
-        for key in ["cursor", "authority_cursor", "revocation_cursor", "revocation_valid_until", "fact_valid_until", "issued_at", "company_id"] {
+        for key in [
+            "cursor",
+            "authority_cursor",
+            "revocation_cursor",
+            "revocation_valid_until",
+            "fact_valid_until",
+            "issued_at",
+            "company_id",
+        ] {
             if let Some(value) = crate::json::get_str(snapshot, key) {
                 self.set_meta(key, value)?;
             }
@@ -151,7 +195,10 @@ impl Cache {
         self.set_meta("high_water_cursor", &cursor)?;
         self.set_meta("snapshot_digest", &digest)?;
         self.set_meta("refreshed_at", now)?;
-        for certificate in crate::json::get_array(snapshot, "certificates").cloned().unwrap_or_default() {
+        for certificate in crate::json::get_array(snapshot, "certificates")
+            .cloned()
+            .unwrap_or_default()
+        {
             if let Some(uuid) = crate::json::get_str(&certificate, "repository_uuid") {
                 let mut document = certificate.clone();
                 if let Some(map) = document.as_object_mut() {
@@ -174,16 +221,26 @@ impl Cache {
     }
 
     pub fn snapshot(&self) -> Result<Option<Value>, ContractError> {
-        let Some(connection) = self.connection.as_ref() else { return Ok(None) };
+        let Some(connection) = self.connection.as_ref() else {
+            return Ok(None);
+        };
         let bytes: Option<Vec<u8>> = connection
-            .query_row("SELECT bytes FROM snapshot WHERE id=1", [], |row| row.get(0))
+            .query_row("SELECT bytes FROM snapshot WHERE id=1", [], |row| {
+                row.get(0)
+            })
             .optional()
             .map_err(sqlite_error("read snapshot"))?;
         match bytes {
             None => Ok(None),
             Some(bytes) => crate::json::parse_strict_value(&bytes)
                 .map(Some)
-                .map_err(|error| ContractError::integrity("DIGEST_MISMATCH", format!("cached snapshot is corrupt ({error})"), "Delete the cache and refresh.")),
+                .map_err(|error| {
+                    ContractError::integrity(
+                        "DIGEST_MISMATCH",
+                        format!("cached snapshot is corrupt ({error})"),
+                        "Delete the cache and refresh.",
+                    )
+                }),
         }
     }
 
@@ -203,16 +260,30 @@ impl Cache {
             ContractError::integrity("SIGNATURE_INVALID", "repository certificate signature failed", "Quarantine the certificate and ask the Company steward for a valid one; no trust-on-first-use fallback exists.")
         })?;
         let Some(root) = root else {
-            return Err(ContractError::user_action("REPO_UNCERTIFIED", "no Company root public key is configured to verify the certificate", "Create the launcher user config with [company] root_public_key_file before installing a certificate."));
+            return Err(ContractError::user_action(
+                "REPO_UNCERTIFIED",
+                "no Company root public key is configured to verify the certificate",
+                "Create the launcher user config with [company] root_public_key_file before installing a certificate.",
+            ));
         };
         if signer != *root {
-            return Err(ContractError::integrity("SIGNATURE_INVALID", "certificate is not signed by the configured Company root", "Only the configured steward root may issue repository certificates."));
+            return Err(ContractError::integrity(
+                "SIGNATURE_INVALID",
+                "certificate is not signed by the configured Company root",
+                "Only the configured steward root may issue repository certificates.",
+            ));
         }
-        let uuid = crate::json::get_str(document, "repository_uuid").unwrap_or_default().to_owned();
+        let uuid = crate::json::get_str(document, "repository_uuid")
+            .unwrap_or_default()
+            .to_owned();
         let digest = crate::json::digest(document);
         let connection = self.connection()?;
         let existing: Option<String> = connection
-            .query_row("SELECT digest FROM certificates WHERE repository_uuid=?1", params![uuid], |row| row.get(0))
+            .query_row(
+                "SELECT digest FROM certificates WHERE repository_uuid=?1",
+                params![uuid],
+                |row| row.get(0),
+            )
             .optional()
             .map_err(sqlite_error("certificate lookup"))?;
         if let Some(existing) = existing {
@@ -232,7 +303,8 @@ impl Cache {
         let path = repository_dir.join("certificate.json");
         let relative = format!("repositories/{uuid}/certificate.json");
         if path.exists() {
-            let existing_bytes = crate::paths::read_bounded(&path, 64 * 1024, "cached certificate")?;
+            let existing_bytes =
+                crate::paths::read_bounded(&path, 64 * 1024, "cached certificate")?;
             let existing_document = crate::json::parse_strict_value(&existing_bytes).map_err(|error| {
                 ContractError::integrity("DIGEST_MISMATCH", format!("cached certificate is corrupt ({error})"), "Delete the corrupt certificate cache entry and reinstall the steward certificate.")
             })?;
@@ -245,8 +317,17 @@ impl Cache {
             }
             enforce_certificate_file_mode(&path)?;
         } else {
-            crate::paths::write_atomic(&path, certificate_bytes, 0o600, true)
-                .map_err(|error| if error.code == "DIGEST_MISMATCH" { ContractError::integrity("DIGEST_MISMATCH", "the certificate cache path changed concurrently", "Retry repo init; the UUID-keyed certificate path is never overwritten.") } else { error })?;
+            crate::paths::write_atomic(&path, certificate_bytes, 0o600, true).map_err(|error| {
+                if error.code == "DIGEST_MISMATCH" {
+                    ContractError::integrity(
+                        "DIGEST_MISMATCH",
+                        "the certificate cache path changed concurrently",
+                        "Retry repo init; the UUID-keyed certificate path is never overwritten.",
+                    )
+                } else {
+                    error
+                }
+            })?;
         }
         connection
             .execute(
@@ -264,14 +345,21 @@ impl Cache {
 
     /// Resolve a certificate only from its UUID-keyed cache file. The SQLite
     /// index is deliberately not a trust source.
-    pub fn certificate(&self, repository_uuid: &str) -> Result<Option<(Value, String)>, ContractError> {
+    pub fn certificate(
+        &self,
+        repository_uuid: &str,
+    ) -> Result<Option<(Value, String)>, ContractError> {
         let path = self.certificate_file(repository_uuid)?;
         if !path.exists() {
             return Ok(None);
         }
         let bytes = crate::paths::read_bounded(&path, 64 * 1024, "cached certificate")?;
         let document = crate::json::parse_strict_value(&bytes).map_err(|error| {
-            ContractError::integrity("DIGEST_MISMATCH", format!("cached certificate is corrupt ({error})"), "Delete the corrupt certificate cache entry and reinstall the steward certificate.")
+            ContractError::integrity(
+                "DIGEST_MISMATCH",
+                format!("cached certificate is corrupt ({error})"),
+                "Delete the corrupt certificate cache entry and reinstall the steward certificate.",
+            )
         })?;
         let digest = crate::json::digest(&document);
         Ok(Some((document, digest)))
@@ -279,19 +367,42 @@ impl Cache {
 
     fn certificate_file(&self, repository_uuid: &str) -> Result<PathBuf, ContractError> {
         if uuid::Uuid::parse_str(repository_uuid).is_err() {
-            return Err(ContractError::integrity("DIGEST_MISMATCH", "repository UUID is malformed", "Reinstall the steward-issued certificate."));
+            return Err(ContractError::integrity(
+                "DIGEST_MISMATCH",
+                "repository UUID is malformed",
+                "Reinstall the steward-issued certificate.",
+            ));
         }
-        Ok(self.root.join("repositories").join(repository_uuid).join("certificate.json"))
+        Ok(self
+            .root
+            .join("repositories")
+            .join(repository_uuid)
+            .join("certificate.json"))
     }
 
-    pub fn pin(&self, hint: &str, repository_uuid: &str, digest: &str, cursor: &str, now: &str) -> Result<PinOutcome, ContractError> {
+    pub fn pin(
+        &self,
+        hint: &str,
+        repository_uuid: &str,
+        digest: &str,
+        cursor: &str,
+        now: &str,
+    ) -> Result<PinOutcome, ContractError> {
         let connection = self.connection()?;
         let existing: Option<(String, String)> = connection
-            .query_row("SELECT repository_uuid, certificate_digest FROM pins WHERE hint=?1", params![hint], |row| Ok((row.get(0)?, row.get(1)?)))
+            .query_row(
+                "SELECT repository_uuid, certificate_digest FROM pins WHERE hint=?1",
+                params![hint],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
             .optional()
             .map_err(sqlite_error("pin lookup"))?;
         match existing {
-            Some((uuid, existing_digest)) if uuid == repository_uuid && existing_digest == digest => Ok(PinOutcome::Unchanged),
+            Some((uuid, existing_digest))
+                if uuid == repository_uuid && existing_digest == digest =>
+            {
+                Ok(PinOutcome::Unchanged)
+            }
             Some((uuid, _)) => Ok(PinOutcome::Conflict(uuid)),
             None => {
                 connection
@@ -306,8 +417,12 @@ impl Cache {
     }
 
     pub fn pins(&self) -> Vec<Value> {
-        let Some(connection) = self.connection.as_ref() else { return Vec::new() };
-        let Ok(mut statement) = connection.prepare("SELECT hint, repository_uuid, certificate_digest, pinned_at FROM pins ORDER BY hint") else {
+        let Some(connection) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut statement) = connection.prepare(
+            "SELECT hint, repository_uuid, certificate_digest, pinned_at FROM pins ORDER BY hint",
+        ) else {
             return Vec::new();
         };
         statement
@@ -324,17 +439,26 @@ impl Cache {
         let fact_valid_until = self.meta("fact_valid_until");
         Freshness {
             state: self.state.clone(),
-            revocation_fresh: revocation_valid_until.as_deref().is_some_and(|until| until > now),
+            revocation_fresh: revocation_valid_until
+                .as_deref()
+                .is_some_and(|until| until > now),
             fact_fresh: fact_valid_until.as_deref().is_some_and(|until| until > now),
             revocation_valid_until,
             fact_valid_until,
             cursor: self.meta("cursor").unwrap_or_else(|| "0".to_owned()),
-            revocation_cursor: self.meta("revocation_cursor").unwrap_or_else(|| "0".to_owned()),
+            revocation_cursor: self
+                .meta("revocation_cursor")
+                .unwrap_or_else(|| "0".to_owned()),
             refreshed_at: self.meta("refreshed_at"),
         }
     }
 
-    pub fn save_saga(&self, candidate_id: &str, record: &Value, now: &str) -> Result<(), ContractError> {
+    pub fn save_saga(
+        &self,
+        candidate_id: &str,
+        record: &Value,
+        now: &str,
+    ) -> Result<(), ContractError> {
         self.connection()?
             .execute(
                 "INSERT INTO pending_sagas(candidate_id, record, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(candidate_id) DO UPDATE SET record=excluded.record, updated_at=excluded.updated_at",
@@ -345,23 +469,37 @@ impl Cache {
     }
 
     pub fn sagas(&self) -> Vec<Value> {
-        let Some(connection) = self.connection.as_ref() else { return Vec::new() };
-        let Ok(mut statement) = connection.prepare("SELECT record FROM pending_sagas ORDER BY updated_at") else {
+        let Some(connection) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(mut statement) =
+            connection.prepare("SELECT record FROM pending_sagas ORDER BY updated_at")
+        else {
             return Vec::new();
         };
         statement
             .query_map([], |row| row.get::<_, String>(0))
-            .map(|rows| rows.filter_map(Result::ok).filter_map(|text| serde_json::from_str(&text).ok()).collect())
+            .map(|rows| {
+                rows.filter_map(Result::ok)
+                    .filter_map(|text| serde_json::from_str(&text).ok())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 }
 
 fn validate_certificate(document: &Value) -> Result<(), ContractError> {
     let malformed = |message: &str| {
-        ContractError::integrity("DIGEST_MISMATCH", message.to_owned(), "Use a steward-issued certificate; malformed certificates are quarantined.")
+        ContractError::integrity(
+            "DIGEST_MISMATCH",
+            message.to_owned(),
+            "Use a steward-issued certificate; malformed certificates are quarantined.",
+        )
     };
     if crate::json::get_str(document, "schema") != Some(crate::model::CERTIFICATE_SCHEMA) {
-        return Err(malformed("certificate schema is not guildhall-repo-certificate/1"));
+        return Err(malformed(
+            "certificate schema is not guildhall-repo-certificate/1",
+        ));
     }
     let uuid = crate::json::get_str(document, "repository_uuid").unwrap_or_default();
     if uuid::Uuid::parse_str(uuid).is_err() {
@@ -369,9 +507,14 @@ fn validate_certificate(document: &Value) -> Result<(), ContractError> {
     }
     let issued_at = crate::json::get_str(document, "issued_at").unwrap_or_default();
     if crate::time::parse_rfc3339_millis(issued_at).is_err() {
-        return Err(malformed("certificate issued_at is not RFC 3339 UTC millisecond time"));
+        return Err(malformed(
+            "certificate issued_at is not RFC 3339 UTC millisecond time",
+        ));
     }
-    if crate::json::get_str(document, "company_id").unwrap_or_default().is_empty() {
+    if crate::json::get_str(document, "company_id")
+        .unwrap_or_default()
+        .is_empty()
+    {
         return Err(malformed("certificate company_id is missing"));
     }
     if document.get("lineage_parent_uuid").is_some() {
@@ -383,20 +526,37 @@ fn validate_certificate(document: &Value) -> Result<(), ContractError> {
     }
     let signer = crate::json::get_str(document, "signer").unwrap_or_default();
     if !crate::hash::is_sha256(signer) {
-        return Err(ContractError::integrity("SIGNATURE_INVALID", "certificate signer is not 64-hex", "Quarantine the certificate and ask the Company steward for a valid one."));
+        return Err(ContractError::integrity(
+            "SIGNATURE_INVALID",
+            "certificate signer is not 64-hex",
+            "Quarantine the certificate and ask the Company steward for a valid one.",
+        ));
     }
     let signature = crate::json::get_str(document, "signature").unwrap_or_default();
-    if signature.len() != 128 || !signature.bytes().all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase()) {
-        return Err(ContractError::integrity("SIGNATURE_INVALID", "certificate signature is not 128-hex", "Quarantine the certificate and ask the Company steward for a valid one."));
+    if signature.len() != 128
+        || !signature
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err(ContractError::integrity(
+            "SIGNATURE_INVALID",
+            "certificate signature is not 128-hex",
+            "Quarantine the certificate and ask the Company steward for a valid one.",
+        ));
     }
     Ok(())
 }
 
 fn enforce_certificate_file_mode(path: &Path) -> Result<(), ContractError> {
     use std::os::unix::fs::PermissionsExt;
-    let metadata = std::fs::metadata(path).map_err(|error| ContractError::io("stat cached certificate", error))?;
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| ContractError::io("stat cached certificate", error))?;
     if !metadata.is_file() {
-        return Err(ContractError::refused("CONFIG_INVARIANT", "cached certificate path is not a regular file", "Delete the path and reinstall the steward certificate."));
+        return Err(ContractError::refused(
+            "CONFIG_INVARIANT",
+            "cached certificate path is not a regular file",
+            "Delete the path and reinstall the steward certificate.",
+        ));
     }
     let mode = metadata.permissions().mode() & 0o777;
     if mode != 0o600 {
@@ -431,8 +591,14 @@ impl Freshness {
     pub fn at(&self, now: &str) -> Freshness {
         Freshness {
             state: self.state.clone(),
-            revocation_fresh: self.revocation_valid_until.as_deref().is_some_and(|until| until > now),
-            fact_fresh: self.fact_valid_until.as_deref().is_some_and(|until| until > now),
+            revocation_fresh: self
+                .revocation_valid_until
+                .as_deref()
+                .is_some_and(|until| until > now),
+            fact_fresh: self
+                .fact_valid_until
+                .as_deref()
+                .is_some_and(|until| until > now),
             revocation_valid_until: self.revocation_valid_until.clone(),
             fact_valid_until: self.fact_valid_until.clone(),
             cursor: self.cursor.clone(),
@@ -442,7 +608,11 @@ impl Freshness {
     }
 
     /// Architecture §6 truth table row for one fact.
-    pub fn projection(&self, safety: bool, certificate_valid: bool) -> (&'static str, Vec<&'static str>) {
+    pub fn projection(
+        &self,
+        safety: bool,
+        certificate_valid: bool,
+    ) -> (&'static str, Vec<&'static str>) {
         if !certificate_valid {
             return ("withheld", vec!["certificate-or-root-invalid"]);
         }
@@ -470,7 +640,6 @@ impl Freshness {
     }
 }
 
-
 #[cfg(test)]
 mod freshness_tests {
     use super::*;
@@ -495,8 +664,14 @@ mod freshness_tests {
         let fresh = "2026-01-03T00:00:00.000Z";
         let expired = "2026-01-01T00:00:00.000Z";
         let fresh_fresh = freshness(fresh, fresh, now);
-        assert_eq!(fresh_fresh.projection(true, true), ("trusted", Vec::<&str>::new()));
-        assert_eq!(fresh_fresh.projection(false, true), ("trusted", Vec::<&str>::new()));
+        assert_eq!(
+            fresh_fresh.projection(true, true),
+            ("trusted", Vec::<&str>::new())
+        );
+        assert_eq!(
+            fresh_fresh.projection(false, true),
+            ("trusted", Vec::<&str>::new())
+        );
         assert_eq!(
             freshness(fresh, expired, now).projection(true, true),
             ("withheld", vec!["CACHE_EXPIRED"])

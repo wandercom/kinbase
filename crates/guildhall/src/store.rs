@@ -62,7 +62,8 @@ pub fn append_jsonl(path: &Path, value: &Value) -> Result<(), ContractError> {
     }
     let canonical = canonical_text(value);
     if path.exists() {
-        let prior = fs::read_to_string(path).map_err(|error| ContractError::io("read JSONL", error))?;
+        let prior =
+            fs::read_to_string(path).map_err(|error| ContractError::io("read JSONL", error))?;
         if prior.lines().any(|existing| existing == canonical) {
             return Ok(());
         }
@@ -83,10 +84,20 @@ pub fn read_jsonl(path: &Path) -> Result<Vec<Value>, ContractError> {
     text.lines()
         .filter(|line| !line.trim().is_empty())
         .map(|line| {
-            let map = parse_strict_object(line.as_bytes())
-                .map_err(|error| ContractError::integrity("DIGEST_MISMATCH", error, "Quarantine the malformed JSONL record."));
-            serde_json::from_value(Value::Object(map?))
-                .map_err(|error| ContractError::integrity("DIGEST_MISMATCH", format!("malformed JSONL record: {error}"), "Quarantine the record."))
+            let map = parse_strict_object(line.as_bytes()).map_err(|error| {
+                ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    error,
+                    "Quarantine the malformed JSONL record.",
+                )
+            });
+            serde_json::from_value(Value::Object(map?)).map_err(|error| {
+                ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    format!("malformed JSONL record: {error}"),
+                    "Quarantine the record.",
+                )
+            })
         })
         .collect()
 }
@@ -102,11 +113,18 @@ pub fn write_private_body(root: &Path, bytes: &[u8]) -> Result<String, ContractE
     Ok(format!("sha256:{digest}"))
 }
 
-pub fn write_content_addressed_event(root: &Path, event: &FactEvent) -> Result<(PathBuf, String), ContractError> {
+pub fn write_content_addressed_event(
+    root: &Path,
+    event: &FactEvent,
+) -> Result<(PathBuf, String), ContractError> {
     let canonical = canonical_text(&event.document());
     let digest = sha256_text(&canonical);
     if !is_sha256(&digest) {
-        return Err(ContractError::integrity("DIGEST_MISMATCH", "event digest is malformed", "Quarantine the event."));
+        return Err(ContractError::integrity(
+            "DIGEST_MISMATCH",
+            "event digest is malformed",
+            "Quarantine the event.",
+        ));
     }
     let relative = crate::paths::sharded_relative(&digest)?;
     let destination = root.join("events").join(&relative);
@@ -123,7 +141,15 @@ pub fn read_events(root: &Path) -> Result<Vec<FactEvent>, ContractError> {
     texts.sort();
     texts
         .iter()
-        .map(|text| FactEvent::parse(text.as_bytes()).map_err(|error| ContractError::integrity("DIGEST_MISMATCH", error, "Quarantine the malformed event.")))
+        .map(|text| {
+            FactEvent::parse(text.as_bytes()).map_err(|error| {
+                ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    error,
+                    "Quarantine the malformed event.",
+                )
+            })
+        })
         .collect()
 }
 
@@ -142,7 +168,9 @@ pub fn verify_event_signature(event: &FactEvent, public_key: &Path) -> Result<bo
 }
 
 pub fn parse_event(bytes: &[u8]) -> Result<FactEvent, ContractError> {
-    FactEvent::parse(bytes).map_err(|error| ContractError::integrity("DIGEST_MISMATCH", error, "Quarantine the malformed event."))
+    FactEvent::parse(bytes).map_err(|error| {
+        ContractError::integrity("DIGEST_MISMATCH", error, "Quarantine the malformed event.")
+    })
 }
 
 pub fn manifest_placeholder() -> Value {

@@ -62,7 +62,10 @@ impl PrivateStore {
             ContractError::refused(
                 "CONFIG_INVARIANT",
                 format!("private store cannot be opened ({error})"),
-                format!("Make {} writable by the current user; no partial schema was created.", root.display()),
+                format!(
+                    "Make {} writable by the current user; no partial schema was created.",
+                    root.display()
+                ),
             )
         })?;
         {
@@ -73,7 +76,9 @@ impl PrivateStore {
             .busy_timeout(std::time::Duration::from_secs(5))
             .map_err(sqlite_error("busy timeout"))?;
         connection
-            .execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;")
+            .execute_batch(
+                "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;",
+            )
             .map_err(sqlite_error("pragma"))?;
         let store = Self {
             root: root.to_path_buf(),
@@ -164,7 +169,9 @@ impl PrivateStore {
 
     pub fn meta(&self, key: &str) -> Result<Option<String>, ContractError> {
         self.connection
-            .query_row("SELECT value FROM meta WHERE key=?1", params![key], |row| row.get(0))
+            .query_row("SELECT value FROM meta WHERE key=?1", params![key], |row| {
+                row.get(0)
+            })
             .optional()
             .map_err(sqlite_error("meta read"))
     }
@@ -183,7 +190,11 @@ impl PrivateStore {
         self.connection
             .execute(
                 "INSERT INTO audit(kind, record, recorded_at) VALUES (?1, ?2, ?3)",
-                params![kind, crate::json::canonical_text(record), crate::time::now_rfc3339_millis()],
+                params![
+                    kind,
+                    crate::json::canonical_text(record),
+                    crate::time::now_rfc3339_millis()
+                ],
             )
             .map(|_| ())
             .map_err(sqlite_error("audit"))
@@ -219,7 +230,10 @@ impl PrivateStore {
     /// count removed; observations keep their digests (evidence tombstones).
     pub fn expire_bodies(&self, now: &str) -> Result<usize, ContractError> {
         self.connection
-            .execute("DELETE FROM bodies WHERE retention_until <= ?1", params![now])
+            .execute(
+                "DELETE FROM bodies WHERE retention_until <= ?1",
+                params![now],
+            )
             .map_err(sqlite_error("expire bodies"))
     }
 
@@ -234,7 +248,10 @@ impl PrivateStore {
             .optional()
             .map_err(sqlite_error("read observation"))?;
         record
-            .map(|text| serde_json::from_str(&text).map_err(|error| ContractError::internal(error.to_string())))
+            .map(|text| {
+                serde_json::from_str(&text)
+                    .map_err(|error| ContractError::internal(error.to_string()))
+            })
             .transpose()
     }
 
@@ -260,7 +277,39 @@ impl PrivateStore {
         Ok(inserted == 1)
     }
 
-    pub fn observations_for_source(&self, source_identity: &str) -> Result<Vec<Observation>, ContractError> {
+    /// Retire the previous observation for a changed native source. The old
+    /// row remains as history with a superseded lifecycle, and the explicit
+    /// disposition transition is recorded for `status --json`.
+    pub fn supersede_observation(
+        &self,
+        observation_id: &str,
+        from_disposition: &str,
+        to_disposition: &str,
+        new_observation_id: &str,
+        now: &str,
+    ) -> Result<(), ContractError> {
+        self.connection
+            .execute(
+                "UPDATE observations SET lifecycle='superseded' WHERE observation_id=?1 AND lifecycle='observed'",
+                params![observation_id],
+            )
+            .map_err(sqlite_error("supersede observation"))?;
+        self.audit(
+            "disposition-change",
+            &json!({
+                "observation_id": observation_id,
+                "new_observation_id": new_observation_id,
+                "from_disposition": from_disposition,
+                "to_disposition": to_disposition,
+                "observed_at": now
+            }),
+        )
+    }
+
+    pub fn observations_for_source(
+        &self,
+        source_identity: &str,
+    ) -> Result<Vec<Observation>, ContractError> {
         let mut statement = self
             .connection
             .prepare("SELECT record FROM observations WHERE source_identity=?1 ORDER BY observed_at, observation_id")
@@ -271,7 +320,10 @@ impl PrivateStore {
         let mut output = Vec::new();
         for row in rows {
             let text = row.map_err(sqlite_error("row"))?;
-            output.push(serde_json::from_str(&text).map_err(|error| ContractError::internal(error.to_string()))?);
+            output.push(
+                serde_json::from_str(&text)
+                    .map_err(|error| ContractError::internal(error.to_string()))?,
+            );
         }
         Ok(output)
     }
@@ -313,33 +365,52 @@ impl PrivateStore {
         let mut output = Vec::new();
         for row in rows {
             let text = row.map_err(sqlite_error("row"))?;
-            output.push(serde_json::from_str(&text).map_err(|error| ContractError::internal(error.to_string()))?);
+            output.push(
+                serde_json::from_str(&text)
+                    .map_err(|error| ContractError::internal(error.to_string()))?,
+            );
         }
         Ok(output)
     }
 
     fn records<T: serde::de::DeserializeOwned>(&self, sql: &str) -> Result<Vec<T>, ContractError> {
-        let mut statement = self.connection.prepare(sql).map_err(sqlite_error("prepare"))?;
+        let mut statement = self
+            .connection
+            .prepare(sql)
+            .map_err(sqlite_error("prepare"))?;
         let rows = statement
             .query_map([], |row| row.get::<_, String>(0))
             .map_err(sqlite_error("query"))?;
         let mut output = Vec::new();
         for row in rows {
             let text = row.map_err(sqlite_error("row"))?;
-            output.push(serde_json::from_str(&text).map_err(|error| ContractError::internal(error.to_string()))?);
+            output.push(
+                serde_json::from_str(&text)
+                    .map_err(|error| ContractError::internal(error.to_string()))?,
+            );
         }
         Ok(output)
     }
 
-    pub fn values(&self, sql: &str, args: &[&dyn rusqlite::ToSql]) -> Result<Vec<Value>, ContractError> {
-        let mut statement = self.connection.prepare(sql).map_err(sqlite_error("prepare"))?;
+    pub fn values(
+        &self,
+        sql: &str,
+        args: &[&dyn rusqlite::ToSql],
+    ) -> Result<Vec<Value>, ContractError> {
+        let mut statement = self
+            .connection
+            .prepare(sql)
+            .map_err(sqlite_error("prepare"))?;
         let rows = statement
             .query_map(args, |row| row.get::<_, String>(0))
             .map_err(sqlite_error("query"))?;
         let mut output = Vec::new();
         for row in rows {
             let text = row.map_err(sqlite_error("row"))?;
-            output.push(serde_json::from_str(&text).map_err(|error| ContractError::internal(error.to_string()))?);
+            output.push(
+                serde_json::from_str(&text)
+                    .map_err(|error| ContractError::internal(error.to_string()))?,
+            );
         }
         Ok(output)
     }
@@ -347,8 +418,12 @@ impl PrivateStore {
     // ----- personal facts -----
 
     pub fn upsert_personal_fact(&self, fact: &Value, now: &str) -> Result<bool, ContractError> {
-        let fact_id = crate::json::get_str(fact, "fact_id").unwrap_or_default().to_owned();
-        let logical_key = crate::json::get_str(fact, "logical_key").unwrap_or_default().to_owned();
+        let fact_id = crate::json::get_str(fact, "fact_id")
+            .unwrap_or_default()
+            .to_owned();
+        let logical_key = crate::json::get_str(fact, "logical_key")
+            .unwrap_or_default()
+            .to_owned();
         let inserted = self
             .connection
             .execute(
@@ -360,7 +435,10 @@ impl PrivateStore {
     }
 
     pub fn personal_facts(&self) -> Result<Vec<Value>, ContractError> {
-        self.values("SELECT record FROM personal_facts WHERE status='current' ORDER BY created_at, fact_id", &[])
+        self.values(
+            "SELECT record FROM personal_facts WHERE status='current' ORDER BY created_at, fact_id",
+            &[],
+        )
     }
 
     // ----- sessions -----
@@ -409,7 +487,14 @@ impl PrivateStore {
             .map_err(sqlite_error("end session"))
     }
 
-    pub fn insert_session_event(&self, session_id: &str, event_id: &str, event_type: &str, record: &Value, now: &str) -> Result<bool, ContractError> {
+    pub fn insert_session_event(
+        &self,
+        session_id: &str,
+        event_id: &str,
+        event_type: &str,
+        record: &Value,
+        now: &str,
+    ) -> Result<bool, ContractError> {
         let inserted = self
             .connection
             .execute(
@@ -427,7 +512,11 @@ impl PrivateStore {
         )
     }
 
-    pub fn session_event_exists(&self, event_id: &str, event_type: &str) -> Result<bool, ContractError> {
+    pub fn session_event_exists(
+        &self,
+        event_id: &str,
+        event_type: &str,
+    ) -> Result<bool, ContractError> {
         let count: i64 = self
             .connection
             .query_row(
@@ -477,7 +566,11 @@ impl PrivateStore {
         }))
     }
 
-    pub fn set_candidate_status(&self, candidate_id: &str, status: &str) -> Result<(), ContractError> {
+    pub fn set_candidate_status(
+        &self,
+        candidate_id: &str,
+        status: &str,
+    ) -> Result<(), ContractError> {
         self.connection
             .execute(
                 "UPDATE candidates SET status=?2 WHERE candidate_id=?1",
@@ -493,19 +586,26 @@ impl PrivateStore {
             .prepare("SELECT record, status FROM candidates WHERE session_id=?1 ORDER BY created_at, candidate_id")
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
-            .query_map(params![session_id], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+            .query_map(params![session_id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
             .map_err(sqlite_error("query"))?;
         let mut output = Vec::new();
         for row in rows {
             let (record, status) = row.map_err(sqlite_error("row"))?;
-            let mut value: Value = serde_json::from_str(&record).map_err(|error| ContractError::internal(error.to_string()))?;
+            let mut value: Value = serde_json::from_str(&record)
+                .map_err(|error| ContractError::internal(error.to_string()))?;
             value["status"] = Value::String(status);
             output.push(value);
         }
         Ok(output)
     }
 
-    pub fn decision(&self, candidate_id: &str, destination: &str) -> Result<Option<Value>, ContractError> {
+    pub fn decision(
+        &self,
+        candidate_id: &str,
+        destination: &str,
+    ) -> Result<Option<Value>, ContractError> {
         let record: Option<String> = self
             .connection
             .query_row(
@@ -551,7 +651,13 @@ impl PrivateStore {
         Ok(inserted == 1)
     }
 
-    pub fn insert_destination_receipt(&self, candidate_id: &str, destination: &str, status: &str, record: &Value) -> Result<(), ContractError> {
+    pub fn insert_destination_receipt(
+        &self,
+        candidate_id: &str,
+        destination: &str,
+        status: &str,
+        record: &Value,
+    ) -> Result<(), ContractError> {
         self.connection
             .execute(
                 "INSERT INTO destination_receipts(candidate_id, destination, status, record, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -568,15 +674,21 @@ impl PrivateStore {
         )
     }
 
-    pub fn recent_decision_digests(&self, principal_destination: &str) -> Result<Vec<String>, ContractError> {
+    pub fn recent_decision_digests(
+        &self,
+        principal_destination: &str,
+    ) -> Result<Vec<String>, ContractError> {
         let mut statement = self
             .connection
             .prepare("SELECT digest FROM decisions WHERE destination=?1 AND decision IN ('reject','defer') ORDER BY decided_at DESC LIMIT 200")
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
-            .query_map(params![principal_destination], |row| row.get::<_, String>(0))
+            .query_map(params![principal_destination], |row| {
+                row.get::<_, String>(0)
+            })
             .map_err(sqlite_error("query"))?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(sqlite_error("rows"))
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("rows"))
     }
 
     // ----- prompt budget core (architecture §5) -----
@@ -602,7 +714,9 @@ impl PrivateStore {
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(sqlite_error("begin immediate"))?;
         let now_dt = crate::time::parse_rfc3339_millis(now).map_err(ContractError::internal)?;
-        let window_start = crate::time::format_rfc3339_millis(now_dt - chrono::Duration::seconds(PROMPT_WINDOW_SECONDS));
+        let window_start = crate::time::format_rfc3339_millis(
+            now_dt - chrono::Duration::seconds(PROMPT_WINDOW_SECONDS),
+        );
         // Existing live reservation for this candidate is returned as-is
         // (idempotent render of the same item).
         let existing: Option<String> = transaction
@@ -696,7 +810,8 @@ impl PrivateStore {
         }
         let reservation_id = crate::crypto::random_id("resv");
         let display_token = crate::crypto::random_token();
-        let expires_at = crate::time::plus_seconds(now, PROMPT_WINDOW_SECONDS).map_err(ContractError::internal)?;
+        let expires_at = crate::time::plus_seconds(now, PROMPT_WINDOW_SECONDS)
+            .map_err(ContractError::internal)?;
         transaction
             .execute(
                 "INSERT INTO prompt_reservations(reservation_id, principal_id, host_instance_id, destination, candidate_id, content_digest, reserved_at, expires_at, display_token, status)
@@ -841,7 +956,9 @@ impl PrivateStore {
             ));
         }
         let now_dt = crate::time::parse_rfc3339_millis(now).map_err(ContractError::internal)?;
-        let hour_ago = crate::time::format_rfc3339_millis(now_dt - chrono::Duration::seconds(PROMPT_WINDOW_SECONDS));
+        let hour_ago = crate::time::format_rfc3339_millis(
+            now_dt - chrono::Duration::seconds(PROMPT_WINDOW_SECONDS),
+        );
         let recent: i64 = transaction
             .query_row(
                 "SELECT COUNT(*) FROM resets WHERE principal_id=?1 AND host_instance_id=?2 AND reset_at > ?3",
@@ -882,9 +999,16 @@ impl PrivateStore {
     }
 
     /// Budget shard summary for `doctor`.
-    pub fn budget_shard(&self, principal_id: &str, host_instance_id: &str, now: &str) -> Result<Value, ContractError> {
+    pub fn budget_shard(
+        &self,
+        principal_id: &str,
+        host_instance_id: &str,
+        now: &str,
+    ) -> Result<Value, ContractError> {
         let now_dt = crate::time::parse_rfc3339_millis(now).map_err(ContractError::internal)?;
-        let window_start = crate::time::format_rfc3339_millis(now_dt - chrono::Duration::seconds(PROMPT_WINDOW_SECONDS));
+        let window_start = crate::time::format_rfc3339_millis(
+            now_dt - chrono::Duration::seconds(PROMPT_WINDOW_SECONDS),
+        );
         let reserved_in_window: i64 = self
             .connection
             .query_row(
@@ -909,13 +1033,22 @@ impl PrivateStore {
             .prepare("SELECT name, count FROM budget_metrics ORDER BY name")
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
-            .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            })
             .map_err(sqlite_error("query"))?;
         for row in rows {
             let (name, count) = row.map_err(sqlite_error("row"))?;
             metrics.insert(name, Value::from(count));
         }
-        for name in ["reserved", "rendered", "decided", "expired", "suppressed", "delivery_loss"] {
+        for name in [
+            "reserved",
+            "rendered",
+            "decided",
+            "expired",
+            "suppressed",
+            "delivery_loss",
+        ] {
             metrics.entry(name).or_insert(Value::from(0));
         }
         Ok(json!({
@@ -967,7 +1100,9 @@ impl PrivateStore {
             self.bump("delivery_loss")?;
         }
         let bodies = self.expire_bodies(now)?;
-        Ok(json!({"expired_candidates": expired_candidates, "delivery_loss": lost, "expired_bodies": bodies}))
+        Ok(
+            json!({"expired_candidates": expired_candidates, "delivery_loss": lost, "expired_bodies": bodies}),
+        )
     }
 
     // ----- checkpoints, query log, reminders, unknowns -----
@@ -985,7 +1120,12 @@ impl PrivateStore {
         Ok(record.and_then(|text| serde_json::from_str(&text).ok()))
     }
 
-    pub fn set_checkpoint(&self, source_identity: &str, record: &Value, now: &str) -> Result<(), ContractError> {
+    pub fn set_checkpoint(
+        &self,
+        source_identity: &str,
+        record: &Value,
+        now: &str,
+    ) -> Result<(), ContractError> {
         self.connection
             .execute(
                 "INSERT INTO checkpoints(source_identity, record, updated_at) VALUES (?1, ?2, ?3)
@@ -1000,7 +1140,11 @@ impl PrivateStore {
         self.connection
             .execute(
                 "INSERT INTO query_log(session_id, record, logged_at) VALUES (?1, ?2, ?3)",
-                params![session_id, crate::json::canonical_text(record), crate::time::now_rfc3339_millis()],
+                params![
+                    session_id,
+                    crate::json::canonical_text(record),
+                    crate::time::now_rfc3339_millis()
+                ],
             )
             .map(|_| ())
             .map_err(sqlite_error("query log"))
@@ -1008,7 +1152,10 @@ impl PrivateStore {
 
     pub fn query_log(&self, session_id: Option<&str>) -> Result<Vec<Value>, ContractError> {
         match session_id {
-            Some(session) => self.values("SELECT record FROM query_log WHERE session_id=?1 ORDER BY id", &[&session]),
+            Some(session) => self.values(
+                "SELECT record FROM query_log WHERE session_id=?1 ORDER BY id",
+                &[&session],
+            ),
             None => self.values("SELECT record FROM query_log ORDER BY id", &[]),
         }
     }
@@ -1027,7 +1174,13 @@ impl PrivateStore {
             .map_err(sqlite_error("reminder"))
     }
 
-    pub fn upsert_private_unknown(&self, unknown_id: &str, record: &Value, status: &str, now: &str) -> Result<(), ContractError> {
+    pub fn upsert_private_unknown(
+        &self,
+        unknown_id: &str,
+        record: &Value,
+        status: &str,
+        now: &str,
+    ) -> Result<(), ContractError> {
         self.connection
             .execute(
                 "INSERT INTO private_unknowns(unknown_id, record, status, updated_at) VALUES (?1, ?2, ?3, ?4)
@@ -1046,7 +1199,11 @@ impl PrivateStore {
         self.connection
             .execute(
                 "INSERT INTO quarantine(kind, record, recorded_at) VALUES (?1, ?2, ?3)",
-                params![kind, crate::json::canonical_text(record), crate::time::now_rfc3339_millis()],
+                params![
+                    kind,
+                    crate::json::canonical_text(record),
+                    crate::time::now_rfc3339_millis()
+                ],
             )
             .map(|_| ())
             .map_err(sqlite_error("quarantine"))
@@ -1054,7 +1211,11 @@ impl PrivateStore {
 
     pub fn quarantine_count(&self, kind: &str) -> Result<i64, ContractError> {
         self.connection
-            .query_row("SELECT COUNT(*) FROM quarantine WHERE kind=?1", params![kind], |row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM quarantine WHERE kind=?1",
+                params![kind],
+                |row| row.get(0),
+            )
             .map_err(sqlite_error("quarantine count"))
     }
 }

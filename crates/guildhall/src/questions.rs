@@ -90,9 +90,9 @@ fn find_unknown(question_id: &str) -> Result<Value, ContractError> {
     for store in [crate::StoreKind::Company, crate::StoreKind::Codebase] {
         if let Ok(records) = crate::store::read_records(store, &repo, "unknowns.jsonl") {
             if let Some(record) = records.into_iter().rev().find(|record| {
-                ["unknown_id", "fact_id", "event_id"].iter().any(|field| {
-                    record.get(*field).and_then(Value::as_str) == Some(question_id)
-                })
+                ["unknown_id", "fact_id", "event_id"]
+                    .iter()
+                    .any(|field| record.get(*field).and_then(Value::as_str) == Some(question_id))
             }) {
                 return Ok(record);
             }
@@ -125,7 +125,11 @@ pub(crate) fn active_authority_with_repo(
     let entries: Vec<Value> = company_records_with_repo(repo, "authority-registry.jsonl")
         .into_iter()
         .filter(|entry| {
-            entry.get("status").and_then(Value::as_str).unwrap_or("active") == "active"
+            entry
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("active")
+                == "active"
                 && entry.get("scope").and_then(Value::as_str) == Some(scope)
                 && (entry.get("question_kind").and_then(Value::as_str) == Some(question_kind)
                     || entry
@@ -133,7 +137,8 @@ pub(crate) fn active_authority_with_repo(
                         .and_then(Value::as_array)
                         .is_some_and(|capabilities| {
                             capabilities.iter().any(|capability| {
-                                capability.as_str() == Some(question_kind) || capability.as_str() == Some("answer")
+                                capability.as_str() == Some(question_kind)
+                                    || capability.as_str() == Some("answer")
                             })
                         }))
         })
@@ -141,8 +146,16 @@ pub(crate) fn active_authority_with_repo(
     let mut distinct_owners = BTreeSet::new();
     for entry in &entries {
         distinct_owners.insert((
-            entry.get("authority_id").and_then(Value::as_str).unwrap_or_default().to_owned(),
-            entry.get("public_key").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            entry
+                .get("authority_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            entry
+                .get("public_key")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
         ));
     }
     if distinct_owners.len() > 1 {
@@ -160,17 +173,39 @@ pub(crate) fn active_authority_with_repo(
     let entry = entries
         .into_iter()
         .min_by(|left, right| {
-            let left_http = left.get("channel").and_then(Value::as_str).unwrap_or_default().starts_with("http://");
-            let right_http = right.get("channel").and_then(Value::as_str).unwrap_or_default().starts_with("http://");
+            let left_http = left
+                .get("channel")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .starts_with("http://");
+            let right_http = right
+                .get("channel")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .starts_with("http://");
             right_http
                 .cmp(&left_http)
                 .then_with(|| {
-                    left.get("channel").and_then(Value::as_str).unwrap_or_default()
-                        .cmp(right.get("channel").and_then(Value::as_str).unwrap_or_default())
+                    left.get("channel")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .cmp(
+                            right
+                                .get("channel")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                        )
                 })
                 .then_with(|| {
-                    left.get("authority_id").and_then(Value::as_str).unwrap_or_default()
-                        .cmp(right.get("authority_id").and_then(Value::as_str).unwrap_or_default())
+                    left.get("authority_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .cmp(
+                            right
+                                .get("authority_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                        )
                 })
         })
         .ok_or_else(|| {
@@ -182,7 +217,12 @@ pub(crate) fn active_authority_with_repo(
                 ExitCode::DegradedSafe,
             )
         })?;
-    if entry.get("public_key").and_then(Value::as_str).unwrap_or_default().is_empty() {
+    if entry
+        .get("public_key")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .is_empty()
+    {
         return Err(ContractError::new(
             "CONFIG_INVARIANT",
             "authority public key missing",
@@ -214,10 +254,16 @@ pub(crate) fn ensure_question(
         .to_owned();
     let question_id = format!(
         "question_{}",
-        &crate::hash::sha256_text(&format!("{}\0{}\0{}", unknown.unknown_id, decision, unknown.question))[..40]
+        &crate::hash::sha256_text(&format!(
+            "{}\0{}\0{}",
+            unknown.unknown_id, decision, unknown.question
+        ))[..40]
     );
     if let Some(existing) = latest_questions(repo).get(&question_id) {
-        return Ok(existing.get("question_id").and_then(Value::as_str).map(str::to_owned));
+        return Ok(existing
+            .get("question_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned));
     }
     if find_unknown(&unknown.unknown_id).is_err() {
         persist_unknown(repo, unknown, &authority_id)?;
@@ -283,7 +329,8 @@ fn persist_unknown(
     event.fact_id = unknown.unknown_id.clone();
     event.event_id = format!("{}:closure", unknown.unknown_id);
     let (private_path, _) = crate::crypto::ensure_keypair(crate::StoreKind::Company, repo)?;
-    let private_key = crate::crypto::PrivateKey::load_or_generate(&private_path, "local Company Unknown key")?;
+    let private_key =
+        crate::crypto::PrivateKey::load_or_generate(&private_path, "local Company Unknown key")?;
     event.sign(&private_key)?;
     append_company(repo, "unknowns.jsonl", &event.to_value())
 }
@@ -291,7 +338,10 @@ fn persist_unknown(
 fn ask(question_id: &str, json: bool) -> Result<(), ContractError> {
     let repo = repo()?;
     let question = find_question(question_id)?;
-    let scope = question.get("scope").and_then(Value::as_str).unwrap_or_default();
+    let scope = question
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let question_kind = question
         .get("question_kind")
         .and_then(Value::as_str)
@@ -375,11 +425,16 @@ fn ask(question_id: &str, json: bool) -> Result<(), ContractError> {
     Ok(())
 }
 
-fn write_signed_outbox(repo: &Path, question: &Value, body: &Value) -> Result<PathBuf, ContractError> {
+fn write_signed_outbox(
+    repo: &Path,
+    question: &Value,
+    body: &Value,
+) -> Result<PathBuf, ContractError> {
     let directory = repo.join(".kin").join("outbox");
     std::fs::create_dir_all(&directory).map_err(io_error)?;
     let (private_path, _) = crate::crypto::ensure_keypair(crate::StoreKind::Company, repo)?;
-    let private_key = crate::crypto::PrivateKey::load_or_generate(&private_path, "local question delivery key")?;
+    let private_key =
+        crate::crypto::PrivateKey::load_or_generate(&private_path, "local question delivery key")?;
     let signature = private_key.sign("question", canonical_bytes(body).as_slice())?;
     let document = json!({
         "schema": "guildhall-question-delivery/1",
@@ -427,8 +482,11 @@ fn http_post(url: &str, body: &[u8]) -> Result<HttpReply, ContractError> {
                 ExitCode::DependencyUnavailable,
             )
         })?;
-    let mut stream = TcpStream::connect_timeout(&address, StdDuration::from_millis(250)).map_err(io_error)?;
-    stream.set_read_timeout(Some(StdDuration::from_secs(2))).map_err(io_error)?;
+    let mut stream =
+        TcpStream::connect_timeout(&address, StdDuration::from_millis(250)).map_err(io_error)?;
+    stream
+        .set_read_timeout(Some(StdDuration::from_secs(2)))
+        .map_err(io_error)?;
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: {authority}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
@@ -491,14 +549,26 @@ fn answer(
     std::fs::read(key_file).map_err(io_error)?;
     let repo = repo()?;
     let question = find_question(question_id)?;
-    let scope = question.get("scope").and_then(Value::as_str).unwrap_or_default();
-    let authority_id = question.get("authority_id").and_then(Value::as_str).unwrap_or_default();
+    let scope = question
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let authority_id = question
+        .get("authority_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let authority = active_authority_with_repo(
         &repo,
         scope,
-        question.get("question_kind").and_then(Value::as_str).unwrap_or("general"),
+        question
+            .get("question_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("general"),
     )?;
-    let signer = map.get("signer").and_then(Value::as_str).unwrap_or_default();
+    let signer = map
+        .get("signer")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let expected_signer = authority
         .get("public_key")
         .and_then(Value::as_str)
@@ -534,7 +604,10 @@ fn answer(
             ));
         }
     }
-    let signature = map.get("signature").and_then(Value::as_str).unwrap_or_default();
+    let signature = map
+        .get("signature")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     if signature.is_empty() {
         return Err(ContractError::new(
             "SIGNATURE_INVALID",
@@ -544,7 +617,10 @@ fn answer(
             ExitCode::IntegrityFailure,
         ));
     }
-    let public_key_text = authority.get("public_key").and_then(Value::as_str).unwrap_or_default();
+    let public_key_text = authority
+        .get("public_key")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     let public_key = crate::crypto::PublicKey::from_hex(public_key_text)?;
     // Lifecycle answers use Convention A: the signer is metadata outside the
     // signed body. Live helper answers use Convention B: signer is included.
@@ -588,12 +664,19 @@ fn answer(
     let parents: Vec<String> = map
         .get("parents")
         .and_then(Value::as_array)
-        .map(|values| values.iter().filter_map(Value::as_str).map(str::to_owned).collect())
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
         .unwrap_or_default();
     let prior_answers: Vec<Value> = company_records_with_repo(&repo, "answers.jsonl")
         .into_iter()
         .filter(|record| {
-            record.get("question_id").and_then(Value::as_str) == question.get("question_id").and_then(Value::as_str)
+            record.get("question_id").and_then(Value::as_str)
+                == question.get("question_id").and_then(Value::as_str)
         })
         .collect();
     let superseded_events: Vec<String> = if parents.is_empty() {
@@ -601,7 +684,12 @@ fn answer(
     } else {
         prior_answers
             .iter()
-            .filter_map(|record| record.get("event_id").and_then(Value::as_str).map(str::to_owned))
+            .filter_map(|record| {
+                record
+                    .get("event_id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
             .collect()
     };
     let answered_at = map
@@ -660,7 +748,13 @@ fn answer(
         };
         values.insert("status".to_owned(), Value::String(status.to_owned()));
         values.insert("answer_id".to_owned(), Value::String(answer_id.clone()));
-        values.insert("closure_event_id".to_owned(), closure_event_id.clone().map(Value::String).unwrap_or(Value::Null));
+        values.insert(
+            "closure_event_id".to_owned(),
+            closure_event_id
+                .clone()
+                .map(Value::String)
+                .unwrap_or(Value::Null),
+        );
     }
     append_company(&repo, "questions.jsonl", &updated)?;
     let result = json!({
@@ -709,7 +803,11 @@ fn write_authority_fact(
         scope: scope.to_owned(),
         statement: answer_text.to_owned(),
         evidence_refs: vec![
-            question.get("question_id").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            question
+                .get("question_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
             answer_id.to_owned(),
         ],
         asserted_at: now.clone(),
@@ -717,7 +815,11 @@ fn write_authority_fact(
         effective_until: None,
         disposition: "current".to_owned(),
         distortion: Distortion {
-            trigger: question.get("decision").and_then(Value::as_str).unwrap_or("authority answer").to_owned(),
+            trigger: question
+                .get("decision")
+                .and_then(Value::as_str)
+                .unwrap_or("authority answer")
+                .to_owned(),
             loss_if_absent: 9_000,
             rationale: "the registered authority resolved a blocking Unknown".to_owned(),
         },
@@ -734,7 +836,8 @@ fn write_authority_fact(
         raw: None,
     };
     let (private_path, _) = crate::crypto::ensure_keypair(crate::StoreKind::Company, repo)?;
-    let private_key = crate::crypto::PrivateKey::load_or_generate(&private_path, "local Company answer key")?;
+    let private_key =
+        crate::crypto::PrivateKey::load_or_generate(&private_path, "local Company answer key")?;
     let unsigned = crate::store::event_canonical_text(&event);
     event.signature = private_key.sign("fact-event", unsigned.as_bytes())?;
     let root = crate::store::ensure_store_root(crate::StoreKind::Company, repo)?;
@@ -749,14 +852,24 @@ fn close_unknown(repo: &Path, question: &Value, answer_id: &str) -> Result<Strin
         .unwrap_or_default();
     let prior = find_unknown(unknown_id)?;
     let field = |key: &str, fallback: &str| {
-        prior.get(key).and_then(Value::as_str).unwrap_or(fallback).to_owned()
+        prior
+            .get(key)
+            .and_then(Value::as_str)
+            .unwrap_or(fallback)
+            .to_owned()
     };
     let store_kind = field("store_kind", "company");
-    let repository_id = prior.get("repository_id").and_then(Value::as_str).map(str::to_owned);
+    let repository_id = prior
+        .get("repository_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
     let owner_role = field("owner_role", "company-steward");
     let owner_identity = field("owner_identity", &owner_role);
     let authority_id = field("authority_id", &owner_identity);
-    let authority_scope = field("authority_scope", field("scope", "architecture:company").as_str());
+    let authority_scope = field(
+        "authority_scope",
+        field("scope", "architecture:company").as_str(),
+    );
     let logical_key = field("logical_key", "");
     let scope = field("scope", &authority_scope);
     let decision_blocked = field("decision_blocked", "authority answer");
@@ -789,11 +902,17 @@ fn close_unknown(repo: &Path, question: &Value, answer_id: &str) -> Result<Strin
         &cursor,
     );
     unknown.fact_id = unknown_id.to_owned();
-    unknown.event_id = format!("{unknown_id}:closed:{}", &answer_id[7..min(19, answer_id.len())]);
+    unknown.event_id = format!(
+        "{unknown_id}:closed:{}",
+        &answer_id[7..min(19, answer_id.len())]
+    );
     unknown.status = "closed".to_owned();
     unknown.closure_evidence = vec![answer_id.to_owned()];
     let (private_path, _) = crate::crypto::ensure_keypair(crate::StoreKind::Company, repo)?;
-    let private_key = crate::crypto::PrivateKey::load_or_generate(&private_path, "local Company Unknown-closing key")?;
+    let private_key = crate::crypto::PrivateKey::load_or_generate(
+        &private_path,
+        "local Company Unknown-closing key",
+    )?;
     unknown.sign(&private_key)?;
     let store = if unknown.store_kind == "codebase" {
         crate::StoreKind::Codebase
@@ -807,7 +926,10 @@ fn close_unknown(repo: &Path, question: &Value, answer_id: &str) -> Result<Strin
 fn status(question_id: &str, json: bool) -> Result<(), ContractError> {
     let repo = repo()?;
     let question = find_question(question_id)?;
-    let qid = question.get("question_id").and_then(Value::as_str).unwrap_or(question_id);
+    let qid = question
+        .get("question_id")
+        .and_then(Value::as_str)
+        .unwrap_or(question_id);
     let answers: Vec<Value> = company_records_with_repo(&repo, "answers.jsonl")
         .into_iter()
         .filter(|record| record.get("question_id").and_then(Value::as_str) == Some(qid))
@@ -817,7 +939,13 @@ fn status(question_id: &str, json: bool) -> Result<(), ContractError> {
         .get("status")
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .unwrap_or_else(|| if answer.is_some() { "closed".to_owned() } else { "open".to_owned() });
+        .unwrap_or_else(|| {
+            if answer.is_some() {
+                "closed".to_owned()
+            } else {
+                "open".to_owned()
+            }
+        });
     let result = json!({
         "question_id": qid,
         "question": question,
@@ -835,7 +963,10 @@ fn print_value(value: &Value, json: bool) {
     } else {
         println!(
             "status: {}",
-            value.get("status").and_then(Value::as_str).unwrap_or("recorded")
+            value
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("recorded")
         );
     }
 }

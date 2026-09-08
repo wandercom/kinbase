@@ -37,16 +37,31 @@ fn refuse(status: u16, error: ContractError) -> (u16, ContractError) {
 
 /// Run a destination write as one immediate SQLite transaction. Every side
 /// effect in `work` commits together or rolls back together.
-fn with_immediate_transaction<T>(db: &CompanyDb, work: impl FnOnce() -> Result<T, (u16, ContractError)>) -> Result<T, (u16, ContractError)> {
+fn with_immediate_transaction<T>(
+    db: &CompanyDb,
+    work: impl FnOnce() -> Result<T, (u16, ContractError)>,
+) -> Result<T, (u16, ContractError)> {
     db.connection
         .execute_batch("BEGIN IMMEDIATE")
-        .map_err(|error| refuse(500, ContractError::internal(format!("begin transaction: {error}"))))?;
+        .map_err(|error| {
+            refuse(
+                500,
+                ContractError::internal(format!("begin transaction: {error}")),
+            )
+        })?;
     let result = work();
     match result {
-        Ok(value) => db.connection.execute_batch("COMMIT").map(|_| value).map_err(|error| {
-            let _ = db.connection.execute_batch("ROLLBACK");
-            refuse(500, ContractError::internal(format!("commit transaction: {error}")))
-        }),
+        Ok(value) => db
+            .connection
+            .execute_batch("COMMIT")
+            .map(|_| value)
+            .map_err(|error| {
+                let _ = db.connection.execute_batch("ROLLBACK");
+                refuse(
+                    500,
+                    ContractError::internal(format!("commit transaction: {error}")),
+                )
+            }),
         Err(error) => {
             let _ = db.connection.execute_batch("ROLLBACK");
             Err(error)
@@ -84,34 +99,67 @@ fn now_hour() -> i64 {
 /// startup) and validate `facts_token_scopes`.
 pub fn register_tokens(db: &CompanyDb, config: &ServiceConfig) -> Result<Value, ContractError> {
     let facts = crate::config::TokenRecord::load(&config.facts_token_file, "facts token")?;
-    db.register_token(&facts.token, "facts", &FACTS_TOKEN_SCOPES, &config.facts_token_scopes, "facts-principal")?;
+    db.register_token(
+        &facts.token,
+        "facts",
+        &FACTS_TOKEN_SCOPES,
+        &config.facts_token_scopes,
+        "facts-principal",
+    )?;
     let mut roles = vec!["facts"];
     if let Some(path) = &config.directory_token_file {
         let directory = crate::config::TokenRecord::load(path, "directory token")?;
-        db.register_token(&directory.token, "directory", &DIRECTORY_TOKEN_SCOPES, &[], "directory-principal")?;
+        db.register_token(
+            &directory.token,
+            "directory",
+            &DIRECTORY_TOKEN_SCOPES,
+            &[],
+            "directory-principal",
+        )?;
         roles.push("directory");
     }
     if let Some(path) = &config.admin_token_file {
         let admin = crate::config::TokenRecord::load(path, "administrative token")?;
-        db.register_token(&admin.token, "admin", &["admin:issue"], &[], "admin-principal")?;
+        db.register_token(
+            &admin.token,
+            "admin",
+            &["admin:issue"],
+            &[],
+            "admin-principal",
+        )?;
         roles.push("admin");
     }
     if let Some(path) = &config.authority_token_file {
         let authority = crate::config::TokenRecord::load(path, "authority token")?;
-        db.register_token(&authority.token, "authority", &AUTHORITY_TOKEN_SCOPES, &[], "authority-principal")?;
+        db.register_token(
+            &authority.token,
+            "authority",
+            &AUTHORITY_TOKEN_SCOPES,
+            &[],
+            "authority-principal",
+        )?;
         roles.push("authority");
     }
-    Ok(json!({"roles": roles, "facts_token_scopes_configured": !config.facts_token_scopes.is_empty()}))
+    Ok(
+        json!({"roles": roles, "facts_token_scopes_configured": !config.facts_token_scopes.is_empty()}),
+    )
 }
 
-pub fn serve(config: ServiceConfig, root: PrivateKey, json_output: bool) -> Result<(), ContractError> {
+pub fn serve(
+    config: ServiceConfig,
+    root: PrivateKey,
+    json_output: bool,
+) -> Result<(), ContractError> {
     let db = CompanyDb::open(&config.sqlite_path)?;
     db.set_meta("company_id", &config.company_id)?;
     db.set_meta("root_public_key", &root.public().to_hex())?;
     register_tokens(&db, &config)?;
     drop(db);
     let listener = TcpListener::bind(config.bind).map_err(|error| {
-        ContractError::unreachable(format!("cannot bind the declared loopback address ({})", error.kind()))
+        ContractError::unreachable(format!(
+            "cannot bind the declared loopback address ({})",
+            error.kind()
+        ))
     })?;
     let state = Arc::new(ServiceState {
         config,
@@ -150,13 +198,16 @@ fn handle_connection(mut stream: TcpStream, state: Arc<ServiceState>) {
             return;
         }
     };
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(&state, &request)));
+    let outcome =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(&state, &request)));
     let (status, body) = match outcome {
         Ok(Ok((status, body))) => (status, body),
         Ok(Err((status, error))) => (status, http::error_body(&error)),
         Err(_) => (
             500,
-            http::error_body(&ContractError::internal("request handler failed; evidence preserved in the service audit")),
+            http::error_body(&ContractError::internal(
+                "request handler failed; evidence preserved in the service audit",
+            )),
         ),
     };
     let _ = http::respond(&mut stream, status, &body);
@@ -165,33 +216,69 @@ fn handle_connection(mut stream: TcpStream, state: Arc<ServiceState>) {
 fn handle(state: &ServiceState, request: &Request) -> Handled {
     let host = request.header("host").unwrap_or_default();
     if !host_is_loopback(host) {
-        return Err(refuse(403, ContractError::refused("CONFIG_INVARIANT", "Host header is not the loopback endpoint", "Address the service by its loopback bind address.")));
+        return Err(refuse(
+            403,
+            ContractError::refused(
+                "CONFIG_INVARIANT",
+                "Host header is not the loopback endpoint",
+                "Address the service by its loopback bind address.",
+            ),
+        ));
     }
     if request.header("origin").is_some() {
-        return Err(refuse(403, ContractError::refused("CONFIG_INVARIANT", "Origin-bearing requests are refused", "Do not send an Origin header; browser contexts are not clients.")));
+        return Err(refuse(
+            403,
+            ContractError::refused(
+                "CONFIG_INVARIANT",
+                "Origin-bearing requests are refused",
+                "Do not send an Origin header; browser contexts are not clients.",
+            ),
+        ));
     }
     if !request.body.is_empty() || request.method == "POST" {
-        let content_type = request.header("content-type").unwrap_or_default().to_ascii_lowercase();
+        let content_type = request
+            .header("content-type")
+            .unwrap_or_default()
+            .to_ascii_lowercase();
         if !content_type.starts_with("application/json") {
-            return Err(refuse(415, ContractError::refused("CONFIG_INVARIANT", "bodies must be application/json", "Send canonical JSON with Content-Type: application/json.")));
+            return Err(refuse(
+                415,
+                ContractError::refused(
+                    "CONFIG_INVARIANT",
+                    "bodies must be application/json",
+                    "Send canonical JSON with Content-Type: application/json.",
+                ),
+            ));
         }
     }
     let db = CompanyDb::open(&state.config.sqlite_path).map_err(|error| refuse(500, error))?;
     let now = crate::time::now_rfc3339_millis();
     maintenance(&db, state, &now).map_err(|error| refuse(500, error))?;
     let route = normalize_route(&request.route);
-    if route == "/status" && request.method == "GET" && request.header("authorization").is_none() && request.header("x-guildhall-signature").is_none() {
+    if route == "/status"
+        && request.method == "GET"
+        && request.header("authorization").is_none()
+        && request.header("x-guildhall-signature").is_none()
+    {
         // Unauthenticated status is refused like every other read.
-        db.record_auth_failure(now_minute()).map_err(|error| refuse(500, error))?;
+        db.record_auth_failure(now_minute())
+            .map_err(|error| refuse(500, error))?;
         return Err(auth_refusal());
     }
     let auth = authenticate(&db, state, request, &now)?;
     let parsed_body: Option<Value> = if request.body.is_empty() {
         None
     } else {
-        Some(crate::json::parse_strict_value(&request.body).map_err(|error| {
-            refuse(400, ContractError::invariant(format!("body is not canonical strict JSON ({error})")))
-        })?)
+        Some(
+            crate::json::parse_strict_value(&request.body).map_err(|error| {
+                refuse(
+                    400,
+                    ContractError::invariant(format!(
+                        "body is not canonical strict JSON ({error})"
+                    )),
+                )
+            })?,
+        )
     };
     let trust_state = trust::load(&db, &state.root.public()).map_err(|error| refuse(500, error))?;
     match (request.method.as_str(), route.as_str()) {
@@ -200,54 +287,96 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
         ("POST", "/facts") => admit_fact(&db, state, &auth, &trust_state, parsed_body, &now),
         ("GET", "/snapshot") => snapshot(&db, state, &auth, &trust_state, request, &now),
         ("GET", "/events") => events(&db, &auth, request),
-        ("POST", "/authority-registry") => publish_registry(&db, &auth, &trust_state, parsed_body, &now),
+        ("POST", "/authority-registry") => {
+            publish_registry(&db, &auth, &trust_state, parsed_body, &now)
+        }
         ("GET", "/authority-registry") => authority_registry(&db, &auth),
-        ("POST", "/directory") => directory_write(&db, state, &auth, &trust_state, parsed_body, &now),
+        ("POST", "/directory") => {
+            directory_write(&db, state, &auth, &trust_state, parsed_body, &now)
+        }
         ("POST", "/questions") => post_question(&db, state, &auth, &trust_state, parsed_body, &now),
         ("GET", "/questions") => {
             require_scope(&auth, "facts:read")?;
-            let questions = db.questions(request.query.get("authority_id").map(String::as_str)).map_err(|error| refuse(500, error))?;
-            Ok((200, json!({"questions": questions, "count": questions.len()})))
+            let questions = db
+                .questions(request.query.get("authority_id").map(String::as_str))
+                .map_err(|error| refuse(500, error))?;
+            Ok((
+                200,
+                json!({"questions": questions, "count": questions.len()}),
+            ))
         }
         ("POST", "/answers") => post_answer(&db, state, &auth, &trust_state, parsed_body, &now),
         ("GET", "/answers") => {
             require_scope(&auth, "facts:read")?;
-            let question_id = request.query.get("question_id").cloned().unwrap_or_default();
-            let answers = db.answers_for_question(&question_id).map_err(|error| refuse(500, error))?;
+            let question_id = request
+                .query
+                .get("question_id")
+                .cloned()
+                .unwrap_or_default();
+            let answers = db
+                .answers_for_question(&question_id)
+                .map_err(|error| refuse(500, error))?;
             Ok((200, json!({"answers": answers})))
         }
         ("POST", "/unknowns") => post_unknown(&db, &auth, &trust_state, parsed_body, &now),
         ("GET", "/unknowns") => {
             require_scope(&auth, "facts:read")?;
-            let unknowns = db.unknowns(request.query.get("status").map(String::as_str)).map_err(|error| refuse(500, error))?;
+            let unknowns = db
+                .unknowns(request.query.get("status").map(String::as_str))
+                .map_err(|error| refuse(500, error))?;
             Ok((200, json!({"unknowns": unknowns})))
         }
-        ("POST", "/certificates") => issue_certificate(&db, state, &auth, &trust_state, parsed_body, &now),
+        ("POST", "/certificates") => {
+            issue_certificate(&db, state, &auth, &trust_state, parsed_body, &now)
+        }
         ("GET", "/certificates") => {
             require_scope(&auth, "facts:read")?;
             let hint = request.query.get("hint").cloned().unwrap_or_default();
             let certificates = if hint.is_empty() {
                 db.all_certificates().map_err(|error| refuse(500, error))?
             } else {
-                db.certificates_for_hint(&hint).map_err(|error| refuse(500, error))?
+                db.certificates_for_hint(&hint)
+                    .map_err(|error| refuse(500, error))?
             };
             Ok((200, json!({"certificates": certificates})))
         }
         ("POST", "/manifests") => post_manifest(&db, &auth, &trust_state, parsed_body, &now),
-        ("POST", "/revocations") => steward_event(&db, &auth, &trust_state, parsed_body, "revocation", "revocation", &now),
+        ("POST", "/revocations") => steward_event(
+            &db,
+            &auth,
+            &trust_state,
+            parsed_body,
+            "revocation",
+            "revocation",
+            &now,
+        ),
         ("GET", "/revocations") => revocations(&db, &auth),
-        ("POST", "/rotations") => steward_event(&db, &auth, &trust_state, parsed_body, "rotation", "rotation", &now),
+        ("POST", "/rotations") => steward_event(
+            &db,
+            &auth,
+            &trust_state,
+            parsed_body,
+            "rotation",
+            "rotation",
+            &now,
+        ),
         ("POST", "/tokens") => issue_token(&db, &auth, parsed_body, &now),
         ("GET", "/steward-queue") => {
             require_scope(&auth, "admin:issue")?;
-            Ok((200, json!({"queue": db.steward_queue().map_err(|error| refuse(500, error))?})))
+            Ok((
+                200,
+                json!({"queue": db.steward_queue().map_err(|error| refuse(500, error))?}),
+            ))
         }
         ("GET", path) if path.starts_with("/questions/") => {
             require_scope(&auth, "facts:read")?;
             let id = path.trim_start_matches("/questions/");
             match db.question(id).map_err(|error| refuse(500, error))? {
                 Some(mut question) => {
-                    question["answers"] = Value::Array(db.answers_for_question(id).map_err(|error| refuse(500, error))?);
+                    question["answers"] = Value::Array(
+                        db.answers_for_question(id)
+                            .map_err(|error| refuse(500, error))?,
+                    );
                     Ok((200, question))
                 }
                 None => Err(refuse(404, ContractError::invariant("question not found"))),
@@ -258,7 +387,10 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
             let id = path.trim_start_matches("/directory/");
             match db.directory(id, &now).map_err(|error| refuse(500, error))? {
                 Some(entry) => Ok((200, entry)),
-                None => Err(refuse(404, ContractError::invariant("directory entry not found or past retention"))),
+                None => Err(refuse(
+                    404,
+                    ContractError::invariant("directory entry not found or past retention"),
+                )),
             }
         }
         ("GET", path) if path.starts_with("/certificates/") => {
@@ -266,19 +398,36 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
             let id = path.trim_start_matches("/certificates/");
             match db.certificate(id).map_err(|error| refuse(500, error))? {
                 Some(certificate) => Ok((200, certificate)),
-                None => Err(refuse(404, ContractError::invariant("certificate not found"))),
+                None => Err(refuse(
+                    404,
+                    ContractError::invariant("certificate not found"),
+                )),
             }
         }
         ("GET", path) if path.starts_with("/manifests/") => {
             require_scope(&auth, "facts:read")?;
             let id = path.trim_start_matches("/manifests/");
-            let branch = request.query.get("branch").cloned().unwrap_or_else(|| "main".to_owned());
-            match db.latest_manifest_observation(id, &branch).map_err(|error| refuse(500, error))? {
+            let branch = request
+                .query
+                .get("branch")
+                .cloned()
+                .unwrap_or_else(|| "main".to_owned());
+            match db
+                .latest_manifest_observation(id, &branch)
+                .map_err(|error| refuse(500, error))?
+            {
                 Some(observation) => Ok((200, observation)),
-                None => Err(refuse(404, ContractError::invariant("no manifest observation for that repository and branch"))),
+                None => Err(refuse(
+                    404,
+                    ContractError::invariant(
+                        "no manifest observation for that repository and branch",
+                    ),
+                )),
             }
         }
-        ("GET", path) if path.starts_with("/facts/") => fact_detail(&db, state, &auth, &trust_state, path, request, &now),
+        ("GET", path) if path.starts_with("/facts/") => {
+            fact_detail(&db, state, &auth, &trust_state, path, request, &now)
+        }
         _ => Err(refuse(404, ContractError::invariant("no such endpoint"))),
     }
 }
@@ -301,12 +450,22 @@ fn host_is_loopback(host: &str) -> bool {
     let host = host.trim();
     let name = host.rsplit_once(':').map(|(name, _)| name).unwrap_or(host);
     let name = name.trim_start_matches('[').trim_end_matches(']');
-    name == "localhost" || name.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+    name == "localhost"
+        || name
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
 }
 
-fn authenticate(db: &CompanyDb, state: &ServiceState, request: &Request, now: &str) -> Result<AuthContext, (u16, ContractError)> {
+fn authenticate(
+    db: &CompanyDb,
+    state: &ServiceState,
+    request: &Request,
+    now: &str,
+) -> Result<AuthContext, (u16, ContractError)> {
     let minute = now_minute();
-    let failures = db.auth_failures(minute).map_err(|error| refuse(500, error))?;
+    let failures = db
+        .auth_failures(minute)
+        .map_err(|error| refuse(500, error))?;
     if failures >= state.config.auth_failures_per_minute {
         return Err(refuse(
             429,
@@ -322,7 +481,11 @@ fn authenticate(db: &CompanyDb, state: &ServiceState, request: &Request, now: &s
     };
     let bearer = request
         .header("authorization")
-        .and_then(|value| value.strip_prefix("Bearer ").or_else(|| value.strip_prefix("bearer ")))
+        .and_then(|value| {
+            value
+                .strip_prefix("Bearer ")
+                .or_else(|| value.strip_prefix("bearer "))
+        })
         .map(str::trim)
         .filter(|token| !token.is_empty());
     let Some(bearer) = bearer else {
@@ -331,18 +494,37 @@ fn authenticate(db: &CompanyDb, state: &ServiceState, request: &Request, now: &s
     let Some(token) = db.token(bearer).map_err(|error| refuse(500, error))? else {
         return Err(fail(db));
     };
-    let nonce = request.header("x-guildhall-nonce").unwrap_or_default().to_owned();
-    let expires_at = request.header("x-guildhall-expires-at").unwrap_or_default().to_owned();
-    let client_key = request.header("x-guildhall-client-key").unwrap_or_default().to_owned();
-    let signature = request.header("x-guildhall-signature").unwrap_or_default().to_owned();
-    if nonce.is_empty() || expires_at.is_empty() || client_key.is_empty() || signature.is_empty() || nonce.len() > 128 {
+    let nonce = request
+        .header("x-guildhall-nonce")
+        .unwrap_or_default()
+        .to_owned();
+    let expires_at = request
+        .header("x-guildhall-expires-at")
+        .unwrap_or_default()
+        .to_owned();
+    let client_key = request
+        .header("x-guildhall-client-key")
+        .unwrap_or_default()
+        .to_owned();
+    let signature = request
+        .header("x-guildhall-signature")
+        .unwrap_or_default()
+        .to_owned();
+    if nonce.is_empty()
+        || expires_at.is_empty()
+        || client_key.is_empty()
+        || signature.is_empty()
+        || nonce.len() > 128
+    {
         return Err(fail(db));
     }
     let Ok(expires) = crate::time::parse_rfc3339_millis(&expires_at) else {
         return Err(fail(db));
     };
     let now_dt = crate::time::parse_rfc3339_millis(now).unwrap_or_else(|_| crate::time::now_utc());
-    if expires <= now_dt || expires.signed_duration_since(now_dt).num_seconds() > REQUEST_EXPIRY_MAX_SECONDS {
+    if expires <= now_dt
+        || expires.signed_duration_since(now_dt).num_seconds() > REQUEST_EXPIRY_MAX_SECONDS
+    {
         return Err(fail(db));
     }
     let Ok(key) = PublicKey::from_hex(&client_key) else {
@@ -360,11 +542,17 @@ fn authenticate(db: &CompanyDb, state: &ServiceState, request: &Request, now: &s
         return Err(fail(db));
     }
     let client_hex = key.to_hex();
-    if !db.consume_request_nonce(&client_hex, &nonce, &expires_at, now).map_err(|error| refuse(500, error))? {
+    if !db
+        .consume_request_nonce(&client_hex, &nonce, &expires_at, now)
+        .map_err(|error| refuse(500, error))?
+    {
         return Err(fail(db));
     }
-    db.record_token_client_pair(&token.digest, &client_hex, now).map_err(|error| refuse(500, error))?;
-    let rate = db.bump_request_rate(&client_hex, minute).map_err(|error| refuse(500, error))?;
+    db.record_token_client_pair(&token.digest, &client_hex, now)
+        .map_err(|error| refuse(500, error))?;
+    let rate = db
+        .bump_request_rate(&client_hex, minute)
+        .map_err(|error| refuse(500, error))?;
     if rate > state.config.requests_per_minute {
         return Err(refuse(
             429,
@@ -410,11 +598,19 @@ fn readable_scopes(auth: &AuthContext, trust_state: &TrustState) -> BTreeSet<Str
     BTreeSet::new()
 }
 
-fn charge_read(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, count: usize, bytes: usize) -> Result<(), (u16, ContractError)> {
+fn charge_read(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+    count: usize,
+    bytes: usize,
+) -> Result<(), (u16, ContractError)> {
     let (total_count, total_bytes) = db
         .add_read_volume(&auth.principal_key, now_hour(), count as i64, bytes as i64)
         .map_err(|error| refuse(500, error))?;
-    if total_count > state.config.read_volume_per_hour || total_bytes > state.config.read_bytes_per_hour {
+    if total_count > state.config.read_volume_per_hour
+        || total_bytes > state.config.read_bytes_per_hour
+    {
         return Err(refuse(
             429,
             ContractError::limit(
@@ -427,11 +623,17 @@ fn charge_read(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, count: 
 }
 
 /// Reduce the Company event log into the current view.
-pub fn current_view(db: &CompanyDb, trust_state: &TrustState, as_of: &str) -> Result<crate::reducer::CurrentView, ContractError> {
+pub fn current_view(
+    db: &CompanyDb,
+    trust_state: &TrustState,
+    as_of: &str,
+) -> Result<crate::reducer::CurrentView, ContractError> {
     let mut admitted = Vec::new();
     let mut tombstones = Vec::new();
     for (cursor, payload, verification) in db.events_of_kind("fact-event")? {
-        let Ok(event) = FactEvent::from_value(&payload) else { continue };
+        let Ok(event) = FactEvent::from_value(&payload) else {
+            continue;
+        };
         let verification = match verification.as_str() {
             "verified" => Verification::Verified,
             "wrong-scope" => Verification::WrongScope,
@@ -487,7 +689,12 @@ pub fn current_view(db: &CompanyDb, trust_state: &TrustState, as_of: &str) -> Re
     Ok(crate::reducer::reduce(&input))
 }
 
-fn status(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: &TrustState) -> Handled {
+fn status(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+) -> Handled {
     require_scope(auth, "facts:read")?;
     let cursor = db.cursor().map_err(|error| refuse(500, error))?;
     Ok((
@@ -511,20 +718,39 @@ fn status(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state:
     ))
 }
 
-fn facts(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: &TrustState, request: &Request, now: &str) -> Handled {
+fn facts(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    request: &Request,
+    now: &str,
+) -> Handled {
     require_scope(auth, "facts:read")?;
     let scope = request.query.get("scope").cloned().unwrap_or_default();
     let readable = readable_scopes(auth, trust_state);
-    let as_of = request.query.get("as_of").cloned().unwrap_or_else(|| now.to_owned());
+    let as_of = request
+        .query
+        .get("as_of")
+        .cloned()
+        .unwrap_or_else(|| now.to_owned());
     let view = current_view(db, trust_state, &as_of).map_err(|error| refuse(500, error))?;
     let selected: Vec<Value> = view
         .facts
         .iter()
-        .filter(|fact| if scope.is_empty() { readable.contains(&fact.authority_scope) } else { fact.authority_scope == scope })
+        .filter(|fact| {
+            if scope.is_empty() {
+                readable.contains(&fact.authority_scope)
+            } else {
+                fact.authority_scope == scope
+            }
+        })
         .map(|fact| {
             let mut value = crate::model::value_of(fact);
-            value["semantic_digest"] = Value::String(crate::model::semantic_digest(&fact.statement));
-            value["digest_alg_version"] = Value::String(crate::model::DIGEST_ALG_VERSION.to_owned());
+            value["semantic_digest"] =
+                Value::String(crate::model::semantic_digest(&fact.statement));
+            value["digest_alg_version"] =
+                Value::String(crate::model::DIGEST_ALG_VERSION.to_owned());
             value
         })
         .collect();
@@ -538,8 +764,15 @@ fn facts(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: 
             ),
         ));
     }
-    let denied_count = view.facts.iter().filter(|fact| !readable.contains(&fact.authority_scope)).count();
-    let bytes: usize = selected.iter().map(|fact| crate::json::canonical_bytes(fact).len()).sum();
+    let denied_count = view
+        .facts
+        .iter()
+        .filter(|fact| !readable.contains(&fact.authority_scope))
+        .count();
+    let bytes: usize = selected
+        .iter()
+        .map(|fact| crate::json::canonical_bytes(fact).len())
+        .sum();
     charge_read(db, state, auth, selected.len().max(1), bytes)?;
     let truncated = selected.len() > MAX_READ_ITEMS;
     let facts: Vec<Value> = selected.into_iter().take(MAX_READ_ITEMS).collect();
@@ -556,14 +789,26 @@ fn facts(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: 
     ))
 }
 
-fn fact_detail(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: &TrustState, path: &str, request: &Request, now: &str) -> Handled {
+fn fact_detail(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    path: &str,
+    request: &Request,
+    now: &str,
+) -> Handled {
     require_scope(auth, "facts:read")?;
     let rest = path.trim_start_matches("/facts/");
     let (fact_id, sub) = rest.split_once('/').unwrap_or((rest, ""));
     let readable = readable_scopes(auth, trust_state);
     if sub == "digest" || sub == "versions" {
         // P-8 historical digest lookup: version-bound digest plus current head.
-        let alg = request.query.get("alg").cloned().unwrap_or_else(|| crate::model::DIGEST_ALG_VERSION.to_owned());
+        let alg = request
+            .query
+            .get("alg")
+            .cloned()
+            .unwrap_or_else(|| crate::model::DIGEST_ALG_VERSION.to_owned());
         if alg != crate::model::DIGEST_ALG_VERSION {
             return Err(refuse(
                 400,
@@ -574,11 +819,16 @@ fn fact_detail(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_s
                 ),
             ));
         }
-        let versions = db.fact_versions(fact_id).map_err(|error| refuse(500, error))?;
+        let versions = db
+            .fact_versions(fact_id)
+            .map_err(|error| refuse(500, error))?;
         let requested = request.query.get("version").cloned();
-        let historical = requested
-            .as_ref()
-            .and_then(|version| versions.iter().find(|item| crate::json::get_str(item, "version") == Some(version.as_str())).cloned());
+        let historical = requested.as_ref().and_then(|version| {
+            versions
+                .iter()
+                .find(|item| crate::json::get_str(item, "version") == Some(version.as_str()))
+                .cloned()
+        });
         let head = versions.last().cloned();
         charge_read(db, state, auth, 1, 256)?;
         return Ok((
@@ -596,7 +846,10 @@ fn fact_detail(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_s
     }
     let view = current_view(db, trust_state, now).map_err(|error| refuse(500, error))?;
     let Some(fact) = view.facts.iter().find(|fact| fact.fact_id == fact_id) else {
-        return Err(refuse(404, ContractError::invariant("fact not found in the current view")));
+        return Err(refuse(
+            404,
+            ContractError::invariant("fact not found in the current view"),
+        ));
     };
     if !readable.contains(&fact.authority_scope) {
         return Err(refuse(
@@ -611,38 +864,82 @@ fn fact_detail(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_s
     let mut value = crate::model::value_of(fact);
     value["semantic_digest"] = Value::String(crate::model::semantic_digest(&fact.statement));
     value["digest_alg_version"] = Value::String(crate::model::DIGEST_ALG_VERSION.to_owned());
-    charge_read(db, state, auth, 1, crate::json::canonical_bytes(&value).len())?;
-    Ok((200, json!({"fact": value, "versions": db.fact_versions(fact_id).map_err(|error| refuse(500, error))?})))
+    charge_read(
+        db,
+        state,
+        auth,
+        1,
+        crate::json::canonical_bytes(&value).len(),
+    )?;
+    Ok((
+        200,
+        json!({"fact": value, "versions": db.fact_versions(fact_id).map_err(|error| refuse(500, error))?}),
+    ))
 }
 
 /// Admit a fact event (architecture §2 admission order): parse once; verify
 /// canonical bytes, domain, signature, scope, and revocation cursor; then
 /// the idempotent destination transaction keyed by content digest.
-fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
-    let body = body.ok_or_else(|| refuse(400, ContractError::invariant("a fact-event body is required")))?;
+fn admit_fact(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    body: Option<Value>,
+    now: &str,
+) -> Handled {
+    let body = body.ok_or_else(|| {
+        refuse(
+            400,
+            ContractError::invariant("a fact-event body is required"),
+        )
+    })?;
     let (document, approval) = if body.get("schema").is_some() {
         (body.clone(), None)
     } else if let Some(event) = body.get("event") {
         (event.clone(), body.get("approval_token").cloned())
     } else if body.get("company_id").is_some() && body.get("statement").is_some() {
-        (company_fact_document_to_event(&body, state, now).map_err(|error| refuse(400, error))?, None)
+        (
+            company_fact_document_to_event(&body, state, now)
+                .map_err(|error| refuse(400, error))?,
+            None,
+        )
     } else {
-        return Err(refuse(400, ContractError::invariant("body is neither a guildhall-event/1 document nor a Company fact document")));
+        return Err(refuse(
+            400,
+            ContractError::invariant(
+                "body is neither a guildhall-event/1 document nor a Company fact document",
+            ),
+        ));
     };
     let bytes = crate::json::canonical_bytes(&document);
     if bytes.len() > crate::model::MAX_EVENT_BYTES {
         return Err(refuse(
             413,
-            ContractError::limit("shared event exceeds the 64 KiB ceiling", json!({"refused_count": 1, "omitted_count": 1, "bytes": bytes.len()})),
+            ContractError::limit(
+                "shared event exceeds the 64 KiB ceiling",
+                json!({"refused_count": 1, "omitted_count": 1, "bytes": bytes.len()}),
+            ),
         ));
     }
     let event = FactEvent::parse(&bytes).map_err(|error| {
-        refuse(400, ContractError::integrity("DIGEST_MISMATCH", format!("event does not parse as a canonical guildhall-event/1 document ({error})"), "Send the exact canonical signed event bytes."))
+        refuse(
+            400,
+            ContractError::integrity(
+                "DIGEST_MISMATCH",
+                format!("event does not parse as a canonical guildhall-event/1 document ({error})"),
+                "Send the exact canonical signed event bytes.",
+            ),
+        )
     })?;
     if event.store_kind != "company" {
         return Err(refuse(
             400,
-            ContractError::refused("FOREIGN_REPO_EVENTS", "only company store events are admitted by the Company service", "Send codebase events to the repository store."),
+            ContractError::refused(
+                "FOREIGN_REPO_EVENTS",
+                "only company store events are admitted by the Company service",
+                "Send codebase events to the repository store.",
+            ),
         ));
     }
     let digest = crate::hash::sha256_bytes(&bytes);
@@ -666,10 +963,24 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
     let (status_code, admission_status, verification_text) = match verification {
         Verification::Verified => (201, "committed", "verified"),
         Verification::SignatureInvalid => {
-            return Err(refuse(400, ContractError::integrity("SIGNATURE_INVALID", "fact-event signature failed", "Quarantine the bytes and contact the named owner; never resign locally.")));
+            return Err(refuse(
+                400,
+                ContractError::integrity(
+                    "SIGNATURE_INVALID",
+                    "fact-event signature failed",
+                    "Quarantine the bytes and contact the named owner; never resign locally.",
+                ),
+            ));
         }
         Verification::Revoked => {
-            return Err(refuse(403, ContractError::refused("AUTHORITY_WRONG_SCOPE", "signer key is revoked at the current authority cursor", "Rotate to an authorized key; post-revocation events refuse.")));
+            return Err(refuse(
+                403,
+                ContractError::refused(
+                    "AUTHORITY_WRONG_SCOPE",
+                    "signer key is revoked at the current authority cursor",
+                    "Rotate to an authorized key; post-revocation events refuse.",
+                ),
+            ));
         }
         Verification::WrongScope | Verification::Unverified | Verification::Foreign => {
             // Approved contribution from a non-steward: steward review queue.
@@ -694,12 +1005,18 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
         .as_ref()
         .and_then(|token| crate::json::get_str(token, "nonce").map(str::to_owned))
         .unwrap_or_else(|| digest.clone());
-    let expires_at = crate::time::plus_seconds(now, state.config.nonce_retention_seconds).unwrap_or_else(|_| now.to_owned());
+    let expires_at = crate::time::plus_seconds(now, state.config.nonce_retention_seconds)
+        .unwrap_or_else(|_| now.to_owned());
     let reserved_receipt = json!({"schema": crate::model::RECEIPT_SCHEMA, "destination": "company", "status": "reserved"});
     let transaction: Result<(u16, Value), (u16, ContractError)> = (|| {
         db.connection
             .execute_batch("BEGIN IMMEDIATE")
-            .map_err(|error| refuse(500, ContractError::internal(format!("begin fact admission: {error}"))))?;
+            .map_err(|error| {
+                refuse(
+                    500,
+                    ContractError::internal(format!("begin fact admission: {error}")),
+                )
+            })?;
         let inserted_nonce = db
             .connection
             .execute(
@@ -720,7 +1037,8 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
                 .and_then(|record| crate::json::get_str(record, "client_key"))
                 == Some(auth.client_key.as_str());
             if same_bytes && same_client {
-                db.bump("retry_receipt_returned").map_err(|error| refuse(500, error))?;
+                db.bump("retry_receipt_returned")
+                    .map_err(|error| refuse(500, error))?;
                 let mut receipt = record
                     .and_then(|record| record.get("receipt").cloned())
                     .unwrap_or(Value::Null);
@@ -752,35 +1070,64 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
             if existing_digest != digest {
                 return Err(refuse(
                     409,
-                    ContractError::integrity("DIGEST_MISMATCH", "event_id already admitted with different canonical bytes", "Use a fresh event_id derived from the content digest."),
+                    ContractError::integrity(
+                        "DIGEST_MISMATCH",
+                        "event_id already admitted with different canonical bytes",
+                        "Use a fresh event_id derived from the content digest.",
+                    ),
                 ));
             }
-            let mut receipt = receipt_for(&event, &digest, existing_cursor, "committed", "duplicate");
-            let (revocation_observed, support_withdrawn) = replay_projection(db, trust_state, &event);
+            let mut receipt =
+                receipt_for(&event, &digest, existing_cursor, "committed", "duplicate");
+            let (revocation_observed, support_withdrawn) =
+                replay_projection(db, trust_state, &event);
             receipt["historical_receipt"] = Value::Bool(true);
             receipt["readmitted"] = Value::Bool(false);
             receipt["revocation_observed"] = Value::Bool(revocation_observed);
             receipt["support_withdrawn"] = Value::Bool(support_withdrawn);
-            receipt["projection_state"] = Value::String(if support_withdrawn { "support_withdrawn".to_owned() } else { "current".to_owned() });
+            receipt["projection_state"] = Value::String(if support_withdrawn {
+                "support_withdrawn".to_owned()
+            } else {
+                "current".to_owned()
+            });
             db.connection
                 .execute(
                     "UPDATE nonces SET receipt=?2 WHERE destination='company' AND nonce=?1",
                     rusqlite::params![nonce, crate::json::canonical_text(&receipt)],
                 )
-                .map_err(|error| refuse(500, ContractError::internal(format!("store historical receipt: {error}"))))?;
+                .map_err(|error| {
+                    refuse(
+                        500,
+                        ContractError::internal(format!("store historical receipt: {error}")),
+                    )
+                })?;
             return Ok((200, receipt));
         }
 
         let cursor = if admission_status == "committed" {
             let transaction_cursor = db
-                .append_event(&event.event_id, "fact-event", "fact-event", &document, &event.signer, verification_text, Some(&auth.client_key))
+                .append_event(
+                    &event.event_id,
+                    "fact-event",
+                    "fact-event",
+                    &document,
+                    &event.signer,
+                    verification_text,
+                    Some(&auth.client_key),
+                )
                 .map_err(|error| refuse(500, error))?;
             match transaction_cursor {
                 Some(cursor) => {
-                    db.record_fact_version(&event.fact_id, &event.semantic_digest(), &event.event_id, cursor)
-                        .map_err(|error| refuse(500, error))?;
+                    db.record_fact_version(
+                        &event.fact_id,
+                        &event.semantic_digest(),
+                        &event.event_id,
+                        cursor,
+                    )
+                    .map_err(|error| refuse(500, error))?;
                     if crate::model::action_of(&event) == Some("relaxation") {
-                        db.insert_relaxation(&document, cursor).map_err(|error| refuse(500, error))?;
+                        db.insert_relaxation(&document, cursor)
+                            .map_err(|error| refuse(500, error))?;
                     }
                     cursor
                 }
@@ -790,12 +1137,18 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
                     .unwrap_or(0),
             }
         } else {
-            db.queue_for_steward(&event.event_id, &document, approval.as_ref().unwrap_or(&Value::Null), &auth.client_key)
-                .map_err(|error| refuse(500, error))?;
+            db.queue_for_steward(
+                &event.event_id,
+                &document,
+                approval.as_ref().unwrap_or(&Value::Null),
+                &auth.client_key,
+            )
+            .map_err(|error| refuse(500, error))?;
             0
         };
         if admission_status == "committed" {
-            db.resolve_steward_queue(&event.event_id).map_err(|error| refuse(500, error))?;
+            db.resolve_steward_queue(&event.event_id)
+                .map_err(|error| refuse(500, error))?;
         }
         let receipt = receipt_for(&event, &digest, cursor, admission_status, "new");
         db.connection
@@ -803,11 +1156,20 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
                 "UPDATE nonces SET receipt=?2 WHERE destination='company' AND nonce=?1",
                 rusqlite::params![nonce, crate::json::canonical_text(&receipt)],
             )
-            .map_err(|error| refuse(500, ContractError::internal(format!("store fact receipt: {error}"))))?;
+            .map_err(|error| {
+                refuse(
+                    500,
+                    ContractError::internal(format!("store fact receipt: {error}")),
+                )
+            })?;
         db.audit("fact-admission", &json!({"event_id": event.event_id, "digest": digest, "status": admission_status, "scope": event.authority_scope}))
             .map_err(|error| refuse(500, error))?;
-        db.bump(if admission_status == "committed" { "facts_admitted" } else { "facts_queued" })
-            .map_err(|error| refuse(500, error))?;
+        db.bump(if admission_status == "committed" {
+            "facts_admitted"
+        } else {
+            "facts_queued"
+        })
+        .map_err(|error| refuse(500, error))?;
         Ok((status_code, receipt))
     })();
     let result = match transaction {
@@ -815,7 +1177,10 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
             Ok(()) => Ok(result),
             Err(error) => {
                 let _ = db.connection.execute_batch("ROLLBACK");
-                Err(refuse(500, ContractError::internal(format!("commit fact admission: {error}"))))
+                Err(refuse(
+                    500,
+                    ContractError::internal(format!("commit fact admission: {error}")),
+                ))
             }
         },
         Err(error) => {
@@ -837,7 +1202,8 @@ fn replay_projection(db: &CompanyDb, trust_state: &TrustState, event: &FactEvent
         .flatten()
         .filter(|(_, payload, _)| {
             payload.get("event_id").and_then(Value::as_str) != Some(event.event_id.as_str())
-                && payload.get("logical_key").and_then(Value::as_str) == Some(event.logical_key.as_str())
+                && payload.get("logical_key").and_then(Value::as_str)
+                    == Some(event.logical_key.as_str())
                 && payload
                     .get("signer")
                     .and_then(Value::as_str)
@@ -847,7 +1213,13 @@ fn replay_projection(db: &CompanyDb, trust_state: &TrustState, event: &FactEvent
     (true, independent_support == 0)
 }
 
-fn receipt_for(event: &FactEvent, digest: &str, cursor: i64, status: &str, admission: &str) -> Value {
+fn receipt_for(
+    event: &FactEvent,
+    digest: &str,
+    cursor: i64,
+    status: &str,
+    admission: &str,
+) -> Value {
     json!({
         "schema": crate::model::RECEIPT_SCHEMA,
         "destination": "company",
@@ -867,7 +1239,11 @@ fn receipt_for(event: &FactEvent, digest: &str, cursor: i64, status: &str, admis
 /// Convert the interface-contract §3.5 Company fact document into a
 /// FactEvent with the ratified field set (signature carried through: the
 /// document's own signature is verified as the fact-event message type).
-fn company_fact_document_to_event(document: &Value, state: &ServiceState, now: &str) -> Result<Value, ContractError> {
+fn company_fact_document_to_event(
+    document: &Value,
+    state: &ServiceState,
+    now: &str,
+) -> Result<Value, ContractError> {
     let signer = crate::json::get_str(document, "signer").unwrap_or_default();
     let statement = crate::json::get_str(document, "statement").unwrap_or_default();
     let fact_id = crate::json::get_str(document, "fact_id").unwrap_or_default();
@@ -881,12 +1257,19 @@ fn company_fact_document_to_event(document: &Value, state: &ServiceState, now: &
             "Recompute sha256(JCS({\"statement\"})) with guildhall-digest/1.",
         ));
     }
-    let alg = crate::json::get_str(document, "digest_alg_version").unwrap_or(crate::model::DIGEST_ALG_VERSION);
+    let alg = crate::json::get_str(document, "digest_alg_version")
+        .unwrap_or(crate::model::DIGEST_ALG_VERSION);
     if alg != crate::model::DIGEST_ALG_VERSION {
-        return Err(ContractError::degraded("DIGEST_ALGORITHM_UNSUPPORTED", format!("digest algorithm {alg} is unknown"), "Use guildhall-digest/1."));
+        return Err(ContractError::degraded(
+            "DIGEST_ALGORITHM_UNSUPPORTED",
+            format!("digest algorithm {alg} is unknown"),
+            "Use guildhall-digest/1.",
+        ));
     }
     let criticality = crate::json::get_str(document, "company_criticality").unwrap_or("advisory");
-    let valid_from = crate::json::get_str(document, "valid_from").unwrap_or(now).to_owned();
+    let valid_from = crate::json::get_str(document, "valid_from")
+        .unwrap_or(now)
+        .to_owned();
     let mut event = json!({
         "schema": crate::model::EVENT_SCHEMA,
         "event_id": format!("evt_{}", &crate::hash::sha256_text(&format!("{fact_id}\0{version}\0{statement}"))[..24]),
@@ -926,13 +1309,25 @@ fn company_fact_document_to_event(document: &Value, state: &ServiceState, now: &
     // The document's own steward signature authorizes the conversion; the
     // converted event is re-signed by the root key it was verified against.
     let key = PublicKey::verify_document("fact-event", document).ok_or_else(|| {
-        ContractError::integrity("SIGNATURE_INVALID", "Company fact document signature failed", "Sign the document with the steward root key as message type fact-event.")
+        ContractError::integrity(
+            "SIGNATURE_INVALID",
+            "Company fact document signature failed",
+            "Sign the document with the steward root key as message type fact-event.",
+        )
     })?;
     if key.to_hex() != state.root.public().to_hex() && key.to_hex() != signer {
-        return Err(ContractError::refused("AUTHORITY_WRONG_SCOPE", "Company fact document is not steward-signed", "Only the Company steward may publish Company facts."));
+        return Err(ContractError::refused(
+            "AUTHORITY_WRONG_SCOPE",
+            "Company fact document is not steward-signed",
+            "Only the Company steward may publish Company facts.",
+        ));
     }
     if key.to_hex() != state.root.public().to_hex() {
-        return Err(ContractError::refused("AUTHORITY_WRONG_SCOPE", "Company fact document signer is not the steward root key", "Only the Company steward may publish Company facts."));
+        return Err(ContractError::refused(
+            "AUTHORITY_WRONG_SCOPE",
+            "Company fact document signer is not the steward root key",
+            "Only the Company steward may publish Company facts.",
+        ));
     }
     state.root.sign_document("fact-event", &event)
 }
@@ -940,8 +1335,15 @@ fn company_fact_document_to_event(document: &Value, state: &ServiceState, now: &
 fn authority_registry(db: &CompanyDb, auth: &AuthContext) -> Handled {
     require_scope(auth, "facts:read")?;
     let mut latest: Option<(i64, Value)> = None;
-    for (cursor, document, verification) in db.events_of_kind("registry").map_err(|error| refuse(500, error))? {
-        if verification == "verified" && latest.as_ref().is_none_or(|(existing, _)| cursor > *existing) {
+    for (cursor, document, verification) in db
+        .events_of_kind("registry")
+        .map_err(|error| refuse(500, error))?
+    {
+        if verification == "verified"
+            && latest
+                .as_ref()
+                .is_none_or(|(existing, _)| cursor > *existing)
+        {
             latest = Some((cursor, document));
         }
     }
@@ -955,13 +1357,19 @@ fn authority_registry(db: &CompanyDb, auth: &AuthContext) -> Handled {
             ),
         )
     })?;
-    let entries = document.get("entries").cloned().unwrap_or(Value::Array(Vec::new()));
-    Ok((200, json!({
-        "registry": document,
-        "entries": entries,
-        "cursor": cursor.to_string(),
-        "authority_cursor": crate::json::get_str(&document, "authority_cursor").map(str::to_owned).unwrap_or_else(|| cursor.to_string())
-    })))
+    let entries = document
+        .get("entries")
+        .cloned()
+        .unwrap_or(Value::Array(Vec::new()));
+    Ok((
+        200,
+        json!({
+            "registry": document,
+            "entries": entries,
+            "cursor": cursor.to_string(),
+            "authority_cursor": crate::json::get_str(&document, "authority_cursor").map(str::to_owned).unwrap_or_else(|| cursor.to_string())
+        }),
+    ))
 }
 
 fn revocations(db: &CompanyDb, auth: &AuthContext) -> Handled {
@@ -970,20 +1378,35 @@ fn revocations(db: &CompanyDb, auth: &AuthContext) -> Handled {
         .events_of_message_type("revocation")
         .map_err(|error| refuse(500, error))?
         .into_iter()
-        .filter(|(_, document, verification)| verification == "verified" && crate::json::get_str(document, "revoked_key").is_some())
+        .filter(|(_, document, verification)| {
+            verification == "verified" && crate::json::get_str(document, "revoked_key").is_some()
+        })
         .map(|(_, document, _)| document)
         .collect::<Vec<_>>();
-    Ok((200, json!({
-        "revocations": documents,
-        "revocation_cursor": db.revocation_cursor().map_err(|error| refuse(500, error))?
-    })))
+    Ok((
+        200,
+        json!({
+            "revocations": documents,
+            "revocation_cursor": db.revocation_cursor().map_err(|error| refuse(500, error))?
+        }),
+    ))
 }
 
-fn snapshot(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: &TrustState, request: &Request, now: &str) -> Handled {
+fn snapshot(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    request: &Request,
+    now: &str,
+) -> Handled {
     require_scope(auth, "facts:read")?;
     let client_nonce = request.query.get("nonce").cloned().unwrap_or_default();
     if client_nonce.is_empty() || client_nonce.len() > 128 {
-        return Err(refuse(400, ContractError::invariant("a fresh client nonce is required for a signed snapshot")));
+        return Err(refuse(
+            400,
+            ContractError::invariant("a fresh client nonce is required for a signed snapshot"),
+        ));
     }
     let readable = readable_scopes(auth, trust_state);
     let view = current_view(db, trust_state, now).map_err(|error| refuse(500, error))?;
@@ -1000,7 +1423,10 @@ fn snapshot(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_stat
         .map(|fact| json!({"fact_id": fact.fact_id, "authority_scope": fact.authority_scope, "bytes": fact.statement.len()}))
         .collect();
     let unknowns: Vec<Value> = view.unknowns.iter().map(crate::model::value_of).collect();
-    let bytes: usize = facts.iter().map(|fact| crate::json::canonical_bytes(fact).len()).sum();
+    let bytes: usize = facts
+        .iter()
+        .map(|fact| crate::json::canonical_bytes(fact).len())
+        .sum();
     charge_read(db, state, auth, facts.len().max(1), bytes)?;
     let snapshot = json!({
         "schema": "guildhall-snapshot/1",
@@ -1021,70 +1447,165 @@ fn snapshot(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_stat
         "certificates": db.all_certificates().map_err(|error| refuse(500, error))?,
         "fact_versions": fact_versions_index(db, &view).map_err(|error| refuse(500, error))?
     });
-    let signed = state.root.sign_document("receipt", &snapshot).map_err(|error| refuse(500, error))?;
+    let signed = state
+        .root
+        .sign_document("receipt", &snapshot)
+        .map_err(|error| refuse(500, error))?;
     db.bump("snapshots").map_err(|error| refuse(500, error))?;
     Ok((200, signed))
 }
 
-fn fact_versions_index(db: &CompanyDb, view: &crate::reducer::CurrentView) -> Result<Value, ContractError> {
+fn fact_versions_index(
+    db: &CompanyDb,
+    view: &crate::reducer::CurrentView,
+) -> Result<Value, ContractError> {
     let mut map = serde_json::Map::new();
     for fact in &view.facts {
-        map.insert(fact.fact_id.clone(), Value::Array(db.fact_versions(&fact.fact_id)?));
+        map.insert(
+            fact.fact_id.clone(),
+            Value::Array(db.fact_versions(&fact.fact_id)?),
+        );
     }
     Ok(Value::Object(map))
 }
 
 fn events(db: &CompanyDb, auth: &AuthContext, request: &Request) -> Handled {
     require_scope(auth, "admin:issue")?;
-    let since = request.query.get("since").and_then(|value| value.parse::<i64>().ok()).unwrap_or(0);
-    let limit = request.query.get("limit").and_then(|value| value.parse::<i64>().ok()).unwrap_or(200).min(1000);
-    Ok((200, json!({"events": db.all_events(since, limit).map_err(|error| refuse(500, error))?})))
+    let since = request
+        .query
+        .get("since")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0);
+    let limit = request
+        .query
+        .get("limit")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(200)
+        .min(1000);
+    Ok((
+        200,
+        json!({"events": db.all_events(since, limit).map_err(|error| refuse(500, error))?}),
+    ))
 }
 
-fn publish_registry(db: &CompanyDb, auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
+fn publish_registry(
+    db: &CompanyDb,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    body: Option<Value>,
+    now: &str,
+) -> Handled {
     let _ = auth;
-    let document = body.ok_or_else(|| refuse(400, ContractError::invariant("a registry document body is required")))?;
+    let document = body.ok_or_else(|| {
+        refuse(
+            400,
+            ContractError::invariant("a registry document body is required"),
+        )
+    })?;
     if crate::json::get_str(&document, "schema") != Some(crate::model::REGISTRY_SCHEMA) {
-        return Err(refuse(400, ContractError::invariant("registry document schema must be guildhall-authority-registry/1")));
+        return Err(refuse(
+            400,
+            ContractError::invariant(
+                "registry document schema must be guildhall-authority-registry/1",
+            ),
+        ));
     }
-    trust::verify_steward_document(trust_state, "authority-registry-entry", &document)
-        .map_err(|error| refuse(if error.code == "SIGNATURE_INVALID" { 400 } else { 403 }, error))?;
-    let entries = crate::json::get_array(&document, "entries")
-        .ok_or_else(|| refuse(400, ContractError::invariant("registry document lacks entries")))?;
+    trust::verify_steward_document(trust_state, "authority-registry-entry", &document).map_err(
+        |error| {
+            refuse(
+                if error.code == "SIGNATURE_INVALID" {
+                    400
+                } else {
+                    403
+                },
+                error,
+            )
+        },
+    )?;
+    let entries = crate::json::get_array(&document, "entries").ok_or_else(|| {
+        refuse(
+            400,
+            ContractError::invariant("registry document lacks entries"),
+        )
+    })?;
     for entry in entries {
         for field in ["authority_id", "scope", "public_key"] {
-            if crate::json::get_str(entry, field).unwrap_or_default().is_empty() {
-                return Err(refuse(400, ContractError::invariant(format!("registry entry lacks {field}"))));
+            if crate::json::get_str(entry, field)
+                .unwrap_or_default()
+                .is_empty()
+            {
+                return Err(refuse(
+                    400,
+                    ContractError::invariant(format!("registry entry lacks {field}")),
+                ));
             }
         }
         let scope = crate::json::get_str(entry, "scope").unwrap_or_default();
         if scope.contains('*') || scope.contains('%') || scope.contains('?') {
-            return Err(refuse(400, ContractError::invariant("registry scopes are exact strings; wildcards do not exist")));
+            return Err(refuse(
+                400,
+                ContractError::invariant(
+                    "registry scopes are exact strings; wildcards do not exist",
+                ),
+            ));
         }
-        if entry.get("email").is_some() || entry.get("private_key").is_some() || entry.get("contact").is_some() {
-            return Err(refuse(400, ContractError::refused("PERSONAL_TAINT_BLOCKED", "registry entries may not carry directory/contact data or private keys", "Publish contact data through the directory endpoint and keep private keys out of the registry.")));
+        if entry.get("email").is_some()
+            || entry.get("private_key").is_some()
+            || entry.get("contact").is_some()
+        {
+            return Err(refuse(
+                400,
+                ContractError::refused(
+                    "PERSONAL_TAINT_BLOCKED",
+                    "registry entries may not carry directory/contact data or private keys",
+                    "Publish contact data through the directory endpoint and keep private keys out of the registry.",
+                ),
+            ));
         }
         PublicKey::from_hex(crate::json::get_str(entry, "public_key").unwrap_or_default())
-            .map_err(|_| refuse(400, ContractError::invariant("registry entry public_key is not a 64-hex Ed25519 key")))?;
+            .map_err(|_| {
+                refuse(
+                    400,
+                    ContractError::invariant(
+                        "registry entry public_key is not a 64-hex Ed25519 key",
+                    ),
+                )
+            })?;
     }
     let digest = crate::json::digest(&document);
     let event_id = format!("registry_{}", &digest[..40]);
     with_immediate_transaction(db, || {
         let cursor = match db
-            .append_event(&event_id, "authority-registry-entry", "registry", &document, crate::json::get_str(&document, "signer").unwrap_or_default(), "verified", None)
+            .append_event(
+                &event_id,
+                "authority-registry-entry",
+                "registry",
+                &document,
+                crate::json::get_str(&document, "signer").unwrap_or_default(),
+                "verified",
+                None,
+            )
             .map_err(|error| refuse(500, error))?
         {
             Some(cursor) => cursor,
-            None => db.event_cursor(&event_id).map_err(|error| refuse(500, error))?.unwrap_or(0),
+            None => db
+                .event_cursor(&event_id)
+                .map_err(|error| refuse(500, error))?
+                .unwrap_or(0),
         };
         for entry in entries {
             let mut entry = entry.clone();
             if entry.get("status").is_none() {
                 entry["status"] = Value::String("active".to_owned());
             }
-            db.upsert_registry_entry(&entry, cursor).map_err(|error| refuse(500, error))?;
+            db.upsert_registry_entry(&entry, cursor)
+                .map_err(|error| refuse(500, error))?;
         }
-        db.audit("registry-published", &json!({"digest": digest, "entries": entries.len(), "cursor": cursor})).map_err(|error| refuse(500, error))?;
+        db.audit(
+            "registry-published",
+            &json!({"digest": digest, "entries": entries.len(), "cursor": cursor}),
+        )
+        .map_err(|error| refuse(500, error))?;
         Ok((
             201,
             json!({
@@ -1100,12 +1621,26 @@ fn publish_registry(db: &CompanyDb, auth: &AuthContext, trust_state: &TrustState
     })
 }
 
-fn directory_write(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
+fn directory_write(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    body: Option<Value>,
+    now: &str,
+) -> Handled {
     require_scope(auth, "admin:issue")?;
-    let document = body.ok_or_else(|| refuse(400, ContractError::invariant("a directory document is required")))?;
-    trust::verify_steward_document(trust_state, "authority-registry-entry", &document).map_err(|error| refuse(403, error))?;
+    let document = body.ok_or_else(|| {
+        refuse(
+            400,
+            ContractError::invariant("a directory document is required"),
+        )
+    })?;
+    trust::verify_steward_document(trust_state, "authority-registry-entry", &document)
+        .map_err(|error| refuse(403, error))?;
     let authority_id = crate::json::get_str(&document, "authority_id").unwrap_or_default();
-    let retention = crate::time::plus_seconds(now, state.config.directory_retention_seconds).unwrap_or_default();
+    let retention = crate::time::plus_seconds(now, state.config.directory_retention_seconds)
+        .unwrap_or_default();
     db.upsert_directory(
         authority_id,
         crate::json::get_str(&document, "display_name").unwrap_or_default(),
@@ -1113,19 +1648,39 @@ fn directory_write(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, tru
         &retention,
     )
     .map_err(|error| refuse(500, error))?;
-    Ok((201, json!({"status": "recorded", "authority_id": authority_id, "retention_until": retention})))
+    Ok((
+        201,
+        json!({"status": "recorded", "authority_id": authority_id, "retention_until": retention}),
+    ))
 }
 
-fn post_question(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
+fn post_question(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    body: Option<Value>,
+    now: &str,
+) -> Handled {
     require_scope(auth, "questions:write")?;
-    let document = body.ok_or_else(|| refuse(400, ContractError::invariant("a question document is required")))?;
+    let document = body.ok_or_else(|| {
+        refuse(
+            400,
+            ContractError::invariant("a question document is required"),
+        )
+    })?;
     let scope = crate::json::get_str(&document, "authority_scope")
         .or(crate::json::get_str(&document, "scope"))
         .unwrap_or_default()
         .to_owned();
-    let question_text = crate::json::get_str(&document, "question").unwrap_or_default().to_owned();
+    let question_text = crate::json::get_str(&document, "question")
+        .unwrap_or_default()
+        .to_owned();
     if scope.is_empty() || question_text.is_empty() {
-        return Err(refuse(400, ContractError::invariant("a question requires authority_scope and question")));
+        return Err(refuse(
+            400,
+            ContractError::invariant("a question requires authority_scope and question"),
+        ));
     }
     let authority = trust_state
         .authority_for_scope(&scope)
@@ -1154,19 +1709,34 @@ fn post_question(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust
                 "response_due_at": crate::time::plus_seconds(now, 24 * 3600).unwrap_or_default(),
                 "kind": "registry"
             });
-            db.upsert_unknown(&unknown, "registry").map_err(|error| refuse(500, error))?;
+            db.upsert_unknown(&unknown, "registry")
+                .map_err(|error| refuse(500, error))?;
             return Err((status, error));
         }
     };
-    let authority_id = crate::json::get_str(&authority, "authority_id").unwrap_or_default().to_owned();
+    let authority_id = crate::json::get_str(&authority, "authority_id")
+        .unwrap_or_default()
+        .to_owned();
     if let Some(supplied) = crate::json::get_str(&document, "authority_id") {
         if supplied != authority_id {
-            return Err(refuse(403, ContractError::refused("AUTHORITY_WRONG_SCOPE", "supplied authority does not own the exact scope", "Address the registered authority for the scope.")));
+            return Err(refuse(
+                403,
+                ContractError::refused(
+                    "AUTHORITY_WRONG_SCOPE",
+                    "supplied authority does not own the exact scope",
+                    "Address the registered authority for the scope.",
+                ),
+            ));
         }
     }
     let question_id = crate::json::get_str(&document, "question_id")
         .map(str::to_owned)
-        .unwrap_or_else(|| format!("question_{}", &crate::hash::sha256_text(&format!("{scope}\0{question_text}\0{now}"))[..24]));
+        .unwrap_or_else(|| {
+            format!(
+                "question_{}",
+                &crate::hash::sha256_text(&format!("{scope}\0{question_text}\0{now}"))[..24]
+            )
+        });
     let due = crate::json::get_str(&document, "response_due_at")
         .map(str::to_owned)
         .unwrap_or_else(|| crate::time::plus_seconds(now, 24 * 3600).unwrap_or_default());
@@ -1190,13 +1760,28 @@ fn post_question(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust
     let delivery = json!({"channel": authority.get("channel").cloned().unwrap_or(Value::Null), "status": "queued", "queued_at": now});
     let _ = state;
     with_immediate_transaction(db, || {
-        let inserted = db.insert_question(&stored, &auth.client_key, &delivery).map_err(|error| refuse(500, error))?;
-        if !inserted {
-            let existing = db.question(&question_id).map_err(|error| refuse(500, error))?;
-            return Ok((200, json!({"status": "already-queued", "question": existing})));
-        }
-        db.append_event(&format!("question_event_{question_id}"), "question", "question", &stored, &auth.client_key, "verified", None)
+        let inserted = db
+            .insert_question(&stored, &auth.client_key, &delivery)
             .map_err(|error| refuse(500, error))?;
+        if !inserted {
+            let existing = db
+                .question(&question_id)
+                .map_err(|error| refuse(500, error))?;
+            return Ok((
+                200,
+                json!({"status": "already-queued", "question": existing}),
+            ));
+        }
+        db.append_event(
+            &format!("question_event_{question_id}"),
+            "question",
+            "question",
+            &stored,
+            &auth.client_key,
+            "verified",
+            None,
+        )
+        .map_err(|error| refuse(500, error))?;
         db.bump("questions").map_err(|error| refuse(500, error))?;
         Ok((
             201,
@@ -1212,56 +1797,134 @@ fn post_question(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust
     })
 }
 
-fn post_answer(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
+fn post_answer(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    body: Option<Value>,
+    now: &str,
+) -> Handled {
     if !(auth.token.has_scope("answers:write") || auth.token.has_scope("questions:write")) {
         return Err(auth_refusal_403());
     }
-    let document = body.ok_or_else(|| refuse(400, ContractError::invariant("an answer document is required")))?;
-    let question_id = crate::json::get_str(&document, "question_id").unwrap_or_default().to_owned();
+    let document = body.ok_or_else(|| {
+        refuse(
+            400,
+            ContractError::invariant("an answer document is required"),
+        )
+    })?;
+    let question_id = crate::json::get_str(&document, "question_id")
+        .unwrap_or_default()
+        .to_owned();
     let question = db
         .question(&question_id)
         .map_err(|error| refuse(500, error))?
         .ok_or_else(|| refuse(404, ContractError::invariant("question not found")))?;
-    let scope = crate::json::get_str(&question, "authority_scope").unwrap_or_default().to_owned();
+    let scope = crate::json::get_str(&question, "authority_scope")
+        .unwrap_or_default()
+        .to_owned();
     let authority = trust_state
         .authority_for_scope(&scope)
         .map_err(|error| refuse(409, error))?
-        .ok_or_else(|| refuse(409, ContractError::degraded("UNKNOWN_OWNER_UNRESOLVED", "no registered authority owns the question scope", "The Company steward must repair the registry.")))?;
+        .ok_or_else(|| {
+            refuse(
+                409,
+                ContractError::degraded(
+                    "UNKNOWN_OWNER_UNRESOLVED",
+                    "no registered authority owns the question scope",
+                    "The Company steward must repair the registry.",
+                ),
+            )
+        })?;
     let expected_key = crate::json::get_str(&authority, "public_key").unwrap_or_default();
     let expected_id = crate::json::get_str(&authority, "authority_id").unwrap_or_default();
     // The registry signer must have produced the signature (C26: key file is informational).
     let key = PublicKey::verify_document("answer", &document).ok_or_else(|| {
-        refuse(400, ContractError::integrity("SIGNATURE_INVALID", "answer signature failed", "Quarantine the answer and contact the named authority."))
+        refuse(
+            400,
+            ContractError::integrity(
+                "SIGNATURE_INVALID",
+                "answer signature failed",
+                "Quarantine the answer and contact the named authority.",
+            ),
+        )
     })?;
     if key.to_hex() != expected_key {
-        db.bump("answers_refused_wrong_scope").map_err(|error| refuse(500, error))?;
-        return Err(refuse(403, ContractError::refused("AUTHORITY_WRONG_SCOPE", "answer signer does not own the exact question scope", "Route the answer through the registered in-scope authority; role prestige cannot widen scope.")));
+        db.bump("answers_refused_wrong_scope")
+            .map_err(|error| refuse(500, error))?;
+        return Err(refuse(
+            403,
+            ContractError::refused(
+                "AUTHORITY_WRONG_SCOPE",
+                "answer signer does not own the exact question scope",
+                "Route the answer through the registered in-scope authority; role prestige cannot widen scope.",
+            ),
+        ));
     }
     if let Some(supplied) = crate::json::get_str(&document, "authority_id") {
         if supplied != expected_id {
-            return Err(refuse(403, ContractError::refused("AUTHORITY_WRONG_SCOPE", "answer names another authority", "Use the registered authority id for the scope.")));
+            return Err(refuse(
+                403,
+                ContractError::refused(
+                    "AUTHORITY_WRONG_SCOPE",
+                    "answer names another authority",
+                    "Use the registered authority id for the scope.",
+                ),
+            ));
         }
     }
     let answer_text = crate::json::get_str(&document, "answer").unwrap_or_default();
     if answer_text.is_empty() {
-        return Err(refuse(400, ContractError::invariant("answer text is required")));
+        return Err(refuse(
+            400,
+            ContractError::invariant("answer text is required"),
+        ));
     }
     if crate::scanner::hard_blocked(answer_text) {
-        return Err(refuse(403, ContractError::integrity("PERSONAL_TAINT_BLOCKED", "hard-blocking material reached Company admission", "Keep the source private; provide a minimized answer.")));
+        return Err(refuse(
+            403,
+            ContractError::integrity(
+                "PERSONAL_TAINT_BLOCKED",
+                "hard-blocking material reached Company admission",
+                "Keep the source private; provide a minimized answer.",
+            ),
+        ));
     }
     if document.get("contains_code") == Some(&Value::Bool(true)) || looks_like_code(answer_text) {
-        return Err(refuse(400, ContractError::refused("CONFIG_INVARIANT", "answers carry fact and rationale only, never code or a solution", "Remove code from the answer.")));
+        return Err(refuse(
+            400,
+            ContractError::refused(
+                "CONFIG_INVARIANT",
+                "answers carry fact and rationale only, never code or a solution",
+                "Remove code from the answer.",
+            ),
+        ));
     }
     with_immediate_transaction(db, || {
-        let existing = db.answers_for_question(&question_id).map_err(|error| refuse(500, error))?;
+        let existing = db
+            .answers_for_question(&question_id)
+            .map_err(|error| refuse(500, error))?;
         let parents: Vec<String> = crate::json::get_array(&document, "parents")
-            .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_owned)).collect())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| item.as_str().map(str::to_owned))
+                    .collect()
+            })
             .unwrap_or_default();
         let mut supersedes: Option<String> = None;
         let mut conflict = false;
         if !existing.is_empty() {
-            let prior_ids: Vec<String> = existing.iter().filter_map(|answer| crate::json::get_str(answer, "answer_id").map(str::to_owned)).collect();
-            if let Some(parent) = parents.iter().find(|parent| prior_ids.iter().any(|id| id == *parent || parent.ends_with(id.as_str()) || id.ends_with(parent.as_str()))) {
+            let prior_ids: Vec<String> = existing
+                .iter()
+                .filter_map(|answer| crate::json::get_str(answer, "answer_id").map(str::to_owned))
+                .collect();
+            if let Some(parent) = parents.iter().find(|parent| {
+                prior_ids.iter().any(|id| {
+                    id == *parent || parent.ends_with(id.as_str()) || id.ends_with(parent.as_str())
+                })
+            }) {
                 supersedes = Some(parent.clone());
             } else if parents.iter().any(|parent| parent.contains('#')) {
                 // "<qid>#1" style parent references the first answer.
@@ -1281,10 +1944,19 @@ fn post_answer(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_s
             stored["answered_at"] = Value::String(now.to_owned());
         }
         let cursor = db
-            .append_event(&format!("answer_event_{answer_id}"), "answer", "answer", &stored, &key.to_hex(), "verified", None)
+            .append_event(
+                &format!("answer_event_{answer_id}"),
+                "answer",
+                "answer",
+                &stored,
+                &key.to_hex(),
+                "verified",
+                None,
+            )
             .map_err(|error| refuse(500, error))?
             .unwrap_or(0);
-        db.insert_answer(&stored, cursor, supersedes.as_deref()).map_err(|error| refuse(500, error))?;
+        db.insert_answer(&stored, cursor, supersedes.as_deref())
+            .map_err(|error| refuse(500, error))?;
         // The admitted answer is a Company observation and fact event closing the Unknown.
         let rationale = crate::json::get_str(&document, "rationale").unwrap_or_default();
         let mut fact = json!({
@@ -1312,25 +1984,57 @@ fn post_answer(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_s
             "confidence": 9800,
             "unresolved_uncertainty": null
         });
-        if let Some(prior) = supersedes.as_ref().and_then(|id| existing.iter().find(|answer| crate::json::get_str(answer, "answer_id") == Some(id.as_str()) || id.contains('#'))) {
+        if let Some(prior) = supersedes.as_ref().and_then(|id| {
+            existing.iter().find(|answer| {
+                crate::json::get_str(answer, "answer_id") == Some(id.as_str()) || id.contains('#')
+            })
+        }) {
             let prior_id = crate::json::get_str(prior, "answer_id").unwrap_or_default();
-            fact["supersedes"] = json!([format!("evt_answer_{}", &prior_id.trim_start_matches("answer_")[..24.min(prior_id.trim_start_matches("answer_").len())])]);
+            fact["supersedes"] = json!([format!(
+                "evt_answer_{}",
+                &prior_id.trim_start_matches("answer_")
+                    [..24.min(prior_id.trim_start_matches("answer_").len())]
+            )]);
         }
-        let signed_fact = state.root.sign_document("fact-event", &fact).map_err(|error| refuse(500, error))?;
-        let fact_event = FactEvent::from_value(&signed_fact).map_err(|error| refuse(500, ContractError::internal(error)))?;
+        let signed_fact = state
+            .root
+            .sign_document("fact-event", &fact)
+            .map_err(|error| refuse(500, error))?;
+        let fact_event = FactEvent::from_value(&signed_fact)
+            .map_err(|error| refuse(500, ContractError::internal(error)))?;
         let fact_cursor = db
-            .append_event(&fact_event.event_id, "fact-event", "fact-event", &signed_fact, &fact_event.signer, if conflict { "verified" } else { "verified" }, Some(&key.to_hex()))
+            .append_event(
+                &fact_event.event_id,
+                "fact-event",
+                "fact-event",
+                &signed_fact,
+                &fact_event.signer,
+                if conflict { "verified" } else { "verified" },
+                Some(&key.to_hex()),
+            )
             .map_err(|error| refuse(500, error))?
             .unwrap_or(cursor);
-        db.record_fact_version(&fact_event.fact_id, &fact_event.semantic_digest(), &fact_event.event_id, fact_cursor)
-            .map_err(|error| refuse(500, error))?;
+        db.record_fact_version(
+            &fact_event.fact_id,
+            &fact_event.semantic_digest(),
+            &fact_event.event_id,
+            fact_cursor,
+        )
+        .map_err(|error| refuse(500, error))?;
         let status = if conflict { "conflict" } else { "answered" };
-        db.set_question_status(&question_id, status).map_err(|error| refuse(500, error))?;
+        db.set_question_status(&question_id, status)
+            .map_err(|error| refuse(500, error))?;
         if let Some(unknown_id) = crate::json::get_str(&question, "unknown_id") {
             if let Some(mut unknown) = db.unknown(unknown_id).map_err(|error| refuse(500, error))? {
-                unknown["status"] = Value::String(if conflict { "open".to_owned() } else { "closed".to_owned() });
-                unknown["closure_evidence"] = json!([answer_id.clone(), fact_event.event_id.clone()]);
-                db.upsert_unknown(&unknown, "answer").map_err(|error| refuse(500, error))?;
+                unknown["status"] = Value::String(if conflict {
+                    "open".to_owned()
+                } else {
+                    "closed".to_owned()
+                });
+                unknown["closure_evidence"] =
+                    json!([answer_id.clone(), fact_event.event_id.clone()]);
+                db.upsert_unknown(&unknown, "answer")
+                    .map_err(|error| refuse(500, error))?;
             }
         }
         db.bump("answers").map_err(|error| refuse(500, error))?;
@@ -1352,38 +2056,102 @@ fn post_answer(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_s
 }
 
 fn looks_like_code(text: &str) -> bool {
-    let markers = ["```", "def ", "class ", "fn ", "import ", "#include", "return ", "=> {", ");", "};"];
-    let hits = markers.iter().filter(|marker| text.contains(*marker)).count();
+    let markers = [
+        "```", "def ", "class ", "fn ", "import ", "#include", "return ", "=> {", ");", "};",
+    ];
+    let hits = markers
+        .iter()
+        .filter(|marker| text.contains(*marker))
+        .count();
     hits >= 2
 }
 
-fn post_unknown(db: &CompanyDb, auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
+fn post_unknown(
+    db: &CompanyDb,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    body: Option<Value>,
+    now: &str,
+) -> Handled {
     require_scope(auth, "questions:write")?;
-    let document = body.ok_or_else(|| refuse(400, ContractError::invariant("an unknown-event document is required")))?;
-    let unknown = crate::model::UnknownEvent::from_value(&document)
-        .map_err(|error| refuse(400, ContractError::invariant(format!("unknown-event does not parse ({error})"))))?;
-    let signer = unknown.verify_signature().ok_or_else(|| refuse(400, ContractError::integrity("SIGNATURE_INVALID", "unknown-event signature failed", "Sign the Unknown with the client key.")))?;
+    let document = body.ok_or_else(|| {
+        refuse(
+            400,
+            ContractError::invariant("an unknown-event document is required"),
+        )
+    })?;
+    let unknown = crate::model::UnknownEvent::from_value(&document).map_err(|error| {
+        refuse(
+            400,
+            ContractError::invariant(format!("unknown-event does not parse ({error})")),
+        )
+    })?;
+    let signer = unknown.verify_signature().ok_or_else(|| {
+        refuse(
+            400,
+            ContractError::integrity(
+                "SIGNATURE_INVALID",
+                "unknown-event signature failed",
+                "Sign the Unknown with the client key.",
+            ),
+        )
+    })?;
     let _ = trust_state;
-    db.append_event(&unknown.event_id, "unknown-event", "unknown-event", &document, &signer.to_hex(), "verified", Some(&auth.client_key))
-        .map_err(|error| refuse(500, error))?;
+    db.append_event(
+        &unknown.event_id,
+        "unknown-event",
+        "unknown-event",
+        &document,
+        &signer.to_hex(),
+        "verified",
+        Some(&auth.client_key),
+    )
+    .map_err(|error| refuse(500, error))?;
     let mut record = document.clone();
     record["unknown_id"] = Value::String(unknown.fact_id.clone());
-    db.upsert_unknown(&record, crate::json::get_str(&document, "kind").unwrap_or("client")).map_err(|error| refuse(500, error))?;
-    Ok((201, json!({"status": "recorded", "unknown_id": unknown.fact_id, "response_due_at": unknown.response_due_at, "recorded_at": now})))
+    db.upsert_unknown(
+        &record,
+        crate::json::get_str(&document, "kind").unwrap_or("client"),
+    )
+    .map_err(|error| refuse(500, error))?;
+    Ok((
+        201,
+        json!({"status": "recorded", "unknown_id": unknown.fact_id, "response_due_at": unknown.response_due_at, "recorded_at": now}),
+    ))
 }
 
-fn issue_certificate(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
+fn issue_certificate(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    body: Option<Value>,
+    now: &str,
+) -> Handled {
     require_scope(auth, "admin:issue")?;
-    let request = body.ok_or_else(|| refuse(400, ContractError::invariant("a certificate request is required")))?;
+    let request = body.ok_or_else(|| {
+        refuse(
+            400,
+            ContractError::invariant("a certificate request is required"),
+        )
+    })?;
     let hint = crate::json::get_str(&request, "discovery_hint").map(str::to_owned);
     let repository_uuid = crate::json::get_str(&request, "repository_uuid")
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
     if let Some(hint) = &hint {
-        let existing = db.certificates_for_hint(hint).map_err(|error| refuse(500, error))?;
+        let existing = db
+            .certificates_for_hint(hint)
+            .map_err(|error| refuse(500, error))?;
         if let Some(certificate) = existing.first() {
-            if crate::json::get_str(certificate, "repository_uuid") != Some(repository_uuid.as_str()) && request.get("lineage_parent_uuid").is_none() {
-                return Ok((200, json!({"status": "existing", "certificate": certificate})));
+            if crate::json::get_str(certificate, "repository_uuid")
+                != Some(repository_uuid.as_str())
+                && request.get("lineage_parent_uuid").is_none()
+            {
+                return Ok((
+                    200,
+                    json!({"status": "existing", "certificate": certificate}),
+                ));
             }
         }
     }
@@ -1396,27 +2164,65 @@ fn issue_certificate(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, t
     if let Some(parent) = request.get("lineage_parent_uuid") {
         document["lineage_parent_uuid"] = parent.clone();
     }
-    let signed = state.root.sign_document("repo-certificate", &document).map_err(|error| refuse(500, error))?;
+    let signed = state
+        .root
+        .sign_document("repo-certificate", &document)
+        .map_err(|error| refuse(500, error))?;
     let event_id = format!("certificate_{repository_uuid}");
     let cursor = db
-        .append_event(&event_id, "repo-certificate", "certificate", &signed, &state.root.public().to_hex(), "verified", None)
+        .append_event(
+            &event_id,
+            "repo-certificate",
+            "certificate",
+            &signed,
+            &state.root.public().to_hex(),
+            "verified",
+            None,
+        )
         .map_err(|error| refuse(500, error))?
         .unwrap_or(trust_state.cursor);
-    db.upsert_certificate(&signed, hint.as_deref(), cursor).map_err(|error| refuse(500, error))?;
-    Ok((201, json!({"status": "issued", "certificate": signed, "certificate_digest": crate::json::digest(&signed), "cursor": cursor.to_string()})))
+    db.upsert_certificate(&signed, hint.as_deref(), cursor)
+        .map_err(|error| refuse(500, error))?;
+    Ok((
+        201,
+        json!({"status": "issued", "certificate": signed, "certificate_digest": crate::json::digest(&signed), "cursor": cursor.to_string()}),
+    ))
 }
 
-fn post_manifest(db: &CompanyDb, _auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
+fn post_manifest(
+    db: &CompanyDb,
+    _auth: &AuthContext,
+    trust_state: &TrustState,
+    body: Option<Value>,
+    now: &str,
+) -> Handled {
     // Ruling C6: no token scope is demanded, but the manifest signer itself
     // must be the active registered maintainer for codebase:<repository_uuid>.
-    let document = body.ok_or_else(|| refuse(400, ContractError::invariant("a manifest document is required")))?;
+    let document = body.ok_or_else(|| {
+        refuse(
+            400,
+            ContractError::invariant("a manifest document is required"),
+        )
+    })?;
     if crate::json::get_str(&document, "schema") != Some(crate::model::MANIFEST_SCHEMA) {
-        return Err(refuse(400, ContractError::invariant("manifest schema must be guildhall-manifest/1")));
+        return Err(refuse(
+            400,
+            ContractError::invariant("manifest schema must be guildhall-manifest/1"),
+        ));
     }
     let key = PublicKey::verify_document("manifest", &document).ok_or_else(|| {
-        refuse(400, ContractError::integrity("SIGNATURE_INVALID", "manifest signature failed", "Sign the manifest with the registered maintainer key."))
+        refuse(
+            400,
+            ContractError::integrity(
+                "SIGNATURE_INVALID",
+                "manifest signature failed",
+                "Sign the manifest with the registered maintainer key.",
+            ),
+        )
     })?;
-    let repository_uuid = crate::json::get_str(&document, "repository_uuid").unwrap_or_default().to_owned();
+    let repository_uuid = crate::json::get_str(&document, "repository_uuid")
+        .unwrap_or_default()
+        .to_owned();
     let maintainer_scope = format!("codebase:{repository_uuid}");
     let registered_maintainer = trust_state.registry.iter().any(|entry| {
         crate::json::get_str(entry, "scope") == Some(maintainer_scope.as_str())
@@ -1424,22 +2230,43 @@ fn post_manifest(db: &CompanyDb, _auth: &AuthContext, trust_state: &TrustState, 
             && crate::json::get_str(entry, "status") == Some("active")
     });
     if !registered_maintainer {
-        return Err(refuse(403, ContractError::refused("AUTHORITY_WRONG_SCOPE", "manifest signer is not the registered maintainer for this codebase", "Register the exact maintainer key with scope codebase:<uuid>.")));
+        return Err(refuse(
+            403,
+            ContractError::refused(
+                "AUTHORITY_WRONG_SCOPE",
+                "manifest signer is not the registered maintainer for this codebase",
+                "Register the exact maintainer key with scope codebase:<uuid>.",
+            ),
+        ));
     }
-    let branch = crate::json::get_str(&document, "branch").unwrap_or("main").to_owned();
+    let branch = crate::json::get_str(&document, "branch")
+        .unwrap_or("main")
+        .to_owned();
     let count = crate::json::get_u64(&document, "event_count").unwrap_or(0) as i64;
-    let revision = crate::json::get_str(&document, "observed_default_branch_revision").unwrap_or_default().to_owned();
-    let rollback = document.get("rollback_event").is_some() || document.get("rewrite_event").is_some();
+    let revision = crate::json::get_str(&document, "observed_default_branch_revision")
+        .unwrap_or_default()
+        .to_owned();
+    let rollback =
+        document.get("rollback_event").is_some() || document.get("rewrite_event").is_some();
     let digest = crate::json::digest(&document);
     let transaction: Result<(u16, Value), (u16, ContractError)> = (|| {
         db.connection
             .execute_batch("BEGIN IMMEDIATE")
-            .map_err(|error| refuse(500, ContractError::internal(format!("begin manifest admission: {error}"))))?;
+            .map_err(|error| {
+                refuse(
+                    500,
+                    ContractError::internal(format!("begin manifest admission: {error}")),
+                )
+            })?;
         let latest = db
             .latest_manifest_observation(&repository_uuid, &branch)
             .map_err(|error| refuse(500, error))?;
         if let Some(latest) = &latest {
-            if latest.get("observed_default_branch_revision").and_then(Value::as_str) == Some(revision.as_str()) {
+            if latest
+                .get("observed_default_branch_revision")
+                .and_then(Value::as_str)
+                == Some(revision.as_str())
+            {
                 return Ok((
                     200,
                     json!({
@@ -1450,20 +2277,36 @@ fn post_manifest(db: &CompanyDb, _auth: &AuthContext, trust_state: &TrustState, 
                     }),
                 ));
             }
-            let prior = latest.get("event_count").and_then(Value::as_i64).unwrap_or(0);
-            if count < prior && !rollback && crate::json::get_str(latest, "status") == Some("current") {
+            let prior = latest
+                .get("event_count")
+                .and_then(Value::as_i64)
+                .unwrap_or(0);
+            if count < prior
+                && !rollback
+                && crate::json::get_str(latest, "status") == Some("current")
+            {
                 return Err(refuse(
                     409,
                     ContractError::refused(
                         "MANIFEST_HEAD_REGRESSION",
-                        format!("published reachable lineage lowers the event count from {prior} to {count} without a signed rewrite event"),
+                        format!(
+                            "published reachable lineage lowers the event count from {prior} to {count} without a signed rewrite event"
+                        ),
                         "Supply a maintainer-signed rollback/rewrite event (atom_kind rollback_exception) or correct the publication.",
                     ),
                 ));
             }
         }
         let cursor = db
-            .append_event(&format!("manifest_{digest}"), "manifest", "manifest-observation", &document, &key.to_hex(), "verified", None)
+            .append_event(
+                &format!("manifest_{digest}"),
+                "manifest",
+                "manifest-observation",
+                &document,
+                &key.to_hex(),
+                "verified",
+                None,
+            )
             .map_err(|error| refuse(500, error))?
             .unwrap_or(trust_state.cursor);
         let id = db
@@ -1471,14 +2314,20 @@ fn post_manifest(db: &CompanyDb, _auth: &AuthContext, trust_state: &TrustState, 
             .map_err(|error| refuse(500, error))?;
         db.audit("manifest-recorded", &json!({"digest": digest, "repository_uuid": repository_uuid, "branch": branch, "revision": revision}))
             .map_err(|error| refuse(500, error))?;
-        Ok((201, json!({"status": "recorded", "observation_id": id, "manifest_digest": digest, "cursor": cursor.to_string(), "recorded_at": now})))
+        Ok((
+            201,
+            json!({"status": "recorded", "observation_id": id, "manifest_digest": digest, "cursor": cursor.to_string(), "recorded_at": now}),
+        ))
     })();
     let result = match transaction {
         Ok(result) => match db.connection.execute_batch("COMMIT") {
             Ok(()) => Ok(result),
             Err(error) => {
                 let _ = db.connection.execute_batch("ROLLBACK");
-                Err(refuse(500, ContractError::internal(format!("commit manifest admission: {error}"))))
+                Err(refuse(
+                    500,
+                    ContractError::internal(format!("commit manifest admission: {error}")),
+                ))
             }
         },
         Err(error) => {
@@ -1488,24 +2337,52 @@ fn post_manifest(db: &CompanyDb, _auth: &AuthContext, trust_state: &TrustState, 
     };
     result
 }
-fn steward_event(db: &CompanyDb, auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, message_type: &str, kind: &str, now: &str) -> Handled {
+fn steward_event(
+    db: &CompanyDb,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    body: Option<Value>,
+    message_type: &str,
+    kind: &str,
+    now: &str,
+) -> Handled {
     require_scope(auth, "admin:issue")?;
-    let document = body.ok_or_else(|| refuse(400, ContractError::invariant(format!("a {kind} document is required"))))?;
-    trust::verify_steward_document(trust_state, message_type, &document).map_err(|error| refuse(403, error))?;
+    let document = body.ok_or_else(|| {
+        refuse(
+            400,
+            ContractError::invariant(format!("a {kind} document is required")),
+        )
+    })?;
+    trust::verify_steward_document(trust_state, message_type, &document)
+        .map_err(|error| refuse(403, error))?;
     let digest = crate::json::digest(&document);
     let event_id = format!("{kind}_{}", &digest[..40]);
     with_immediate_transaction(db, || {
         let cursor = db
-            .append_event(&event_id, message_type, kind, &document, crate::json::get_str(&document, "signer").unwrap_or_default(), "verified", None)
+            .append_event(
+                &event_id,
+                message_type,
+                kind,
+                &document,
+                crate::json::get_str(&document, "signer").unwrap_or_default(),
+                "verified",
+                None,
+            )
             .map_err(|error| refuse(500, error))?
             .unwrap_or(trust_state.cursor);
         if kind == "revocation" {
-            db.set_meta("revocation_cursor", &cursor.to_string()).map_err(|error| refuse(500, error))?;
+            db.set_meta("revocation_cursor", &cursor.to_string())
+                .map_err(|error| refuse(500, error))?;
             // Compromise response: enumerate affected facts and emit destination-owned apology Unknowns.
             let revoked = crate::json::get_str(&document, "revoked_key").unwrap_or_default();
             let mut affected = 0usize;
-            for (_, payload, verification) in db.events_of_kind("fact-event").map_err(|error| refuse(500, error))? {
-                if verification == "verified" && crate::json::get_str(&payload, "signer") == Some(revoked) {
+            for (_, payload, verification) in db
+                .events_of_kind("fact-event")
+                .map_err(|error| refuse(500, error))?
+            {
+                if verification == "verified"
+                    && crate::json::get_str(&payload, "signer") == Some(revoked)
+                {
                     affected += 1;
                     let fact_id = crate::json::get_str(&payload, "fact_id").unwrap_or_default();
                     let unknown = json!({
@@ -1519,7 +2396,8 @@ fn steward_event(db: &CompanyDb, auth: &AuthContext, trust_state: &TrustState, b
                         "affected_fact_id": fact_id,
                         "kind": "apology"
                     });
-                    db.upsert_unknown(&unknown, "apology").map_err(|error| refuse(500, error))?;
+                    db.upsert_unknown(&unknown, "apology")
+                        .map_err(|error| refuse(500, error))?;
                 }
             }
             let residual = json!({
@@ -1530,33 +2408,76 @@ fn steward_event(db: &CompanyDb, auth: &AuthContext, trust_state: &TrustState, b
                 "max_offline_revocation_freshness_seconds": 900,
                 "statement": "unknown clones may keep projecting until they sync or their revocation freshness window expires"
             });
-            db.append_event(&format!("residual_{}", &digest[..32]), "revocation", "unreachable_clone_residual", &residual, "company-service", "verified", None)
-                .map_err(|error| refuse(500, error))?;
+            db.append_event(
+                &format!("residual_{}", &digest[..32]),
+                "revocation",
+                "unreachable_clone_residual",
+                &residual,
+                "company-service",
+                "verified",
+                None,
+            )
+            .map_err(|error| refuse(500, error))?;
         }
-        Ok((201, json!({"status": "recorded", "kind": kind, "cursor": cursor.to_string(), "digest": digest})))
+        Ok((
+            201,
+            json!({"status": "recorded", "kind": kind, "cursor": cursor.to_string(), "digest": digest}),
+        ))
     })
 }
 
 fn issue_token(db: &CompanyDb, auth: &AuthContext, body: Option<Value>, now: &str) -> Handled {
     require_scope(auth, "admin:issue")?;
-    let request = body.ok_or_else(|| refuse(400, ContractError::invariant("a token request is required")))?;
+    let request =
+        body.ok_or_else(|| refuse(400, ContractError::invariant("a token request is required")))?;
     let scopes: Vec<String> = crate::json::get_array(&request, "scopes")
-        .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_owned)).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_owned))
+                .collect()
+        })
         .unwrap_or_default();
     let authority_scopes: Vec<String> = crate::json::get_array(&request, "authority_scopes")
-        .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_owned)).collect())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_owned))
+                .collect()
+        })
         .unwrap_or_default();
-    if scopes.iter().chain(authority_scopes.iter()).any(|scope| scope.is_empty() || scope.contains('*') || scope.contains('%')) {
-        return Err(refuse(400, ContractError::invariant("scopes are exact strings; wildcard and empty entries are refused")));
+    if scopes
+        .iter()
+        .chain(authority_scopes.iter())
+        .any(|scope| scope.is_empty() || scope.contains('*') || scope.contains('%'))
+    {
+        return Err(refuse(
+            400,
+            ContractError::invariant(
+                "scopes are exact strings; wildcard and empty entries are refused",
+            ),
+        ));
     }
     if scopes.iter().any(|scope| scope == "admin:issue") && authority_scopes.iter().any(|_| true) {
-        return Err(refuse(400, ContractError::invariant("administrative issuance cannot carry fact body read scopes")));
+        return Err(refuse(
+            400,
+            ContractError::invariant("administrative issuance cannot carry fact body read scopes"),
+        ));
     }
     let token = format!("facts-{}", &crate::crypto::random_token()[..40]);
     let scope_refs: Vec<&str> = scopes.iter().map(String::as_str).collect();
-    db.register_token(&token, "issued", &scope_refs, &authority_scopes, crate::json::get_str(&request, "principal_id").unwrap_or("issued-principal"))
-        .map_err(|error| refuse(500, error))?;
-    Ok((201, json!({"status": "issued", "token": token, "scopes": scopes, "authority_scopes": authority_scopes, "issued_at": now})))
+    db.register_token(
+        &token,
+        "issued",
+        &scope_refs,
+        &authority_scopes,
+        crate::json::get_str(&request, "principal_id").unwrap_or("issued-principal"),
+    )
+    .map_err(|error| refuse(500, error))?;
+    Ok((
+        201,
+        json!({"status": "issued", "token": token, "scopes": scopes, "authority_scopes": authority_scopes, "issued_at": now}),
+    ))
 }
 
 /// Periodic obligations executed on request arrival: manifest observation
@@ -1592,7 +2513,15 @@ fn maintenance(db: &CompanyDb, state: &ServiceState, now: &str) -> Result<(), Co
             "observation_status": "historical-only"
         });
         let signed = state.root.sign_document("fact-event", &event)?;
-        db.append_event(crate::json::get_str(&signed, "event_id").unwrap_or_default(), "fact-event", "fact-event", &signed, &state.root.public().to_hex(), "verified", None)?;
+        db.append_event(
+            crate::json::get_str(&signed, "event_id").unwrap_or_default(),
+            "fact-event",
+            "fact-event",
+            &signed,
+            &state.root.public().to_hex(),
+            "verified",
+            None,
+        )?;
         let unknown = json!({
             "unknown_id": format!("unknown_publication_{}", &crate::hash::sha256_text(repository)[..24]),
             "scope": "company:root",
@@ -1607,15 +2536,21 @@ fn maintenance(db: &CompanyDb, state: &ServiceState, now: &str) -> Result<(), Co
     }
     // Orphan deadlines: apology Unknowns past response_due_at become orphan_abandoned.
     for unknown in db.unknowns(Some("open"))? {
-        if crate::json::get_str(&unknown, "kind") != Some("apology") && crate::json::get_str(&unknown, "kind") != Some("orphan") {
+        if crate::json::get_str(&unknown, "kind") != Some("apology")
+            && crate::json::get_str(&unknown, "kind") != Some("orphan")
+        {
             continue;
         }
         let due = crate::json::get_str(&unknown, "response_due_at").unwrap_or_default();
         if due.is_empty() || due > now {
             continue;
         }
-        let unknown_id = crate::json::get_str(&unknown, "unknown_id").unwrap_or_default().to_owned();
-        let closing = crate::json::get_str(&unknown, "owner_identity").unwrap_or("company-steward").to_owned();
+        let unknown_id = crate::json::get_str(&unknown, "unknown_id")
+            .unwrap_or_default()
+            .to_owned();
+        let closing = crate::json::get_str(&unknown, "owner_identity")
+            .unwrap_or("company-steward")
+            .to_owned();
         let event = json!({
             "schema": crate::model::EVENT_SCHEMA,
             "event_id": format!("evt_orphan_{}", &crate::hash::sha256_text(&unknown_id)[..24]),
@@ -1643,10 +2578,21 @@ fn maintenance(db: &CompanyDb, state: &ServiceState, now: &str) -> Result<(), Co
             "unresponsive_closing_authority": closing
         });
         let signed = state.root.sign_document("fact-event", &event)?;
-        db.append_event(crate::json::get_str(&signed, "event_id").unwrap_or_default(), "fact-event", "fact-event", &signed, &state.root.public().to_hex(), "verified", None)?;
+        db.append_event(
+            crate::json::get_str(&signed, "event_id").unwrap_or_default(),
+            "fact-event",
+            "fact-event",
+            &signed,
+            &state.root.public().to_hex(),
+            "verified",
+            None,
+        )?;
         let mut closed = unknown.clone();
         closed["status"] = Value::String("abandoned".to_owned());
-        db.upsert_unknown(&closed, crate::json::get_str(&unknown, "kind").unwrap_or("apology"))?;
+        db.upsert_unknown(
+            &closed,
+            crate::json::get_str(&unknown, "kind").unwrap_or("apology"),
+        )?;
     }
     Ok(())
 }
@@ -1727,7 +2673,12 @@ nonce_retention_seconds = 1300
                 }),
             )
             .unwrap();
-        assert_eq!(publish_registry(&db, &auth, &trust, Some(registry), &now).unwrap().0, 201);
+        assert_eq!(
+            publish_registry(&db, &auth, &trust, Some(registry), &now)
+                .unwrap()
+                .0,
+            201
+        );
         let trust = trust::load(&db, &root_key.public()).unwrap();
 
         let fact = architect_key
@@ -1776,8 +2727,14 @@ nonce_retention_seconds = 1300
         let (status, receipt) = admit_fact(&db, &state, &auth, &trust, Some(fact), &now).unwrap();
         assert_eq!(status, 201);
         assert_eq!(receipt["status"], "committed");
-        assert_eq!(receipt["semantic_digest"], crate::model::semantic_digest("The scheduler must bound queue wait time."));
-        assert_eq!(receipt["digest_alg_version"], crate::model::DIGEST_ALG_VERSION);
+        assert_eq!(
+            receipt["semantic_digest"],
+            crate::model::semantic_digest("The scheduler must bound queue wait time.")
+        );
+        assert_eq!(
+            receipt["digest_alg_version"],
+            crate::model::DIGEST_ALG_VERSION
+        );
 
         let (_, listed) = facts(&db, &state, &auth, &trust, &request, &now).unwrap();
         let item = listed["facts"]
@@ -1825,14 +2782,35 @@ nonce_retention_seconds = 1300
             )
             .unwrap();
         let event = FactEvent::parse(&crate::json::canonical_bytes(&fact_document)).unwrap();
-        db.append_event(&event.event_id, "fact-event", "fact-event", &fact_document, &event.signer, "verified", None).unwrap();
+        db.append_event(
+            &event.event_id,
+            "fact-event",
+            "fact-event",
+            &fact_document,
+            &event.signer,
+            "verified",
+            None,
+        )
+        .unwrap();
         let trust = trust::load(&db, &root_key.public()).unwrap();
         assert_eq!(replay_projection(&db, &trust, &event), (false, false));
 
         let revocation = root_key
-            .sign_document("revocation", &json!({"revoked_key": architect_key.public().to_hex(), "effective_at": now}))
+            .sign_document(
+                "revocation",
+                &json!({"revoked_key": architect_key.public().to_hex(), "effective_at": now}),
+            )
             .unwrap();
-        db.append_event("rev_packet10_replay", "revocation", "revocation", &revocation, &root_key.public().to_hex(), "verified", None).unwrap();
+        db.append_event(
+            "rev_packet10_replay",
+            "revocation",
+            "revocation",
+            &revocation,
+            &root_key.public().to_hex(),
+            "verified",
+            None,
+        )
+        .unwrap();
         let trust = trust::load(&db, &root_key.public()).unwrap();
         assert_eq!(replay_projection(&db, &trust, &event), (true, true));
 
@@ -1859,7 +2837,16 @@ nonce_retention_seconds = 1300
                 }),
             )
             .unwrap();
-        db.append_event("evt_packet10_second", "fact-event", "fact-event", &second_document, &root_key.public().to_hex(), "verified", None).unwrap();
+        db.append_event(
+            "evt_packet10_second",
+            "fact-event",
+            "fact-event",
+            &second_document,
+            &root_key.public().to_hex(),
+            "verified",
+            None,
+        )
+        .unwrap();
         assert_eq!(replay_projection(&db, &trust, &event), (true, false));
     }
 }
@@ -1870,7 +2857,12 @@ mod packet11_tests {
     use serde_json::json;
     use std::collections::BTreeMap;
 
-    fn signed_request(key: &PrivateKey, nonce: &str, expires_at: &str, signature: Option<&str>) -> Request {
+    fn signed_request(
+        key: &PrivateKey,
+        nonce: &str,
+        expires_at: &str,
+        signature: Option<&str>,
+    ) -> Request {
         let body = Vec::new();
         let signed = json!({
             "method": "GET",
@@ -1879,16 +2871,20 @@ mod packet11_tests {
             "nonce": nonce,
             "expires_at": expires_at
         });
-        let signature = signature
-            .map(str::to_owned)
-            .unwrap_or_else(|| key.sign("receipt", &crate::json::canonical_bytes(&signed)).unwrap());
+        let signature = signature.map(str::to_owned).unwrap_or_else(|| {
+            key.sign("receipt", &crate::json::canonical_bytes(&signed))
+                .unwrap()
+        });
         Request {
             method: "GET".to_owned(),
             path: "/status".to_owned(),
             route: "/status".to_owned(),
             query: BTreeMap::new(),
             headers: vec![
-                ("authorization".to_owned(), "Bearer facts-packet11".to_owned()),
+                (
+                    "authorization".to_owned(),
+                    "Bearer facts-packet11".to_owned(),
+                ),
                 ("x-guildhall-nonce".to_owned(), nonce.to_owned()),
                 ("x-guildhall-expires-at".to_owned(), expires_at.to_owned()),
                 ("x-guildhall-client-key".to_owned(), key.public().to_hex()),
@@ -1938,11 +2934,26 @@ mod packet11_tests {
         };
         let now = crate::time::now_rfc3339_millis();
         let expires_at = crate::time::plus_seconds(&now, 60).unwrap();
-        let first_auth = authenticate(&db, &state, &signed_request(&first, "nonce-a", &expires_at, None), &now).unwrap();
-        let second_auth = authenticate(&db, &state, &signed_request(&second, "nonce-b", &expires_at, None), &now).unwrap();
+        let first_auth = authenticate(
+            &db,
+            &state,
+            &signed_request(&first, "nonce-a", &expires_at, None),
+            &now,
+        )
+        .unwrap();
+        let second_auth = authenticate(
+            &db,
+            &state,
+            &signed_request(&second, "nonce-b", &expires_at, None),
+            &now,
+        )
+        .unwrap();
         assert_ne!(first_auth.client_key, second_auth.client_key);
         assert_ne!(first_auth.principal_key, second_auth.principal_key);
-        assert_eq!(db.token_client_key_count(&first_auth.token.digest).unwrap(), 2);
+        assert_eq!(
+            db.token_client_key_count(&first_auth.token.digest).unwrap(),
+            2
+        );
 
         for index in 0..10 {
             let nonce = format!("bad-{index}");
@@ -1954,8 +2965,8 @@ mod packet11_tests {
         }
         let request = signed_request(&first, "bad-eleventh", &expires_at, Some(&"00".repeat(64)));
         let Err((status, error)) = authenticate(&db, &state, &request, &now) else {
-                panic!("failure ceiling was not enforced");
-            };
+            panic!("failure ceiling was not enforced");
+        };
         assert_eq!(status, 429);
         assert_eq!(error.detail.as_ref().unwrap()["omitted_count"], 1);
     }

@@ -3,9 +3,9 @@
 
 use guildhall::codebase::{RepoConfig, Repository};
 use guildhall::company::db::CompanyDb;
+use guildhall::hash::sha256_bytes;
 use guildhall::json::{canonical_bytes, canonical_text, parse_strict_value};
 use guildhall::paths::sharded_relative;
-use guildhall::hash::sha256_bytes;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;
@@ -81,7 +81,8 @@ safe_name = "boundary-repo"
 fn destination_nonce_is_unique_and_matching_retry_reads_stored_receipt() {
     let temp = TempDir::new().expect("temporary Company directory");
     let db = CompanyDb::open(&temp.path().join("company.sqlite")).expect("open Company database");
-    let receipt = json!({"schema": "guildhall-receipt/1", "destination": "company", "status": "reserved"});
+    let receipt =
+        json!({"schema": "guildhall-receipt/1", "destination": "company", "status": "reserved"});
     let inserted = db
         .connection
         .execute(
@@ -108,7 +109,11 @@ fn destination_nonce_is_unique_and_matching_retry_reads_stored_receipt() {
     assert_eq!(record["receipt"]["status"], "reserved");
     let count: i64 = db
         .connection
-        .query_row("SELECT COUNT(*) FROM nonces WHERE destination='company' AND nonce='nonce-1'", [], |row| row.get(0))
+        .query_row(
+            "SELECT COUNT(*) FROM nonces WHERE destination='company' AND nonce='nonce-1'",
+            [],
+            |row| row.get(0),
+        )
         .expect("count nonce rows");
     assert_eq!(count, 1);
 }
@@ -127,14 +132,17 @@ fn manifest_lineage_head_has_one_observation() {
         "observed_at": "2026-09-08T00:00:00.000Z",
         "fresh_until": "2026-09-08T01:00:00.000Z"
     });
-    db.insert_manifest_observation(&document, 1).expect("insert first observation");
+    db.insert_manifest_observation(&document, 1)
+        .expect("insert first observation");
     let error = db
         .insert_manifest_observation(&document, 2)
         .expect_err("duplicate lineage must be constrained");
     assert_eq!(error.code, "DIGEST_MISMATCH");
     let count: i64 = db
         .connection
-        .query_row("SELECT COUNT(*) FROM manifest_observations", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM manifest_observations", [], |row| {
+            row.get(0)
+        })
         .expect("count manifest observations");
     assert_eq!(count, 1);
 }
@@ -144,7 +152,8 @@ fn codebase_receipt_is_bound_to_repository_and_destination() {
     let temp = TempDir::new().expect("temporary repository root");
     let repository = init_git_repository(&temp.path().join("repository"));
     let uuid = "01234567-89ab-cdef-0123-456789abcdef";
-    let canonical = canonical_bytes(&json!({"schema": "guildhall-event/1", "event_id": "evt-boundary"}));
+    let canonical =
+        canonical_bytes(&json!({"schema": "guildhall-event/1", "event_id": "evt-boundary"}));
     let receipt = repository
         .admit_event(uuid, &canonical, "fact-event", Value::Null)
         .expect("admit codebase event");
@@ -159,7 +168,8 @@ fn codebase_receipt_is_bound_to_repository_and_destination() {
         .join("receipts")
         .join(uuid)
         .join(format!("{digest}.json"));
-    let mut stored = parse_strict_value(&fs::read(&receipt_path).expect("read receipt")).expect("parse receipt");
+    let mut stored =
+        parse_strict_value(&fs::read(&receipt_path).expect("read receipt")).expect("parse receipt");
     stored["destination"] = Value::String("codebase:foreign-uuid".to_owned());
     fs::write(&receipt_path, canonical_bytes(&stored)).expect("corrupt receipt destination");
     let refused = repository
@@ -197,15 +207,18 @@ fn write_journal_state(
         .join(repository_uuid)
         .join(format!("{digest}.json"));
     if with_staged {
-        fs::create_dir_all(staged.parent().expect("staging parent")).expect("create staging parent");
+        fs::create_dir_all(staged.parent().expect("staging parent"))
+            .expect("create staging parent");
         fs::write(&staged, &payload).expect("write staged bytes");
     }
     if with_final {
-        fs::create_dir_all(final_path.parent().expect("event parent")).expect("create event parent");
+        fs::create_dir_all(final_path.parent().expect("event parent"))
+            .expect("create event parent");
         fs::write(&final_path, &payload).expect("write final event");
     }
     if with_receipt {
-        fs::create_dir_all(receipt_path.parent().expect("receipt parent")).expect("create receipt parent");
+        fs::create_dir_all(receipt_path.parent().expect("receipt parent"))
+            .expect("create receipt parent");
         fs::write(
             &receipt_path,
             canonical_bytes(&json!({
@@ -246,18 +259,24 @@ fn journal_recovery_replays_every_step_and_is_idempotent() {
     write_journal_state(&repository, uuid, 4, "receipted", false, true, true);
     write_journal_state(&repository, uuid, 5, "done", false, true, true);
 
-    let replayed = repository.recover_journal(uuid).expect("recover journal states");
+    let replayed = repository
+        .recover_journal(uuid)
+        .expect("recover journal states");
     assert_eq!(replayed.len(), 4);
     let journal_dir = repository.local_dir().join("journal");
     for generation in 1..=5 {
-        let bytes = fs::read(journal_dir.join(format!("{generation:012}.json"))).expect("read journal");
+        let bytes =
+            fs::read(journal_dir.join(format!("{generation:012}.json"))).expect("read journal");
         let entry = parse_strict_value(&bytes).expect("parse journal");
         assert_eq!(entry["state"], "done", "generation {generation}");
     }
     let receipts = repository.local_dir().join("receipts").join(uuid);
     assert_eq!(fs::read_dir(&receipts).expect("list receipts").count(), 5);
     let replayed_again = repository.recover_journal(uuid).expect("rerun recovery");
-    assert!(replayed_again.is_empty(), "completed markers are not replayed");
+    assert!(
+        replayed_again.is_empty(),
+        "completed markers are not replayed"
+    );
 }
 
 #[test]
@@ -266,7 +285,8 @@ fn journal_recovery_refuses_malformed_marker() {
     let repository = init_git_repository(&temp.path().join("repository"));
     let journal = repository.local_dir().join("journal");
     fs::create_dir_all(&journal).expect("create journal directory");
-    fs::write(journal.join("000000000001.json"), b"{ not canonical").expect("write malformed journal");
+    fs::write(journal.join("000000000001.json"), b"{ not canonical")
+        .expect("write malformed journal");
     let error = repository
         .recover_journal("01234567-89ab-cdef-0123-456789abcdef")
         .expect_err("malformed journal must fail closed");
@@ -295,7 +315,8 @@ fn journal_cleanup_failure_is_typed_not_ignored() {
             entry["digest"].as_str().expect("digest").to_owned()
         }));
     let receipt_parent = receipt_path.parent().expect("receipt parent");
-    fs::create_dir_all(receipt_parent.parent().expect("receipt root")).expect("create receipt root");
+    fs::create_dir_all(receipt_parent.parent().expect("receipt root"))
+        .expect("create receipt root");
     fs::write(receipt_parent, b"not-a-directory").expect("make receipt parent unwritable");
     let error = repository
         .recover_journal(uuid)

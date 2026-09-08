@@ -86,9 +86,10 @@ pub fn exit_for(code: &str) -> i32 {
 /// (`LIMIT_EXCEEDED`), where the call site decides.
 pub fn retryable_for(code: &str) -> Option<bool> {
     match code {
-        "COMPANY_UNREACHABLE" | "CACHE_EXPIRED" | "REVOCATION_STALE" | "UNKNOWN_OWNER_UNRESOLVED" => {
-            Some(true)
-        }
+        "COMPANY_UNREACHABLE"
+        | "CACHE_EXPIRED"
+        | "REVOCATION_STALE"
+        | "UNKNOWN_OWNER_UNRESOLVED" => Some(true),
         "LIMIT_EXCEEDED" => None,
         _ => Some(false),
     }
@@ -216,16 +217,40 @@ impl ContractError {
         .with_detail(detail)
     }
 
-    pub fn integrity(code: &str, message: impl Into<String>, remediation: impl Into<String>) -> Self {
-        Self::new(code, message, remediation, false, ExitCode::IntegrityFailure)
+    pub fn integrity(
+        code: &str,
+        message: impl Into<String>,
+        remediation: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            code,
+            message,
+            remediation,
+            false,
+            ExitCode::IntegrityFailure,
+        )
     }
 
-    pub fn degraded(code: &str, message: impl Into<String>, remediation: impl Into<String>) -> Self {
+    pub fn degraded(
+        code: &str,
+        message: impl Into<String>,
+        remediation: impl Into<String>,
+    ) -> Self {
         Self::new(code, message, remediation, true, ExitCode::DegradedSafe)
     }
 
-    pub fn user_action(code: &str, message: impl Into<String>, remediation: impl Into<String>) -> Self {
-        Self::new(code, message, remediation, false, ExitCode::UserActionRequired)
+    pub fn user_action(
+        code: &str,
+        message: impl Into<String>,
+        remediation: impl Into<String>,
+    ) -> Self {
+        Self::new(
+            code,
+            message,
+            remediation,
+            false,
+            ExitCode::UserActionRequired,
+        )
     }
 
     pub fn unreachable(message: impl Into<String>) -> Self {
@@ -257,7 +282,9 @@ impl ContractError {
         Self::refused(
             "CONFIG_INVARIANT",
             format!("{role} file is unreadable ({})", error.kind()),
-            format!("Restore the {role} file at its configured path with mode 0600; contents are never printed."),
+            format!(
+                "Restore the {role} file at its configured path with mode 0600; contents are never printed."
+            ),
         )
     }
 
@@ -266,7 +293,10 @@ impl ContractError {
         Self::refused(
             "CONFIG_INVARIANT",
             format!("{role} file mode {:o} is broader than 0600", mode & 0o777),
-            format!("Run `chmod 0600 {}` and retry; file contents are never printed.", path.display()),
+            format!(
+                "Run `chmod 0600 {}` and retry; file contents are never printed.",
+                path.display()
+            ),
         )
     }
 

@@ -1,9 +1,9 @@
 use crate::error::{ContractError, ExitCode};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use std::process::{Command, Stdio};
 
 const ARMS: [&str; 11] = [
@@ -311,14 +311,14 @@ fn freeze(manifest_path: &Path, budget_path: &Path, json: bool) -> Result<(), Co
     let manifest = read_json(manifest_path)?;
     for section in ["census", "power", "calibration", "budget"] {
         required_object(&manifest, section).map_err(|_| {
-            invariant(format!("{section} section is missing from the experiment manifest"))
+            invariant(format!(
+                "{section} section is missing from the experiment manifest"
+            ))
         })?;
     }
     let budget_file = read_json(budget_path)?;
     if budget_file.get("human_ratified").and_then(Value::as_bool) != Some(true) {
-        return Err(invariant(
-            "budget file lacks human_ratified: true",
-        ));
+        return Err(invariant("budget file lacks human_ratified: true"));
     }
     let aggregate = required_integer(&budget_file, "aggregate_usd")?;
     let power = required_object(&manifest, "power")?;
@@ -446,9 +446,7 @@ fn required_integer(value: &Value, field: &str) -> Result<i64, ContractError> {
             return Ok(rounded as i64);
         }
     }
-    Err(invariant(format!(
-        "{field} must be a nonnegative integer"
-    )))
+    Err(invariant(format!("{field} must be a nonnegative integer")))
 }
 
 fn required_basis_points(value: &Value, field: &str) -> Result<i64, ContractError> {
@@ -564,7 +562,12 @@ fn run(frozen_path: &Path, smoke: bool, json: bool) -> Result<(), ContractError>
             .map(|task| {
                 task.get("cost_usd")
                     .and_then(Value::as_i64)
-                    .or_else(|| frozen.get("power").and_then(|power| power.get("cost_usd")).and_then(Value::as_i64))
+                    .or_else(|| {
+                        frozen
+                            .get("power")
+                            .and_then(|power| power.get("cost_usd"))
+                            .and_then(Value::as_i64)
+                    })
                     .unwrap_or(0)
             })
             .sum();
@@ -578,7 +581,10 @@ fn run(frozen_path: &Path, smoke: bool, json: bool) -> Result<(), ContractError>
             ));
         }
         if let Some(model) = model {
-            let public_seed = frozen.get("public_seed").and_then(Value::as_u64).unwrap_or(0);
+            let public_seed = frozen
+                .get("public_seed")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
             for task in &tasks {
                 let task_id = task.get("task_id").cloned().unwrap_or(Value::Null);
                 for seed in &seeds {
@@ -775,12 +781,14 @@ fn verdict(run_path: &Path, json: bool) -> Result<(), ContractError> {
     let human_bytes_invalid = human_bytes != 0;
     let independent_product_failure = run
         .get("independent_product_failure")
-        .and_then(|value| value.as_bool().or_else(|| {
-            value
-                .get("valid")
-                .or_else(|| value.get("observed"))
-                .and_then(Value::as_bool)
-        }))
+        .and_then(|value| {
+            value.as_bool().or_else(|| {
+                value
+                    .get("valid")
+                    .or_else(|| value.get("observed"))
+                    .and_then(Value::as_bool)
+            })
+        })
         .unwrap_or(false);
     let explicit_measurement = run
         .get("measurement_result")
@@ -797,9 +805,7 @@ fn verdict(run_path: &Path, json: bool) -> Result<(), ContractError> {
         .and_then(Value::as_str)
         .unwrap_or_default();
     let input_gate_vector = run.get("gate_vector").filter(|value| value.is_object());
-    let gate_result = if ["PASS", "PRODUCT_FAILURE", "INVALID_HARNESS"]
-        .contains(&explicit_gate)
-    {
+    let gate_result = if ["PASS", "PRODUCT_FAILURE", "INVALID_HARNESS"].contains(&explicit_gate) {
         explicit_gate
     } else if let Some(vector) = input_gate_vector {
         let invalid_harness = !vector.is_object()
@@ -831,21 +837,25 @@ fn verdict(run_path: &Path, json: bool) -> Result<(), ContractError> {
     };
     let headroom_condition = run
         .get("headroom_condition")
-        .and_then(|value| value.as_bool().or_else(|| {
-            value
-                .get("condition")
-                .or_else(|| value.get("observed"))
-                .and_then(Value::as_bool)
-        }))
+        .and_then(|value| {
+            value.as_bool().or_else(|| {
+                value
+                    .get("condition")
+                    .or_else(|| value.get("observed"))
+                    .and_then(Value::as_bool)
+            })
+        })
         .unwrap_or(measurement_result == "INCONCLUSIVE_NO_HEADROOM");
     let ceiling_condition = run
         .get("ceiling_condition")
-        .and_then(|value| value.as_bool().or_else(|| {
-            value
-                .get("condition")
-                .or_else(|| value.get("observed"))
-                .and_then(Value::as_bool)
-        }))
+        .and_then(|value| {
+            value.as_bool().or_else(|| {
+                value
+                    .get("condition")
+                    .or_else(|| value.get("observed"))
+                    .and_then(Value::as_bool)
+            })
+        })
         .unwrap_or(measurement_result == "INCONCLUSIVE_CEILING");
     let terminal = if human_bytes_invalid {
         "INVALID_RUN"
@@ -853,9 +863,7 @@ fn verdict(run_path: &Path, json: bool) -> Result<(), ContractError> {
         "NOT_PROVEN"
     } else {
         match (gate_result, measurement_result) {
-            ("PRODUCT_FAILURE", _) | ("PASS", "NOT_PROVEN") | ("PASS", "NOT_RUN") => {
-                "NOT_PROVEN"
-            }
+            ("PRODUCT_FAILURE", _) | ("PASS", "NOT_PROVEN") | ("PASS", "NOT_RUN") => "NOT_PROVEN",
             ("PASS", "PROVEN") => "PROVEN",
             ("PASS", "INCONCLUSIVE_NO_HEADROOM") => "INCONCLUSIVE_NO_HEADROOM",
             ("PASS", "INCONCLUSIVE_CEILING") => "INCONCLUSIVE_CEILING",

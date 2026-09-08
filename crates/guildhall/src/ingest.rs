@@ -4,6 +4,7 @@ use crate::hash::sha256_bytes;
 use crate::model::{Atom, CompanyReference, Distortion, FactEvent, Observation};
 use crate::scanner::hard_blocked;
 use crate::time::{now_rfc3339_millis, parse_rfc3339_millis};
+use rusqlite::Connection;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -13,7 +14,7 @@ const MAX_FILE_BYTES: usize = 1024 * 1024;
 const MAX_DIRECTORY_BYTES: usize = 128 * 1024 * 1024;
 const MAX_ITEMS: usize = 10_000;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct NativeRecord {
     native_id: String,
     statement: String,
@@ -25,6 +26,8 @@ struct NativeRecord {
     effective_until: Option<String>,
     receipt_observed_at: Option<String>,
     receipt_expires_at: Option<String>,
+    environment_id: Option<String>,
+    owner_id: Option<String>,
 }
 
 pub fn ingest(
@@ -45,11 +48,16 @@ pub fn ingest(
         ));
     }
     let repo_canonical = repo.canonicalize().map_err(io_error)?;
-    let source_canonical = source.canonicalize().map_err(|error| ContractError::refused(
-        "CONFIG_INVARIANT",
-        format!("source is unavailable or escapes the repository ({})", error.kind()),
-        "Pass a source contained by the repository.",
-    ))?;
+    let source_canonical = source.canonicalize().map_err(|error| {
+        ContractError::refused(
+            "CONFIG_INVARIANT",
+            format!(
+                "source is unavailable or escapes the repository ({})",
+                error.kind()
+            ),
+            "Pass a source contained by the repository.",
+        )
+    })?;
     if !source_canonical.starts_with(&repo_canonical) {
         return Err(ContractError::refused(
             "CONFIG_INVARIANT",
@@ -58,8 +66,8 @@ pub fn ingest(
         ));
     }
     let bytes = read_source(source_kind, source)?;
-    let records = if source_kind == "kindex" {
-        parse_kindex_events(&bytes)?
+    let mut records = if source_kind == "kindex" {
+        parse_kindex_source(source, &bytes)?
     } else {
         parse_native(source_kind, &bytes).map_err(|message| {
             ContractError::new(
@@ -85,6 +93,7 @@ pub fn ingest(
     // `store` remains the semantic destination for signed fact events only.
     let journal_store = crate::StoreKind::Personal;
     let journal_root = crate::store::ensure_store_root(journal_store, repo)?;
+    let private = crate::private::PrivateStore::open_personal(&journal_root)?;
     crate::store::write_private_body(&journal_root, &bytes)?;
     let repository_id = (store == crate::StoreKind::Codebase)
         .then(|| crate::repository::repository_id(repo))
@@ -97,9 +106,34 @@ pub fn ingest(
     let branch = (store == crate::StoreKind::Codebase)
         .then(|| crate::repository::git_branch(repo).ok())
         .flatten();
-    let trust_class = (store == crate::StoreKind::Codebase)
-        .then(|| repository_trust_class(repo, source, source_kind, &bytes))
-        .unwrap_or("approved-source");
+    let trust_class = match store {
+        crate::StoreKind::Personal => "personal-host",
+        crate::StoreKind::Company => "company-authority",
+        crate::StoreKind::Codebase => repository_trust_class(repo, source, source_kind, &bytes),
+    };
+    let prior_observations = private.observations_for_source(&source_identity)?;
+    let present_native_ids = records
+        .iter()
+        .map(|record| record.native_id.clone())
+        .collect::<std::collections::BTreeSet<_>>();
+    for prior in &prior_observations {
+        if !present_native_ids.contains(&prior.native_id) {
+            records.push(native_record(
+                prior.native_id.clone(),
+                "[deleted native source]",
+                "repository",
+                4_000,
+                "retracted",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ));
+        }
+    }
     let prepared = records
         .into_iter()
         .map(|record| {
@@ -113,13 +147,8 @@ pub fn ingest(
             (record, observation_id, digest)
         })
         .collect::<Vec<_>>();
-    let mut classified_atoms = external_classifier_atoms(
-        classifier,
-        source_kind,
-        &source_identity,
-        &now,
-        &prepared,
-    )?;
+    let mut classified_atoms =
+        external_classifier_atoms(classifier, source_kind, &source_identity, &now, &prepared)?;
     let mut observation_count = 0;
     let mut reported_observations = Vec::new();
     let mut derived_facts = Vec::new();
@@ -129,6 +158,7 @@ pub fn ingest(
     let mut quarantined_count = 0;
     let mut quarantined_observations = Vec::new();
     let mut skew_dispositions = Vec::new();
+    let prepared_manifest = prepared.clone();
     for (record, observation_id, digest) in prepared {
         if let Some((field, direction, seconds)) = receipt_clock_skew(&record, &now) {
             let disposition = "CLOCK_SKEW".to_owned();
@@ -170,38 +200,54 @@ pub fn ingest(
             effective_until: record.effective_until.clone(),
             body_ref: format!("sha256:{digest}"),
             extraction_version: EXTRACTION_VERSION.to_owned(),
-            origin_trust: (store == crate::StoreKind::Codebase).then(|| trust_class.to_owned()),
-            environment_id: None,
-            owner_id: None,
+            origin_trust: Some(trust_class.to_owned()),
+            environment_id: record.environment_id.clone(),
+            owner_id: record.owner_id.clone(),
             lifecycle: "observed".to_owned(),
         };
-        let existing = crate::store::read_records(journal_store, repo, "observations.jsonl")
-            .unwrap_or_default()
-            .into_iter()
-            .find(|value| {
-                value.get("observation_id").and_then(Value::as_str) == Some(&observation_id)
-            });
+        let existing = prior_observations
+            .iter()
+            .find(|prior| prior.observation_id == observation_id);
         if existing.is_some() {
             skipped += 1;
             continue;
         }
+        if let Some(prior) = prior_observations
+            .iter()
+            .filter(|prior| prior.native_id == record.native_id)
+            .max_by(|left, right| left.observed_at.cmp(&right.observed_at))
+        {
+            private.supersede_observation(
+                &prior.observation_id,
+                &prior.disposition,
+                &record.disposition,
+                &observation_id,
+                &now,
+            )?;
+        }
+        private.insert_observation(&observation)?;
         let observation_value = serde_json::to_value(&observation)
             .map_err(|error| ContractError::internal(error.to_string()))?;
-        mark_changed_source(
+        crate::store::append_record(
             journal_store,
             repo,
-            &source_identity,
-            &record.native_id,
-            &digest,
-            &now,
+            "observations.jsonl",
+            &observation_value,
         )?;
-        crate::store::append_record(journal_store, repo, "observations.jsonl", &observation_value)?;
         observation_count += 1;
         reported_observations.push(json!({
+            "observation_id": observation_id,
             "source_kind": source_kind,
             "source_identity": source_identity,
+            "native_id": record.native_id,
             "content_digest": digest,
             "observed_at": now,
+            "asserted_at": record.asserted_at,
+            "effective_from": record.effective_from,
+            "effective_until": record.effective_until,
+            "repository_id": repository_id,
+            "revision": revision,
+            "branch": branch,
             "disposition": record.disposition,
             "origin_trust_class": observation.origin_trust,
             "extraction_version": EXTRACTION_VERSION
@@ -226,7 +272,10 @@ pub fn ingest(
             }
         } else {
             for external in external_atoms {
-                let text = external.get("text").and_then(Value::as_str).unwrap_or_default();
+                let text = external
+                    .get("text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
                 if hard_blocked(text) && store != crate::StoreKind::Personal {
                     skipped += 1;
                     continue;
@@ -294,7 +343,23 @@ pub fn ingest(
         "quarantined_count": quarantined_count,
         "quarantined_observations": quarantined_observations,
         "skew_dispositions": skew_dispositions,
-        "origin_trust_class": if store == crate::StoreKind::Codebase { Some(trust_class) } else { None },
+        "origin_trust_class": trust_class,
+        "current_view_byte_identical": observation_count == 0 && skipped > 0,
+        "observation_ids": reported_observations
+            .iter()
+            .filter_map(|value| value.get("observation_id").and_then(Value::as_str).map(str::to_owned))
+            .collect::<Vec<_>>(),
+        "adapter_receipts": {source_kind: observation_count},
+        "build_manifest": {
+            "observation_ids": prepared_manifest.iter().map(|(_, id, _)| id.clone()).collect::<Vec<_>>(),
+            "adapter_receipts": {source_kind: observation_count},
+            "reducer_digest": sha256_bytes(&crate::json::canonical_bytes(&json!({
+                "observations": prepared_manifest
+                    .iter()
+                    .map(|(_, id, digest)| json!({"observation_id": id, "content_digest": digest}))
+                    .collect::<Vec<_>>()
+            })))
+        },
         "checkpoint": checkpoint,
         "source_digest": sha256_bytes(&bytes),
         "store": store_name(store)
@@ -317,7 +382,9 @@ fn read_source(source_kind: &str, source: &Path) -> Result<Vec<u8>, ContractErro
     let metadata = std::fs::symlink_metadata(source).map_err(io_error)?;
     if metadata.file_type().is_symlink() {
         let target = source.canonicalize().map_err(io_error)?;
-        let parent = source.parent().and_then(|parent| parent.canonicalize().ok());
+        let parent = source
+            .parent()
+            .and_then(|parent| parent.canonicalize().ok());
         let inside = parent.is_some_and(|parent| target.starts_with(parent));
         if !inside {
             return Err(ContractError::refused(
@@ -364,7 +431,8 @@ fn read_source(source_kind: &str, source: &Path) -> Result<Vec<u8>, ContractErro
                 "Split the source into bounded adapter batches.",
                 false,
                 ExitCode::Refused,
-            ).with_detail(json!({"omitted_count": 1})));
+            )
+            .with_detail(json!({"omitted_count": 1})));
         }
         if !bytes.is_empty() && !bytes.ends_with(b"\n") {
             bytes.push(b'\n');
@@ -419,23 +487,30 @@ fn read_bounded_file(path: &Path, limit: usize) -> Result<Vec<u8>, ContractError
             "Split the source into bounded adapter batches.",
             false,
             ExitCode::Refused,
-        ).with_detail(json!({"omitted_count": 1})));
+        )
+        .with_detail(json!({"omitted_count": 1})));
     }
     std::fs::read(path).map_err(io_error)
 }
 
 fn git_history_bytes(source: &Path) -> Result<Vec<u8>, ContractError> {
     let output = std::process::Command::new("git")
-        .args(["log", "--all", "--pretty=format:%H%x00%s%x00%b%x00%aI"])
+        .args([
+            "log",
+            "--all",
+            "--pretty=format:%H%x00%s%x00%b%x00%aI%x00%P",
+        ])
         .current_dir(source)
         .output()
-        .map_err(|error| ContractError::new(
-            "RUN_INTEGRITY_FAILED",
-            format!("git history source is unreadable: {error}"),
-            "Check the repository and git installation.",
-            false,
-            ExitCode::InternalFailure,
-        ))?;
+        .map_err(|error| {
+            ContractError::new(
+                "RUN_INTEGRITY_FAILED",
+                format!("git history source is unreadable: {error}"),
+                "Check the repository and git installation.",
+                false,
+                ExitCode::InternalFailure,
+            )
+        })?;
     if !output.status.success() {
         return Err(ContractError::new(
             "RUN_INTEGRITY_FAILED",
@@ -449,18 +524,79 @@ fn git_history_bytes(source: &Path) -> Result<Vec<u8>, ContractError> {
     let mut bytes = Vec::new();
     for commit in text.split('\n') {
         let fields: Vec<&str> = commit.split('\0').collect();
-        if fields.len() != 4 {
+        if fields.len() != 5 {
             continue;
         }
+        let parents = fields[4].split_whitespace().count();
+        let reverted = fields[1].to_ascii_lowercase().starts_with("revert")
+            || fields[2].to_ascii_lowercase().starts_with("revert");
         let record = json!({
             "id": fields[0],
             "message": fields[1],
             "body": fields[2],
             "created_at": fields[3],
+            "parents": fields[4],
+            "state": if reverted {
+                "reverted"
+            } else if parents > 1 {
+                "merged"
+            } else {
+                "current"
+            }
+        });
+        bytes.extend_from_slice(crate::json::canonical_bytes(&record).as_slice());
+        bytes.push(b'\n');
+    }
+    let refs = git_output(
+        source,
+        &["for-each-ref", "--format=%(refname)%00%(objectname)"],
+    )
+    .unwrap_or_default();
+    for line in refs.lines() {
+        let fields: Vec<&str> = line.split('\0').collect();
+        if fields.len() != 2 || fields[0].is_empty() {
+            continue;
+        }
+        let record = json!({
+            "id": format!("ref:{}", fields[0]),
+            "message": format!("git ref {} points to {}", fields[0], fields[1]),
             "state": "current"
         });
         bytes.extend_from_slice(crate::json::canonical_bytes(&record).as_slice());
         bytes.push(b'\n');
+    }
+    let branches = git_output(
+        source,
+        &["for-each-ref", "refs/heads", "--format=%(refname)"],
+    )
+    .unwrap_or_default()
+    .lines()
+    .filter(|line| !line.trim().is_empty())
+    .map(str::to_owned)
+    .take(32)
+    .collect::<Vec<_>>();
+    let mut merge_bases = 0usize;
+    for (left_index, left) in branches.iter().enumerate() {
+        for right in branches.iter().skip(left_index + 1) {
+            if merge_bases >= 64 {
+                break;
+            }
+            let Some(base) = git_output(source, &["merge-base", left, right]) else {
+                continue;
+            };
+            let base = base.trim();
+            if base.is_empty() {
+                continue;
+            }
+            let record = json!({
+                "id": format!("merge-base:{left}:{right}"),
+                "message": format!("merge-base of {left} and {right} is {base}"),
+                "state": "current"
+            });
+            bytes.extend_from_slice(crate::json::canonical_bytes(&record).as_slice());
+            bytes.push(b'\n');
+            merge_bases += 1;
+        }
     }
     Ok(bytes)
 }
@@ -500,8 +636,13 @@ fn external_classifier_atoms(
         &crate::json::canonical_bytes(&input),
         std::time::Duration::from_secs(classifier.timeout_seconds),
     )?;
-    let output = crate::json::parse_strict_value(&bytes)
-        .map_err(|error| ContractError::integrity("PROCESSOR_UNAUTHORIZED", format!("classifier output is not strict JSON: {error}"), "Repair the pinned classifier; no output was promoted."))?;
+    let output = crate::json::parse_strict_value(&bytes).map_err(|error| {
+        ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            format!("classifier output is not strict JSON: {error}"),
+            "Repair the pinned classifier; no output was promoted.",
+        )
+    })?;
     crate::classifier::validate_output(&output)?;
     let mut result = BTreeMap::new();
     if let Some(atoms) = output.get("atoms").and_then(Value::as_array) {
@@ -509,19 +650,24 @@ fn external_classifier_atoms(
             let observation_id = atom
                 .get("observation_id")
                 .and_then(Value::as_str)
-                .ok_or_else(|| ContractError::integrity("PROCESSOR_UNAUTHORIZED", "classifier atom has no observation_id", "Repair the pinned classifier; no output was promoted."))?
+                .ok_or_else(|| {
+                    ContractError::integrity(
+                        "PROCESSOR_UNAUTHORIZED",
+                        "classifier atom has no observation_id",
+                        "Repair the pinned classifier; no output was promoted.",
+                    )
+                })?
                 .to_owned();
-            result.entry(observation_id).or_insert_with(Vec::new).push(atom.clone());
+            result
+                .entry(observation_id)
+                .or_insert_with(Vec::new)
+                .push(atom.clone());
         }
     }
     Ok(result)
 }
 
-fn apply_classifier_atom(
-    atom: &mut Atom,
-    external: &Value,
-    repository_id: Option<&str>,
-) {
+fn apply_classifier_atom(atom: &mut Atom, external: &Value, repository_id: Option<&str>) {
     if let Some(value) = external.get("atom_id").and_then(Value::as_str) {
         atom.atom_id = value.to_owned();
     }
@@ -535,7 +681,10 @@ fn apply_classifier_atom(
             _ => 3_000,
         };
     }
-    if let Some(values) = external.get("proposed_destinations").and_then(Value::as_array) {
+    if let Some(values) = external
+        .get("proposed_destinations")
+        .and_then(Value::as_array)
+    {
         let destinations = values
             .iter()
             .filter_map(|value| value.as_str())
@@ -556,7 +705,10 @@ fn apply_classifier_atom(
             .map(str::to_owned)
             .collect();
     }
-    if let Some(value) = external.get("unresolved_uncertainty").and_then(Value::as_str) {
+    if let Some(value) = external
+        .get("unresolved_uncertainty")
+        .and_then(Value::as_str)
+    {
         atom.unresolved_uncertainty = (!value.is_empty()).then(|| value.to_owned());
     }
 }
@@ -564,11 +716,149 @@ fn apply_classifier_atom(
 /// Validate `.kin/events/` as signed FactEvents. Malformed data-model bytes
 /// and invalid signatures are counted typed integrity failures; neither can
 /// reach the canonical renderer or panic.
+fn parse_kindex_source(source: &Path, bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError> {
+    if let Some(path) = sqlite_export_path(source) {
+        return parse_kindex_sqlite(&path).map_err(|message| {
+            ContractError::refused(
+                "CONFIG_INVARIANT",
+                message,
+                "Use a valid Kindex 0.36 SQLite export or signed `.kin/events` tree.",
+            )
+        });
+    }
+    parse_kindex_events(bytes)
+}
+
+fn sqlite_export_path(source: &Path) -> Option<std::path::PathBuf> {
+    let metadata = std::fs::metadata(source).ok()?;
+    if metadata.is_file() {
+        let is_sqlite = source
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| matches!(extension, "sqlite" | "sqlite3" | "db"));
+        return is_sqlite.then(|| source.to_path_buf());
+    }
+    if !metadata.is_dir() {
+        return None;
+    }
+    let mut stack = vec![source.to_path_buf()];
+    while let Some(directory) = stack.pop() {
+        let Ok(children) = std::fs::read_dir(directory) else {
+            continue;
+        };
+        for child in children.flatten() {
+            let path = child.path();
+            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                continue;
+            };
+            if metadata.file_type().is_symlink() {
+                continue;
+            }
+            if metadata.is_dir() {
+                stack.push(path);
+            } else if path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| matches!(extension, "sqlite" | "sqlite3" | "db"))
+            {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+fn parse_kindex_sqlite(path: &Path) -> Result<Vec<NativeRecord>, String> {
+    let connection =
+        Connection::open(path).map_err(|error| format!("Kindex export is unreadable: {error}"))?;
+    let mut statement = connection
+        .prepare("SELECT id, node_type, title, content, payload, created_at FROM nodes")
+        .map_err(|error| format!("Kindex nodes table is unavailable: {error}"))?;
+    let mut rows = statement
+        .query([])
+        .map_err(|error| format!("Kindex nodes cannot be read: {error}"))?;
+    let mut records = Vec::new();
+    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+        let id: String = row.get(0).map_err(|error| error.to_string())?;
+        let node_type: Option<String> = row.get(1).map_err(|error| error.to_string())?;
+        let title: Option<String> = row.get(2).map_err(|error| error.to_string())?;
+        let content: Option<String> = row.get(3).map_err(|error| error.to_string())?;
+        let payload: Option<Vec<u8>> = row.get(4).map_err(|error| error.to_string())?;
+        let created_at: Option<String> = row.get(5).map_err(|error| error.to_string())?;
+        let payload_text = payload
+            .map(|bytes: Vec<u8>| String::from_utf8_lossy(&bytes).trim().to_owned())
+            .unwrap_or_default();
+        let statement_text = content
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| title.filter(|value| !value.trim().is_empty()))
+            .unwrap_or_else(|| {
+                if payload_text.is_empty() {
+                    format!("Kindex node {id}")
+                } else {
+                    payload_text
+                }
+            });
+        records.push(native_record(
+            id,
+            statement_text,
+            format!("kindex:{}", node_type.unwrap_or_else(|| "node".to_owned())),
+            8_000,
+            "current",
+            time_string(created_at.as_deref()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ));
+    }
+    let mut edge_statement = connection
+        .prepare("SELECT src, dst, relationship, reason FROM edges")
+        .map_err(|error| format!("Kindex edges table is unavailable: {error}"))?;
+    let mut rows = edge_statement
+        .query([])
+        .map_err(|error| format!("Kindex edges cannot be read: {error}"))?;
+    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
+        let source: String = row.get(0).map_err(|error| error.to_string())?;
+        let destination: String = row.get(1).map_err(|error| error.to_string())?;
+        let relationship: Option<String> = row.get(2).map_err(|error| error.to_string())?;
+        let reason: Option<String> = row.get(3).map_err(|error| error.to_string())?;
+        records.push(native_record(
+            format!("edge:{source}:{destination}"),
+            format!(
+                "{} {} {} ({})",
+                source,
+                relationship.unwrap_or_else(|| "relates-to".to_owned()),
+                destination,
+                reason.unwrap_or_else(|| "no reason supplied".to_owned())
+            ),
+            "kindex:edge",
+            8_000,
+            "current",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ));
+    }
+    if records.is_empty() {
+        return Err("Kindex export contains no nodes or edges".to_owned());
+    }
+    Ok(records)
+}
+
 fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError> {
     let text = std::str::from_utf8(bytes).map_err(|error| {
         ContractError::integrity(
             "DIGEST_MISMATCH",
-            format!("kindex event source is not valid UTF-8 ({})", error.valid_up_to()),
+            format!(
+                "kindex event source is not valid UTF-8 ({})",
+                error.valid_up_to()
+            ),
             "Quarantine the malformed event; no bytes were admitted.",
         )
         .with_detail(json!({"malformed_count": 1}))
@@ -597,6 +887,8 @@ fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError>
                     effective_until: event.effective_until.clone(),
                     receipt_observed_at: None,
                     receipt_expires_at: None,
+                    environment_id: None,
+                    owner_id: None,
                 });
             }
             Err(_) => malformed.push(index + 1),
@@ -605,7 +897,10 @@ fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError>
     if !malformed.is_empty() {
         return Err(ContractError::integrity(
             "DIGEST_MISMATCH",
-            format!("{} kindex event(s) violate the FactEvent data model", malformed.len()),
+            format!(
+                "{} kindex event(s) violate the FactEvent data model",
+                malformed.len()
+            ),
             "Quarantine the malformed events; no bytes were admitted.",
         )
         .with_detail(json!({"malformed_count": malformed.len(), "line_numbers": malformed})));
@@ -632,15 +927,326 @@ fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError>
 fn parse_native(source_kind: &str, bytes: &[u8]) -> Result<Vec<NativeRecord>, String> {
     let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
     match source_kind {
-        "codex_jsonl" | "claude_jsonl" | "git_history" | "kindex" | "runtime_evidence"
-        | "github_export" => parse_json_records(source_kind, text),
-        _ => parse_text_lines(source_kind, text),
+        "codex_jsonl" | "claude_jsonl" => parse_host_jsonl(source_kind, text),
+        "github_export" => parse_github_export(text),
+        "docs_adr" => parse_docs_adr(text),
+        "repo_code" => parse_code_text(text),
+        "repo_tests" => {
+            let records = parse_json_records(source_kind, text)?;
+            if records.is_empty() {
+                parse_code_text(text)
+            } else {
+                Ok(records)
+            }
+        }
+        _ => parse_json_records(source_kind, text),
     }
+}
+
+fn native_record(
+    native_id: impl Into<String>,
+    statement: impl Into<String>,
+    scope: impl Into<String>,
+    confidence: u16,
+    disposition: impl Into<String>,
+    asserted_at: Option<String>,
+    effective_from: Option<String>,
+    effective_until: Option<String>,
+    receipt_observed_at: Option<String>,
+    receipt_expires_at: Option<String>,
+    environment_id: Option<String>,
+    owner_id: Option<String>,
+) -> NativeRecord {
+    NativeRecord {
+        native_id: native_id.into(),
+        statement: statement.into(),
+        scope: scope.into(),
+        confidence,
+        disposition: disposition.into(),
+        asserted_at,
+        effective_from,
+        effective_until,
+        receipt_observed_at,
+        receipt_expires_at,
+        environment_id,
+        owner_id,
+    }
+}
+
+fn time_string(value: Option<&str>) -> Option<String> {
+    value
+        .filter(|value| parse_rfc3339_millis(value).is_ok())
+        .map(str::to_owned)
+}
+
+fn content_text(map: &Map<String, Value>) -> Option<String> {
+    if let Some(Value::String(text)) = map.get("text") {
+        return Some(text.clone());
+    }
+    if let Some(Value::Array(parts)) = map.get("content") {
+        let text = parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join(" ");
+        if !text.trim().is_empty() {
+            return Some(text);
+        }
+    }
+    None
+}
+
+fn parse_host_jsonl(source_kind: &str, text: &str) -> Result<Vec<NativeRecord>, String> {
+    let mut records = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let value: Value = serde_json::from_str(line)
+            .map_err(|error| format!("native JSONL line {}: {error}", index + 1))?;
+        let Some(map) = value.as_object() else {
+            continue;
+        };
+        let kind = map.get("type").and_then(Value::as_str).unwrap_or_default();
+        let statement = if kind == "response_item" {
+            map.get("payload")
+                .and_then(Value::as_object)
+                .and_then(|payload| content_text(payload))
+        } else if kind == "stop" || kind == "session_end" {
+            None
+        } else {
+            map.get("message")
+                .and_then(Value::as_object)
+                .and_then(content_text)
+                .or_else(|| content_text(map))
+        };
+        let Some(statement) = statement.filter(|statement| !statement.trim().is_empty()) else {
+            continue;
+        };
+        let native_id = map
+            .get("id")
+            .or_else(|| map.get("uuid"))
+            .or_else(|| map.get("session_id"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("line:{}", index + 1));
+        let asserted_at = time_string(
+            map.get("timestamp")
+                .or_else(|| map.get("ts"))
+                .and_then(Value::as_str),
+        );
+        records.push(native_record(
+            native_id,
+            statement,
+            "host-session",
+            6_000,
+            "current",
+            asserted_at,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ));
+    }
+    if records.is_empty() {
+        return Err(format!(
+            "{source_kind} source contains no native message records"
+        ));
+    }
+    Ok(records)
+}
+
+fn parse_github_export(text: &str) -> Result<Vec<NativeRecord>, String> {
+    let value: Value = serde_json::from_str(text).map_err(|error| error.to_string())?;
+    let map = value
+        .as_object()
+        .ok_or_else(|| "GitHub export must be one JSON object".to_owned())?;
+    let mut records = Vec::new();
+    for (key, prefix) in [("issues", "issue"), ("pullRequests", "pull-request")] {
+        let Some(items) = map.get(key).and_then(Value::as_array) else {
+            continue;
+        };
+        for item in items {
+            let Some(item) = item.as_object() else {
+                continue;
+            };
+            let number = item.get("number").and_then(Value::as_i64).unwrap_or(0);
+            let title = item
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let body = item.get("body").and_then(Value::as_str).unwrap_or_default();
+            let statement = format!("{title}\n{body}").trim().to_owned();
+            if statement.is_empty() {
+                continue;
+            }
+            let state = item.get("state").and_then(Value::as_str).unwrap_or("open");
+            records.push(native_record(
+                format!("{prefix}:{number}"),
+                statement,
+                "repository",
+                if state == "closed" || state == "merged" {
+                    8_000
+                } else {
+                    6_000
+                },
+                source_disposition(item),
+                time_string(item.get("updatedAt").and_then(Value::as_str)),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ));
+            if let Some(reviews) = item.get("reviews").and_then(Value::as_array) {
+                for (review_index, review) in reviews.iter().enumerate() {
+                    let Some(review) = review.as_object() else {
+                        continue;
+                    };
+                    let state = review
+                        .get("state")
+                        .and_then(Value::as_str)
+                        .unwrap_or("current");
+                    let author = review
+                        .get("author")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    records.push(native_record(
+                        format!("review:{number}:{review_index}"),
+                        format!("review by {author}: {state}"),
+                        "repository",
+                        8_000,
+                        if state == "APPROVED" {
+                            "approved"
+                        } else {
+                            "current"
+                        },
+                        time_string(review.get("updatedAt").and_then(Value::as_str)),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ));
+                }
+            }
+        }
+    }
+    if records.is_empty() {
+        return Err("GitHub export contains no issues, pull requests, or reviews".to_owned());
+    }
+    Ok(records)
+}
+
+fn parse_docs_adr(text: &str) -> Result<Vec<NativeRecord>, String> {
+    let trimmed = text.trim_start();
+    let Some(after_front) = trimmed.strip_prefix("---\n") else {
+        return Err("ADR Markdown must begin with YAML front matter".to_owned());
+    };
+    let Some(end) = after_front.find("\n---") else {
+        return Err("ADR Markdown front matter is not closed".to_owned());
+    };
+    let front = &after_front[..end];
+    let body = after_front[end + 4..].trim_start();
+    let mut adr = None;
+    let mut title = String::new();
+    let mut status = "current".to_owned();
+    let mut supersedes = None;
+    for line in front.lines() {
+        if let Some((key, value)) = line.split_once(':') {
+            let value = value.trim();
+            match key.trim() {
+                "adr" => adr = Some(value.to_owned()),
+                "title" => title = value.to_owned(),
+                "status" => status = value.to_lowercase(),
+                "supersedes" => supersedes = Some(value.to_owned()),
+                _ => {}
+            }
+        }
+    }
+    let adr = adr.ok_or_else(|| "ADR front matter must name adr".to_owned())?;
+    if title.is_empty() {
+        return Err("ADR front matter must name title".to_owned());
+    }
+    let mut statement = format!("# {title}\n{body}");
+    if let Some(supersedes) = supersedes {
+        statement = format!("{statement}\nSupersedes ADR {supersedes}.");
+    }
+    let disposition = match status.as_str() {
+        "accepted" => "current",
+        "proposed" => "proposed",
+        "rejected" => "rejected",
+        "superseded" => "superseded",
+        other => other,
+    };
+    Ok(vec![native_record(
+        format!("adr:{adr}"),
+        statement,
+        "repository",
+        7_000,
+        disposition,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )])
+}
+
+fn parse_code_text(text: &str) -> Result<Vec<NativeRecord>, String> {
+    let mut records = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let is_python = trimmed.starts_with("def ") || trimmed.starts_with("class ");
+        let is_typescript = [
+            "export function ",
+            "function ",
+            "const ",
+            "interface ",
+            "type ",
+            "export type ",
+            "export interface ",
+            "it(",
+            "test(",
+        ]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix));
+        if !is_python && !is_typescript {
+            continue;
+        }
+        records.push(native_record(
+            format!("declaration:{}", index + 1),
+            trimmed,
+            "repository",
+            7_000,
+            "current",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ));
+    }
+    if records.is_empty() {
+        return Err("source contains no Python or TypeScript declaration".to_owned());
+    }
+    Ok(records)
 }
 
 fn parse_json_records(source_kind: &str, text: &str) -> Result<Vec<NativeRecord>, String> {
     let mut records = Vec::new();
     if let Ok(value) = serde_json::from_str::<Value>(text) {
+        if source_kind == "github_export" {
+            return parse_github_export(text);
+        }
         collect_json_value(source_kind, &value, &mut records)?;
         return Ok(records);
     }
@@ -650,6 +1256,9 @@ fn parse_json_records(source_kind: &str, text: &str) -> Result<Vec<NativeRecord>
         }
         let value: Value = serde_json::from_str(line)
             .map_err(|error| format!("native JSONL line {}: {error}", index + 1))?;
+        if source_kind == "github_export" {
+            return parse_github_export(line);
+        }
         collect_json_value(source_kind, &value, &mut records)?;
     }
     Ok(records)
@@ -672,33 +1281,55 @@ fn collect_json_value(
                 let native_id = map
                     .get("id")
                     .or_else(|| map.get("number"))
+                    .or_else(|| map.get("event_id"))
                     .and_then(Value::as_str)
                     .map(str::to_owned)
                     .unwrap_or_else(|| format!("record:{}", records.len() + 1));
                 let statement = extract_statement(map).unwrap_or_else(|| canonical_summary(map));
                 let disposition = source_disposition(map);
-                records.push(NativeRecord {
+                let command = map
+                    .get("command")
+                    .and_then(Value::as_array)
+                    .map(|command| {
+                        command
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    })
+                    .unwrap_or_default();
+                let statement = if !command.is_empty() {
+                    format!("command: {command}\n{statement}")
+                } else {
+                    statement
+                };
+                records.push(native_record(
                     native_id,
                     statement,
-                    scope: extract_scope(map).unwrap_or_else(|| default_scope(source_kind)),
-                    confidence: source_confidence(source_kind, &disposition),
+                    extract_scope(map).unwrap_or_else(|| default_scope(source_kind)),
+                    source_confidence(source_kind, &disposition),
                     disposition,
-                    asserted_at: time_field(
+                    time_field(
                         map,
                         &["asserted_at", "created_at", "timestamp", "closed_at"],
                     ),
-                    effective_from: time_field(map, &["effective_from", "started_at"]),
-                    effective_until: time_field(
-                        map,
-                        &["effective_until", "expires_at", "fresh_until"],
-                    ),
-                    receipt_observed_at: time_field(map, &["observed_at"]),
-                    receipt_expires_at: time_field(map, &["expires_at"]),
-                });
+                    time_field(map, &["effective_from", "started_at"]),
+                    time_field(map, &["effective_until", "expires_at", "fresh_until"]),
+                    time_field(map, &["observed_at"]),
+                    time_field(map, &["expires_at"]),
+                    map.get("environment_id")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                    map.get("environment_owner")
+                        .or_else(|| map.get("owner_id"))
+                        .and_then(Value::as_str)
+                        .map(str::to_owned),
+                ));
                 return Ok(());
             }
             for key in [
                 "payload", "message", "content", "data", "items", "events", "facts", "nodes",
+                "edges",
             ] {
                 if let Some(child) = map.get(key) {
                     collect_json_value(source_kind, child, records)?;
@@ -729,7 +1360,9 @@ fn is_record_container(map: &Map<String, Value>) -> bool {
     ]
     .iter()
     .any(|key| map.get(*key).is_some_and(Value::is_string))
+        || map.get("command").is_some_and(Value::is_array)
         || map.contains_key("state")
+        || map.contains_key("schema") && map.get("stdout").is_some()
 }
 
 fn extract_statement(map: &Map<String, Value>) -> Option<String> {
@@ -776,8 +1409,10 @@ fn source_disposition(map: &Map<String, Value>) -> String {
         .unwrap_or("current")
         .to_lowercase();
     match state.as_str() {
-        "rejected" | "closed" | "reverted" | "failed" => state,
-        "merged" | "approved" | "deployed" | "passed" => "current".to_owned(),
+        "rejected" | "closed" | "reverted" | "failed" | "retracted" | "superseded" | "reopened" => {
+            state
+        }
+        "merged" | "approved" | "deployed" | "passed" | "accepted" => "current".to_owned(),
         "draft" | "proposed" | "open" | "experiment" | "incident" => state,
         _ => "current".to_owned(),
     }
@@ -803,18 +1438,20 @@ fn text_record(source_kind: &str, index: usize, statement: &str) -> NativeRecord
         } else {
             "current".to_owned()
         };
-    NativeRecord {
-        native_id: format!("line:{}", index + 1),
-        statement: statement.trim().to_owned(),
-        scope: default_scope(source_kind),
-        confidence: source_confidence(source_kind, &disposition),
+    native_record(
+        format!("line:{}", index + 1),
+        statement.trim(),
+        default_scope(source_kind),
+        source_confidence(source_kind, &disposition),
         disposition,
-        asserted_at: None,
-        effective_from: None,
-        effective_until: None,
-        receipt_observed_at: None,
-        receipt_expires_at: None,
-    }
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 fn default_scope(source_kind: &str) -> String {
@@ -1027,7 +1664,12 @@ fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
         .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
-fn repository_trust_class(repo: &Path, source: &Path, source_kind: &str, source_bytes: &[u8]) -> &'static str {
+fn repository_trust_class(
+    repo: &Path,
+    source: &Path,
+    source_kind: &str,
+    source_bytes: &[u8],
+) -> &'static str {
     let tracked = std::process::Command::new("git")
         .args(["ls-files", "--error-unmatch"])
         .arg(source)
@@ -1054,7 +1696,12 @@ fn repository_trust_class(repo: &Path, source: &Path, source_kind: &str, source_
         return "merged-default";
     }
     let ancestor = std::process::Command::new("git")
-        .args(["merge-base", "--is-ancestor", "HEAD", &format!("refs/heads/{default_branch}")])
+        .args([
+            "merge-base",
+            "--is-ancestor",
+            "HEAD",
+            &format!("refs/heads/{default_branch}"),
+        ])
         .current_dir(repo)
         .output()
         .is_ok_and(|output| output.status.success());
@@ -1064,22 +1711,38 @@ fn repository_trust_class(repo: &Path, source: &Path, source_kind: &str, source_
     let review_message = git_output(repo, &["log", "-1", "--format=%B", "HEAD"])
         .unwrap_or_default()
         .to_ascii_lowercase();
-    let reviewed = ["reviewed-by:", "approved-by:", "review evidence", "pull request #"]
-        .iter()
-        .any(|marker| review_message.contains(marker));
+    let reviewed = [
+        "reviewed-by:",
+        "approved-by:",
+        "review evidence",
+        "pull request #",
+    ]
+    .iter()
+    .any(|marker| review_message.contains(marker));
     let github_review = source_kind == "github_export"
-        && (source_bytes.windows(b"reviews".len()).any(|window| window == b"reviews")
-            || source_bytes.windows(b"reviewed_at".len()).any(|window| window == b"reviewed_at"));
+        && (source_bytes
+            .windows(b"reviews".len())
+            .any(|window| window == b"reviews")
+            || source_bytes
+                .windows(b"reviewed_at".len())
+                .any(|window| window == b"reviewed_at"));
     if reviewed || github_review {
         return "approved-pr";
     }
     "merged-default"
 }
 
-fn receipt_clock_skew(record: &NativeRecord, proof_clock: &str) -> Option<(&'static str, &'static str, i64)> {
-    for (field, value) in [("observed_at", &record.receipt_observed_at), ("expires_at", &record.receipt_expires_at)] {
+fn receipt_clock_skew(
+    record: &NativeRecord,
+    proof_clock: &str,
+) -> Option<(&'static str, &'static str, i64)> {
+    for (field, value) in [
+        ("observed_at", &record.receipt_observed_at),
+        ("expires_at", &record.receipt_expires_at),
+    ] {
         if let Some(claim) = value {
-            if let Some((direction, seconds)) = crate::time::receipt_clock_skew(claim, proof_clock) {
+            if let Some((direction, seconds)) = crate::time::receipt_clock_skew(claim, proof_clock)
+            {
                 return Some((field, direction, seconds));
             }
         }
@@ -1118,4 +1781,85 @@ fn io_error(error: std::io::Error) -> ContractError {
         false,
         ExitCode::InternalFailure,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_adapters_parse_one_fixture_each() {
+        let codex = r#"{"type":"response_item","id":"codex-1","payload":{"content":[{"type":"text","text":"Codex observed the failing build"}]}}"#;
+        let claude = r#"{"type":"message","uuid":"claude-1","message":{"content":[{"type":"text","text":"Claude observed the regression"}]}}"#;
+        let repo_code = "def parse_native():\n    pass\ninterface Adapter {}\n";
+        let repo_tests = r#"{"schema":"guildhall-command-result/1","id":"command-1","command":["cargo","test"],"stdout":"test passed","exit_status":0,"observed_at":"2026-09-08T10:00:00.000Z"}"#;
+        let git_history = r#"{"id":"commit-1","message":"Merge reviewed change","state":"merged","created_at":"2026-09-08T10:00:00.000Z"}"#;
+        let docs_adr = "---\nadr: 7\ntitle: Use SQLite exports\nstatus: accepted\nsupersedes: 4\n---\n# Use SQLite exports\nStore exports as SQLite.\n";
+        let github_export = r#"{"issues":[{"number":1,"title":"Fix scheduler","body":"The scheduler drops jobs","state":"closed","updatedAt":"2026-09-08T10:00:00.000Z","reviews":[{"author":"alice","state":"APPROVED","updatedAt":"2026-09-08T10:05:00.000Z"}]}]}"#;
+        let runtime_evidence = r#"{"id":"run-1","environment_id":"env-1","environment_owner":"alice","message":"scheduler restarted","state":"deployed","effective_from":"2026-09-08T10:00:00.000Z","effective_until":"2026-09-09T10:00:00.000Z"}"#;
+        let authority_answer = r#"{"id":"answer-1","answer":"Use PostgreSQL 16 for the company ledger","state":"current","asserted_at":"2026-09-08T10:00:00.000Z"}"#;
+
+        let fixtures = [
+            ("codex_jsonl", codex),
+            ("claude_jsonl", claude),
+            ("repo_code", repo_code),
+            ("repo_tests", repo_tests),
+            ("git_history", git_history),
+            ("docs_adr", docs_adr),
+            ("github_export", github_export),
+            ("runtime_evidence", runtime_evidence),
+            ("authority_answer", authority_answer),
+        ];
+        let mut parsed = BTreeMap::new();
+        for (source_kind, fixture) in fixtures {
+            let records = parse_native(source_kind, fixture.as_bytes())
+                .unwrap_or_else(|error| panic!("{source_kind} fixture failed: {error}"));
+            assert!(!records.is_empty(), "{source_kind} produced no records");
+            parsed.insert(source_kind.to_owned(), records);
+        }
+        assert_eq!(parsed["codex_jsonl"][0].native_id, "codex-1");
+        assert_eq!(parsed["claude_jsonl"][0].native_id, "claude-1");
+        assert_eq!(parsed["repo_code"].len(), 2);
+        assert_eq!(parsed["repo_tests"][0].native_id, "command-1");
+        assert_eq!(parsed["git_history"][0].native_id, "commit-1");
+        assert_eq!(parsed["docs_adr"][0].native_id, "adr:7");
+        assert_eq!(parsed["github_export"][0].native_id, "issue:1");
+        assert_eq!(parsed["github_export"][1].native_id, "review:1:0");
+        assert_eq!(
+            parsed["runtime_evidence"][0].environment_id.as_deref(),
+            Some("env-1")
+        );
+        assert_eq!(
+            parsed["runtime_evidence"][0].effective_until.as_deref(),
+            Some("2026-09-09T10:00:00.000Z")
+        );
+        assert_eq!(parsed["authority_answer"][0].native_id, "answer-1");
+    }
+
+    #[test]
+    fn kindex_sqlite_export_parses_nodes_and_edges() {
+        let directory = tempfile::tempdir().expect("temp directory");
+        let path = directory.path().join("kindex.sqlite");
+        let connection = Connection::open(&path).expect("sqlite export");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE nodes(id TEXT PRIMARY KEY, node_type TEXT, title TEXT, content TEXT, payload BLOB, created_at TEXT);
+                CREATE TABLE edges(src TEXT, dst TEXT, relationship TEXT, reason TEXT);
+                INSERT INTO nodes VALUES('node-1', 'concept', 'Adapter', 'Native adapters produce observations', x'7b7d', '2026-09-08T10:00:00.000Z');
+                INSERT INTO edges VALUES('node-1', 'node-2', 'supports', 'fixture evidence');
+                "#,
+            )
+            .expect("kindex fixture schema");
+        let records = parse_kindex_sqlite(&path).expect("kindex sqlite records");
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].native_id, "node-1");
+        assert_eq!(records[0].statement, "Native adapters produce observations");
+        assert_eq!(
+            records[0].asserted_at.as_deref(),
+            Some("2026-09-08T10:00:00.000Z")
+        );
+        assert_eq!(records[1].native_id, "edge:node-1:node-2");
+        assert!(records[1].statement.contains("supports"));
+    }
 }

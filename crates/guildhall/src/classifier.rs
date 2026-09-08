@@ -14,34 +14,77 @@ use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 pub const CLASSIFIER_VERSION: &str = "guildhall-classifier/1";
-const ALLOWED_KINDS: [&str; 6] = ["claim", "question", "decision", "constraint", "rationale", "observation"];
+const ALLOWED_KINDS: [&str; 6] = [
+    "claim",
+    "question",
+    "decision",
+    "constraint",
+    "rationale",
+    "observation",
+];
 const ALLOWED_CONFIDENCE: [&str; 3] = ["high", "medium", "low"];
 const ALLOWED_DESTINATIONS: [&str; 4] = ["personal", "company", "codebase", "none"];
 const MAX_CLASSIFIER_INPUT: usize = 8 * 1024 * 1024;
 
-pub fn run(model: &str, json: bool) -> Result<(), ContractError> {
+pub fn run(
+    provider: Option<&str>,
+    model: Option<&str>,
+    configured_model: &str,
+    json: bool,
+) -> Result<(), ContractError> {
     let mut input = Vec::new();
-    std::io::stdin()
-        .read_to_end(&mut input)
-        .map_err(|error| ContractError::invariant(format!("classifier stdin is unreadable: {error}")))?;
+    std::io::stdin().read_to_end(&mut input).map_err(|error| {
+        ContractError::invariant(format!("classifier stdin is unreadable: {error}"))
+    })?;
     if input.len() > MAX_CLASSIFIER_INPUT {
         return Err(ContractError::limit(
             format!("classifier input exceeds the {MAX_CLASSIFIER_INPUT}-byte bound"),
             json!({"omitted_count": 1}),
         ));
     }
-    let document = crate::json::parse_strict_value(&input)
-        .map_err(|error| ContractError::invariant(format!("classifier input is not a strict JSON object: {error}")))?;
-    let output = if model.starts_with("ollama:") {
-        let name = model.trim_start_matches("ollama:");
-        ollama(name, &document)?
-    } else {
-        deterministic(&document)?
+    let document = crate::json::parse_strict_value(&input).map_err(|error| {
+        ContractError::invariant(format!(
+            "classifier input is not a strict JSON object: {error}"
+        ))
+    })?;
+    let selected_provider = provider.map(str::to_owned).unwrap_or_else(|| {
+        if configured_model.starts_with("ollama:")
+            || model.is_some_and(|model| model.starts_with("ollama:"))
+        {
+            "ollama".to_owned()
+        } else {
+            "deterministic".to_owned()
+        }
+    });
+    let output = match selected_provider.as_str() {
+        "deterministic" => deterministic(&document)?,
+        "ollama" => {
+            let name = model
+                .map(|model| model.trim_start_matches("ollama:"))
+                .or_else(|| configured_model.strip_prefix("ollama:"))
+                .ok_or_else(|| {
+                    unauthorized("Ollama provider requires --model or classifier.model")
+                })?;
+            if name.trim().is_empty() {
+                return Err(unauthorized(
+                    "Ollama provider requires a nonempty model name",
+                ));
+            }
+            ollama(name.trim(), &document)?
+        }
+        other => {
+            return Err(ContractError::invariant(format!(
+                "unsupported classifier provider `{other}`; use deterministic or ollama"
+            )));
+        }
     };
     if json {
         println!("{}", crate::json::canonical_text(&output));
     } else {
-        println!("{}", serde_json::to_string_pretty(&output).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&output).unwrap_or_default()
+        );
     }
     Ok(())
 }
@@ -50,7 +93,9 @@ fn deterministic(document: &Value) -> Result<Value, ContractError> {
     let observations = observations(document)?;
     let mut atoms = Vec::new();
     for observation in observations {
-        let map = observation.as_object().ok_or_else(|| invariant("each observation must be an object"))?;
+        let map = observation
+            .as_object()
+            .ok_or_else(|| invariant("each observation must be an object"))?;
         require_observation(map)?;
         let body = map.get("body").and_then(Value::as_str).unwrap_or_default();
         let base = base_confidence(map);
@@ -59,7 +104,11 @@ fn deterministic(document: &Value) -> Result<Value, ContractError> {
                 "low"
             } else {
                 let hedged = sentence_confidence(&sentence);
-                if base == "medium" && hedged == "high" { "medium" } else { hedged }
+                if base == "medium" && hedged == "high" {
+                    "medium"
+                } else {
+                    hedged
+                }
             };
             atoms.push(atom_from_observation(map, &sentence, confidence));
         }
@@ -117,11 +166,19 @@ fn post_ollama(request: &Value) -> Result<Vec<u8>, ContractError> {
         "POST /api/chat HTTP/1.1\r\nHost: 127.0.0.1:11434\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         body.len()
     );
-    stream.write_all(head.as_bytes()).map_err(|error| unreachable(format!("Ollama transport failed: {error}")))?;
-    stream.write_all(&body).map_err(|error| unreachable(format!("Ollama transport failed: {error}")))?;
-    stream.flush().map_err(|error| unreachable(format!("Ollama transport failed: {error}")))?;
+    stream
+        .write_all(head.as_bytes())
+        .map_err(|error| unreachable(format!("Ollama transport failed: {error}")))?;
+    stream
+        .write_all(&body)
+        .map_err(|error| unreachable(format!("Ollama transport failed: {error}")))?;
+    stream
+        .flush()
+        .map_err(|error| unreachable(format!("Ollama transport failed: {error}")))?;
     let mut response = Vec::new();
-    stream.read_to_end(&mut response).map_err(|error| unreachable(format!("Ollama transport failed: {error}")))?;
+    stream
+        .read_to_end(&mut response)
+        .map_err(|error| unreachable(format!("Ollama transport failed: {error}")))?;
     let split = response
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
@@ -134,7 +191,9 @@ fn post_ollama(request: &Value) -> Result<Vec<u8>, ContractError> {
         .and_then(|code| code.parse::<u16>().ok())
         .ok_or_else(|| unauthorized("Ollama returned a malformed HTTP status"))?;
     if status != 200 {
-        return Err(unauthorized(format!("Ollama returned HTTP status {status}")));
+        return Err(unauthorized(format!(
+            "Ollama returned HTTP status {status}"
+        )));
     }
     let mut body = response[split + 4..].to_vec();
     if header.contains("transfer-encoding:chunked") {
@@ -190,14 +249,23 @@ fn require_observation(map: &Map<String, Value>) -> Result<(), ContractError> {
         "disposition",
         "extraction_version",
     ] {
-        if !map.get(key).and_then(Value::as_str).map(|value| !value.is_empty()).unwrap_or(false) {
-            return Err(invariant(format!("classifier observation is missing nonempty string {key}")));
+        if !map
+            .get(key)
+            .and_then(Value::as_str)
+            .map(|value| !value.is_empty())
+            .unwrap_or(false)
+        {
+            return Err(invariant(format!(
+                "classifier observation is missing nonempty string {key}"
+            )));
         }
     }
     if map.get("body").and_then(Value::as_str).is_none()
         && map.get("body_ref").and_then(Value::as_str).is_none()
     {
-        return Err(invariant("classifier observation must carry body or body_ref"));
+        return Err(invariant(
+            "classifier observation must carry body or body_ref",
+        ));
     }
     Ok(())
 }
@@ -231,9 +299,22 @@ fn base_confidence(map: &Map<String, Value>) -> &'static str {
 fn sentence_confidence(text: &str) -> &'static str {
     let lower = text.to_lowercase();
     const HEDGES: [&str; 16] = [
-        "maybe", "perhaps", "possibly", "probably", "might", "could",
-        "seems", "appears", "not sure", "unclear", "uncertain", "i think",
-        "we think", "as far as i know", "not certain", "hedged",
+        "maybe",
+        "perhaps",
+        "possibly",
+        "probably",
+        "might",
+        "could",
+        "seems",
+        "appears",
+        "not sure",
+        "unclear",
+        "uncertain",
+        "i think",
+        "we think",
+        "as far as i know",
+        "not certain",
+        "hedged",
     ];
     if HEDGES.iter().any(|hedge| lower.contains(hedge)) {
         "low"
@@ -246,9 +327,18 @@ fn sentence_confidence(text: &str) -> &'static str {
 
 fn is_company_statement(lower: &str) -> bool {
     [
-        "architecture", "company policy", "organization", "company-wide",
-        "corporate", "product policy", "standard", "governance", "roadmap",
-        "company decision", "all teams", "every team",
+        "architecture",
+        "company policy",
+        "organization",
+        "company-wide",
+        "corporate",
+        "product policy",
+        "standard",
+        "governance",
+        "roadmap",
+        "company decision",
+        "all teams",
+        "every team",
     ]
     .iter()
     .any(|token| lower.contains(token))
@@ -256,11 +346,34 @@ fn is_company_statement(lower: &str) -> bool {
 
 fn is_codebase_statement(lower: &str) -> bool {
     [
-        "repository", "codebase", "code", "function", "module", "test",
-        "tests", "build", "dependency", "dependencies", "api", "schema",
-        "migration", "service", "scheduler", "worker", "queue", "bug",
-        "compiler", "type", "interface", "library", "branch", "commit",
-        "deployment", "config", "configuration", "database",
+        "repository",
+        "codebase",
+        "code",
+        "function",
+        "module",
+        "test",
+        "tests",
+        "build",
+        "dependency",
+        "dependencies",
+        "api",
+        "schema",
+        "migration",
+        "service",
+        "scheduler",
+        "worker",
+        "queue",
+        "bug",
+        "compiler",
+        "type",
+        "interface",
+        "library",
+        "branch",
+        "commit",
+        "deployment",
+        "config",
+        "configuration",
+        "database",
     ]
     .iter()
     .any(|token| lower.contains(token))
@@ -291,14 +404,33 @@ fn push_sentence(output: &mut Vec<String>, sentence: &str) {
 }
 
 fn atom_from_observation(map: &Map<String, Value>, text: &str, confidence: &str) -> Value {
-    let observation_id = map.get("observation_id").and_then(Value::as_str).unwrap_or_default();
-    let source_kind = map.get("source_kind").and_then(Value::as_str).unwrap_or_default();
-    let source_identity = map.get("source_identity").and_then(Value::as_str).unwrap_or_default();
-    let content_digest = map.get("content_digest").and_then(Value::as_str).unwrap_or_default();
-    let scope = map.get("scope").and_then(Value::as_str).unwrap_or("unscoped");
+    let observation_id = map
+        .get("observation_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let source_kind = map
+        .get("source_kind")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let source_identity = map
+        .get("source_identity")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let content_digest = map
+        .get("content_digest")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let scope = map
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("unscoped");
     let scan: ScanResult = scanner(text);
     let hard_block = scan.taints.iter().any(|taint| taint.hard_block());
-    let mut taints: Vec<String> = scan.taints.iter().map(|taint| taint.as_str().to_owned()).collect();
+    let mut taints: Vec<String> = scan
+        .taints
+        .iter()
+        .map(|taint| taint.as_str().to_owned())
+        .collect();
     if let Some(taint) = crate::classify::provenance_taint(source_kind) {
         let value = taint.as_str().to_owned();
         if !taints.contains(&value) {
@@ -308,18 +440,16 @@ fn atom_from_observation(map: &Map<String, Value>, text: &str, confidence: &str)
     let mut destinations = destination_boundary(source_kind);
     let lower = text.to_lowercase();
     if !hard_block && confidence != "low" {
-        if is_company_statement(&lower) || scope.contains("company") {
+        if is_personal_statement(&lower) {
+            destinations = vec!["personal".to_owned()];
+        } else if is_company_statement(&lower) || scope.contains("company") {
             push_unique(&mut destinations, "company");
-        }
-        if is_codebase_statement(&lower) || scope.contains("repository") {
+        } else if is_codebase_statement(&lower) || scope.contains("repository") {
             push_unique(&mut destinations, "codebase");
         }
     }
-    if hard_block {
+    if hard_block || confidence == "low" {
         destinations = vec!["none".to_owned()];
-    } else if confidence == "low" {
-        destinations.retain(|destination| destination == "personal");
-        push_unique(&mut destinations, "none");
     }
     if destinations.is_empty() {
         destinations.push("none".to_owned());
@@ -346,11 +476,28 @@ fn atom_from_observation(map: &Map<String, Value>, text: &str, confidence: &str)
     })
 }
 
+fn is_personal_statement(lower: &str) -> bool {
+    [
+        " i ",
+        "my ",
+        " me",
+        "myself",
+        "yesterday i",
+        "last night i",
+        "personal anecdote",
+        "private atom",
+    ]
+    .iter()
+    .any(|token| lower.starts_with(token.trim_start()) || lower.contains(token))
+        || lower.starts_with("i ")
+}
+
 fn destination_boundary(source_kind: &str) -> Vec<String> {
     match source_kind {
-        "codex_jsonl" | "claude_jsonl" => vec!["personal".to_owned()],
+        "codex_jsonl" | "claude_jsonl" => Vec::new(),
         "company" | "authority_answer" => vec!["company".to_owned()],
-        "repo_code" | "repo_tests" | "git_history" | "docs_adr" | "github_export" | "runtime_evidence" | "kindex" => {
+        "repo_code" | "repo_tests" | "git_history" | "docs_adr" | "github_export"
+        | "runtime_evidence" | "kindex" => {
             vec!["codebase".to_owned()]
         }
         _ => Vec::new(),
@@ -359,21 +506,44 @@ fn destination_boundary(source_kind: &str) -> Vec<String> {
 
 fn infer_kind(text: &str) -> &'static str {
     let lower = text.to_lowercase();
-    if lower.contains('?') || lower.starts_with("what ") || lower.starts_with("why ") || lower.starts_with("how ") {
+    if lower.contains('?')
+        || lower.starts_with("what ")
+        || lower.starts_with("why ")
+        || lower.starts_with("how ")
+    {
         "question"
     } else if [
-        "must", "required", "shall", "always", "never", "do not",
-        "don't", "only", "forbid", "forbidden", "ensure",
+        "must",
+        "required",
+        "shall",
+        "always",
+        "never",
+        "do not",
+        "don't",
+        "only",
+        "forbid",
+        "forbidden",
+        "ensure",
     ]
     .iter()
     .any(|token| lower.contains(token))
     {
         "constraint"
-    } else if lower.contains("because") || lower.contains("rationale") || lower.contains("the reason is") {
+    } else if lower.contains("because")
+        || lower.contains("rationale")
+        || lower.contains("the reason is")
+    {
         "rationale"
     } else if [
-        "we decided", "decision", "we choose", "we chose", "use ",
-        "adopt", "selected", "preferred approach", "agreed to",
+        "we decided",
+        "decision",
+        "we choose",
+        "we chose",
+        "use ",
+        "adopt",
+        "selected",
+        "preferred approach",
+        "agreed to",
     ]
     .iter()
     .any(|token| lower.contains(token))
@@ -391,40 +561,90 @@ fn push_unique(values: &mut Vec<String>, value: &str) {
 }
 
 pub fn validate_output(document: &Value) -> Result<(), ContractError> {
-    let map = document.as_object().ok_or_else(|| unauthorized("classifier output must be an object"))?;
+    let map = document
+        .as_object()
+        .ok_or_else(|| unauthorized("classifier output must be an object"))?;
     let mut keys: Vec<&str> = map.keys().map(String::as_str).collect();
     keys.sort_unstable();
     if keys != ["atoms", "classifier_version", "provider"] {
-        return Err(unauthorized("classifier output keys violate the strict contract"));
+        return Err(unauthorized(
+            "classifier output keys violate the strict contract",
+        ));
     }
-    if !["deterministic", "ollama"].contains(&map.get("provider").and_then(Value::as_str).unwrap_or_default()) {
-        return Err(unauthorized("classifier provider is outside the closed vocabulary"));
+    if !["deterministic", "ollama"].contains(
+        &map.get("provider")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    ) {
+        return Err(unauthorized(
+            "classifier provider is outside the closed vocabulary",
+        ));
     }
-    let _ = map.get("classifier_version").and_then(Value::as_str).filter(|value| !value.is_empty())
+    let _ = map
+        .get("classifier_version")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
         .ok_or_else(|| unauthorized("classifier_version must be a nonempty string"))?;
-    let atoms = map.get("atoms").and_then(Value::as_array).ok_or_else(|| unauthorized("atoms must be an array"))?;
+    let atoms = map
+        .get("atoms")
+        .and_then(Value::as_array)
+        .ok_or_else(|| unauthorized("atoms must be an array"))?;
     for atom in atoms {
-        let atom = atom.as_object().ok_or_else(|| unauthorized("each atom must be an object"))?;
+        let atom = atom
+            .as_object()
+            .ok_or_else(|| unauthorized("each atom must be an object"))?;
         let mut keys: Vec<&str> = atom.keys().map(String::as_str).collect();
         keys.sort_unstable();
-        if keys != ["atom_id", "atom_kind", "confidence", "observation_id", "proposed_destinations", "provenance", "scope", "taint", "text", "unresolved_uncertainty"] {
+        if keys
+            != [
+                "atom_id",
+                "atom_kind",
+                "confidence",
+                "observation_id",
+                "proposed_destinations",
+                "provenance",
+                "scope",
+                "taint",
+                "text",
+                "unresolved_uncertainty",
+            ]
+        {
             return Err(unauthorized("atom keys violate the strict contract"));
         }
-        for key in ["atom_id", "observation_id", "text", "scope", "unresolved_uncertainty"] {
+        for key in [
+            "atom_id",
+            "observation_id",
+            "text",
+            "scope",
+            "unresolved_uncertainty",
+        ] {
             if !atom.get(key).map(Value::is_string).unwrap_or(false) {
                 return Err(unauthorized(format!("atom.{key} must be a string")));
             }
         }
-        if !ALLOWED_KINDS.contains(&atom.get("atom_kind").and_then(Value::as_str).unwrap_or_default())
-            || !ALLOWED_CONFIDENCE.contains(&atom.get("confidence").and_then(Value::as_str).unwrap_or_default()) {
-            return Err(unauthorized("atom atom_kind or confidence is outside the closed vocabulary"));
+        if !ALLOWED_KINDS.contains(
+            &atom
+                .get("atom_kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ) || !ALLOWED_CONFIDENCE.contains(
+            &atom
+                .get("confidence")
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ) {
+            return Err(unauthorized(
+                "atom atom_kind or confidence is outside the closed vocabulary",
+            ));
         }
         let Some(destinations) = atom.get("proposed_destinations").and_then(Value::as_array) else {
             return Err(unauthorized("atom proposed_destinations must be an array"));
         };
         for destination in destinations {
             if !ALLOWED_DESTINATIONS.contains(&destination.as_str().unwrap_or_default()) {
-                return Err(unauthorized("atom destination is outside the closed vocabulary"));
+                return Err(unauthorized(
+                    "atom destination is outside the closed vocabulary",
+                ));
             }
         }
         let Some(taints) = atom.get("taint").and_then(Value::as_array) else {
@@ -433,11 +653,16 @@ pub fn validate_output(document: &Value) -> Result<(), ContractError> {
         if taints.iter().any(|value| !value.is_string()) {
             return Err(unauthorized("atom taint entries must be strings"));
         }
-        let provenance = atom.get("provenance").and_then(Value::as_object).ok_or_else(|| unauthorized("atom provenance must be an object"))?;
+        let provenance = atom
+            .get("provenance")
+            .and_then(Value::as_object)
+            .ok_or_else(|| unauthorized("atom provenance must be an object"))?;
         let mut provenance_keys: Vec<&str> = provenance.keys().map(String::as_str).collect();
         provenance_keys.sort_unstable();
         if provenance_keys != ["content_digest", "source_identity", "source_kind"] {
-            return Err(unauthorized("atom provenance keys violate the strict contract"));
+            return Err(unauthorized(
+                "atom provenance keys violate the strict contract",
+            ));
         }
         for value in provenance.values() {
             if !value.is_string() {
@@ -468,4 +693,54 @@ fn unreachable(message: impl Into<String>) -> ContractError {
         true,
         ExitCode::DependencyUnavailable,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deterministic_provider_routes_mixed_atoms_to_different_destinations() {
+        let document = json!({
+            "observations": [{
+                "observation_id": "obs-mixed",
+                "source_kind": "codex_jsonl",
+                "source_identity": "source:test",
+                "content_digest": "digest",
+                "observed_at": "2026-09-08T10:00:00.000Z",
+                "disposition": "current",
+                "extraction_version": "1",
+                "scope": "mixed",
+                "body": "I kept my personal notes yesterday. The repository must never commit generated fixtures. Every organization-wide architecture decision must use company review. Maybe we should ask whether this is correct."
+            }]
+        });
+        let output = deterministic(&document).expect("deterministic classifier");
+        let atoms = output
+            .get("atoms")
+            .and_then(Value::as_array)
+            .expect("atoms");
+        assert_eq!(atoms.len(), 4);
+        assert_eq!(
+            atoms[0].get("proposed_destinations").unwrap(),
+            &json!(["personal"])
+        );
+        assert_eq!(
+            atoms[1].get("proposed_destinations").unwrap(),
+            &json!(["codebase"])
+        );
+        assert_eq!(
+            atoms[2].get("proposed_destinations").unwrap(),
+            &json!(["company"])
+        );
+        assert_eq!(
+            atoms[3].get("proposed_destinations").unwrap(),
+            &json!(["none"])
+        );
+        assert_eq!(atoms[3].get("confidence").unwrap(), "low");
+        assert!(
+            atoms
+                .iter()
+                .any(|atom| atom.get("confidence") == Some(&Value::String("low".to_owned())))
+        );
+    }
 }

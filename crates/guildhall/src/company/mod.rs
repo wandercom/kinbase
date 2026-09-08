@@ -19,10 +19,18 @@ use std::path::Path;
 /// `.pub` sibling is created when absent (never a private replacement).
 pub fn load_root_key(config: &ServiceConfig) -> Result<PrivateKey, ContractError> {
     let key = PrivateKey::load(&config.root_key_file, "Company root key")?;
-    let public_path = std::path::PathBuf::from(format!("{}.pub", config.root_key_file.to_string_lossy().trim_end_matches(".key")));
-    let alt_public = std::path::PathBuf::from(format!("{}.pub", config.root_key_file.to_string_lossy()));
+    let public_path = std::path::PathBuf::from(format!(
+        "{}.pub",
+        config
+            .root_key_file
+            .to_string_lossy()
+            .trim_end_matches(".key")
+    ));
+    let alt_public =
+        std::path::PathBuf::from(format!("{}.pub", config.root_key_file.to_string_lossy()));
     if !public_path.exists() && !alt_public.exists() {
-        key.public().save_new(&public_path, "Company root public key")?;
+        key.public()
+            .save_new(&public_path, "Company root public key")?;
     }
     Ok(key)
 }
@@ -51,9 +59,21 @@ pub fn init(config_path: &Path, json_output: bool) -> Result<(), ContractError> 
     let root = load_root_key(&config)?;
     for (path, prefix, role) in [
         (Some(&config.facts_token_file), "facts-", "facts token"),
-        (config.directory_token_file.as_ref(), "dir-", "directory token"),
-        (config.admin_token_file.as_ref(), "admin-", "administrative token"),
-        (config.authority_token_file.as_ref(), "auth-", "authority token"),
+        (
+            config.directory_token_file.as_ref(),
+            "dir-",
+            "directory token",
+        ),
+        (
+            config.admin_token_file.as_ref(),
+            "admin-",
+            "administrative token",
+        ),
+        (
+            config.authority_token_file.as_ref(),
+            "auth-",
+            "authority token",
+        ),
     ] {
         if let Some(path) = path {
             if ensure_token_file(path, prefix, role)? {
@@ -97,11 +117,18 @@ pub fn serve(config_path: &Path, json_output: bool) -> Result<(), ContractError>
 
 /// Steward helper: sign a JSON document with the Company root key as one of
 /// the closed message types and print it.
-pub fn sign(config_path: &Path, message_type: &str, document_path: &Path, json_output: bool) -> Result<(), ContractError> {
+pub fn sign(
+    config_path: &Path,
+    message_type: &str,
+    document_path: &Path,
+    json_output: bool,
+) -> Result<(), ContractError> {
     let config = load_service_config(config_path)?;
     let root = load_root_key(&config)?;
     let bytes = crate::paths::read_bounded(document_path, 1024 * 1024, "document")?;
-    let document = crate::json::parse_strict_value(&bytes).map_err(|error| ContractError::invariant(format!("document is not canonical JSON ({error})")))?;
+    let document = crate::json::parse_strict_value(&bytes).map_err(|error| {
+        ContractError::invariant(format!("document is not canonical JSON ({error})"))
+    })?;
     let signed = root.sign_document(message_type, &document)?;
     crate::output::emit(&signed, json_output);
     Ok(())
@@ -110,14 +137,33 @@ pub fn sign(config_path: &Path, message_type: &str, document_path: &Path, json_o
 /// Steward helper: publish a signed document to the running service using
 /// the administrative token (falls back to the facts token for endpoints
 /// that accept it).
-pub fn publish(config_path: &Path, endpoint: &str, document_path: &Path, json_output: bool) -> Result<(), ContractError> {
+pub fn publish(
+    config_path: &Path,
+    endpoint: &str,
+    document_path: &Path,
+    json_output: bool,
+) -> Result<(), ContractError> {
     let config = load_service_config(config_path)?;
     let bytes = crate::paths::read_bounded(document_path, 1024 * 1024, "document")?;
-    let document = crate::json::parse_strict_value(&bytes).map_err(|error| ContractError::invariant(format!("document is not canonical JSON ({error})")))?;
-    let token_path = config.admin_token_file.as_ref().unwrap_or(&config.facts_token_file);
+    let document = crate::json::parse_strict_value(&bytes).map_err(|error| {
+        ContractError::invariant(format!("document is not canonical JSON ({error})"))
+    })?;
+    let token_path = config
+        .admin_token_file
+        .as_ref()
+        .unwrap_or(&config.facts_token_file);
     let token = crate::config::TokenRecord::load(token_path, "administrative token")?;
-    let client_key = PrivateKey::load_or_generate(&crate::paths::config_dir().join("steward-client.key"), "steward client key")?;
-    let client = client::Client::new(&format!("http://{}", config.bind), token, client_key, None, crate::paths::config_dir().join("steward-cache"))?;
+    let client_key = PrivateKey::load_or_generate(
+        &crate::paths::config_dir().join("steward-client.key"),
+        "steward client key",
+    )?;
+    let client = client::Client::new(
+        &format!("http://{}", config.bind),
+        token,
+        client_key,
+        None,
+        crate::paths::config_dir().join("steward-cache"),
+    )?;
     let response = client.post(endpoint, &document)?;
     let mut result = json!({"status": response.status, "response": response.body});
     if response.status >= 400 {

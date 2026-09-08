@@ -31,7 +31,8 @@ pub fn emit(value: &Value, json: bool) {
 /// Canonical single-line JSON (falls back to serde_json when the value is
 /// outside the canonical data model, e.g. contains floats in diagnostics).
 pub fn single_line(value: &Value) -> String {
-    crate::json::try_canonical_text(value).unwrap_or_else(|_| serde_json::to_string(value).unwrap_or_else(|_| "{}".to_owned()))
+    crate::json::try_canonical_text(value)
+        .unwrap_or_else(|_| serde_json::to_string(value).unwrap_or_else(|_| "{}".to_owned()))
 }
 
 /// A structured diagnostic on stderr: one JSON object per line, never raw

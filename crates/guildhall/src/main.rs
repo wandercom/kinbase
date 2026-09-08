@@ -1,5 +1,5 @@
-pub use guildhall::cli::{parse_or_exit, run};
 pub use guildhall::Cli;
+pub use guildhall::cli::{parse_or_exit, run};
 
 fn main() {
     if std::env::args().nth(1).as_deref() == Some("__probe") {

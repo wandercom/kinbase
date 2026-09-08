@@ -42,14 +42,20 @@ impl<'de> Deserialize<'de> for Bp {
         let value = Value::deserialize(deserializer)?;
         match value {
             Value::Number(number) => {
-                let raw = number.as_i64().ok_or_else(|| serde::de::Error::custom("basis points must be an integer"))?;
+                let raw = number
+                    .as_i64()
+                    .ok_or_else(|| serde::de::Error::custom("basis points must be an integer"))?;
                 if !(0..=10_000).contains(&raw) {
-                    return Err(serde::de::Error::custom("basis points must be within 0..=10000"));
+                    return Err(serde::de::Error::custom(
+                        "basis points must be within 0..=10000",
+                    ));
                 }
                 Ok(Bp(raw as u16))
             }
             Value::String(text) => match text.to_lowercase().as_str() {
-                "high" | "critical" | "safety" | "safety_critical" | "irreversible" => Ok(Bp(9_000)),
+                "high" | "critical" | "safety" | "safety_critical" | "irreversible" => {
+                    Ok(Bp(9_000))
+                }
                 "medium" | "moderate" => Ok(Bp(6_000)),
                 "low" | "advisory" | "reversible" => Ok(Bp(3_000)),
                 "none" | "" => Ok(Bp(0)),
@@ -60,7 +66,9 @@ impl<'de> Deserialize<'de> for Bp {
                     .map(Bp)
                     .ok_or_else(|| serde::de::Error::custom("unrecognized qualitative score")),
             },
-            _ => Err(serde::de::Error::custom("score must be an integer or qualitative label")),
+            _ => Err(serde::de::Error::custom(
+                "score must be an integer or qualitative label",
+            )),
         }
     }
 }
@@ -99,16 +107,28 @@ pub const ACTION_DISPOSITIONS: [&str; 8] = [
 pub fn disposition_is_negative(disposition: &str) -> bool {
     matches!(
         disposition,
-        "rejected" | "reverted" | "retracted" | "withdrawn" | "expired" | "never_true" | "superseded"
+        "rejected"
+            | "reverted"
+            | "retracted"
+            | "withdrawn"
+            | "expired"
+            | "never_true"
+            | "superseded"
     )
 }
 
 pub fn disposition_is_transient(disposition: &str) -> bool {
-    matches!(disposition, "draft" | "proposed" | "open" | "incident" | "experiment" | "workaround")
+    matches!(
+        disposition,
+        "draft" | "proposed" | "open" | "incident" | "experiment" | "workaround"
+    )
 }
 
 pub fn disposition_is_durable(disposition: &str) -> bool {
-    matches!(disposition, "approved" | "accepted" | "merged" | "deployed" | "current")
+    matches!(
+        disposition,
+        "approved" | "accepted" | "merged" | "deployed" | "current"
+    )
 }
 
 /// The action name of a lifecycle message, from either `disposition` or a
@@ -275,7 +295,13 @@ pub struct CompanyReference {
     pub fact_version: Option<String>,
 }
 
-pub const RELATIONS: [&str; 5] = ["applies", "specializes", "implements", "contradicts", "exception_request"];
+pub const RELATIONS: [&str; 5] = [
+    "applies",
+    "specializes",
+    "implements",
+    "contradicts",
+    "exception_request",
+];
 pub const CRITICALITIES: [&str; 3] = ["advisory", "safety", "safety_critical"];
 
 pub fn criticality_is_safety(value: &str) -> bool {
@@ -371,7 +397,14 @@ pub struct UnknownEvent {
 }
 
 /// Closed Unknown statuses and degraded policies (P-6).
-pub const UNKNOWN_STATUSES: [&str; 6] = ["open", "asked", "closed", "abandoned", "superseded", "reopened"];
+pub const UNKNOWN_STATUSES: [&str; 6] = [
+    "open",
+    "asked",
+    "closed",
+    "abandoned",
+    "superseded",
+    "reopened",
+];
 pub const EXPIRY_POLICIES: [&str; 3] = [
     "block_dependent_decision",
     "reversible_sandbox_only_experiment",
@@ -381,8 +414,12 @@ pub const EXPIRY_POLICIES: [&str; 3] = [
 /// Normalize a planted policy spelling to the closed vocabulary.
 pub fn normalize_policy(value: &str) -> &'static str {
     match value {
-        "sandbox" | "sandbox-only-experiment" | "reversible_sandbox_only_experiment" => "reversible_sandbox_only_experiment",
-        "exception" | "named-human-exception" | "named_human_granted_exception" => "named_human_granted_exception",
+        "sandbox" | "sandbox-only-experiment" | "reversible_sandbox_only_experiment" => {
+            "reversible_sandbox_only_experiment"
+        }
+        "exception" | "named-human-exception" | "named_human_granted_exception" => {
+            "named_human_granted_exception"
+        }
         _ => "block_dependent_decision",
     }
 }
@@ -455,7 +492,10 @@ impl FactEvent {
         if self.confidence.0 > MAX_CONFIDENCE || self.distortion.loss_if_absent > MAX_CONFIDENCE {
             return Err("confidence and loss are basis points in 0..=10000".to_owned());
         }
-        if !matches!(self.store_kind.as_str(), "company" | "codebase" | "personal") {
+        if !matches!(
+            self.store_kind.as_str(),
+            "company" | "codebase" | "personal"
+        ) {
             return Err("store_kind must be company, codebase, or personal".to_owned());
         }
         crate::time::parse_rfc3339_millis(&self.asserted_at)?;
@@ -463,7 +503,8 @@ impl FactEvent {
         if let Some(until) = &self.effective_until {
             crate::time::parse_rfc3339_millis(until)?;
         }
-        if self.authority_scope.is_empty() || self.logical_key.is_empty() || self.fact_id.is_empty() {
+        if self.authority_scope.is_empty() || self.logical_key.is_empty() || self.fact_id.is_empty()
+        {
             return Err("authority_scope, logical_key, and fact_id are required".to_owned());
         }
         for forbidden in ['*', '%', '?', '\0'] {
@@ -476,7 +517,10 @@ impl FactEvent {
         }
         for reference in &self.company_refs {
             if !RELATIONS.contains(&reference.relation.as_str()) {
-                return Err(format!("unsupported company reference relation {}", reference.relation));
+                return Err(format!(
+                    "unsupported company reference relation {}",
+                    reference.relation
+                ));
             }
             if !CRITICALITIES.contains(&reference.company_criticality.as_str()) {
                 return Err("company_criticality must be advisory or safety_critical".to_owned());
@@ -648,7 +692,10 @@ impl UnknownEvent {
 pub fn fact_id(store_kind: &str, scope: &str, statement: &str) -> String {
     format!(
         "fact_{}",
-        &crate::hash::sha256_text(&format!("{store_kind}\0{scope}\0{}", crate::scanner::squeeze(statement)))[..40]
+        &crate::hash::sha256_text(&format!(
+            "{store_kind}\0{scope}\0{}",
+            crate::scanner::squeeze(statement)
+        ))[..40]
     )
 }
 
@@ -659,10 +706,17 @@ pub fn logical_key(store_kind: &str, authority_scope: &str, subject: &str) -> St
     )
 }
 
-pub fn event_id(fact_id: &str, statement_digest: &str, asserted_at: &str, signer_hint: &str) -> String {
+pub fn event_id(
+    fact_id: &str,
+    statement_digest: &str,
+    asserted_at: &str,
+    signer_hint: &str,
+) -> String {
     format!(
         "event_{}",
-        &crate::hash::sha256_text(&format!("{fact_id}\0{statement_digest}\0{asserted_at}\0{signer_hint}"))[..40]
+        &crate::hash::sha256_text(&format!(
+            "{fact_id}\0{statement_digest}\0{asserted_at}\0{signer_hint}"
+        ))[..40]
     )
 }
 
