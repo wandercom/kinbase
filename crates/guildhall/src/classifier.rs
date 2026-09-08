@@ -185,7 +185,21 @@ pub(crate) fn deterministic(document: &Value) -> Result<Value, ContractError> {
                     hedged
                 }
             };
-            atoms.push(atom_from_observation(map, &sentence, confidence, None));
+            let mut atom = atom_from_observation(map, &sentence, confidence, None);
+            // A sentence that no destination rule places is not a
+            // high-confidence `none`: the rule provider has no evidence of
+            // ownership, so it abstains at low confidence rather than guess.
+            if confidence != "low"
+                && atom.get("proposed_destinations") == Some(&json!(["none"]))
+                && !atom_hard_blocked(&atom)
+            {
+                atom = atom_from_observation(map, &sentence, "low", None);
+                atom["unresolved_uncertainty"] = Value::String(
+                    "no destination rule matched; ownership is ambiguous and the label was demoted to none"
+                        .to_owned(),
+                );
+            }
+            atoms.push(atom);
         }
     }
     Ok(json!({
@@ -599,7 +613,7 @@ fn sentence_confidence(text: &str) -> &'static str {
 fn is_nonfact_statement(text: &str) -> bool {
     let trimmed = text.trim();
     let lower = trimmed.to_lowercase();
-    trimmed.ends_with('?')
+    trimmed.contains('?')
         || lower.starts_with("what ")
         || lower.starts_with("why ")
         || lower.starts_with("how ")
@@ -676,18 +690,44 @@ fn is_codebase_statement(lower: &str) -> bool {
     .any(|token| lower.contains(token))
 }
 
+/// Split a body into sentences. A sentence ends at `.`, `!` or `?` only when
+/// the terminator is followed by whitespace (or the end of the text) so that
+/// file names such as `config.py`, decimals and abbreviations do not split;
+/// the terminator stays on the sentence so that a question is still a
+/// question when its confidence is judged.
 fn sentences(body: &str) -> Vec<String> {
-    let normalized = body.replace(['\r', '\n'], ". ");
+    let normalized = body.replace("\r\n", "\n").replace(['\r', '\n'], "\n");
     let mut output = Vec::new();
     let mut current = String::new();
-    let mut characters = normalized.chars().peekable();
-    while let Some(character) = characters.next() {
-        if character == '.' || character == '!' || character == '?' {
+    let characters: Vec<char> = normalized.chars().collect();
+    let mut index = 0;
+    while index < characters.len() {
+        let character = characters[index];
+        if character == '\n' {
             push_sentence(&mut output, &current);
             current.clear();
-        } else {
-            current.push(character);
+            index += 1;
+            continue;
         }
+        current.push(character);
+        if character == '.' || character == '!' || character == '?' {
+            // Swallow a run of terminators (`?!`, `...`) and closing quotes.
+            let mut next = index + 1;
+            while next < characters.len()
+                && matches!(characters[next], '.' | '!' | '?' | '"' | '\'' | ')' | ']')
+            {
+                current.push(characters[next]);
+                next += 1;
+            }
+            let boundary = next >= characters.len() || characters[next].is_whitespace();
+            if boundary {
+                push_sentence(&mut output, &current);
+                current.clear();
+            }
+            index = next;
+            continue;
+        }
+        index += 1;
     }
     push_sentence(&mut output, &current);
     output
@@ -797,6 +837,19 @@ fn atom_from_observation_base(map: &Map<String, Value>, text: &str, confidence: 
         },
         "unresolved_uncertainty": if confidence == "low" { "low-confidence shared labels were demoted to none" } else { "" }
     })
+}
+
+fn atom_hard_blocked(atom: &Value) -> bool {
+    atom.get("taint")
+        .and_then(Value::as_array)
+        .map(|taints| {
+            taints
+                .iter()
+                .filter_map(Value::as_str)
+                .filter_map(crate::scanner::Taint::parse)
+                .any(|taint| taint.hard_block())
+        })
+        .unwrap_or(false)
 }
 
 fn is_personal_statement(lower: &str) -> bool {
