@@ -522,9 +522,39 @@ fn authenticate(
         return Err(fail(db));
     };
     let now_dt = crate::time::parse_rfc3339_millis(now).unwrap_or_else(|_| crate::time::now_utc());
-    if expires <= now_dt
-        || expires.signed_duration_since(now_dt).num_seconds() > REQUEST_EXPIRY_MAX_SECONDS
-    {
+    // R-14: the request expiry is a receipt-time claim. More than the
+    // configured skew bound ahead of or behind the proof clock is quarantined
+    // as CLOCK_SKEW; an expiry within the bound but already past is an
+    // ordinary expired request.
+    let skew_seconds = expires.signed_duration_since(now_dt).num_seconds();
+    let skew_bound = state.config.clock_skew_seconds.max(0);
+    if skew_seconds.abs() > skew_bound {
+        let _ = db.record_auth_failure(minute);
+        let direction = if skew_seconds > 0 { "ahead" } else { "behind" };
+        let _ = db.audit(
+            "request-clock-skew",
+            &json!({"client_key": client_key, "direction": direction, "skew_seconds": skew_seconds, "bound_seconds": skew_bound, "expires_at": expires_at, "proof_clock": now}),
+        );
+        return Err((
+            401,
+            ContractError::refused(
+                "AUTHORITY_SCOPE_DENIED",
+                format!(
+                    "request expiry claim is {} seconds {direction} of the proof clock; quarantined as CLOCK_SKEW until the owner supplies a corrected receipt time",
+                    skew_seconds.abs()
+                ),
+                "Correct the client clock or the request expiry; receipt-time claims must lie within the five-minute skew bound.",
+            )
+            .with_detail(json!({
+                "disposition": "CLOCK_SKEW",
+                "direction": direction,
+                "skew_seconds": skew_seconds,
+                "bound_seconds": skew_bound,
+                "field": "expires_at"
+            })),
+        ));
+    }
+    if expires <= now_dt || skew_seconds > REQUEST_EXPIRY_MAX_SECONDS {
         return Err(fail(db));
     }
     let Ok(key) = PublicKey::from_hex(&client_key) else {

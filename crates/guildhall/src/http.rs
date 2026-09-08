@@ -236,7 +236,16 @@ pub fn error_body(error: &ContractError) -> Value {
     if compact.remediation.len() > 1024 {
         compact.remediation.truncate(1024);
     }
-    compact.detail = None;
+    // Structured detail is privacy-minimized by construction (counts, ids,
+    // dispositions, digests); it stays in the body only while it is small,
+    // so refusals such as a ceiling stop or a CLOCK_SKEW quarantine remain
+    // typed for the caller inside the 4096-byte bound.
+    let small_detail = compact
+        .detail
+        .as_ref()
+        .filter(|detail| detail.is_object() && crate::json::canonical_bytes(detail).len() <= 1024)
+        .cloned();
+    compact.detail = small_detail;
     serde_json::json!({"error": compact})
 }
 
