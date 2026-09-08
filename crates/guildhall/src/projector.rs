@@ -151,6 +151,12 @@ pub fn run(
         .filter(|unknown| unknown.status == "open" || unknown.status == "asked")
         .cloned()
         .collect();
+    // Low-distortion Unknowns are represented, but only a high-distortion
+    // Unknown blocks dependent trusted guidance.
+    let has_blocking_unknown = open_unknowns.iter().any(|unknown| {
+        unknown.loss_if_absent >= 7_000
+            && (unknown.decision_blocked == decision || unknown.scope.starts_with("architecture:"))
+    });
 
     let mut selected: Vec<CurrentFact> = Vec::new();
     let mut selection_trace = Vec::new();
@@ -227,13 +233,13 @@ pub fn run(
             }
         }));
         selected.push((*fact).clone());
-        if is_authority_answer(fact) && open_unknowns.is_empty() {
+        if is_authority_answer(fact) && !has_blocking_unknown {
             sufficiency = true;
             break;
         }
     }
 
-    let question_id = if open_unknowns.is_empty() {
+    let question_id = if !has_blocking_unknown {
         None
     } else {
         let evidence: Vec<String> = selected
@@ -333,7 +339,7 @@ pub fn run(
         .as_ref()
         .and_then(|record| crate::json::get_str(record, "dominating_input").map(str::to_owned));
     let cache_state_constructed = launcher.company_cache()?.is_some();
-    let recommendation = if open_unknowns.is_empty() {
+    let recommendation = if !has_blocking_unknown {
         selected
             .iter()
             .find(|fact| is_authority_answer(fact))
@@ -365,7 +371,7 @@ pub fn run(
             .any(|unknown| unknown.loss_if_absent >= 7_500)
     {
         "block_dependent_decision"
-    } else if open_unknowns.is_empty() && !advisory_is_degraded {
+    } else if !has_blocking_unknown && !advisory_is_degraded {
         "block_dependent_decision"
     } else {
         "reversible_sandbox_only_experiment"
@@ -376,7 +382,14 @@ pub fn run(
         "as_of_source": as_of.as_of_source,
         "ambient_clock_read": false,
         "candidates": candidate_values.into_iter().chain(unknowns.iter().map(unknown_value)).collect::<Vec<_>>(),
-        "selected": selected.iter().map(|fact| json!({"fact_id": fact.fact_id, "logical_key": fact.logical_key})).collect::<Vec<_>>(),
+        "selected": selected.iter().map(|fact| json!({
+            "fact_id": fact.fact_id,
+            "logical_key": fact.logical_key,
+            "role": candidate_role(fact, &facts).0,
+            "resident": working.contains(fact.fact_id.as_str()),
+            "reselected": false,
+            "selection_reason": if working.contains(fact.fact_id.as_str()) { "working_set_resident" } else { "positive_conditional_marginal_value" }
+        })).collect::<Vec<_>>(),
         "selection_trace": selection_trace,
         "tier_escalation": tier_escalation,
         "projection_bytes": projection_bytes,
@@ -401,7 +414,7 @@ pub fn run(
             .as_ref()
             .and_then(|record| crate::json::get_str(record, "max_rule")),
         "dominating_input": dominating_input,
-        "projection_state": if open_unknowns.is_empty() { "projected" } else { "withheld" },
+        "projection_state": if has_blocking_unknown { "withheld" } else { "projected" },
         "omitted_count": omitted_count
     });
 
@@ -533,10 +546,17 @@ fn event_candidate_value(
         .effective_until
         .as_deref()
         .is_some_and(|until| until <= as_of);
+    let invariant = event.distortion.loss_if_absent >= 7_000
+        && matches!(event.atom_kind.as_str(), "constraint" | "decision");
     let (role, reason) = if conflict_event_ids.contains(&event.event_id) {
         (
             "conflict",
             "event participates in a logical-key conflict".to_owned(),
+        )
+    } else if invariant {
+        (
+            "high_distortion_compatibility_invariant",
+            "high-loss durable invariant constrains compatible implementations".to_owned(),
         )
     } else if expired || event.disposition == "expired" {
         ("stale", format!("fact is expired as of {as_of}"))
@@ -560,10 +580,18 @@ fn event_candidate_value(
             "effective_until": event.effective_until
         },
         "role": role,
-        "roles": [if role == "stale" { "stale_fact" } else { role }],
-        "derived_role": if role == "stale" { "stale_fact" } else { role },
+        "roles": if role == "stale" {
+            vec!["stale_fact".to_owned()]
+        } else if invariant && role != "conflict" {
+            vec![role.to_owned(), "current".to_owned()]
+        } else {
+            vec![role.to_owned()]
+        },
+        "derived_role": role,
         "reason": reason,
-        "authority_id": event.authority_id
+        "authority_id": event.authority_id,
+        "owner_role": if event.store_kind == "company" { "company-steward".to_owned() } else { "repository-maintainer".to_owned() },
+        "owner_identity": event.authority_id
     })
 }
 
@@ -673,13 +701,23 @@ fn candidate_value(fact: &CurrentFact, all_facts: &[CurrentFact]) -> Value {
 }
 
 fn unknown_value(unknown: &UnknownOut) -> Value {
+    let role = if unknown.loss_if_absent >= 7_000 {
+        "high_distortion_unknown"
+    } else {
+        "unknown"
+    };
     json!({
-        "role": if unknown.loss_if_absent >= 7_000 { "high_distortion_unknown" } else { "unknown" },
-        "roles": [if unknown.loss_if_absent >= 7_000 { "high_distortion_unknown" } else { "unknown" }],
-        "derived_role": if unknown.loss_if_absent >= 7_000 { "high_distortion_unknown" } else { "unknown" },
+        "role": role,
+        "roles": [role],
+        "derived_role": role,
         "owner_role": unknown.owner_role,
         "owner_identity": unknown.owner_identity,
         "logical_key": unknown.logical_key,
+        "unknown_id": unknown.unknown_id,
+        "status": unknown.status,
+        "kind": unknown.kind,
+        "loss_if_absent": unknown.loss_if_absent,
+        "decision_blocked": unknown.decision_blocked,
         "reason": if unknown.kind == "explicit" { format!("{}: {}", unknown.status, unknown.question) } else { format!("{}: {}", unknown.status, unknown.kind) }
     })
 }
@@ -873,11 +911,17 @@ fn complementary_pair(left: &CurrentFact, right: &CurrentFact, decision: &str) -
 }
 
 fn redundancy(fact: &CurrentFact, selected: &[CurrentFact]) -> (i64, String) {
+    let protected_invariant = fact.distortion.loss_if_absent >= 7_000
+        && matches!(fact.atom_kind.as_str(), "constraint" | "decision");
     for existing in selected {
         let explicit = fact.redundancy_with.contains(&existing.fact_id)
             || existing.redundancy_with.contains(&fact.fact_id);
         if explicit {
-            return (-8_000, "explicit_edge".to_owned());
+            return if protected_invariant {
+                (-2_000, "protected_invariant_explicit_edge".to_owned())
+            } else {
+                (-8_000, "explicit_edge".to_owned())
+            };
         }
         let fact_support: BTreeSet<&str> = fact
             .support_event_ids
@@ -896,7 +940,11 @@ fn redundancy(fact: &CurrentFact, selected: &[CurrentFact]) -> (i64, String) {
             .collect::<BTreeSet<_>>()
             .is_empty()
         {
-            return (-3_000, "shared_provenance".to_owned());
+            return if protected_invariant {
+                (-1_000, "protected_invariant_shared_provenance".to_owned())
+            } else {
+                (-3_000, "shared_provenance".to_owned())
+            };
         }
     }
     let fact_terms = terms(&fact.statement);
@@ -913,9 +961,23 @@ fn redundancy(fact: &CurrentFact, selected: &[CurrentFact]) -> (i64, String) {
             .saturating_mul(10_000)
             .saturating_div(total);
         if similarity >= 6_000 {
-            // Near-duplicate paraphrases are withheld aggressively once an
-            // invariant has covered their distortion.
-            let penalty = similarity;
+            // A near-duplicate may reduce value, but a distinct high-loss
+            // invariant must remain recoverable. Complementary test/rationale
+            // evidence is likewise capped so its 2500-point gain is reported
+            // separately instead of being erased by lexical redundancy.
+            let complementary = matches!(
+                fact.atom_kind.as_str(),
+                "test" | "runtime_trace" | "test_runtime_evidence" | "rationale"
+            ) && matches!(
+                existing.atom_kind.as_str(),
+                "test" | "runtime_trace" | "test_runtime_evidence" | "rationale"
+            ) && fact.atom_kind != existing.atom_kind;
+            let ceiling = if protected_invariant || complementary {
+                2_000
+            } else {
+                10_000
+            };
+            let penalty = similarity.min(ceiling);
             if penalty > best.0 {
                 best = (penalty, format!("lexical_similarity:{similarity}"));
             }

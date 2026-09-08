@@ -629,6 +629,11 @@ pub(crate) fn load_store(
                     environment_registered: None,
                 }));
             }
+            // Company snapshot and local authority-answer events are Company
+            // records even when a publisher repeats Codebase event bytes.
+            for admitted in &mut events {
+                admitted.event.store_kind = "company".to_owned();
+            }
             let mut unknowns = Vec::new();
             if let Ok(records) =
                 crate::store::read_records(crate::StoreKind::Company, repo, "unknowns.jsonl")

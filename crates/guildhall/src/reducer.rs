@@ -442,25 +442,35 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 retired.insert(event.event_id.clone(), "self-retraction".to_owned());
                 continue;
             }
-            for target in &event.supersedes {
-                // Parent-bound: the superseded event must be in the admitted set
-                // and the superseding authority must not be lower.
-                if let Some(old) = eligible
-                    .iter()
-                    .find(|candidate| candidate.event.event_id == *target)
-                {
-                    let old_rank = authority_rank(&old.event, old.origin_trust.as_deref());
-                    let new_rank = authority_rank(event, admitted.origin_trust.as_deref());
-                    if new_rank >= old_rank && old.event.authority_scope == event.authority_scope {
-                        retired.insert(target.clone(), format!("superseded by {}", event.event_id));
-                    } else {
-                        trace.counterfactual.push(format!(
+            // A rejected or reverted proposal is negative evidence. Its
+            // `supersedes` list describes the change it proposed, not an
+            // authorization to retire the accepted rule it proposed replacing.
+            if !matches!(event.disposition.as_str(), "rejected" | "reverted") {
+                for target in &event.supersedes {
+                    // Parent-bound: the superseded event must be in the admitted set
+                    // and the superseding authority must not be lower.
+                    if let Some(old) = eligible
+                        .iter()
+                        .find(|candidate| candidate.event.event_id == *target)
+                    {
+                        let old_rank = authority_rank(&old.event, old.origin_trust.as_deref());
+                        let new_rank = authority_rank(event, admitted.origin_trust.as_deref());
+                        if new_rank >= old_rank
+                            && old.event.authority_scope == event.authority_scope
+                        {
+                            retired.insert(
+                                target.clone(),
+                                format!("superseded by {}", event.event_id),
+                            );
+                        } else {
+                            trace.counterfactual.push(format!(
                             "{} claims to supersede {} but its authority ({}/{}) does not own that scope; it survives as a conflict",
                             event.event_id, target, event.authority_id, event.authority_scope
                         ));
+                        }
+                    } else if all_event_ids.contains(target.as_str()) {
+                        retired.insert(target.clone(), format!("superseded by {}", event.event_id));
                     }
-                } else if all_event_ids.contains(target.as_str()) {
-                    retired.insert(target.clone(), format!("superseded by {}", event.event_id));
                 }
             }
         }
@@ -1279,7 +1289,31 @@ fn authority_owner_for_scope(
     if let Some(identity) = input.authority_owner_by_scope.get(scope) {
         return Some(identity.clone());
     }
-    fallback_scope.and_then(|scope| input.authority_owner_by_scope.get(scope).cloned())
+    if let Some(fallback) = fallback_scope {
+        if let Some(identity) = input.authority_owner_by_scope.get(fallback) {
+            return Some(identity.clone());
+        }
+    }
+    // Architecture scopes are hierarchical: a leaf diagnosis scope is owned by
+    // its unique registered architecture ancestor. Ambiguous ancestors remain
+    // unresolved so the reducer still raises an owned-registry Unknown.
+    if !scope.starts_with("architecture:") {
+        return None;
+    }
+    let mut resolved: Option<String> = None;
+    let mut prefix = "architecture:".to_owned();
+    for part in scope.split('/').skip(1) {
+        prefix.push_str(part);
+        if let Some(identity) = input.authority_owner_by_scope.get(&prefix) {
+            if resolved.is_none() {
+                resolved = Some(identity.clone());
+            } else if resolved.as_deref() != Some(identity) {
+                return None;
+            }
+        }
+        prefix.push('/');
+    }
+    resolved
 }
 
 fn owner_role_for_scope(input: &ReducerInput, scope: &str) -> &'static str {
@@ -1862,7 +1896,7 @@ mod packet10_tests {
             "company",
             None,
         );
-        let rejected = admitted(
+        let mut rejected = admitted(
             event(
                 "pr-rejected",
                 "newer rejected proposal",
@@ -1875,6 +1909,7 @@ mod packet10_tests {
             "pr",
             None,
         );
+        rejected.event.supersedes = vec!["adr-current".to_owned()];
         let view = reduce(&input(vec![adr, rejected], Vec::new()));
         assert_eq!(view.traces[0].state, "current");
         assert_eq!(
