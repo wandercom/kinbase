@@ -60,14 +60,30 @@ impl AsOf {
         })
     }
 
-    /// Replay a proof-clock value that was persisted at repository creation.
+    /// Replay a proof-clock value that was persisted at repository creation,
+    /// advanced by this invocation's `GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS`
+    /// (interface contract §0, ruling R-14: the offset applies to the proof
+    /// clock every command compares against).
     pub fn recorded(value: &str) -> Result<Self, String> {
         let parsed = parse_rfc3339_millis(value)?;
+        let offset = clock_offset_seconds();
         Ok(Self {
-            as_of: format_rfc3339_millis(parsed),
-            as_of_source: "recorded-proof-clock".to_owned(),
+            as_of: format_rfc3339_millis(parsed + Duration::seconds(offset)),
+            as_of_source: if offset == 0 {
+                "recorded-proof-clock".to_owned()
+            } else {
+                format!("recorded-proof-clock+{offset}s")
+            },
         })
     }
+}
+
+/// Advance a recorded proof-clock instant by this invocation's offset.
+pub fn recorded_with_offset(value: &str) -> Result<String, String> {
+    let parsed = parse_rfc3339_millis(value)?;
+    Ok(format_rfc3339_millis(
+        parsed + Duration::seconds(clock_offset_seconds()),
+    ))
 }
 
 /// `GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS` advances the proof clock by a

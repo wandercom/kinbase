@@ -762,21 +762,33 @@ impl RepoContext {
                     .unwrap_or(reference.company_criticality.as_str());
                 record["company_criticality"] = Value::String(live_company_class.to_owned());
                 record["published_digest_alg_version"] = Value::String(live_digest_alg.to_owned());
+                let company_event_id = company_fact
+                    .as_ref()
+                    .and_then(|value| crate::json::get_str(value, "event_id"))
+                    .map(str::to_owned);
                 let effective_company_class = self.effective_company_class(
                     &repository_uuid,
                     reference,
+                    company_event_id.as_deref(),
+                    exception_requests,
                     live_company_class,
                     as_of,
                 );
-                if let Some(relaxation) = self.active_relaxation(&repository_uuid, reference, as_of)
-                {
+                if let Some(relaxation) = self.active_relaxation(
+                    &repository_uuid,
+                    reference,
+                    company_event_id.as_deref(),
+                    exception_requests,
+                    as_of,
+                ) {
                     record["relaxation"] = json!({
                         "owner": crate::json::get_str(relaxation, "authority_id").unwrap_or("company-steward"),
+                        "event_id": crate::json::get_str(relaxation, "event_id"),
                         "scope": format!("codebase:{repository_uuid}"),
                         "fact_id": reference.fact_id,
                         "fact_version": crate::json::get_str(relaxation, "relaxed_fact_version").unwrap_or("current"),
-                        "relaxed_class": crate::json::get_str(relaxation, "relaxed_class").unwrap_or("advisory"),
-                        "expires_at": crate::json::get_str(relaxation, "expires_at").or_else(|| crate::json::get_str(relaxation, "effective_until")),
+                        "relaxed_class": Self::relaxed_class(relaxation),
+                        "expires_at": crate::json::get_str(relaxation, "expires_at").filter(|value| !value.is_empty()).or_else(|| crate::json::get_str(relaxation, "effective_until")),
                         "changes_effective_class": true
                     });
                 }
@@ -983,37 +995,109 @@ impl RepoContext {
         results
     }
 
+    /// The steward relaxation, if any, that currently applies to this
+    /// repository's reference. Interface contract C13: a relaxation is a
+    /// steward-signed FactEvent whose `parents` name the affected events; it
+    /// is bound to this repository through the maintainer's `exception_request`
+    /// it answers (a Codebase event carrying the certified UUID) and to the
+    /// relaxed fact through that fact's event. Explicit `repository_id` /
+    /// `relaxed_fact_id` fields are honoured when present.
     fn active_relaxation<'a>(
         &'a self,
         repository_uuid: &str,
         reference: &crate::model::CompanyReference,
+        company_event_id: Option<&str>,
+        exception_requests: &[FactEvent],
         as_of: &str,
     ) -> Option<&'a Value> {
+        let request_ids: BTreeSet<&str> = exception_requests
+            .iter()
+            .filter(|event| event.repository_id.as_deref() == Some(repository_uuid))
+            .flat_map(|event| [event.event_id.as_str(), event.fact_id.as_str()])
+            .collect();
         self.trust.relaxations.iter().find(|relaxation| {
-            let repository = crate::json::get_str(relaxation, "repository_id")
-                .or_else(|| crate::json::get_str(relaxation, "repository_uuid"));
-            let fact_id = crate::json::get_str(relaxation, "relaxed_fact_id")
-                .or_else(|| crate::json::get_str(relaxation, "fact_id"));
+            if crate::json::get_str(relaxation, "status").unwrap_or("active") != "active" {
+                return false;
+            }
             let expiry = crate::json::get_str(relaxation, "expires_at")
+                .filter(|value| !value.is_empty())
                 .or_else(|| crate::json::get_str(relaxation, "effective_until"));
-            repository == Some(repository_uuid)
-                && fact_id == Some(reference.fact_id.as_str())
-                && expiry.is_some_and(|until| until > as_of)
-                && crate::json::get_str(relaxation, "status").unwrap_or("active") == "active"
+            if !expiry.is_some_and(|until| until > as_of) {
+                return false;
+            }
+            let parents: Vec<&str> = crate::json::get_array(relaxation, "parents")
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
+            let repository = crate::json::get_str(relaxation, "repository_id")
+                .or_else(|| crate::json::get_str(relaxation, "repository_uuid"))
+                .filter(|value| !value.is_empty());
+            let repository_bound = match repository {
+                Some(bound) => bound == repository_uuid,
+                None => parents.iter().any(|parent| request_ids.contains(parent)),
+            };
+            // Only an explicit `relaxed_fact_id` names the relaxed fact; the
+            // document's own `fact_id` is the relaxation's identity.
+            let fact = crate::json::get_str(relaxation, "relaxed_fact_id")
+                .filter(|value| !value.is_empty());
+            let fact_bound = match fact {
+                Some(bound) => bound == reference.fact_id,
+                None => parents.iter().any(|parent| {
+                    *parent == reference.fact_id
+                        || company_event_id.is_some_and(|event_id| *parent == event_id)
+                }),
+            };
+            repository_bound && fact_bound
         })
+    }
+
+    /// The class a relaxation grants: an explicit `relaxed_class`, else the
+    /// relaxation fact's own Company-owned criticality (ruling R-8).
+    fn relaxed_class(relaxation: &Value) -> String {
+        if let Some(class) = crate::json::get_str(relaxation, "relaxed_class") {
+            return class.to_owned();
+        }
+        match relaxation
+            .get("distortion")
+            .and_then(|distortion| distortion.get("loss_if_absent"))
+        {
+            Some(Value::String(label)) => {
+                if crate::model::criticality_is_safety(label) || label == "high" {
+                    "safety_critical".to_owned()
+                } else {
+                    "advisory".to_owned()
+                }
+            }
+            Some(Value::Number(number)) => {
+                if number.as_i64().unwrap_or(0) >= 7_500 {
+                    "safety_critical".to_owned()
+                } else {
+                    "advisory".to_owned()
+                }
+            }
+            _ => "advisory".to_owned(),
+        }
     }
 
     fn effective_company_class(
         &self,
         repository_uuid: &str,
         reference: &crate::model::CompanyReference,
+        company_event_id: Option<&str>,
+        exception_requests: &[FactEvent],
         live_class: &str,
         as_of: &str,
     ) -> String {
-        self.active_relaxation(repository_uuid, reference, as_of)
-            .and_then(|relaxation| crate::json::get_str(relaxation, "relaxed_class"))
-            .unwrap_or(live_class)
-            .to_owned()
+        self.active_relaxation(
+            repository_uuid,
+            reference,
+            company_event_id,
+            exception_requests,
+            as_of,
+        )
+        .map(Self::relaxed_class)
+        .unwrap_or_else(|| live_class.to_owned())
     }
 
     pub fn repository_uuid(&self) -> Result<String, ContractError> {
@@ -1079,6 +1163,26 @@ fn local_dependence_class(statement: &str) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Exception records in lifecycle order: requests first, then the
+/// relaxations that answer them; ties by signer and event id.
+fn ordered_exceptions(mut exceptions: Vec<Value>) -> Vec<Value> {
+    let rank = |record: &Value| match crate::json::get_str(record, "kind") {
+        Some("exception_request") => 0,
+        _ => 1,
+    };
+    exceptions.sort_by(|left, right| {
+        rank(left).cmp(&rank(right)).then_with(|| {
+            crate::json::get_str(left, "signed_by")
+                .cmp(&crate::json::get_str(right, "signed_by"))
+                .then_with(|| {
+                    crate::json::get_str(left, "event_id")
+                        .cmp(&crate::json::get_str(right, "event_id"))
+                })
+        })
+    });
+    exceptions
 }
 
 /// The role that owns a Company fact, from its authority scope.
@@ -1154,22 +1258,23 @@ fn client_unknown(
     }
 }
 
-/// Replay the proof clock recorded at repository creation.
+/// Replay the proof clock recorded at repository creation, advanced by this
+/// invocation's `GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS` (ruling R-14).
 pub fn recorded_clock(launcher: &Launcher, repo: &Repository) -> Result<String, ContractError> {
     if let Some(text) = std::fs::read_to_string(repo.local_dir().join("proof-clock"))
         .ok()
-        .and_then(|text| crate::time::parse_rfc3339_millis(text.trim()).ok())
+        .and_then(|text| crate::time::recorded_with_offset(text.trim()).ok())
     {
-        return Ok(crate::time::format_rfc3339_millis(text));
+        return Ok(text);
     }
     if let Some(uuid) = repo.uuid_hint() {
         let store = launcher.private_store()?;
         let key = format!("proof-clock:{uuid}");
         if let Some(value) = store
             .meta(&key)?
-            .and_then(|text| crate::time::parse_rfc3339_millis(text.trim()).ok())
+            .and_then(|text| crate::time::recorded_with_offset(text.trim()).ok())
         {
-            return Ok(crate::time::format_rfc3339_millis(value));
+            return Ok(value);
         }
     }
     Err(ContractError::refused(
@@ -2251,6 +2356,29 @@ pub fn status(
     let mut event_records = Vec::new();
     let mut exceptions = Vec::new();
     let mut exception_request_accepted = false;
+    // Steward relaxations live in Company; the snapshot publishes them. They
+    // are accepted only when the document verifies under a steward key.
+    let steward_keys = context.trust.steward_keys();
+    for relaxation in &context.trust.relaxations {
+        let signer = crate::json::get_str(relaxation, "signer").unwrap_or_default();
+        let mut document = relaxation.clone();
+        if let Some(map) = document.as_object_mut() {
+            map.remove("expires_at");
+            map.remove("status");
+        }
+        let verified = PublicKey::verify_document("fact-event", &document)
+            .is_some_and(|key| steward_keys.contains(&key.to_hex()));
+        let steward = steward_keys.contains(signer) && verified;
+        exceptions.push(json!({
+            "signed_by": crate::json::get_str(relaxation, "authority_id").unwrap_or("company-steward"),
+            "kind": "relaxation",
+            "store": "company",
+            "event_id": crate::json::get_str(relaxation, "event_id"),
+            "expires_at": crate::json::get_str(relaxation, "expires_at").filter(|value| !value.is_empty()).or_else(|| crate::json::get_str(relaxation, "effective_until")),
+            "accepted": steward,
+            "refusal_code": if steward { Value::Null } else { Value::String("AUTHORITY_WRONG_SCOPE".to_owned()) }
+        }));
+    }
     let mut misextraction_notices = Vec::new();
     let mut never_true = Vec::new();
     for item in &events {
@@ -2285,21 +2413,25 @@ pub fn status(
             let action = crate::model::action_of(event).unwrap_or(event.atom_kind.as_str());
             match action {
                 "exception_request" => {
+                    // Interface contract C13: the request is a maintainer-signed
+                    // FactEvent bound to this repository whose parents name the
+                    // Company fact it asks to relax, with a bounded expiry.
                     let document = event.document();
+                    let names_target = !event.parents.is_empty()
+                        || !event.supersedes.is_empty()
+                        || crate::json::get_str(&document, "relaxed_fact_id").is_some();
+                    let bounded = event.effective_until.is_some()
+                        || crate::json::get_str(&document, "expires_at").is_some();
                     let bound = event.repository_id.as_deref()
                         == context.trust.repository_uuid.as_deref()
-                        && crate::json::get_str(&document, "relaxed_fact_id").is_some()
-                        && crate::json::get_str(&document, "requested_class")
-                            .is_some_and(|class| crate::model::CRITICALITIES.contains(&class))
-                        && !crate::json::get_str(&document, "reason")
-                            .unwrap_or_default()
-                            .is_empty()
-                        && crate::json::get_str(&document, "expires_at").is_some();
+                        && names_target
+                        && bounded;
                     let accepted = verified && bound;
                     exception_request_accepted = exception_request_accepted || accepted;
                     exceptions.push(json!({
                         "signed_by": event.authority_id,
                         "kind": "exception_request",
+                        "event_id": event.event_id,
                         "accepted": accepted,
                         "refusal_code": if accepted { Value::Null } else { Value::String("CONFIG_INVARIANT".to_owned()) }
                     }));
@@ -2308,7 +2440,8 @@ pub fn status(
                     let steward = context.trust.steward_keys().contains(&event.signer) && verified;
                     exceptions.push(json!({
                         "signed_by": event.authority_id,
-                        "kind": event.atom_kind,
+                        "kind": if action == "relaxation" { "relaxation" } else { event.atom_kind.as_str() },
+                        "event_id": event.event_id,
                         "accepted": steward,
                         "refusal_code": if steward { Value::Null } else { Value::String("AUTHORITY_WRONG_SCOPE".to_owned()) }
                     }));
@@ -2530,7 +2663,7 @@ pub fn status(
         "approver_minted_accepted": !never_true.iter().any(|notice| notice.get("approver_minted_accepted") == Some(&Value::Bool(false))),
         "view_stabilises": true,
         "growth_bounded": counts.total_files <= crate::codebase::EVENT_CEILING,
-        "exceptions": exceptions,
+        "exceptions": ordered_exceptions(exceptions),
         "exception_request_accepted": exception_request_accepted,
         "events": event_records,
         "effective_criticality": effective,
