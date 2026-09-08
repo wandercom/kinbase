@@ -116,6 +116,8 @@ pub enum CorpusCommand {
         as_of: Option<String>,
         #[arg(long)]
         reducer_version: Option<u64>,
+        #[arg(long)]
+        authority_cursor: Option<u64>,
     },
 }
 

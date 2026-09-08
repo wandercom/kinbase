@@ -119,3 +119,20 @@ pub fn seconds_between(earlier: &str, later: &str) -> Result<i64, String> {
     let later = parse_rfc3339_millis(later)?;
     Ok(later.signed_duration_since(earlier).num_seconds())
 }
+
+/// Receipt-time skew (R-14). Returns the direction and signed second offset
+/// only when a receipt claim is more than five minutes from the proof clock.
+/// Historical claims are never passed to this function.
+pub fn receipt_clock_skew(claim: &str, proof_clock: &str) -> Option<(&'static str, i64)> {
+    let Ok(claim) = parse_rfc3339_millis(claim) else {
+        return None;
+    };
+    let Ok(proof) = parse_rfc3339_millis(proof_clock) else {
+        return None;
+    };
+    let seconds = claim.signed_duration_since(proof).num_seconds();
+    if seconds.abs() <= 300 {
+        return None;
+    }
+    Some((if seconds > 0 { "ahead" } else { "behind" }, seconds))
+}

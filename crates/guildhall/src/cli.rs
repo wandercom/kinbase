@@ -180,11 +180,11 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
                 .unwrap_or_else(|| "deterministic".to_owned());
             crate::classifier::run(&model, json)?;
         }
-        Command::Corpus(CorpusCommand::Rebuild { store, repo, as_of, reducer_version }) => {
+        Command::Corpus(CorpusCommand::Rebuild { store, repo, as_of, reducer_version, authority_cursor }) => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             let as_of = resolve_as_of(as_of.as_deref())?;
-            crate::corpus::rebuild(&launcher, &repo, store_to_kind(store), &as_of, reducer_version, json)
+            crate::corpus::rebuild(&launcher, &repo, store_to_kind(store), &as_of, reducer_version, authority_cursor, json)
                 .map_err(internal)?;
         }
         Command::Fsck { repo, full, as_of } => {

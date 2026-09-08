@@ -23,6 +23,8 @@ struct NativeRecord {
     asserted_at: Option<String>,
     effective_from: Option<String>,
     effective_until: Option<String>,
+    receipt_observed_at: Option<String>,
+    receipt_expires_at: Option<String>,
 }
 
 pub fn ingest(
@@ -96,7 +98,7 @@ pub fn ingest(
         .then(|| crate::repository::git_branch(repo).ok())
         .flatten();
     let trust_class = (store == crate::StoreKind::Codebase)
-        .then(|| repository_trust_class(repo, source))
+        .then(|| repository_trust_class(repo, source, source_kind, &bytes))
         .unwrap_or("approved-source");
     let prepared = records
         .into_iter()
@@ -124,7 +126,34 @@ pub fn ingest(
     let mut atom_count = 0;
     let mut fact_count = 0;
     let mut skipped = 0;
+    let mut quarantined_count = 0;
+    let mut quarantined_observations = Vec::new();
+    let mut skew_dispositions = Vec::new();
     for (record, observation_id, digest) in prepared {
+        if let Some((field, direction, seconds)) = receipt_clock_skew(&record, &now) {
+            let disposition = "CLOCK_SKEW".to_owned();
+            let record_value = json!({
+                "observation_id": observation_id,
+                "source_kind": source_kind,
+                "source_identity": source_identity,
+                "native_id": record.native_id,
+                "content_digest": digest,
+                "field": field,
+                "direction": direction,
+                "skew_seconds": seconds,
+                "proof_clock": now,
+                "disposition": disposition,
+                "remediation": "owner must supply corrected receipt evidence"
+            });
+            let private = crate::private::PrivateStore::open_personal(&journal_root)?;
+            private.quarantine("CLOCK_SKEW", &record_value)?;
+            quarantined_observations.push(record_value);
+            if !skew_dispositions.contains(&disposition) {
+                skew_dispositions.push(disposition);
+            }
+            quarantined_count += 1;
+            continue;
+        }
         let observation = Observation {
             observation_id: observation_id.clone(),
             source_kind: source_kind.to_owned(),
@@ -174,6 +203,7 @@ pub fn ingest(
             "content_digest": digest,
             "observed_at": now,
             "disposition": record.disposition,
+            "origin_trust_class": observation.origin_trust,
             "extraction_version": EXTRACTION_VERSION
         }));
         let external_atoms = classified_atoms.remove(&observation_id).unwrap_or_default();
@@ -261,6 +291,10 @@ pub fn ingest(
         "atom_count": atom_count,
         "fact_count": fact_count,
         "idempotent_count": skipped,
+        "quarantined_count": quarantined_count,
+        "quarantined_observations": quarantined_observations,
+        "skew_dispositions": skew_dispositions,
+        "origin_trust_class": if store == crate::StoreKind::Codebase { Some(trust_class) } else { None },
         "checkpoint": checkpoint,
         "source_digest": sha256_bytes(&bytes),
         "store": store_name(store)
@@ -561,6 +595,8 @@ fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError>
                     asserted_at: Some(event.asserted_at.clone()),
                     effective_from: Some(event.effective_from.clone()),
                     effective_until: event.effective_until.clone(),
+                    receipt_observed_at: None,
+                    receipt_expires_at: None,
                 });
             }
             Err(_) => malformed.push(index + 1),
@@ -656,6 +692,8 @@ fn collect_json_value(
                         map,
                         &["effective_until", "expires_at", "fresh_until"],
                     ),
+                    receipt_observed_at: time_field(map, &["observed_at"]),
+                    receipt_expires_at: time_field(map, &["expires_at"]),
                 });
                 return Ok(());
             }
@@ -774,6 +812,8 @@ fn text_record(source_kind: &str, index: usize, statement: &str) -> NativeRecord
         asserted_at: None,
         effective_from: None,
         effective_until: None,
+        receipt_observed_at: None,
+        receipt_expires_at: None,
     }
 }
 
@@ -977,7 +1017,17 @@ fn distortion_for(atom_kind: &str) -> Distortion {
     }
 }
 
-fn repository_trust_class(repo: &Path, source: &Path) -> &'static str {
+fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
+    std::process::Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn repository_trust_class(repo: &Path, source: &Path, source_kind: &str, source_bytes: &[u8]) -> &'static str {
     let tracked = std::process::Command::new("git")
         .args(["ls-files", "--error-unmatch"])
         .arg(source)
@@ -997,19 +1047,44 @@ fn repository_trust_class(repo: &Path, source: &Path) -> &'static str {
         return "uncommitted-worktree";
     }
     let branch = crate::repository::git_branch(repo).unwrap_or_default();
-    let default_branch = std::process::Command::new("git")
-        .args(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+    let default_branch = crate::codebase::Repository::discover(repo)
+        .map(|repository| repository.default_branch())
+        .unwrap_or_else(|_| "main".to_owned());
+    if branch == default_branch {
+        return "merged-default";
+    }
+    let ancestor = std::process::Command::new("git")
+        .args(["merge-base", "--is-ancestor", "HEAD", &format!("refs/heads/{default_branch}")])
         .current_dir(repo)
         .output()
-        .ok()
-        .and_then(|output| String::from_utf8(output.stdout).ok())
-        .map(|value| value.trim().trim_start_matches("origin/").to_owned())
-        .unwrap_or_else(|| "main".to_owned());
-    if branch != default_branch {
-        "unreviewed-branch"
-    } else {
-        "merged-default"
+        .is_ok_and(|output| output.status.success());
+    if !ancestor {
+        return "unreviewed-branch";
     }
+    let review_message = git_output(repo, &["log", "-1", "--format=%B", "HEAD"])
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    let reviewed = ["reviewed-by:", "approved-by:", "review evidence", "pull request #"]
+        .iter()
+        .any(|marker| review_message.contains(marker));
+    let github_review = source_kind == "github_export"
+        && (source_bytes.windows(b"reviews".len()).any(|window| window == b"reviews")
+            || source_bytes.windows(b"reviewed_at".len()).any(|window| window == b"reviewed_at"));
+    if reviewed || github_review {
+        return "approved-pr";
+    }
+    "merged-default"
+}
+
+fn receipt_clock_skew(record: &NativeRecord, proof_clock: &str) -> Option<(&'static str, &'static str, i64)> {
+    for (field, value) in [("observed_at", &record.receipt_observed_at), ("expires_at", &record.receipt_expires_at)] {
+        if let Some(claim) = value {
+            if let Some((direction, seconds)) = crate::time::receipt_clock_skew(claim, proof_clock) {
+                return Some((field, direction, seconds));
+            }
+        }
+    }
+    None
 }
 
 fn source_identity(source_kind: &str, source: &Path) -> String {

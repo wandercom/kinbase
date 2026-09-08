@@ -109,7 +109,7 @@ pub fn write_content_addressed_event(root: &Path, event: &FactEvent) -> Result<(
         return Err(ContractError::integrity("DIGEST_MISMATCH", "event digest is malformed", "Quarantine the event."));
     }
     let relative = crate::paths::sharded_relative(&digest)?;
-    let destination = root.join("events").join(format!("{}.json", relative.display()));
+    let destination = root.join("events").join(&relative);
     if let Some(parent) = destination.parent() {
         crate::paths::ensure_dir(parent, "event store")?;
     }

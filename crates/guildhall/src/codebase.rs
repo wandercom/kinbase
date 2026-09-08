@@ -435,7 +435,45 @@ impl Repository {
         let receipt_path = receipts_dir.join(format!("{digest}.json"));
         if receipt_path.exists() {
             let bytes = std::fs::read(&receipt_path).map_err(|error| ContractError::io("read receipt", error))?;
-            if let Ok(existing) = crate::json::parse_strict_value(&bytes) {
+            if let Ok(mut existing) = crate::json::parse_strict_value(&bytes) {
+                let event_value = crate::json::parse_strict_value(canonical).ok();
+                let signer = event_value.as_ref().and_then(|value| crate::json::get_str(value, "signer")).map(str::to_owned);
+                let logical_key = event_value.as_ref().and_then(|value| crate::json::get_str(value, "logical_key")).map(str::to_owned);
+                let revoked_signers: Vec<&str> = receipt_extra
+                    .get("revoked_signers")
+                    .and_then(Value::as_array)
+                    .map(|items| items.iter().filter_map(Value::as_str).collect())
+                    .unwrap_or_default();
+                let revocation_key = receipt_extra
+                    .get("revocation")
+                    .and_then(|value| value.get("revoked_key"))
+                    .and_then(Value::as_str);
+                let revocation_observed = receipt_extra.get("revocation_observed") == Some(&Value::Bool(true))
+                    || signer.as_deref().is_some_and(|signer| revoked_signers.contains(&signer))
+                    || signer.as_deref().zip(revocation_key).is_some_and(|(signer, key)| signer == key);
+                let sole_support = logical_key.as_deref().is_some_and(|logical_key| {
+                    self.stored_events()
+                        .map(|events| {
+                            events
+                                .iter()
+                                .filter(|file| {
+                                    matches!(
+                                        crate::codebase::parse_stored(&file.bytes),
+                                        ParsedEvent::Fact(event) if event.logical_key == logical_key
+                                    )
+                                })
+                                .count() <= 1
+                        })
+                        .unwrap_or(true)
+                });
+                let support_withdrawn = revocation_observed && sole_support;
+                existing["historical_receipt"] = Value::Bool(true);
+                existing["readmitted"] = Value::Bool(false);
+                existing["revocation_observed"] = Value::Bool(revocation_observed);
+                existing["support_withdrawn"] = Value::Bool(support_withdrawn);
+                existing["projection_state"] = Value::String(
+                    if support_withdrawn { "support_withdrawn".to_owned() } else { "current".to_owned() }
+                );
                 return Ok(existing);
             }
         }
@@ -477,6 +515,11 @@ impl Repository {
             "event_path": format!(".kin/events/{}", relative.to_string_lossy()),
             "kind": kind,
             "created": created,
+            "historical_receipt": false,
+            "readmitted": true,
+            "revocation_observed": false,
+            "support_withdrawn": false,
+            "projection_state": "current",
             "committed_at": crate::time::now_rfc3339_millis(),
             "journal_generation": generation
         });
@@ -602,10 +645,15 @@ impl Repository {
         events: &[StoredFile],
     ) -> Result<Value, ContractError> {
         let leaves: Vec<Vec<u8>> = events.iter().map(|file| file.bytes.clone()).collect();
+        // Serialize linked-worktree publication on the common-dir lock. The
+        // lock remains held through the atomic manifest write, so concurrent
+        // publishers observe one parent head and form one lineage.
+        let _lock = self.admission_lock(repository_uuid)?;
         let heads = self.manifest_heads()?;
+        let clock_skew = crate::time::receipt_clock_skew(observed_at, &crate::time::now_rfc3339_millis());
         let branch = self.branch()?;
         let revision = self.default_branch_revision()?;
-        let manifest = json!({
+        let mut manifest = json!({
             "schema": crate::model::MANIFEST_SCHEMA,
             "repository_uuid": repository_uuid,
             "branch": branch,
@@ -617,6 +665,12 @@ impl Repository {
             "observed_at": observed_at,
             "fresh_until": crate::time::plus_seconds(observed_at, fresh_seconds).map_err(ContractError::internal)?
         });
+        if let Some((direction, seconds)) = clock_skew {
+            manifest["disposition"] = Value::String("CLOCK_SKEW".to_owned());
+            manifest["quarantined"] = Value::Bool(true);
+            manifest["skew_direction"] = Value::String(direction.to_owned());
+            manifest["skew_seconds"] = Value::from(seconds);
+        }
         let signed = signer.sign_document("manifest", &manifest)?;
         let bytes = crate::json::canonical_bytes(&signed);
         let digest = crate::hash::sha256_bytes(&bytes);

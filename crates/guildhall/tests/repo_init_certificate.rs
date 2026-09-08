@@ -201,7 +201,7 @@ fn repo_init_caches_certificate_outside_worktree() {
     ]);
     assert!(!repo.join(".kin/certificate.json").exists());
     let exclude = fs::read_to_string(repo.join(".git/info/exclude")).expect("read git exclude");
-    assert!(!exclude.contains(".kin/local/"));
+    assert!(exclude.lines().any(|line| line.trim() == ".kin/local/"));
 
     let cache = guildhall::company::cache::Cache::open(&cache_root).expect("open cache");
     let (resolved, digest) = cache

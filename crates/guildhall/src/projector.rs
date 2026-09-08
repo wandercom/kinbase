@@ -242,6 +242,7 @@ pub fn run(
         "decision": decision,
         "as_of": as_of.as_of,
         "as_of_source": as_of.as_of_source,
+        "ambient_clock_read": false,
         "candidates": candidates.iter().map(|fact| candidate_value(fact)).collect::<Vec<_>>(),
         "selected": selected.iter().map(|fact| json!({"fact_id": fact.fact_id, "logical_key": fact.logical_key})).collect::<Vec<_>>(),
         "selection_trace": selection_trace,
@@ -290,11 +291,11 @@ fn load_view(
     store: crate::StoreKind,
     as_of: &crate::time::AsOf,
 ) -> Result<CurrentView, ContractError> {
-    let (mut events, unknowns) = crate::corpus::load_store(launcher, repo, store)?;
+    let mut data = crate::corpus::load_store(launcher, repo, store)?;
     if store == crate::StoreKind::Codebase {
         if let Ok(repository) = crate::codebase::Repository::discover(repo) {
             let repository_uuid = repository.uuid_hint().map(str::to_owned);
-            events.retain(|admitted| {
+            data.events.retain(|admitted| {
                 admitted
                     .event
                     .repository_id
@@ -304,22 +305,22 @@ fn load_view(
             });
         }
     }
-    let store_name = match store {
+    let store_name_value = match store {
         crate::StoreKind::Company => "company",
         crate::StoreKind::Personal => "personal",
         crate::StoreKind::Codebase => "codebase",
     };
     let input = ReducerInput {
-        store_kind: store_name.to_owned(),
-        events,
-        unknowns,
-        tombstones: Vec::new(),
-        revocations: Vec::new(),
+        store_kind: store_name_value.to_owned(),
+        events: data.events,
+        unknowns: data.unknowns,
+        tombstones: data.tombstones,
+        revocations: data.revocations,
         as_of: as_of.as_of.clone(),
-        authority_cursor: "0".to_owned(),
+        authority_cursor: data.authority_cursor,
         revocation_fresh: true,
         fact_valid_until: None,
-        certificate_valid: true,
+        certificate_valid: data.certificate_valid,
     };
     Ok(crate::reducer::reduce(&input))
 }

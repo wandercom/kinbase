@@ -642,7 +642,18 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
                 ContractError::integrity("DIGEST_MISMATCH", "event_id already admitted with different canonical bytes", "Use a fresh event_id derived from the content digest."),
             ));
         }
-        let receipt = receipt_for(&event, &digest, existing_cursor, "committed", "duplicate");
+        let mut receipt = receipt_for(&event, &digest, existing_cursor, "committed", "duplicate");
+        // R-10: an exact pre-revocation replay is not a new admission. Return
+        // the historical receipt, but recalculate its projection under the
+        // current authority cursor so a revoked sole support visibly withdraws.
+        let (revocation_observed, support_withdrawn) = replay_projection(db, trust_state, &event);
+        receipt["historical_receipt"] = Value::Bool(true);
+        receipt["readmitted"] = Value::Bool(false);
+        receipt["revocation_observed"] = Value::Bool(revocation_observed);
+        receipt["support_withdrawn"] = Value::Bool(support_withdrawn);
+        receipt["projection_state"] = Value::String(
+            if support_withdrawn { "support_withdrawn".to_owned() } else { "current".to_owned() },
+        );
         return Ok((200, receipt));
     }
     // Idempotent retry through the destination-owned nonce record.
@@ -721,6 +732,28 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
         .map_err(|error| refuse(500, error))?;
     db.bump(if admission_status == "committed" { "facts_admitted" } else { "facts_queued" }).map_err(|error| refuse(500, error))?;
     Ok((status_code, receipt))
+}
+
+fn replay_projection(db: &CompanyDb, trust_state: &TrustState, event: &FactEvent) -> (bool, bool) {
+    let revocation_observed = trust_state.is_revoked(&event.signer);
+    if !revocation_observed {
+        return (false, false);
+    }
+    let independent_support = db
+        .events_of_kind("fact-event")
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter(|(_, payload, _)| {
+            payload.get("event_id").and_then(Value::as_str) != Some(event.event_id.as_str())
+                && payload.get("logical_key").and_then(Value::as_str) == Some(event.logical_key.as_str())
+                && payload
+                    .get("signer")
+                    .and_then(Value::as_str)
+                    .is_some_and(|signer| !trust_state.is_revoked(signer))
+        })
+        .count();
+    (true, independent_support == 0)
 }
 
 fn receipt_for(event: &FactEvent, digest: &str, cursor: i64, status: &str, admission: &str) -> Value {
@@ -1573,5 +1606,77 @@ nonce_retention_seconds = 1300
             .unwrap();
         assert_eq!(item["semantic_digest"], receipt["semantic_digest"]);
         assert_eq!(item["digest_alg_version"], crate::model::DIGEST_ALG_VERSION);
+    }
+
+    #[test]
+    fn pre_revocation_replay_projection_withdraws_only_a_sole_support() {
+        let temp = tempfile::tempdir().unwrap();
+        let root_key = PrivateKey::generate();
+        let architect_key = PrivateKey::generate();
+        let db = CompanyDb::open(&temp.path().join("company.sqlite")).unwrap();
+        let now = crate::time::now_rfc3339_millis();
+
+        let fact_document = architect_key
+            .sign_document(
+                "fact-event",
+                &json!({
+                    "schema": crate::model::EVENT_SCHEMA,
+                    "event_id": "evt_packet10_replay",
+                    "store_kind": "company",
+                    "authority_id": "chief-architect-1",
+                    "authority_scope": "architecture:scheduling",
+                    "fact_id": "fact_packet10_replay",
+                    "logical_key": "architecture:scheduling",
+                    "atom_kind": "constraint",
+                    "scope": "architecture:scheduling",
+                    "statement": "The scheduler must bound queue wait time.",
+                    "evidence_refs": [],
+                    "asserted_at": now,
+                    "effective_from": now,
+                    "disposition": "accepted",
+                    "distortion": {"trigger": "deadline", "loss_if_absent": 8000, "rationale": "test"},
+                    "parents": [], "supersedes": [], "redundancy_with": [], "complements": [],
+                    "company_refs": [], "authority_snapshot_cursor": "0", "confidence": 8000,
+                    "unresolved_uncertainty": null
+                }),
+            )
+            .unwrap();
+        let event = FactEvent::parse(&crate::json::canonical_bytes(&fact_document)).unwrap();
+        db.append_event(&event.event_id, "fact-event", "fact-event", &fact_document, &event.signer, "verified", None).unwrap();
+        let trust = trust::load(&db, &root_key.public()).unwrap();
+        assert_eq!(replay_projection(&db, &trust, &event), (false, false));
+
+        let revocation = root_key
+            .sign_document("revocation", &json!({"revoked_key": architect_key.public().to_hex(), "effective_at": now}))
+            .unwrap();
+        db.append_event("rev_packet10_replay", "revocation", "revocation", &revocation, &root_key.public().to_hex(), "verified", None).unwrap();
+        let trust = trust::load(&db, &root_key.public()).unwrap();
+        assert_eq!(replay_projection(&db, &trust, &event), (true, true));
+
+        let second_document = root_key
+            .sign_document(
+                "fact-event",
+                &json!({
+                    "schema": crate::model::EVENT_SCHEMA,
+                    "event_id": "evt_packet10_second",
+                    "store_kind": "company",
+                    "authority_id": "company-steward",
+                    "authority_scope": "architecture:scheduling",
+                    "fact_id": "fact_packet10_second",
+                    "logical_key": "architecture:scheduling",
+                    "atom_kind": "constraint",
+                    "scope": "architecture:scheduling",
+                    "statement": "A second independent scheduler bound remains current.",
+                    "evidence_refs": [], "asserted_at": now, "effective_from": now,
+                    "disposition": "accepted",
+                    "distortion": {"trigger": "deadline", "loss_if_absent": 8000, "rationale": "test"},
+                    "parents": [], "supersedes": [], "redundancy_with": [], "complements": [],
+                    "company_refs": [], "authority_snapshot_cursor": "0", "confidence": 8000,
+                    "unresolved_uncertainty": null
+                }),
+            )
+            .unwrap();
+        db.append_event("evt_packet10_second", "fact-event", "fact-event", &second_document, &root_key.public().to_hex(), "verified", None).unwrap();
+        assert_eq!(replay_projection(&db, &trust, &event), (true, false));
     }
 }

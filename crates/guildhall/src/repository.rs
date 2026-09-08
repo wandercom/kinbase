@@ -10,7 +10,7 @@ use crate::crypto::PublicKey;
 use crate::error::ContractError;
 use crate::launcher::Launcher;
 use crate::model::{CurrentFact, FactEvent, UnknownEvent};
-use crate::reducer::{AdmittedEvent, ReducerInput, Revocation, Verification};
+use crate::reducer::{AdmittedEvent, ReducerInput, Revocation, Tombstone, Verification};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -187,6 +187,83 @@ pub struct RepoContext {
     pub trust: TrustContext,
 }
 
+fn git_text(repo: &Path, args: &[&str]) -> String {
+    std::process::Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+fn is_event_path(path: &str) -> bool {
+    path.to_ascii_lowercase().starts_with(".kin/events/")
+}
+
+fn tracked_event_paths(repo: &Path) -> BTreeSet<String> {
+    // Do not constrain Git with a case-sensitive `.kin/events` pathspec: a
+    // case-colliding index entry may spell the reserved directory differently.
+    git_text(repo, &["ls-files"])
+        .lines()
+        .filter(|path| is_event_path(path))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn dirty_event_paths(repo: &Path) -> BTreeSet<String> {
+    git_text(repo, &["status", "--porcelain", "--untracked-files=all"])
+        .lines()
+        .filter_map(|line| line.get(3..))
+        .filter(|path| is_event_path(path))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn merged_pr_review_evidence(repo: &Path, branch: &str) -> bool {
+    if branch.is_empty() {
+        return false;
+    }
+    let message = git_text(repo, &["log", "-1", "--format=%B", branch]).to_ascii_lowercase();
+    ["reviewed-by:", "approved-by:", "review evidence", "pull request #"].iter().any(|marker| message.contains(marker))
+}
+
+fn repository_origin_class(repo: &Repository, head_reachable: Option<bool>) -> String {
+    if repo.config.is_none() {
+        return "merged-default".to_owned();
+    }
+    let default = repo.default_branch();
+    let branch = repo.branch().unwrap_or_default();
+    if branch == default {
+        return "merged-default".to_owned();
+    }
+    if head_reachable == Some(true) {
+        if merged_pr_review_evidence(&repo.root, &branch) {
+            return "approved-pr".to_owned();
+        }
+        return "merged-default".to_owned();
+    }
+    "unreviewed-branch".to_owned()
+}
+
+fn event_path_origin_class(
+    repo: &Path,
+    relative: &Path,
+    tracked: &BTreeSet<String>,
+    dirty: &BTreeSet<String>,
+    fallback: &str,
+) -> String {
+    // `StoredFile::relative` is relative to `.kin/events`; Git reports the
+    // repository-relative path including that reserved prefix.
+    let path = format!(".kin/events/{}", relative.to_string_lossy());
+    if !tracked.contains(&path) || dirty.contains(&path) {
+        return "uncommitted-worktree".to_owned();
+    }
+    let _ = repo;
+    fallback.to_owned()
+}
+
 impl RepoContext {
     /// Build the context: discover the repository, resolve the certificate
     /// from the out-of-worktree cache, refresh Company state within the
@@ -203,18 +280,31 @@ impl RepoContext {
         let mut loaded = Vec::new();
         let head = self.repo.revision().unwrap_or_default();
         let head_reachable = if head.is_empty() { None } else { Some(self.repo.is_reachable_from_default(&head)) };
-        let origin = if self.repo.config.is_some() {
-            let default = self.repo.default_branch();
-            let branch = self.repo.branch().unwrap_or_default();
-            if head_reachable == Some(true) || branch == default { "merged-default".to_owned() } else { "unreviewed-branch".to_owned() }
-        } else {
-            "merged-default".to_owned()
-        };
+        let default_origin = repository_origin_class(&self.repo, head_reachable);
+        let tracked_paths = tracked_event_paths(&self.repo.root);
+        let dirty_paths = dirty_event_paths(&self.repo.root);
         for file in self.repo.stored_events()? {
             counts.total_files += 1;
             if file.path_alias {
                 counts.path_alias += 1;
                 counts.foreign_paths.push(format!(".kin/events/{}", file.relative.to_string_lossy()));
+                // Keep the aliased bytes in the loaded list so fsck can report
+                // the exact refusal reason, but mark them malformed so no
+                // reducer path can admit a non-content-addressed event.
+                let origin = event_path_origin_class(
+                    &self.repo.root,
+                    &file.relative,
+                    &tracked_paths,
+                    &dirty_paths,
+                    &default_origin,
+                );
+                loaded.push(LoadedEvent {
+                    file,
+                    parsed: ParsedEvent::Malformed("event path is not its content digest".to_owned()),
+                    verification: None,
+                    origin_trust: origin,
+                    reachable: head_reachable,
+                });
                 continue;
             }
             if file.bytes.len() > crate::model::MAX_EVENT_BYTES {
@@ -248,11 +338,18 @@ impl RepoContext {
                     None
                 }
             };
+            let origin = event_path_origin_class(
+                &self.repo.root,
+                &file.relative,
+                &tracked_paths,
+                &dirty_paths,
+                &default_origin,
+            );
             loaded.push(LoadedEvent {
                 file,
                 parsed,
                 verification,
-                origin_trust: origin.clone(),
+                origin_trust: origin,
                 reachable: head_reachable,
             });
         }
@@ -268,29 +365,65 @@ impl RepoContext {
         Ok((loaded, counts))
     }
 
-    /// Reduce the repository's admitted events into its current view,
-    /// resolving Company references (P-8) against the cached Company view.
-    pub fn current_view(&self, as_of: &str, cursor_override: Option<&str>) -> Result<(crate::reducer::CurrentView, LoadCounts, Vec<Value>), ContractError> {
-        let (loaded, counts) = self.load_events()?;
+    /// Build the exact reducer inputs from stored repository events,
+    /// including lifecycle tombstones and the authority snapshot.
+    pub fn reducer_parts(
+        &self,
+    ) -> Result<(Vec<AdmittedEvent>, Vec<UnknownEvent>, Vec<Tombstone>, Vec<Revocation>), ContractError> {
+        let (loaded, _) = self.load_events()?;
+        let mut fact_by_id: BTreeMap<&str, &FactEvent> = BTreeMap::new();
+        for item in &loaded {
+            if let ParsedEvent::Fact(event) = &item.parsed {
+                fact_by_id.insert(event.event_id.as_str(), event);
+            }
+        }
         let mut admitted = Vec::new();
         let mut unknowns = Vec::new();
         let mut tombstones = Vec::new();
-        let mut dependence_events: Vec<FactEvent> = Vec::new();
         for (index, item) in loaded.iter().enumerate() {
             match &item.parsed {
                 ParsedEvent::Fact(event) => {
                     let verification = item.verification.clone().unwrap_or(Verification::Unverified);
                     if let Some(action) = crate::model::action_of(event) {
                         if matches!(action, "misextraction" | "never_true" | "support_withdrawn") {
+                            let target_id = event.parents.iter().chain(event.supersedes.iter()).next().cloned();
+                            let target = target_id.as_deref().and_then(|id| fact_by_id.get(id).copied());
                             let authorized = match action {
-                                "misextraction" => verification == Verification::Verified || self.trust.entries_for_key(&event.signer).iter().any(|entry| crate::json::get_str(entry, "scope").is_some_and(|scope| scope.starts_with("approver:"))) || event.verify_signature().is_some() && event.authority_scope.starts_with("approver:"),
+                                "misextraction" => {
+                                    verification == Verification::Verified
+                                        && (event.authority_scope.starts_with("approver:")
+                                            || self.trust.entries_for_key(&event.signer).iter().any(|entry| {
+                                                crate::json::get_str(entry, "scope")
+                                                    .is_some_and(|scope| scope.starts_with("approver:"))
+                                            }))
+                                }
+                                "never_true" => {
+                                    verification == Verification::Verified
+                                        && target.is_some_and(|target| {
+                                            target.authority_scope == event.authority_scope
+                                        })
+                                }
                                 _ => verification == Verification::Verified,
                             };
-                            for target in event.parents.iter().chain(event.supersedes.iter()) {
-                                tombstones.push(crate::reducer::Tombstone {
+                            if !authorized {
+                                if action == "never_true" || action == "misextraction" {
+                                    admitted.push(AdmittedEvent {
+                                        event: event.clone(),
+                                        verification: Verification::WrongScope,
+                                        store_cursor: format!("{index:09}"),
+                                        origin_trust: Some(item.origin_trust.clone()),
+                                        reachable: item.reachable,
+                                        source_identity: Some(event.signer.clone()),
+                                        environment_registered: None,
+                                    });
+                                }
+                                continue;
+                            }
+                            if let Some(target_id) = target_id {
+                                tombstones.push(Tombstone {
                                     kind: action.to_owned(),
-                                    target_event_id: target.clone(),
-                                    signer_authorized: authorized,
+                                    target_event_id: target_id,
+                                    signer_authorized: true,
                                     reason_code: event.statement.clone(),
                                     tombstone_id: event.event_id.clone(),
                                 });
@@ -299,7 +432,9 @@ impl RepoContext {
                         }
                     }
                     if event.atom_kind == "dependence" {
-                        dependence_events.push(event.clone());
+                        // Dependence events are reducer inputs as well as
+                        // Company-reference annotations; current_view filters
+                        // them only after reduction through company_refs.
                     }
                     let environment_registered = event
                         .authority_scope
@@ -307,7 +442,7 @@ impl RepoContext {
                         .map(|id| self.trust.environment_registered(id));
                     admitted.push(AdmittedEvent {
                         event: event.clone(),
-                        verification: if environment_registered == Some(false) { Verification::WrongScope } else { verification },
+                        verification,
                         store_cursor: format!("{index:09}"),
                         origin_trust: Some(item.origin_trust.clone()),
                         reachable: item.reachable,
@@ -319,13 +454,21 @@ impl RepoContext {
                 _ => {}
             }
         }
+        Ok((admitted, unknowns, tombstones, self.trust.revocations.clone()))
+    }
+
+    /// Reduce the repository's admitted events into its current view,
+    /// resolving Company references (P-8) against the cached Company view.
+    pub fn current_view(&self, as_of: &str, cursor_override: Option<&str>) -> Result<(crate::reducer::CurrentView, LoadCounts, Vec<Value>), ContractError> {
+        let (loaded, counts) = self.load_events()?;
+        let (admitted, unknowns, tombstones, revocations) = self.reducer_parts()?;
         let cursor = cursor_override.map(str::to_owned).unwrap_or_else(|| self.trust.authority_cursor.clone());
         let input = ReducerInput {
             store_kind: "codebase".to_owned(),
             events: admitted,
             unknowns,
             tombstones,
-            revocations: self.trust.revocations.clone(),
+            revocations,
             as_of: as_of.to_owned(),
             authority_cursor: cursor,
             revocation_fresh: true,
@@ -333,7 +476,18 @@ impl RepoContext {
             certificate_valid: self.trust.certificate_valid,
         };
         let mut view = crate::reducer::reduce(&input);
+        let mut dependence_events: Vec<FactEvent> = loaded
+            .iter()
+            .filter_map(|item| {
+                if let ParsedEvent::Fact(event) = &item.parsed {
+                    (event.atom_kind == "dependence").then(|| event.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
         let references = self.resolve_company_references(&mut view, &dependence_events, as_of);
+        dependence_events.clear();
         Ok((view, counts, references))
     }
 
@@ -1068,7 +1222,6 @@ pub fn published_observations(repo: &Repository) -> Vec<Value> {
 /// `status --json` (interface contract §1.2).
 pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, json_output: bool) -> Result<(), ContractError> {
     let context = RepoContext::load(launcher, repo_path, true)?;
-    let now = crate::time::now_rfc3339_millis();
     let (view, counts, references) = if context.repo.config.is_some() {
         context.current_view(&as_of.as_of, None)?
     } else {
@@ -1116,7 +1269,7 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
             "logical_key": unknown.logical_key,
             "owner_role": unknown.owner_role,
             "owner_identity": unknown.owner_identity,
-            "response_due_at": crate::time::plus_seconds(&now, 24 * 3600).unwrap_or_default(),
+            "response_due_at": crate::time::plus_seconds(&as_of.as_of, 24 * 3600).unwrap_or_default(),
             "question": unknown.question,
             "status": unknown.status
         }));
@@ -1137,6 +1290,7 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
                 "statement": event.statement,
                 "signature": event.signature,
                 "verification": item.verification.as_ref().map(crate::company::trust::verification_text),
+                "origin_trust_class": item.origin_trust,
                 "fact_state": view.traces.iter().find(|t| t.logical_key == event.logical_key).map(|t| t.state.clone())
             });
             if let Some(closing) = event.raw.as_ref().and_then(|raw| crate::json::get_str(raw, "unresponsive_closing_authority")) {
@@ -1161,15 +1315,25 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
                     }));
                 }
                 "misextraction" => {
+                    let trace = view.traces.iter().find(|trace| trace.logical_key == event.logical_key);
                     misextraction_notices.push(json!({
                         "logical_key": event.logical_key,
-                        "admitted": event.verify_signature().is_some(),
+                        "admitted": trace.is_some_and(|trace| trace.notice_admitted),
+                        "notice_admitted": trace.is_some_and(|trace| trace.notice_admitted),
                         "asserted_claim": "evidence_byte_mismatch",
-                        "semantic_withdrawal": false
+                        "semantic_withdrawal": trace.is_some_and(|trace| trace.notice_admitted)
                     }));
                 }
                 "never_true" => {
-                    never_true.push(json!({"authority_id": event.authority_id, "accepted": verified, "refusal_code": if verified { Value::Null } else { Value::String("AUTHORITY_WRONG_SCOPE".to_owned()) }}));
+                    let trace = view.traces.iter().find(|trace| trace.logical_key == event.logical_key);
+                    let approver_minted_accepted = trace.and_then(|trace| trace.approver_minted_accepted).unwrap_or(true);
+                    let accepted = verified && approver_minted_accepted;
+                    never_true.push(json!({
+                        "authority_id": event.authority_id,
+                        "accepted": accepted,
+                        "approver_minted_accepted": approver_minted_accepted,
+                        "refusal_code": if accepted { Value::Null } else { Value::String("AUTHORITY_WRONG_SCOPE".to_owned()) }
+                    }));
                 }
                 _ => {}
             }
@@ -1199,6 +1363,21 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
         .map(str::to_owned)
         .or_else(|| references.first().and_then(|record| crate::json::get_str(record, "effective_dependence_class").map(str::to_owned)));
     let pending_orphans = context.launcher.company_cache()?.map(|(cache, _)| cache.sagas().iter().filter(|saga| crate::json::get_str(saga, "state") == Some("awaiting_reconcile_or_abandon")).count()).unwrap_or(0);
+    let mut origin_trust_classes: BTreeMap<&str, usize> = BTreeMap::new();
+    for event in &events {
+        *origin_trust_classes.entry(event.origin_trust.as_str()).or_insert(0) += 1;
+    }
+    let negative_evidence: Vec<Value> = view
+        .traces
+        .iter()
+        .filter(|trace| !trace.negative_evidence_event_ids.is_empty())
+        .map(|trace| json!({"logical_key": trace.logical_key, "negative_evidence": trace.negative_evidence_event_ids}))
+        .collect();
+    let unknown_owner_roles: Vec<Value> = view
+        .unknowns
+        .iter()
+        .map(|unknown| json!({"logical_key": unknown.logical_key, "owner_role": unknown.owner_role}))
+        .collect();
     let mut result = json!({
         "status": if context.trust.certificate_valid { "certified" } else { "unverified" },
         "mode": context.launcher.mode,
@@ -1226,6 +1405,12 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
         "authority_cursor": view.authority_cursor,
         "as_of": as_of.as_of,
         "as_of_source": as_of.as_of_source,
+        "ambient_clock_read": false,
+        "origin_trust_classes": origin_trust_classes,
+        "negative_evidence": negative_evidence,
+        "unknown_owner_roles": unknown_owner_roles,
+        "notice_admitted": misextraction_notices.iter().any(|notice| notice.get("notice_admitted") == Some(&Value::Bool(true))),
+        "approver_minted_accepted": !never_true.iter().any(|notice| notice.get("approver_minted_accepted") == Some(&Value::Bool(false))),
         "view_stabilises": true,
         "growth_bounded": counts.total_files <= crate::codebase::EVENT_CEILING,
         "exceptions": exceptions,
@@ -1525,7 +1710,7 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
     let mut missing_heads = 0usize;
     let mut expired_publication = false;
     let published = published_observations(repo);
-    let now = crate::time::now_rfc3339_millis();
+    let now = as_of.as_of.clone();
     for observation in &published {
         if let Some(until) = crate::json::get_str(observation, "fresh_until") {
             if until <= now.as_str() {
@@ -1591,6 +1776,46 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
         unknowns.push(json!({"kind": "completeness", "owner_role": "repository-maintainer"}));
     }
     let admitted_paths: Vec<Value> = events.iter().filter(|e| !e.file.path_alias && e.verification == Some(Verification::Verified)).map(|e| json!({"path": format!(".kin/events/{}", e.file.relative.to_string_lossy()), "digest": e.file.digest})).collect();
+    let mut refused_paths: Vec<Value> = events
+        .iter()
+        .filter(|event| event.file.path_alias)
+        .map(|event| {
+            let path = format!(".kin/events/{}", event.file.relative.to_string_lossy());
+            let reason = if crate::paths::digest_from_sharded(&event.file.relative).is_none() {
+                "PATH_NOT_LOWERCASE_ASCII_SHA256"
+            } else {
+                "CONTENT_DIGEST_MISMATCH"
+            };
+            json!({"path": path, "digest": event.file.digest, "reason": reason})
+        })
+        .collect();
+    {
+        // Count both on-disk names and Git index names. On a case-insensitive
+        // checkout two index entries can collapse to one worktree file, so the
+        // index is required to surface the `core.ignorecase` collision.
+        let mut exact_paths: BTreeSet<String> = BTreeSet::new();
+        for event in &events {
+            exact_paths.insert(event.file.relative.to_string_lossy().into_owned());
+        }
+        for path in tracked_event_paths(&repo.root) {
+            if is_event_path(&path) {
+                if let Some(relative) = path.get(".kin/events/".len()..) {
+                    exact_paths.insert(relative.to_owned());
+                }
+            }
+        }
+        let mut lower_counts: BTreeMap<String, usize> = BTreeMap::new();
+        for path in exact_paths {
+            *lower_counts.entry(path.to_ascii_lowercase()).or_insert(0) += 1;
+        }
+        for (lower, count) in lower_counts {
+            if count > 1 {
+                refused_paths.push(json!({"path": format!(".kin/events/{lower}"), "reason": "CORE_IGNORECASE_CASE_COLLISION"}));
+            }
+        }
+    }
+    refused_paths.sort_by(|left, right| left["path"].as_str().cmp(&right["path"].as_str()));
+    let path_refusal_count = refused_paths.len();
     let store_digest = crate::hash::sha256_text(&local_digests.iter().cloned().collect::<Vec<_>>().join("\n"));
     let certificate_conflict = repo.kin.join("certificate.json").exists() && repo.kin.join("certificate-second.json").exists();
     let digest_attribution = if context.trust.company_reachable == Some(false) { "none" } else if counts.signature_invalid > 0 || counts.malformed > 0 { "client" } else { "none" };
@@ -1612,6 +1837,8 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
         "manifest_comparison": {"classification": classification, "missing_heads": missing_heads, "expired_publication": expired_publication, "published_observations": published.len()},
         "manifest_relations": {"superset": "normal_lag", "missing_head": "INCOMPLETE", "expired_owner": "company-steward", "incomparable_local_only": "divergent-branch"},
         "admitted_paths": admitted_paths,
+        "refused_paths": refused_paths,
+        "refused_path_count": path_refusal_count,
         "foreign_paths": counts.foreign_paths,
         "ineffective_git_attributes": !attributes_effective,
         "index_cache_byte_equivalent": index_matches,
@@ -1631,8 +1858,8 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
         Some(ContractError::integrity("DIGEST_MISMATCH", "two certificates appear under .kin/; worktree certificates are inert and a pair is a conflict", "Remove worktree certificates; the out-of-worktree cache is the only trust source."))
     } else if counts.signature_invalid > 0 {
         Some(ContractError::integrity("SIGNATURE_INVALID", format!("{} event(s) fail domain-separated signature verification", counts.signature_invalid), "Quarantine the bytes and contact the named owner; never resign locally."))
-    } else if counts.malformed > 0 || counts.path_alias > 0 {
-        Some(ContractError::integrity("DIGEST_MISMATCH", format!("{} malformed and {} alias-path event file(s) under .kin/events", counts.malformed, counts.path_alias), "Run full fsck and repair the content-addressed event tree; only computed lowercase digest paths admit."))
+    } else if counts.malformed > 0 || counts.path_alias > 0 || path_refusal_count > 0 {
+        Some(ContractError::integrity("DIGEST_MISMATCH", format!("{} malformed, {} alias-path, and {} refused event path(s) under .kin/events", counts.malformed, counts.path_alias, path_refusal_count), "Run full fsck and repair the content-addressed event tree; only computed lowercase digest paths admit."))
     } else if !manifest_problems.is_empty() {
         Some(ContractError::integrity("MANIFEST_INCOMPLETE", format!("{} manifest problem(s)", manifest_problems.len()), "Fetch full history/.kin or ask the maintainer to reconcile the signed head set."))
     } else if classification == "INCOMPLETE" && sparse {
@@ -1706,4 +1933,33 @@ pub fn unknown_events(events: &[LoadedEvent]) -> Vec<&UnknownEvent> {
 
 pub fn current_facts_only(view: &crate::reducer::CurrentView) -> Vec<&CurrentFact> {
     view.facts.iter().filter(|fact| fact.status == "current" && fact.trust == "trusted").collect()
+}
+
+#[cfg(test)]
+mod packet10_repository_tests {
+    use super::*;
+
+    #[test]
+    fn event_path_origin_class_compares_the_git_repository_path() {
+        let relative = Path::new("aa/bb/0123456789abcdef.json");
+        let git_path = ".kin/events/aa/bb/0123456789abcdef.json";
+        let tracked: BTreeSet<String> = BTreeSet::from([git_path.to_owned()]);
+        let dirty: BTreeSet<String> = BTreeSet::new();
+        assert_eq!(
+            event_path_origin_class(Path::new("."), relative, &tracked, &dirty, "merged-default"),
+            "merged-default"
+        );
+
+        let empty: BTreeSet<String> = BTreeSet::new();
+        assert_eq!(
+            event_path_origin_class(Path::new("."), relative, &empty, &dirty, "merged-default"),
+            "uncommitted-worktree"
+        );
+
+        let dirty: BTreeSet<String> = BTreeSet::from([git_path.to_owned()]);
+        assert_eq!(
+            event_path_origin_class(Path::new("."), relative, &tracked, &dirty, "merged-default"),
+            "uncommitted-worktree"
+        );
+    }
 }
