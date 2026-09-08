@@ -68,17 +68,58 @@ pub fn ingest(
             source.to_path_buf()
         };
     let source: &Path = &resolved_source;
-    let source_canonical = source.canonicalize().map_err(|error| {
-        ContractError::refused(
-            "CONFIG_INVARIANT",
-            format!(
-                "source is unavailable or escapes the repository ({})",
-                error.kind()
-            ),
-            "Pass a source contained by the repository.",
-        )
-        .with_detail(serde_json::json!({"omitted_count": 1}))
-    })?;
+    let journal_store = crate::StoreKind::Personal;
+    let journal_root = crate::store::ensure_store_root(journal_store, repo)?;
+    let private = crate::private::PrivateStore::open_personal(&journal_root)?;
+    let source_identity = source_identity(source_kind, source);
+    let now = now_rfc3339_millis();
+    let prior_observations = private.observations_for_source(&source_identity)?;
+    let source_available = source.exists();
+
+    // A lifecycle re-ingest must keep a stable identity even after its native
+    // source has been removed. Resolve an absent path lexically, but still
+    // refuse a missing child whose nearest existing parent is a symlink out
+    // of the repository.
+    let source_canonical = if source_available {
+        source.canonicalize().map_err(|error| {
+            ContractError::refused(
+                "CONFIG_INVARIANT",
+                format!(
+                    "source is unavailable or escapes the repository ({})",
+                    error.kind()
+                ),
+                "Pass a source contained by the repository.",
+            )
+            .with_detail(serde_json::json!({"omitted_count": 1}))
+        })?
+    } else {
+        let lexical_source = if source.is_absolute() {
+            source.to_path_buf()
+        } else {
+            std::env::current_dir().map_err(io_error)?.join(source)
+        };
+        if !lexical_source.starts_with(&repo_canonical) {
+            return Err(ContractError::refused(
+                "CONFIG_INVARIANT",
+                "source escapes the repository root",
+                "Pass a source contained by the repository.",
+            )
+            .with_detail(serde_json::json!({"omitted_count": 1})));
+        }
+        if let Some(parent) = source.parent() {
+            if let Some(parent_canonical) = parent.canonicalize().ok() {
+                if !parent_canonical.starts_with(&repo_canonical) {
+                    return Err(ContractError::refused(
+                        "CONFIG_INVARIANT",
+                        "source escapes the repository root",
+                        "Pass a source contained by the repository.",
+                    )
+                    .with_detail(serde_json::json!({"omitted_count": 1})));
+                }
+            }
+        }
+        lexical_source
+    };
     if !source_canonical.starts_with(&repo_canonical) {
         return Err(ContractError::refused(
             "CONFIG_INVARIANT",
@@ -87,19 +128,76 @@ pub fn ingest(
         )
         .with_detail(serde_json::json!({"omitted_count": 1})));
     }
-    let bytes = read_source(source_kind, source)?;
-    let mut records = if source_kind == "kindex" {
-        parse_kindex_source(source, &bytes)?
+
+    let parsed: Result<(Vec<u8>, Vec<NativeRecord>), ContractError> = if source_available {
+        read_source(source_kind, source).and_then(|bytes| {
+            let parsed = if source_kind == "kindex" {
+                parse_kindex_source(source, &bytes)
+            } else {
+                parse_native(source_kind, &bytes).map_err(|message| {
+                    ContractError::new(
+                        "CONFIG_INVARIANT",
+                        message,
+                        "Use a valid native source envelope.",
+                        false,
+                        ExitCode::Refused,
+                    )
+                })
+            };
+            parsed.map(|records| (bytes, records))
+        })
     } else {
-        parse_native(source_kind, &bytes).map_err(|message| {
-            ContractError::new(
-                "CONFIG_INVARIANT",
-                message,
-                "Use a valid native source envelope.",
-                false,
-                ExitCode::Refused,
-            )
-        })?
+        Err(ContractError::refused(
+            "CONFIG_INVARIANT",
+            "source is unavailable or escapes the repository (not found)",
+            "Pass a source contained by the repository.",
+        )
+        .with_detail(serde_json::json!({"omitted_count": 1})))
+    };
+    let (bytes, mut records) = match parsed {
+        Ok((bytes, records))
+            if !records.is_empty() || (source_kind == "kindex" && source_available) =>
+        {
+            (bytes, records)
+        }
+        other => {
+            if prior_observations.is_empty() {
+                return match other {
+                    Err(error) => Err(error),
+                    Ok(_) => Err(ContractError::invariant(format!(
+                        "{source_kind} source contains no native records"
+                    ))),
+                };
+            }
+            let bytes = other.ok().map(|(bytes, _)| bytes).unwrap_or_default();
+            let lifecycle = if source_available {
+                "retracted_observation"
+            } else {
+                "absent_source_recorded"
+            };
+            let mut lifecycle_native_ids = std::collections::BTreeSet::new();
+            let records = prior_observations
+                .iter()
+                .filter(|prior| lifecycle_native_ids.insert(prior.native_id.clone()))
+                .map(|prior| {
+                    native_record(
+                        prior.native_id.clone(),
+                        format!("[{lifecycle}]"),
+                        "repository",
+                        4_000,
+                        lifecycle,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                })
+                .collect::<Vec<_>>();
+            (bytes, records)
+        }
     };
     if records.len() > MAX_ITEMS {
         return Err(ContractError::new(
@@ -111,17 +209,10 @@ pub fn ingest(
         ));
     }
     let store = store_for_source(source_kind);
-    // Runtime observations, atoms, and raw source bytes are always private.
-    // `store` remains the semantic destination for signed fact events only.
-    let journal_store = crate::StoreKind::Personal;
-    let journal_root = crate::store::ensure_store_root(journal_store, repo)?;
-    let private = crate::private::PrivateStore::open_personal(&journal_root)?;
     crate::store::write_private_body(&journal_root, &bytes)?;
     let repository_id = (store == crate::StoreKind::Codebase)
         .then(|| crate::repository::repository_id(repo))
         .transpose()?;
-    let source_identity = source_identity(source_kind, source);
-    let now = now_rfc3339_millis();
     let revision = (store == crate::StoreKind::Codebase)
         .then(|| crate::repository::git_revision(repo).ok())
         .flatten();
@@ -133,7 +224,22 @@ pub fn ingest(
         crate::StoreKind::Company => "company-authority",
         crate::StoreKind::Codebase => repository_trust_class(repo, source, source_kind, &bytes),
     };
-    let prior_observations = private.observations_for_source(&source_identity)?;
+    // An expired native record is retained as an explicit lifecycle
+    // observation, while its raw body remains withheld from projection.
+    if let Ok(proof_now) = parse_rfc3339_millis(&now) {
+        for record in &mut records {
+            if let Some(effective_until) = record.effective_until.as_deref() {
+                if parse_rfc3339_millis(effective_until)
+                    .map(|effective_until| effective_until < proof_now)
+                    .unwrap_or(false)
+                {
+                    record.statement = "[expired_raw_withheld]".to_owned();
+                    record.disposition = "expired_raw_withheld".to_owned();
+                }
+            }
+        }
+    }
+
     // Kindex quarantine records are parser receipts, not observations. Split
     // them before observation ids are derived so no malformed line can be
     // represented as admitted or current.
@@ -157,14 +263,17 @@ pub fn ingest(
         .iter()
         .map(|record| record.native_id.clone())
         .collect::<std::collections::BTreeSet<_>>();
+    let mut missing_native_ids = std::collections::BTreeSet::new();
     for prior in &prior_observations {
-        if !present_native_ids.contains(&prior.native_id) {
+        if !present_native_ids.contains(&prior.native_id)
+            && missing_native_ids.insert(prior.native_id.clone())
+        {
             records.push(native_record(
                 prior.native_id.clone(),
-                "[deleted native source]",
+                "[retracted_observation]",
                 "repository",
                 4_000,
-                "retracted",
+                "retracted_observation",
                 None,
                 None,
                 None,
@@ -199,6 +308,7 @@ pub fn ingest(
     let mut quarantined_count = 0;
     let mut quarantined_observations = Vec::new();
     let mut skew_dispositions = Vec::new();
+    let mut changed_dispositions = Vec::new();
     let mut historical_receipts = Vec::new();
     let mut revocation_observed_count = 0;
     let trust = if source_kind == "kindex" {
@@ -253,6 +363,11 @@ pub fn ingest(
             quarantined_count += 1;
             continue;
         }
+        let prior_same_native = prior_observations
+            .iter()
+            .filter(|prior| prior.native_id == record.native_id)
+            .max_by(|left, right| left.observed_at.cmp(&right.observed_at));
+        let lifecycle = record_lifecycle(&record, prior_same_native, &digest);
         let observation = Observation {
             observation_id: observation_id.clone(),
             source_kind: source_kind.to_owned(),
@@ -272,7 +387,7 @@ pub fn ingest(
             origin_trust: Some(trust_class.to_owned()),
             environment_id: record.environment_id.clone(),
             owner_id: record.owner_id.clone(),
-            lifecycle: "observed".to_owned(),
+            lifecycle: lifecycle.clone(),
         };
         let revocation_observed = record
             .signer
@@ -296,25 +411,25 @@ pub fn ingest(
             revocation_observed_count += 1;
             continue;
         }
-        let existing = prior_observations
+        if let Some(existing) = prior_observations
             .iter()
-            .find(|prior| prior.observation_id == observation_id);
-        if existing.is_some() {
+            .find(|prior| prior.observation_id == observation_id)
+        {
             skipped += 1;
+            reported_observations.push(observation_result(existing));
             continue;
         }
-        if let Some(prior) = prior_observations
-            .iter()
-            .filter(|prior| prior.native_id == record.native_id)
-            .max_by(|left, right| left.observed_at.cmp(&right.observed_at))
-        {
+        if let Some(prior) = prior_same_native {
             private.supersede_observation(
                 &prior.observation_id,
                 &prior.disposition,
-                &record.disposition,
+                &lifecycle,
                 &observation_id,
                 &now,
             )?;
+            if lifecycle != "observed" && !changed_dispositions.contains(&lifecycle) {
+                changed_dispositions.push(lifecycle.clone());
+            }
         }
         private.insert_observation(&observation)?;
         let observation_value = serde_json::to_value(&observation)
@@ -326,23 +441,7 @@ pub fn ingest(
             &observation_value,
         )?;
         observation_count += 1;
-        reported_observations.push(json!({
-            "observation_id": observation_id,
-            "source_kind": source_kind,
-            "source_identity": source_identity,
-            "native_id": record.native_id,
-            "content_digest": digest,
-            "observed_at": now,
-            "asserted_at": record.asserted_at,
-            "effective_from": record.effective_from,
-            "effective_until": record.effective_until,
-            "repository_id": repository_id,
-            "revision": revision,
-            "branch": branch,
-            "disposition": record.disposition,
-            "origin_trust_class": observation.origin_trust,
-            "extraction_version": EXTRACTION_VERSION
-        }));
+        reported_observations.push(observation_result(&observation));
         let external_atoms = classified_atoms.remove(&observation_id).unwrap_or_default();
         let mut atoms = Vec::new();
         if external_atoms.is_empty() {
@@ -459,6 +558,7 @@ pub fn ingest(
         "quarantined_count": quarantined_count,
         "quarantined_observations": quarantined_observations,
         "skew_dispositions": skew_dispositions,
+        "changed_dispositions": changed_dispositions,
         "origin_trust_class": trust_class,
         "current_view_byte_identical": observation_count == 0 && skipped > 0,
         "observation_ids": reported_observations
@@ -1098,14 +1198,8 @@ fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError>
             });
         }
     }
-    if records.is_empty() {
-        return Err(ContractError::integrity(
-            "DIGEST_MISMATCH",
-            "kindex event source contains no FactEvents",
-            "Point the kindex adapter at a repository `.kin/events/` tree.",
-        )
-        .with_detail(json!({"malformed_count": 0, "event_count": 0})));
-    }
+    // An initialized repository may legitimately have no FactEvents yet. Its
+    // empty native view is a successful observation set, not corrupted input.
     Ok(records)
 }
 
@@ -2012,6 +2106,48 @@ fn receipt_clock_skew(
         }
     }
     None
+}
+
+fn record_lifecycle(record: &NativeRecord, prior: Option<&Observation>, digest: &str) -> String {
+    match record.disposition.as_str() {
+        "retracted_observation" | "absent_source_recorded" | "expired_raw_withheld" => {
+            return record.disposition.clone();
+        }
+        _ => {}
+    }
+    if prior.is_some_and(|prior| prior.content_digest != digest) {
+        "amended_new_observation".to_owned()
+    } else {
+        "observed".to_owned()
+    }
+}
+
+fn observation_result(observation: &Observation) -> Value {
+    let lifecycle = observation.lifecycle.as_str();
+    let changed_disposition = if lifecycle == "observed" {
+        Value::Null
+    } else {
+        json!(lifecycle)
+    };
+    json!({
+        "observation_id": observation.observation_id,
+        "source_kind": observation.source_kind,
+        "source_identity": observation.source_identity,
+        "native_id": observation.native_id,
+        "content_digest": observation.content_digest,
+        "observed_at": observation.observed_at,
+        "asserted_at": observation.asserted_at,
+        "effective_from": observation.effective_from,
+        "effective_until": observation.effective_until,
+        "repository_id": observation.repository_id,
+        "revision": observation.revision,
+        "branch": observation.branch,
+        "disposition": observation.disposition,
+        "origin_trust_class": observation.origin_trust,
+        "extraction_version": observation.extraction_version,
+        "lifecycle": lifecycle,
+        "changed_disposition": changed_disposition
+    })
 }
 
 fn source_identity(source_kind: &str, source: &Path) -> String {

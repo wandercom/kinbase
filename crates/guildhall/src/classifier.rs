@@ -94,6 +94,9 @@ pub fn run(
 /// can split a JSON document and make a well-formed source look like EOF; each
 /// emitted request is itself one complete strict JSON object.
 pub(crate) fn request_batches(observations: Vec<Value>) -> Result<Vec<Value>, ContractError> {
+    if observations.is_empty() {
+        return Ok(vec![json!({ "observations": [] })]);
+    }
     let mut batches = Vec::new();
     let mut current: Vec<Value> = Vec::new();
     for observation in observations {

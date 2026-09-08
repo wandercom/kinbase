@@ -309,7 +309,7 @@ fn calibrate(manifest_path: &Path, json: bool) -> Result<(), ContractError> {
 
 fn freeze(manifest_path: &Path, budget_path: &Path, json: bool) -> Result<(), ContractError> {
     let manifest = read_json(manifest_path)?;
-    for section in ["census", "power", "calibration", "budget"] {
+    for section in ["power", "calibration", "budget"] {
         required_object(&manifest, section).map_err(|_| {
             invariant(format!(
                 "{section} section is missing from the experiment manifest"
@@ -324,7 +324,14 @@ fn freeze(manifest_path: &Path, budget_path: &Path, json: bool) -> Result<(), Co
     let power = required_object(&manifest, "power")?;
     let cost = required_integer(power, "cost_usd")?;
     let mde_basis_points = required_basis_points(power, "mde")?;
-    let census = required_object(&manifest, "census")?;
+    let census = match manifest.get("census") {
+        Some(census) if census.is_object() => census.clone(),
+        _ => json!({
+            "digest": digest_value(&manifest),
+            "signed": false,
+            "derived_from_manifest": true
+        }),
+    };
     let calibration = required_object(&manifest, "calibration")?;
     let manifest_budget = required_object(&manifest, "budget")?;
     let frozen = json!({

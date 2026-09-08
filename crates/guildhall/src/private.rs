@@ -290,7 +290,7 @@ impl PrivateStore {
     ) -> Result<(), ContractError> {
         self.connection
             .execute(
-                "UPDATE observations SET lifecycle='superseded' WHERE observation_id=?1 AND lifecycle='observed'",
+                "UPDATE observations SET lifecycle='superseded' WHERE observation_id=?1 AND lifecycle != 'superseded'",
                 params![observation_id],
             )
             .map_err(sqlite_error("supersede observation"))?;
