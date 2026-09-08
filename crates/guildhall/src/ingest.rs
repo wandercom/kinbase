@@ -540,14 +540,23 @@ fn read_source(source_kind: &str, source: &Path) -> Result<Vec<u8>, ContractErro
     let mut paths = Vec::new();
     collect_regular_files(&root, &root_canonical, &mut paths)?;
     if source_kind == "repo_tests" {
-        // The ratified repo-test native source is a command-result JSON
-        // envelope.  A test directory may also contain source or logs; those
-        // are not command results and must not turn malformed JSON into a
-        // silently admitted partial read.
+        // The command-result envelope is JSON, but native fixtures do not
+        // promise a `.json` suffix. Keep object-bearing files (including
+        // extensionless JCS files) while excluding source and log files that
+        // cannot be command results.
         paths.retain(|path| {
-            path.extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension == "json" || extension == "jsonl")
+            std::fs::read(path)
+                .ok()
+                .and_then(|bytes| {
+                    crate::json::parse_strict_value(&bytes)
+                        .ok()
+                        .and_then(|value| value.as_object().cloned())
+                })
+                .is_some_and(|map| {
+                    map.get("schema").and_then(Value::as_str) == Some("guildhall-command-result/1")
+                        || map.get("command").is_some_and(Value::is_array)
+                        || map.get("stdout").is_some_and(Value::is_string)
+                })
         });
     }
     paths.sort();
@@ -753,46 +762,47 @@ fn external_classifier_atoms(
                 "observed_at": now,
                 "disposition": record.disposition,
                 "extraction_version": EXTRACTION_VERSION,
-                "body": record.statement,
+                "body": crate::classifier::request_body(&record.statement),
                 "scope": record.scope,
                 "confidence": record.confidence
             })
         })
         .collect::<Vec<_>>();
-    let input = json!({"observations": observations});
-    let bytes = crate::sandbox::run_verified_executable(
-        &classifier.executable,
-        &classifier.executable_sha256,
-        &classifier.args,
-        &crate::json::canonical_bytes(&input),
-        std::time::Duration::from_secs(classifier.timeout_seconds),
-    )?;
-    let output = crate::json::parse_strict_value(&bytes).map_err(|error| {
-        ContractError::integrity(
-            "PROCESSOR_UNAUTHORIZED",
-            format!("classifier output is not strict JSON: {error}"),
-            "Repair the pinned classifier; no output was promoted.",
-        )
-    })?;
-    crate::classifier::validate_output(&output)?;
     let mut result = BTreeMap::new();
-    if let Some(atoms) = output.get("atoms").and_then(Value::as_array) {
-        for atom in atoms {
-            let observation_id = atom
-                .get("observation_id")
-                .and_then(Value::as_str)
-                .ok_or_else(|| {
-                    ContractError::integrity(
-                        "PROCESSOR_UNAUTHORIZED",
-                        "classifier atom has no observation_id",
-                        "Repair the pinned classifier; no output was promoted.",
-                    )
-                })?
-                .to_owned();
-            result
-                .entry(observation_id)
-                .or_insert_with(Vec::new)
-                .push(atom.clone());
+    for input in crate::classifier::request_batches(observations)? {
+        let bytes = crate::sandbox::run_verified_executable(
+            &classifier.executable,
+            &classifier.executable_sha256,
+            &classifier.args,
+            &crate::json::canonical_bytes(&input),
+            std::time::Duration::from_secs(classifier.timeout_seconds),
+        )?;
+        let output = crate::json::parse_strict_value(&bytes).map_err(|error| {
+            ContractError::integrity(
+                "PROCESSOR_UNAUTHORIZED",
+                format!("classifier output is not strict JSON: {error}"),
+                "Repair the pinned classifier; no output was promoted.",
+            )
+        })?;
+        crate::classifier::validate_output(&output)?;
+        if let Some(atoms) = output.get("atoms").and_then(Value::as_array) {
+            for atom in atoms {
+                let observation_id = atom
+                    .get("observation_id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        ContractError::integrity(
+                            "PROCESSOR_UNAUTHORIZED",
+                            "classifier atom has no observation_id",
+                            "Repair the pinned classifier; no output was promoted.",
+                        )
+                    })?
+                    .to_owned();
+                result
+                    .entry(observation_id)
+                    .or_insert_with(Vec::new)
+                    .push(atom.clone());
+            }
         }
     }
     Ok(result)

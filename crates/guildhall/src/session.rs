@@ -11,7 +11,6 @@ use std::path::Path;
 use uuid::Uuid;
 
 const SESSION_OBSERVATION_LIMIT: usize = 10_000;
-const CLASSIFIER_REQUEST_LIMIT: usize = 1024 * 1024;
 const SESSION_OBSERVATION_KEYS: [&str; 5] = ["id", "role", "text", "observed_at", "source_kind"];
 
 pub fn start(repo: &Path, host: crate::HostKind, json: bool) -> Result<(), ContractError> {
@@ -206,14 +205,14 @@ pub fn observe(
                 "observed_at": observation.observed_at,
                 "disposition": observation.disposition,
                 "extraction_version": observation.extraction_version,
-                "body": session_corpus_text(&records, native_id),
+                "body": crate::classifier::request_body(&session_corpus_text(&records, native_id)),
                 "scope": "host-session",
                 "confidence": 8_000
             })
         })
         .collect::<Vec<_>>();
     let mut external_atoms: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-    for batch in classifier_batches(classifier_observations)? {
+    for batch in crate::classifier::request_batches(classifier_observations)? {
         let batch_atoms = pinned_classifier_atoms(classifier, &batch)?;
         for (observation_id, atoms) in batch_atoms {
             external_atoms
@@ -512,43 +511,6 @@ fn pinned_classifier_atoms(
     Ok(result)
 }
 
-fn classifier_batches(observations: Vec<Value>) -> Result<Vec<Value>, ContractError> {
-    let mut batches = Vec::new();
-    let mut current: Vec<Value> = Vec::new();
-    for observation in observations {
-        let mut candidate = current.clone();
-        candidate.push(observation.clone());
-        let request = json!({ "observations": candidate });
-        let bytes = crate::json::canonical_bytes(&request).len();
-        if bytes <= CLASSIFIER_REQUEST_LIMIT {
-            current = candidate;
-            continue;
-        }
-        if !current.is_empty() {
-            batches.push(json!({ "observations": current }));
-            candidate = vec![observation];
-        }
-        let bytes = crate::json::canonical_bytes(&json!({ "observations": candidate })).len();
-        if bytes > CLASSIFIER_REQUEST_LIMIT {
-            return Err(ContractError::limit(
-                format!(
-                    "a single classifier observation exceeds the {CLASSIFIER_REQUEST_LIMIT}-byte request bound"
-                ),
-                json!({
-                    "omitted_count": 1,
-                    "bytes": bytes,
-                    "ceiling_bytes": CLASSIFIER_REQUEST_LIMIT
-                }),
-            ));
-        }
-        current = candidate;
-    }
-    if !current.is_empty() {
-        batches.push(json!({ "observations": current }));
-    }
-    Ok(batches)
-}
-
 fn atom_from_classifier(
     external: &Value,
     native_id: &str,
@@ -625,24 +587,26 @@ fn atom_from_classifier(
                 )
         });
         let mut proposed_destinations = proposed_destinations;
-        let eligible_destinations = if atom.hard_blocked {
-            Vec::new()
-        } else if taint_boundary {
-            vec!["personal".to_owned()]
-        } else if atom.confidence < 6_000 {
+        let mut eligible_destinations = if atom.hard_blocked || atom.confidence < 6_000 {
             Vec::new()
         } else {
             proposed_destinations.clone()
         };
         if !atom.hard_blocked && atom.confidence >= 6_000 && taint_boundary {
-            // Predictions can carry both the semantic shared destination and
-            // the Personal label that privacy eligibility preserves.  Candidate
-            // fan-out below uses only `eligible_destinations`.
+            // Approval-gating taint stays on the private atom and candidate
+            // audit record; it does not erase an otherwise eligible, minimized
+            // destination that exact-byte human approval may license.
             if !proposed_destinations
                 .iter()
                 .any(|value| value == "personal")
             {
                 proposed_destinations.push("personal".to_owned());
+            }
+            let eligible_personal = eligible_destinations
+                .iter()
+                .any(|value| value == "personal");
+            if !eligible_personal {
+                eligible_destinations.push("personal".to_owned());
             }
         }
         if atom.hard_blocked || atom.confidence < 6_000 {

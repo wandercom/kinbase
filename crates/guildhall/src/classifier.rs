@@ -24,6 +24,7 @@ const ALLOWED_KINDS: [&str; 6] = [
 ];
 const ALLOWED_CONFIDENCE: [&str; 3] = ["high", "medium", "low"];
 const ALLOWED_DESTINATIONS: [&str; 4] = ["personal", "company", "codebase", "none"];
+pub const CLASSIFIER_REQUEST_LIMIT: usize = 1024 * 1024;
 const MAX_CLASSIFIER_INPUT: usize = 8 * 1024 * 1024;
 
 pub fn run(
@@ -87,6 +88,76 @@ pub fn run(
         );
     }
     Ok(())
+}
+
+/// Split classifier input at whole-observation boundaries. A byte-sized cut
+/// can split a JSON document and make a well-formed source look like EOF; each
+/// emitted request is itself one complete strict JSON object.
+pub(crate) fn request_batches(observations: Vec<Value>) -> Result<Vec<Value>, ContractError> {
+    let mut batches = Vec::new();
+    let mut current: Vec<Value> = Vec::new();
+    for observation in observations {
+        let mut candidate = current.clone();
+        candidate.push(observation.clone());
+        let request = json!({ "observations": candidate });
+        let bytes = crate::json::canonical_bytes(&request).len();
+        if bytes <= CLASSIFIER_REQUEST_LIMIT {
+            current = candidate;
+            continue;
+        }
+        if !current.is_empty() {
+            batches.push(json!({ "observations": current }));
+            candidate = vec![observation];
+        }
+        let bytes = crate::json::canonical_bytes(&json!({ "observations": candidate })).len();
+        if bytes > CLASSIFIER_REQUEST_LIMIT {
+            return Err(ContractError::limit(
+                format!(
+                    "a single classifier observation exceeds the {CLASSIFIER_REQUEST_LIMIT}-byte request bound"
+                ),
+                json!({
+                    "omitted_count": 1,
+                    "bytes": bytes,
+                    "ceiling_bytes": CLASSIFIER_REQUEST_LIMIT
+                }),
+            ));
+        }
+        current = candidate;
+    }
+    if !current.is_empty() {
+        batches.push(json!({ "observations": current }));
+    }
+    Ok(batches)
+}
+
+/// Canonical records reject control characters, but native source bodies may
+/// contain line breaks. Preserve sentence boundaries at those breaks and make
+/// every otherwise-forbidden code point an explicit space so a classifier
+/// request can never silently canonicalize to zero bytes.
+pub(crate) fn request_body(text: &str) -> String {
+    let line_breaks_replaced = text
+        .replace("\r\n", ". ")
+        .replace('\r', ". ")
+        .replace('\n', ". ");
+    line_breaks_replaced
+        .chars()
+        .map(|character| {
+            let code = character as u32;
+            if code <= 0x1f
+                || (0x80..=0x9f).contains(&code)
+                || code == 0x61c
+                || (0x200e..=0x200f).contains(&code)
+                || (0x202a..=0x202e).contains(&code)
+                || (0x2066..=0x2069).contains(&code)
+                || (0xfdd0..=0xfdef).contains(&code)
+                || ((code & 0xfffe) == 0xfffe && code <= 0x10ffff)
+            {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
 }
 
 pub(crate) fn deterministic(document: &Value) -> Result<Value, ContractError> {
