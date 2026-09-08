@@ -153,9 +153,16 @@ pub fn run(
         .collect();
     // Low-distortion Unknowns are represented, but only a high-distortion
     // Unknown blocks dependent trusted guidance.
+    // An Unknown blocks this projection when it names the task or the
+    // decision as the decision it blocks, when its own precise question is
+    // the decision at stake, or when it is architecture-owned.
     let has_blocking_unknown = open_unknowns.iter().any(|unknown| {
         unknown.loss_if_absent >= 7_000
-            && (unknown.decision_blocked == decision || unknown.scope.starts_with("architecture:"))
+            && (unknown.decision_blocked == decision
+                || unknown.decision_blocked == task
+                || unknown.question == decision
+                || unknown.scope.starts_with("architecture:")
+                || unknown.owner_role == "chief-architect")
     });
 
     let mut selected: Vec<CurrentFact> = Vec::new();
@@ -339,14 +346,25 @@ pub fn run(
         .as_ref()
         .and_then(|record| crate::json::get_str(record, "dominating_input").map(str::to_owned));
     let cache_state_constructed = launcher.company_cache()?.is_some();
-    let recommendation = if !has_blocking_unknown {
-        selected
-            .iter()
-            .find(|fact| is_authority_answer(fact))
-            .map(|fact| fact.statement.clone())
+    // Trusted guidance is released only once no high-distortion Unknown
+    // blocks the decision, and it cites the admitted answer it rests on
+    // (question, answer and fact identities) rather than restating prose.
+    let recommendation_fact = if !has_blocking_unknown {
+        selected.iter().find(|fact| is_authority_answer(fact))
     } else {
         None
     };
+    let recommendation = recommendation_fact.map(|fact| fact.statement.clone());
+    let recommendation_basis = recommendation_fact.map(|fact| {
+        json!({
+            "fact_id": fact.fact_id,
+            "event_id": fact.event_id,
+            "authority_id": fact.authority_id,
+            "authority_scope": fact.authority_scope,
+            "cites": fact.evidence_refs,
+            "authority_snapshot_cursor": fact.authority_snapshot_cursor
+        })
+    });
     let safety_is_degraded = facts.iter().any(|fact| {
         crate::model::criticality_is_safety(
             fact.effective_dependence_class
@@ -398,6 +416,7 @@ pub fn run(
         "unknowns": unknowns.iter().map(unknown_value).collect::<Vec<_>>(),
         "voi_approximation": "additive deterministic basis-point approximation over conditional distortion, authority, complementarity, uncertainty, redundancy, retrieval, and staleness",
         "trusted_recommendation": recommendation,
+        "trusted_recommendation_basis": recommendation_basis,
         "degraded_policy": degraded_policy,
         "cache_state_constructed": cache_state_constructed,
         "company_reference_resolved": selected_reference.is_some(),
