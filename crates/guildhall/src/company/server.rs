@@ -1193,6 +1193,49 @@ fn admit_fact(
             ));
         }
         Verification::Revoked => {
+            // Architecture §2: a pre-revocation committed retry may return
+            // its historical receipt to its original scoped client, but is
+            // never re-admitted and its projection is recalculated under the
+            // current revocation state.
+            if let Some(existing_cursor) = db
+                .event_cursor(&event.event_id)
+                .map_err(|error| refuse(500, error))?
+            {
+                let existing_digest = db
+                    .all_events(existing_cursor - 1, 1)
+                    .map_err(|error| refuse(500, error))?
+                    .first()
+                    .and_then(|record| record.get("payload"))
+                    .map(|payload| crate::json::digest(payload))
+                    .unwrap_or_default();
+                let same_client = db
+                    .nonce_record("company", &digest)
+                    .map_err(|error| refuse(500, error))?
+                    .as_ref()
+                    .and_then(|record| crate::json::get_str(record, "client_key"))
+                    == Some(auth.client_key.as_str());
+                if existing_digest == digest && same_client {
+                    let mut receipt =
+                        receipt_for(&event, &digest, existing_cursor, "committed", "historical");
+                    let (revocation_observed, support_withdrawn) =
+                        replay_projection(db, trust_state, &event);
+                    receipt["historical_receipt"] = Value::Bool(true);
+                    receipt["readmitted"] = Value::Bool(false);
+                    receipt["revocation_observed"] = Value::Bool(revocation_observed);
+                    receipt["support_withdrawn"] = Value::Bool(support_withdrawn);
+                    receipt["receipt_scope_restricted"] = Value::Bool(true);
+                    receipt["projection_state"] = Value::String(if support_withdrawn {
+                        "support_withdrawn".to_owned()
+                    } else {
+                        "current".to_owned()
+                    });
+                    let _ = db.audit(
+                        "historical-receipt",
+                        &json!({"event_id": event.event_id, "digest": digest, "revoked_key": event.signer}),
+                    );
+                    return Ok((200, receipt));
+                }
+            }
             return Err(refuse(
                 403,
                 ContractError::refused(
