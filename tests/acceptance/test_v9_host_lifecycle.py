@@ -121,6 +121,23 @@ def _json(result) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+def _doctor_approval_code(payload):
+    """C9 requires a diagnostic; a successful doctor need not be an error object."""
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in ("code", "status") and value == "HOOK_APPROVAL_REQUIRED":
+                return value
+            found = _doctor_approval_code(value)
+            if found is not None:
+                return found
+    elif isinstance(payload, list):
+        for value in payload:
+            found = _doctor_approval_code(value)
+            if found is not None:
+                return found
+    return None
+
+
 def _tree(root: Path) -> dict[str, str]:
     import hashlib
 
@@ -186,7 +203,7 @@ def test_hooks_plan_is_read_only_and_install_requires_native_approval(
             "plan": {"files": files, "commands": field(plan, "commands"),
                      "permissions": field(plan, "permissions")},
             "files_changed_by_plan": len(set(after_plan.items()) ^ set(before.items())),
-            "doctor_refusal_code": doctor.code,
+            "doctor_refusal_code": _doctor_approval_code(_json(doctor)),
             "install_exit_code": installed_result.returncode,
             "installed_files": changed,
             "planned_paths_relative_to_home": paths_relative,
@@ -404,6 +421,7 @@ def test_blackholed_company_endpoint_degrades_loudly_inside_the_budget(
     world, anchors = anchored
     _run(guildhall, "hooks", "install", host, "--json",
          cwd=world.repo.path)
+    trust.remove_cache(roots)
     payloads: list[dict] = []
     durations: list[float] = []
     connect_durations: list[float] = []

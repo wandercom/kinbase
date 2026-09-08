@@ -41,7 +41,7 @@ from ._harness.requirements import (
 )
 from ._harness.roots import ProofRoots
 from ._harness.service import Blackhole
-from ._harness.worldbuilder import REPO_UUID, OpaqueIds, SignedWorld, Witness
+from ._harness.worldbuilder import REPO_UUID, OpaqueIds, SignedWorld
 
 pytestmark = [pytest.mark.v8, pytest.mark.requires_product]
 
@@ -112,6 +112,10 @@ def _json(result) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
+
+def _valid_at(*, day: int) -> str:
+    return synth.receipt_stamp((day - 1) * 86400 - 60)
+
 def _company_fact(world, *, statement: str, criticality: str, valid_until: str,
                   signer: synth.Signer | None = None, supersedes=(),
                   parents=(), disposition: str = "accepted",
@@ -123,7 +127,7 @@ def _company_fact(world, *, statement: str, criticality: str, valid_until: str,
         signer or world.architect, store_kind="company",
         logical_key=logical_key, statement=statement, atom_kind="decision",
         disposition=disposition,
-        effective_from=synth._stamp(day=1), effective_until=valid_until,
+        effective_from=_valid_at(day=1), effective_until=valid_until,
         supersedes=tuple(supersedes), parents=tuple(parents),
         distortion={
             "trigger": "a dependent edit of the scheduler wire format",
@@ -148,6 +152,8 @@ def _published(anchors, record: dict) -> dict:
             "semantic_digest": receipt["semantic_digest"],
             "digest_alg_version": receipt.get("digest_alg_version") or "guildhall-digest/1",
             "source": "admission-receipt",
+            "valid_from": record["document"]["effective_from"],
+            "valid_until": record["document"]["effective_until"],
         }
     listing = anchors.client.get("/facts")
     if listing.status == 200 and listing.body:
@@ -166,6 +172,8 @@ def _published(anchors, record: dict) -> dict:
                         "digest_alg_version":
                             entry.get("digest_alg_version") or "guildhall-digest/1",
                         "source": "GET /facts",
+                        "valid_from": record["document"]["effective_from"],
+                        "valid_until": record["document"]["effective_until"],
                     }
     raise ProductFailure(
         "Company published no semantic digest for an admitted fact, neither in "
@@ -180,11 +188,11 @@ def _populate_company(anchors, world) -> dict:
     """Admit the referenced fact plus a superseding version, and retain both."""
     first = _company_fact(
         world, statement="the wire format version is fixed at three",
-        criticality="safety_critical", valid_until=synth._stamp(day=30),
+        criticality="safety_critical", valid_until=_valid_at(day=30),
     )
     second = _company_fact(
         world, statement="the wire format version is fixed at four",
-        criticality="safety_critical", valid_until=synth._stamp(day=60),
+        criticality="safety_critical", valid_until=_valid_at(day=60),
         supersedes=(first["event_id"],), parents=(first["event_id"],),
     )
     return {
@@ -208,7 +216,7 @@ def _plant_reference(world, anchors, *, published: dict | None = None,
         semantic_digest=semantic_digest or str(published["semantic_digest"]),
         digest_alg_version=digest_alg_version or str(published["digest_alg_version"]),
         authority=world.architect.authority_id,
-        valid_from=synth._stamp(day=1), valid_until=synth._stamp(day=60),
+        valid_from=published["valid_from"], valid_until=published["valid_until"],
         company_criticality=criticality, relation=relation,
     )
     return world.plant_event(
@@ -320,7 +328,7 @@ def test_stricter_of_company_and_local_class_controls_freshness(
         # the three rows never share state.
         fact = _company_fact(
             world, statement="the wire format rule " + str(index) + " holds",
-            criticality=company_class, valid_until=synth._stamp(day=60),
+            criticality=company_class, valid_until=_valid_at(day=60),
             logical_key=FACT_KEY + "/" + str(index),
         )
         key = REFERENCE_KEY + "/" + str(index)
@@ -375,7 +383,7 @@ def test_only_company_steward_may_sign_a_relaxation(
                   "format rule until day two",
         atom_kind="decision", disposition="exception_request",
         parents=(populated["second"]["event_id"],),
-        effective_until=synth._stamp(day=2),
+        effective_until=_valid_at(day=2),
     )
     world.plant_event(
         world.maintainer, store_kind="codebase",
@@ -383,12 +391,12 @@ def test_only_company_steward_may_sign_a_relaxation(
         statement="the relaxation is granted",
         atom_kind="decision", disposition="relaxation",
         parents=(request["event_id"],),
-        effective_until=synth._stamp(day=2),
+        effective_until=_valid_at(day=2),
     )
     _company_fact(
         world, signer=world.steward, disposition="relaxation",
         statement="the relaxation is granted for this repository uuid",
-        criticality="advisory", valid_until=synth._stamp(day=2),
+        criticality="advisory", valid_until=_valid_at(day=2),
         parents=(request["event_id"], populated["second"]["event_id"]),
         logical_key=REFERENCE_KEY + "/exception",
     )
@@ -435,7 +443,7 @@ def test_maintainer_may_request_but_not_mint_an_exception(
         statement="this repository requests an advisory relaxation until day two",
         atom_kind="decision", disposition="exception_request",
         parents=(populated["second"]["event_id"],),
-        effective_until=synth._stamp(day=2),
+        effective_until=_valid_at(day=2),
     )
     world.plant_event(
         world.maintainer, store_kind="codebase",
@@ -443,12 +451,12 @@ def test_maintainer_may_request_but_not_mint_an_exception(
         statement="the maintainer grants its own relaxation",
         atom_kind="decision", disposition="relaxation",
         parents=(request["event_id"],),
-        effective_until=synth._stamp(day=2),
+        effective_until=_valid_at(day=2),
     )
     granted = _company_fact(
         world, signer=world.steward, disposition="relaxation",
         statement="the steward grants the scoped relaxation",
-        criticality="advisory", valid_until=synth._stamp(day=2),
+        criticality="advisory", valid_until=_valid_at(day=2),
         parents=(request["event_id"], populated["second"]["event_id"]),
         logical_key=REFERENCE_KEY + "/request",
     )
@@ -496,36 +504,38 @@ def test_digest_mismatch_attribution_truth_table(
         "unavailable": "none",
     }
     scenarios = []
-    for index, relation in enumerate(DIGEST_RELATIONS):
+    for relation in DIGEST_RELATIONS:
+        clone = world.repo.clone(roots.run_root / "digest-cases" / ids.token(relation))
+        row_world = SignedWorld(repo=clone, steward=world.steward,
+                                maintainer=world.maintainer, architect=world.architect,
+                                company=anchors)
+        published = dict(populated["published"])
         digest_override = None
         if relation == "historical_differs":
             digest_override = canonical.content_digest_hex(b"a different statement")
-        if relation == "version_missing":
-            digest_override = canonical.content_digest_hex(b"a retired version")
-        _plant_reference(world, anchors, published=populated["published"],
-                         semantic_digest=digest_override,
-                         logical_key=REFERENCE_KEY + "/" + ids.token(relation))
+        elif relation == "historical_matches":
+            # Current head differs, while Company's retained old version matches.
+            published = _published(anchors, populated["first"])
+        elif relation == "version_missing":
+            published["fact_id"] = "fact_" + ids.token("unpublished-version")
+        _plant_reference(row_world, anchors, published=published,
+                         semantic_digest=digest_override)
         if relation == "unavailable":
-            # Validator ruling C28: unavailability is configured through the
-            # user config, never the environment; the endpoint is a listener
-            # that never answers.
             with Blackhole(0) as blackhole, anchors.company_endpoint(
-                f"http://127.0.0.1:{blackhole.port}"
-            ):
-                observed = _json(_run(guildhall, "fsck", "--repo",
-                                      str(world.repo.path), "--json",
-                                      cwd=world.repo.path))
+                    f"http://127.0.0.1:{blackhole.port}"):
+                observed = _json(_run(guildhall, "fsck", "--repo", str(clone.path),
+                                      "--json", cwd=clone.path))
         else:
-            observed = _json(_run(guildhall, "fsck", "--repo", str(world.repo.path),
-                                  "--json", cwd=world.repo.path))
+            observed = _json(_run(guildhall, "fsck", "--repo", str(clone.path),
+                                  "--json", cwd=clone.path))
         owner = field(observed, "digest_attribution", "owner_role")
         scenarios.append({
             "scenario": ids.token(relation),
-            "company_queried": relation != "unavailable"
-            or field(observed, "company_query_attempted") is True,
+            "company_queried": field(observed, "company_query_attempted") is True,
             "owner_role": owner,
             "owner_matches_expected": owner == expected_owner[relation],
         })
+
     with Blackhole(0) as blackhole, anchors.company_endpoint(
         f"http://127.0.0.1:{blackhole.port}"
     ):
@@ -562,7 +572,7 @@ def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
     bare = world.repo.clone(tmp_path / ids.token("uncertified"))
     uncertified = anchors.uncertified_driver(ids.token("uncertified"))
     clone_status = _json(_run(uncertified, "status", "--repo", str(bare.path),
-                              "--json", cwd=bare.path))
+                              "--as-of", synth.receipt_stamp(), "--json", cwd=bare.path))
 
     # Attacker fork: a clone that claims a new UUID with a self-issued
     # certificate. The in-tree copy is inert (a foreign path); the out-of-tree
@@ -586,7 +596,7 @@ def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
     install = _run(guildhall, "repo", "init", "--repo", str(fork.path),
                    "--certificate", str(forged_file), "--json", cwd=fork.path)
     fork_status = _json(_run(guildhall, "status", "--repo", str(fork.path),
-                             "--json", cwd=fork.path))
+                             "--as-of", synth.receipt_stamp(), "--json", cwd=fork.path))
     unknowns = [
         u for u in rows(clone_status, "unknowns")
         if field(u, "kind") == "certificate"
@@ -737,15 +747,34 @@ def test_company_emits_its_own_observation_expired_event(
     world, anchors = anchored
     fact = _company_fact(
         world, statement="this observation expires immediately",
-        criticality="advisory", valid_until=synth._stamp(day=1),
+        criticality="advisory", valid_until=_valid_at(day=1),
     )
     _plant_reference(world, anchors, published=_published(anchors, fact))
     # The dated default-branch observation whose fresh_until Company watches.
     _run(guildhall, "repo", "publish-manifest", "--repo", str(world.repo.path),
          "--json", cwd=world.repo.path)
-    before = anchors.client.get("/questions")
-    witness = Witness(kind="company_side_expiry")
-    witness.note(pre_query_status=before.status)
+    # R-14 applies separately to the long-lived service and the invoking client.
+    # Restart the same service state/config under the advanced proof clock, then
+    # read its status before any clone activity can manufacture an expiry event.
+    import socket
+    import time
+    anchors.service.stop()
+    anchors.service.process = guildhall.popen(
+        "company", "serve", "--config", str(anchors.roots.service_config_path),
+        env=guildhall.base_env({"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "604800"}))
+    deadline = time.monotonic() + 30
+    while True:
+        try:
+            with socket.create_connection(("127.0.0.1", anchors.service.port), timeout=1):
+                break
+        except OSError:
+            if time.monotonic() >= deadline:
+                raise ProductFailure("Company failed to restart for its expiry timer")
+            time.sleep(0.01)
+    anchors.client.clock_offset_seconds = 604800
+    company_status = anchors.client.get("/status").json
+    company_expired = [e for e in rows(company_status, "events")
+                       if field(e, "disposition") == "manifest_observation_expired"]
 
     observed = _json(_run(
         guildhall, "status", "--repo", str(world.repo.path), "--json",
@@ -766,7 +795,7 @@ def test_company_emits_its_own_observation_expired_event(
             "unknown_owner_roles": sorted(
                 {str(field(u, "owner_role")) for u in rows(observed, "unknowns")}
             ),
-            "emitted_without_clone_activity": True,
+            "emitted_without_clone_activity": len(company_expired) == 1,
         },
         label="Company emits its own observation-expired event",
     )
@@ -791,15 +820,23 @@ def test_cache_disagreement_truth_table(
             guildhall, anchors, world, roots, revocation, validity, dependence
         )
         projection = field(constructed["observed"], "projection_state")
-        expected = "withheld" if (revocation == "stale"
-                                  and dependence == "safety") else "projected"
+        expected = "projected" if revocation == "fresh" and validity == "fresh" else "withheld"
+        observed = constructed["observed"]
+        selected = rows(observed, "selected")
+        unknowns = rows(observed, "unknowns")
+        unsafe_selected = any(field(f, "logical_key") == REFERENCE_KEY for f in selected)
+        stale_label = "stale" in json.dumps(observed).lower()
+        matches = (projection == "projected" and field(observed, "company_reference_resolved") is True
+                   if expected == "projected" else
+                   not unsafe_selected and bool(unknowns) and
+                   (projection == "withheld" if dependence == "safety" else stale_label))
         table.append({
             "revocation": revocation,
             "fact_validity": validity,
             "dependence": dependence,
             "projection": projection,
             "state_constructed": constructed["state_constructed"],
-            "matches_expected": projection == expected,
+            "matches_expected": matches,
         })
     stale_safety = [
         r for r in table
@@ -819,27 +856,50 @@ def test_cache_disagreement_truth_table(
 
 def _construct_cache_row(guildhall, anchors, world, roots, revocation, validity,
                          dependence) -> dict:
-    """Really move the state this row names, then read the result back."""
-    removed = 0
-    if revocation == "stale":
-        removed = trust.remove_cache(roots)
-    _plant_reference(
-        world, anchors,
-        criticality="safety_critical" if dependence == "safety" else "advisory",
-        logical_key=REFERENCE_KEY + "/" + revocation + "-" + validity + "-" + dependence,
-    )
-    offset = "604800" if validity == "stale" else "0"
-    observed = _json(_run(
-        guildhall, "project", "--repo", str(world.repo.path),
-        "--task", "diagnose the wire format",
-        "--decision", "which version applies", "--json", cwd=world.repo.path,
-        env=guildhall.base_env({"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": offset}),
-    ))
-    return {
-        "observed": observed,
-        "state_constructed": (revocation != "stale" or removed >= 0)
-        and (validity != "stale" or offset == "604800"),
-    }
+    """Each row has an independent signed cache, with both clocks exercised offline."""
+    from ._harness.worldbuilder import start_company
+
+    layout = ProofRoots.create(roots.run_root / "cache-rows" /
+                               (revocation + "-" + validity + "-" + dependence))
+    driver = Guildhall(home=layout.home, xdg_config_home=layout.xdg_config_home,
+                      cwd=layout.repo_root, path_prefix=guildhall.path_prefix)
+    row_world = SignedWorld.create(layout.repo_root)
+    service = start_company(driver, layout)
+    try:
+        row_anchors = trust.establish(driver, layout, row_world, start_service=service)
+        offset = 960 if revocation == "stale" else (60 if validity == "stale" else 0)
+        valid_until = synth.receipt_stamp(30 if validity == "stale" else 86400)
+        fact = _company_fact(row_world, statement="the wire format is version four",
+                             criticality="safety_critical" if dependence == "safety" else "advisory",
+                             valid_until=valid_until)
+        published = _published(row_anchors, fact)
+        ref = synth.company_reference(
+            company_id=COMPANY_ID, fact_id=published["fact_id"],
+            semantic_digest=published["semantic_digest"],
+            digest_alg_version=published["digest_alg_version"],
+            authority=row_world.architect.authority_id,
+            valid_from=synth.receipt_stamp(-60), valid_until=valid_until,
+            company_criticality="safety_critical" if dependence == "safety" else "advisory", relation="applies")
+        reference = row_world.plant_event(
+            row_world.maintainer, store_kind="codebase", logical_key=REFERENCE_KEY,
+            statement="the scheduler requires the Company wire-format rule", company_refs=(ref,))
+        _plant_local_dependence(row_world, reference=reference,
+                                local_class="safety_critical" if dependence == "safety" else "advisory")
+        _ingest(driver, row_world.repo.path)
+        warm = _json(_run(driver, "project", "--repo", str(row_world.repo.path),
+                           "--task", "diagnose the wire format", "--decision", "which version applies",
+                           "--json", cwd=row_world.repo.path))
+        with Blackhole(0) as blackhole, row_anchors.company_endpoint(
+                f"http://127.0.0.1:{blackhole.port}"):
+            observed = _json(_run(
+                driver, "project", "--repo", str(row_world.repo.path),
+                "--task", "diagnose the wire format", "--decision", "which version applies",
+                "--as-of", synth.receipt_stamp(offset), "--json", cwd=row_world.repo.path,
+                env=driver.base_env({"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": str(offset)})))
+        return {"observed": observed,
+                "state_constructed": field(warm, "company_reference_resolved") is True}
+    finally:
+        service.stop()
 
 
 @spec_ref(

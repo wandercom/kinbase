@@ -181,8 +181,9 @@ def _run_pool(guildhall: Guildhall, repo: Path, corpus, *, runs: int,
     return joins, reported
 
 
-def _first_candidate(listing: dict) -> dict:
-    candidates = rows(listing, "candidates")
+def _first_candidate(listing: dict, destination: str | None = None) -> dict:
+    candidates = [c for c in rows(listing, "candidates")
+                  if destination is None or field(c, "destination") == destination]
     if not candidates:
         raise ProductFailure(
             "`proposals list --json` returned no candidate to fan out; V-2 "
@@ -191,12 +192,25 @@ def _first_candidate(listing: dict) -> dict:
     return candidates[0]
 
 
-def _decide(guildhall: Guildhall, repo: Path, candidate: dict, destination: str):
+
+def _fanout_pair(listing: dict, destination: str) -> tuple[dict, dict]:
+    for local in rows(listing, "candidates"):
+        if field(local, "destination") != destination or not isinstance(field(local, "message_id"), str):
+            continue
+        for company in rows(listing, "candidates"):
+            if field(company, "destination") == "company:root" and field(
+                    company, "message_id") == field(local, "message_id"):
+                if field(local, "candidate_id") != field(company, "candidate_id"):
+                    return local, company
+    raise ProductFailure("V-2 fan-out requires independent Codebase and Company "
+                         "candidates for the same source message")
+
+def _decide(guildhall: Guildhall, repo: Path, candidate: dict, destination: str, **kwargs):
     return guildhall.run(
         "proposals", "decide", str(field(candidate, "candidate_id")),
         "--destination", destination,
         "--approve-digest", str(field(candidate, "payload_digest")), "--json",
-        cwd=repo, check=False,
+        cwd=repo, check=False, **kwargs,
     )
 
 
@@ -496,14 +510,14 @@ def test_partial_fanout_failure_does_not_roll_back_committed_destination(
     session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
-    candidate = _first_candidate(listing)
+    candidate, company = _fanout_pair(listing, "codebase:" + anchors.repository_uuid)
 
     _decide(guildhall, world.repo.path, candidate,
             "codebase:" + anchors.repository_uuid)
     with Blackhole(0) as blackhole, anchors.company_endpoint(
         f"http://127.0.0.1:{blackhole.port}"
     ):
-        blackholed = _decide(guildhall, world.repo.path, candidate, "company:root")
+        blackholed = _decide(guildhall, world.repo.path, company, "company:root")
     witness = Witness(kind="company_unreachable")
     witness.note(port=blackhole.port, decide_exit=blackholed.returncode)
     witness.require("the Company endpoint must actually have been unreachable")
@@ -535,12 +549,13 @@ def test_retry_returns_original_receipt_without_duplication(
     session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
-    candidate = _first_candidate(listing)
+    candidate = _first_candidate(listing, "codebase:" + anchors.repository_uuid)
     destination = "codebase:" + anchors.repository_uuid
 
     first = _decide(guildhall, world.repo.path, candidate, destination)
     events_after_first = world.event_count()
-    second = _decide(guildhall, world.repo.path, candidate, destination)
+    second = _decide(guildhall, world.repo.path, candidate, destination,
+                     env=guildhall.base_env({"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "960"}))
     events_after_second = world.event_count()
     status = _proposals(guildhall, world.repo.path, session)
 
@@ -568,13 +583,23 @@ def test_retry_returns_original_receipt_without_duplication(
 def test_expired_closing_deadline_emits_one_signed_orphan_abandoned(
     guildhall: Guildhall, anchored, held_out
 ) -> None:
+    from ._harness.service import Blackhole
+
     world, anchors = anchored
     session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
-    candidate = _first_candidate(listing)
+    candidate, company = _fanout_pair(listing, "codebase:" + anchors.repository_uuid)
     _decide(guildhall, world.repo.path, candidate,
             "codebase:" + anchors.repository_uuid)
+
+    with Blackhole(0) as blackhole, anchors.company_endpoint(
+        f"http://127.0.0.1:{blackhole.port}"
+    ):
+        _decide(guildhall, world.repo.path, company, "company:root")
+    require_nonempty(rows(_proposals(guildhall, world.repo.path, session), "apologies"),
+                     obligation="V-2.orphan-abandoned", origin=Origin.PRODUCT,
+                     why="a partial fan-out must open an orphan before its deadline")
 
     # Advance the proof clock past the closing deadline. The witness is the
     # expiry state read back from the store, not the request itself.
@@ -593,7 +618,7 @@ def test_expired_closing_deadline_emits_one_signed_orphan_abandoned(
     status = advanced.json if isinstance(advanced.json, dict) else {}
     abandoned = [
         e for e in rows(status, "events")
-        if field(e, "atom_kind") == "orphan_abandoned"
+        if field(e, "disposition") == "orphan_abandoned"
     ]
     O.check(
         "V-2.orphan-abandoned",
@@ -745,21 +770,31 @@ def test_kill_at_every_transition_then_concurrent_retry(
         with _crash_world(guildhall, roots, transition) as (driver, world, anchors):
             session = start_session(driver, world.repo.path)
             _observe(driver, world.repo.path, held_out.path, session)
-            candidate = _first_candidate(_proposals(driver, world.repo.path, session))
+            candidate = _first_candidate(_proposals(driver, world.repo.path, session),
+                                         "codebase:" + anchors.repository_uuid)
             destination = "codebase:" + anchors.repository_uuid
-            killed = _kill_at_transition(driver, world, candidate, destination, transition)
-            first = _decide_async(driver, world.repo.path, candidate, destination)
-            second = _decide_async(driver, world.repo.path, candidate, destination)
-            first.communicate(timeout=120)
-            second.communicate(timeout=120)
-            status = _proposals(driver, world.repo.path, session)
-            killed.update({
-                "duplicate_events": field(status, "duplicate_events"),
-                "recursive_apologies": field(status, "recursive_apologies"),
-                "recovered": field(status, "fanout_receipts", "codebase", "state")
-                == "committed",
-                "total_events_after_recovery": field(status, "committed_event_count"),
-            })
+            with contextlib.ExitStack() as perturbation:
+                if transition == "apology":
+                    from ._harness.service import Blackhole
+                    local, company = _fanout_pair(_proposals(driver, world.repo.path, session), destination)
+                    _decide(driver, world.repo.path, local, destination)
+                    blackhole = perturbation.enter_context(Blackhole(0))
+                    perturbation.enter_context(anchors.company_endpoint(
+                        f"http://127.0.0.1:{blackhole.port}"))
+                    candidate, destination = company, "company:root"
+                killed = _kill_at_transition(driver, world, candidate, destination, transition)
+                first = _decide_async(driver, world.repo.path, candidate, destination)
+                second = _decide_async(driver, world.repo.path, candidate, destination)
+                first.communicate(timeout=120)
+                second.communicate(timeout=120)
+                status = _proposals(driver, world.repo.path, session)
+                killed.update({
+                    "duplicate_events": field(status, "duplicate_events"),
+                    "recursive_apologies": field(status, "recursive_apologies"),
+                    "recovered": field(status, "fanout_receipts", "codebase", "state")
+                    == "committed",
+                    "total_events_after_recovery": field(status, "committed_event_count"),
+                })
         results.append(killed)
 
     require_all(
@@ -795,7 +830,7 @@ def test_no_cross_store_transaction_exists(
     session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
-    candidate = _first_candidate(listing)
+    candidate = _first_candidate(listing, "codebase:" + anchors.repository_uuid)
     for destination in ("codebase:" + anchors.repository_uuid, "company:root"):
         _decide(guildhall, world.repo.path, candidate, destination)
     status = _proposals(guildhall, world.repo.path, session)
@@ -829,7 +864,7 @@ def test_no_accept_all_path_is_reachable(
     session = start_session(guildhall, world.repo.path)
     _observe(guildhall, world.repo.path, held_out.path, session)
     listing = _proposals(guildhall, world.repo.path, session)
-    candidate = _first_candidate(listing)
+    candidate = _first_candidate(listing, "codebase:" + anchors.repository_uuid)
     surfaces = 0
     for probe in ("--all", "--accept-all", "--yes-to-all"):
         attempt = guildhall.run(

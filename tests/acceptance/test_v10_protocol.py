@@ -788,7 +788,12 @@ def test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised(
     guildhall: Guildhall, tmp_path: Path
 ) -> None:
     manifest = tmp_path / "ceiling-manifest.json"
-    manifest.write_text(json.dumps({"frozen": True}), encoding="utf-8")
+    manifest.write_text(json.dumps({
+        "census": {"digest": "0" * 64, "signed": True},
+        "power": {"n": 120, "mde": 0.2, "cost_usd": 1000},
+        "calibration": {"digest": "1" * 64, "valid": True},
+        "budget": {"aggregate_usd": 1000, "human_ratified": True},
+    }), encoding="utf-8")
     budget = tmp_path / "budget.json"
     budget.write_text(json.dumps({"aggregate_usd": 1000, "human_ratified": True}),
                       encoding="utf-8")

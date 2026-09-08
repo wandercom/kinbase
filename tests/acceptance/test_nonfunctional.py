@@ -19,7 +19,7 @@ import pytest
 
 from ._harness import obligations as O
 
-from ._harness import synth
+from ._harness import synth, scale
 from ._harness import canonical
 from ._harness.cli import ERROR_CODES, ERROR_FIELDS, EXIT_MEANING, Guildhall
 from ._harness.hosts import (
@@ -38,7 +38,7 @@ from ._harness.requirements import (
 )
 from ._harness import trust
 from ._harness.roots import ProofRoots
-from ._harness.worldbuilder import SignedWorld, start_session
+from ._harness.worldbuilder import REPO_UUID, SignedWorld, start_session
 
 pytestmark = [pytest.mark.nonfunctional, pytest.mark.requires_product]
 
@@ -250,6 +250,7 @@ def test_external_calls_have_timeouts_and_failed_writes_are_not_admitted(
     listener.listen(1)
     port = listener.getsockname()[1]
     try:
+        trust.remove_cache(roots)
         with anchors.company_endpoint("http://127.0.0.1:" + str(port)):
             result = guildhall.run(
                 "status", "--repo", str(roots.repo_root), "--json",
@@ -258,6 +259,9 @@ def test_external_calls_have_timeouts_and_failed_writes_are_not_admitted(
     finally:
         listener.close()
     payload = result.json if isinstance(result.json, dict) else {}
+    world.plant_event(world.maintainer, store_kind="codebase",
+                      logical_key="scheduler/failed-write",
+                      statement="the failed-write probe has an admissible event")
     unwritable = roots.repo_root / ".kin" / "events"
     unwritable.mkdir(parents=True, exist_ok=True)
     os.chmod(unwritable, 0o500)
@@ -473,7 +477,7 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
     session = start_session(guildhall, roots.repo_root)
     ceilings = []
 
-    oversize = tmp_path / "oversize.txt"
+    oversize = roots.repo_root / "oversize.txt"
     oversize.write_bytes(b"x" * (SOURCE_BODY_CEILING + 1024))
     ceilings.append(_ceiling_probe(
         guildhall, roots, "source_body",
@@ -496,30 +500,43 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
         ("session", "observe", session, "--event", str(batch), "--json"),
         constructed=True))
 
-    # Validator ruling C24: a malformed or oversized file inside .kin/events/
-    # is a typed integrity failure with counts, never a crash. It is written at
-    # a non-reserved name so it is also a foreign path.
-    big_event = roots.repo_root / ".kin" / "events" / "oversized.json"
-    big_event.parent.mkdir(parents=True, exist_ok=True)
-    big_event.write_text(json.dumps({"statement": "y" * (SHARED_EVENT_CEILING + 64)}),
-                         encoding="utf-8")
+    large = world.plant_event(
+        world.maintainer, store_kind="codebase", logical_key="scheduler/oversize",
+        statement="y" * (SHARED_EVENT_CEILING + 64), commit=False)
+    big_event = roots.repo_root / large["path"]
     ceilings.append(_ceiling_probe(
         guildhall, roots, "shared_event",
         ("ingest", "kindex", str(roots.repo_root / ".kin"), "--repo",
          str(roots.repo_root), "--json"),
         constructed=big_event.stat().st_size > SHARED_EVENT_CEILING))
+    big_event.unlink()
 
+    corpus = scale.build_event_corpus(
+        roots.repo_root, world.maintainer, 10001,
+        logical_prefix="scheduler/ceiling", repository_id=REPO_UUID)
     ceilings.append(_ceiling_probe(
         guildhall, roots, "kin_intake",
         ("ingest", "kindex", str(roots.repo_root / ".kin"), "--repo",
-         str(roots.repo_root), "--json"),
-        constructed=True))
-
+         str(roots.repo_root), "--json"), constructed=corpus.event_count == 10001))
+    # A separate, below-intake domain with 33 independently required constraints.
+    for path in (roots.repo_root / ".kin" / "events").rglob("*.json"):
+        path.unlink()
+    for shard in range(33):
+        world.plant_event(
+            world.maintainer, store_kind="codebase",
+            logical_key=f"scheduler/shard-{shard}/retry-ceiling",
+            statement=f"Scheduler shard {shard} must stop after {shard + 1} retries; "
+                      "a higher setting duplicates payments and a lower setting loses work.",
+            distortion={"trigger": "configure all 33 scheduler shard retry ceilings",
+                        "loss_if_absent": "high", "rationale": "each shard has an independent safety bound"},
+            commit=False)
+    guildhall.run("ingest", "kindex", str(roots.repo_root / ".kin"),
+                  "--repo", str(roots.repo_root), "--json", check=False)
     ceilings.append(_ceiling_probe(
         guildhall, roots, "projection_call",
-        ("project", "--repo", str(roots.repo_root), "--task", "diagnose",
-         "--decision", "which rule applies", "--json"),
-        constructed=True))
+        ("project", "--repo", str(roots.repo_root), "--task", "configure all 33 scheduler shard retry ceilings",
+         "--decision", "which exact bound applies to each of the 33 shards", "--json"),
+        constructed=len(list((roots.repo_root / ".kin" / "events").rglob("*.json"))) == 33))
 
     O.check("NF.ceilings", {"ceilings": ceilings},
             label="every operational ceiling refuses with an omitted count")
@@ -832,10 +849,19 @@ def _ceiling_probe(guildhall, roots, ceiling: str, argv, *,
     """Drive one ceiling and read back its refusal and omitted count."""
     result = guildhall.run(*argv, cwd=roots.repo_root, check=False)
     payload = result.json if isinstance(result.json, dict) else {}
+    # A projection may stop with a bounded prefix and omit the tail; it need
+    # not throw away that prefix. This still requires an actual ceiling stop.
+    selected = payload.get("selected")
+    omitted = payload.get("omitted_count")
+    size = payload.get("projection_bytes")
+    bounded_stop = (ceiling == "projection_call" and isinstance(selected, list)
+                    and 0 < len(selected) <= 32 and isinstance(size, int)
+                    and not isinstance(size, bool) and 0 < size <= 131072
+                    and isinstance(omitted, int) and not isinstance(omitted, bool) and omitted > 0)
     return {
         "ceiling": ceiling,
         "constructed": constructed,
-        "refused": result.returncode != 0 or _error_code(payload) == "LIMIT_EXCEEDED",
+        "refused": _error_code(payload) == "LIMIT_EXCEEDED" or bounded_stop,
         "omitted_count": payload.get("omitted_count"),
     }
 

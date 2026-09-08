@@ -145,10 +145,10 @@ def _text(payload: dict, *keys: str) -> str:
 
 
 def _list(payload: dict, *keys: str) -> list:
-    """First present list among ``keys``; empty when none exist."""
+    """First nonempty evidence list among public aliases; empty if all are empty."""
     for key in keys:
         value = payload.get(key)
-        if isinstance(value, list):
+        if isinstance(value, list) and value:
             return value
     return []
 

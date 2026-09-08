@@ -35,7 +35,7 @@ def observations(status, adapter):
 
 
 def receipt_count(status, adapter):
-    counts = status.get("receipt_counts", {})
+    counts = status.get("adapter_receipts", status.get("receipt_counts", {}))
     if isinstance(counts, dict):
         count = counts.get(adapter)
         if isinstance(count, int) and not isinstance(count, bool):

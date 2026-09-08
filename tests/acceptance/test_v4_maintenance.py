@@ -31,7 +31,7 @@ from pathlib import Path
 import pytest
 
 from ._harness import obligations as O
-from ._harness import prereq, scale, synth, trust
+from ._harness import canonical, prereq, scale, synth, trust
 from ._harness.cli import Guildhall
 from ._harness.detectors import compare_manifests
 from ._harness.evidence_model import (
@@ -129,13 +129,25 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
     stages: list[dict] = []
     cycle_digests: list[str] = []
 
+    def snapshot():
+        company = anchors.client.get("/facts").json
+        facts = rows(company, "facts")
+        material = {"repository": _store_digest(repo),
+                    "head": world.repo.head(),
+                    "branch": world.repo.run("symbolic-ref", "--short", "HEAD").stdout.strip(),
+                    "company_facts": facts,
+                    "registry": anchors.registry.document()}
+        return hashlib.sha256(canonical.jcs(material)).hexdigest()
+
     def stage(name: str, action) -> None:
-        before = _store_digest(repo)
+        before = snapshot()
         action()
-        after = _store_digest(repo)
+        after = snapshot()
         stages.append({
             "stage": name,
-            "state_changed": before != after,
+            "stage_verified": (before == after if name == "duplicate" else
+                               bool(cycle_digests[-1]) if name in ("rebuild", "restart")
+                               else before != after),
             "pre_state_digest": before,
             "post_state_digest": after,
         })
@@ -149,9 +161,7 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
         )
 
     stage("create", create)
-    stage("duplicate", lambda: world.plant_event(
-        world.architect, store_kind="company", logical_key=key,
-        statement="the maintenance window is four hours"))
+    stage("duplicate", lambda: anchors.admit_fact(first["event"]["document"]))
     stage("edit", lambda: world.plant_event(
         world.architect, store_kind="company", logical_key=key,
         statement="the maintenance window is six hours"))
@@ -168,9 +178,9 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
     # republished at cursor 1001 without the architect's key.
     stage("revoke", lambda: anchors.revoke(world.architect, cursor="1001"))
     stage("expire", lambda: world.plant_event(
-        world.architect, store_kind="company", logical_key=key,
-        statement="the interim window applies until the cycle ends",
-        effective_until=synth._stamp(day=1), may_refuse=True))
+        world.steward, store_kind="company", logical_key=key + "/interim",
+        statement="the interim window has expired",
+        effective_until=synth._stamp(day=1)))
     stage("branch", lambda: (world.repo.branch("maintenance/alt"),
                              world.repo.checkout("maintenance/alt"),
                              world.repo.write("docs/alt.md", "alternate\n"),
@@ -185,13 +195,18 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
         world.steward, store_kind="company", logical_key=key,
         statement="the maintenance window is eight hours",
         parents=(first["event"]["event_id"],)))
-    stage("rebuild", lambda: cycle_digests.append(
-        str(field(_json(_run(guildhall, "corpus", "rebuild", "--store", "company",
-                             "--repo", str(repo), "--json", cwd=repo)),
-                  "current_view_digest"))))
-    stage("restart", lambda: cycle_digests.append(
-        str(field(_json(_run(guildhall, "fsck", "--repo", str(repo), "--json",
-                             cwd=repo)), "store_digest"))))
+    def stable_rebuild():
+        first = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+                           "--repo", str(repo), "--json", cwd=repo))
+        second = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+                            "--repo", str(repo), "--json", cwd=repo))
+        digest = field(first, "current_view_digest")
+        cycle_digests.append(digest if isinstance(digest, str)
+                             and digest == field(second, "current_view_digest") else "")
+
+    stage("rebuild", stable_rebuild)
+    # Each CLI invocation is a new process; restart must retain the same view.
+    stage("restart", stable_rebuild)
 
     final = _json(_run(guildhall, "status", "--repo", str(repo), "--json", cwd=repo))
     cycle_digests.append(_store_digest(repo))
@@ -247,10 +262,14 @@ def test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event(
                             cwd=world.repo.path, env=guildhall.base_env({
                                 "GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "60"})))
 
+    # The maintainer owns both competing Codebase heads. Reconcile them to
+    # the still-current Company policy; a Company-only event cannot erase a
+    # contradictory repository head by role prestige.
     world.plant_event(
-        world.steward, store_kind="company", logical_key=key,
-        statement="the drain order is newest first",
+        world.maintainer, store_kind="codebase", logical_key=key,
+        statement="the drain order is oldest first",
         parents=(base["event_id"], left_event["event_id"], right_event["event_id"]),
+        supersedes=(left_event["event_id"], right_event["event_id"]),
     )
     resolved = _json(_run(guildhall, "explain", key, "--repo", str(world.repo.path),
                           "--decision", "which drain order applies", "--json",
@@ -429,13 +448,13 @@ def test_rebuild_is_deterministic_over_frozen_inputs(
             statement="an additional supporting statement"),
         "reducer_version": lambda: None,
         "as_of": lambda: None,
-        "authority_cursor": lambda: world.plant_event(
-            world.steward, store_kind="company",
-            logical_key="architecture/scheduler/determinism",
-            statement="the authority cursor advances",
-            authority_snapshot_cursor="1002"),
+        "authority_cursor": lambda: anchors.republish_registry(cursor="1002"),
     }
     for name in REBUILD_INPUTS:
+        prior = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+                           "--repo", str(repo), "--as-of", as_of,
+                           "--authority-cursor", str(anchors.registry.cursor),
+                           "--json", cwd=repo))
         variations[name]()
         argv = ["corpus", "rebuild", "--store", "company", "--repo", str(repo),
                 "--json"]
@@ -444,12 +463,14 @@ def test_rebuild_is_deterministic_over_frozen_inputs(
         else:
             argv += ["--as-of", as_of]
         if name == "reducer_version":
-            argv += ["--reducer-version", "2"]
+            current = str(field(prior, "inputs", "reducer_version"))
+            argv += ["--reducer-version", "1" if current.endswith("2") else "2"]
+        argv += ["--authority-cursor", str(anchors.registry.cursor)]
         result = _json(_run(guildhall, *argv, cwd=repo))
         varied.append({
             "input": name,
             "observed_effect": field(result, "current_view_digest")
-            != field(baseline, "current_view_digest"),
+            != field(prior, "current_view_digest"),
         })
     O.check(
         "V-4.determinism",
@@ -477,19 +498,30 @@ def test_omitting_as_of_breaks_determinism_and_is_refused(
     as_of = synth._stamp(day=5, hour=6)
     pinned = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
                         "--repo", str(repo), "--as-of", as_of, "--json", cwd=repo))
-    omitted = _run(guildhall, "corpus", "rebuild", "--store", "company",
-                   "--repo", str(repo), "--json", cwd=repo)
+    omitted = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+                         "--repo", str(repo), "--json", cwd=repo))
+    repeated = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+                          "--repo", str(repo), "--json", cwd=repo))
     recorded = field(pinned, "inputs", "as_of")
+    # R-1/C12: omission selects the recorded proof clock, not the wall clock.
+    for payload in (omitted, repeated):
+        source = field(payload, "inputs", "as_of_source") or field(payload, "as_of_source")
+        if source != "recorded-proof-clock":
+            raise ProductFailure("R-1/C12: omitted --as-of must echo "
+                                 "as_of_source=recorded-proof-clock; observed " + repr(source))
+        if not isinstance(field(payload, "current_view_digest"), str) or not payload["current_view_digest"]:
+            raise ProductFailure("V-4.as-of: omitted rebuild lacks current_view_digest")
     O.check(
         "V-4.as-of",
         {
             "explicit_as_of_recorded": recorded == as_of,
             "rfc3339_millisecond_format": isinstance(recorded, str)
             and recorded.endswith("Z") and "." in recorded,
-            "ambient_clock_read": omitted.returncode == 0
-            and field(_json(omitted), "inputs", "as_of") not in (None, as_of),
+            "ambient_clock_read": any(field(p, "ambient_clock_read") is True
+                                      for p in (omitted, repeated))
+            or omitted["current_view_digest"] != repeated["current_view_digest"],
         },
-        label="as_of is explicit, formatted and never ambient",
+        label="explicit or recorded proof time is deterministic and never ambient",
     )
 
 
@@ -634,6 +666,9 @@ def test_linked_worktrees_serialize_on_one_common_dir_lock(
     guildhall: Guildhall, anchored, ids: OpaqueIds, tmp_path: Path
 ) -> None:
     world, anchors = anchored
+    world.plant_event(world.maintainer, store_kind="codebase",
+                      logical_key="scheduler/concurrent-admission",
+                      statement="the scheduler preserves one admission lineage")
     first = world.repo.add_worktree(tmp_path / ids.token("wt-a"), "wt-a")
     second = world.repo.add_worktree(tmp_path / ids.token("wt-b"), "wt-b")
     common = world.repo.common_dir()

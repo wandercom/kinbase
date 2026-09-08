@@ -471,13 +471,16 @@ def test_paraphrase_only_output_stays_private_by_taint_policy(
     corpus = roots.run_root / "corpus" / "paraphrase.jsonl"
     corpus.parent.mkdir(parents=True, exist_ok=True)
     session = start_session(guildhall, world.repo.path)
-    corpus.write_text(
-        json.dumps({"id": session, "role": "user",
-                    "text": "the marker " + canary + " belongs to me personally",
-                    "observed_at": synth.receipt_stamp(),
-                    "source_kind": "codex_jsonl"}) + "\n",
-        encoding="utf-8",
-    )
+    # The native model reply contains only a paraphrase. Its private source
+    # remains in the same conversation so source taint must still block fan-out.
+    model_reply = "This identifier is private to the speaker."
+    corpus.write_text("\n".join(json.dumps(row) for row in (
+        {"id": session + "-source", "role": "user",
+         "text": "the marker " + canary + " belongs to me personally",
+         "observed_at": synth.receipt_stamp(), "source_kind": "codex_jsonl"},
+        {"id": session + "-reply", "role": "assistant", "text": model_reply,
+         "observed_at": synth.receipt_stamp(), "source_kind": "codex_jsonl"},
+    )) + "\n", encoding="utf-8")
     observed = _run(guildhall, "session", "observe", session, "--event",
                     str(corpus), "--json", cwd=world.repo.path)
     listing = _run(guildhall, "proposals", "list", "--session", session, "--json",
@@ -488,7 +491,7 @@ def test_paraphrase_only_output_stays_private_by_taint_policy(
         if isinstance(field(c, "destination"), str)
         and field(c, "destination").split(":")[0] in ("company", "codebase")
     ]
-    rendered = json.dumps(payload)
+    rendered = model_reply
     O.check(
         "V-3.paraphrase",
         {

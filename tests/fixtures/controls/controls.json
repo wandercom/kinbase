@@ -16393,67 +16393,67 @@
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               }
             ],
             "unrelated_additional_field": "must not trip the checker",
@@ -16472,66 +16472,66 @@
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
-                "state_changed": true
+                "stage_verified": true
               }
             ],
             "view_stabilises": true
@@ -16550,67 +16550,67 @@
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               }
             ],
             "unrelated_additional_field": "must not trip the checker",
@@ -16629,67 +16629,67 @@
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               }
             ],
             "view_stabilises": false
@@ -16708,67 +16708,67 @@
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               }
             ],
             "unrelated_additional_field": "must not trip the checker",
@@ -16787,67 +16787,67 @@
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               }
             ],
             "view_stabilises": true
@@ -16867,67 +16867,67 @@
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               }
             ],
             "unrelated_additional_field": "must not trip the checker",
@@ -16945,67 +16945,67 @@
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               },
               {
                 "post_state_digest": "present",
                 "stage": "present",
-                "state_changed": true
+                "stage_verified": true
               }
             ],
             "view_stabilises": true
@@ -17028,67 +17028,67 @@
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           },
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           },
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           },
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           },
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           },
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           },
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           },
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           },
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           },
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           },
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           },
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           },
           {
             "post_state_digest": "present",
             "stage": "present",
-            "state_changed": true
+            "stage_verified": true
           }
         ],
         "view_stabilises": true

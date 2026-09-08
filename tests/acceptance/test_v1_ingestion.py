@@ -104,6 +104,26 @@ def anchored(roots: ProofRoots, guildhall: Guildhall):
 
 
 @pytest.fixture()
+def native_corpus(anchored):
+    """An intact native corpus, independent of destructive lifecycle end states."""
+    world, anchors, ctx = anchored
+    trust.classifier_pinned(anchors, what="V-1 native source extraction")
+    witnesses = {}
+    for cell in L.execution_cells():
+        if cell.adapter not in witnesses:
+            if cell.adapter == "docs_adr":
+                cell = next(c for c in L.CELLS if c.key == "docs_adr::accepted")
+            witnesses[cell.adapter] = cell.run(ctx)
+            # Native Git-history steps switch branches. Commit prior sources
+            # on the default branch before a branch can absorb/remove them.
+            world.repo.run("add", "-A")
+            world.repo.commit("retain native " + cell.adapter + " source")
+    world.repo.run("add", "-A")
+    world.repo.commit("record intact native adapter corpus")
+    return world, anchors, ctx, witnesses
+
+
+@pytest.fixture()
 def matrix(anchored, guildhall: Guildhall):
     """All 64 ratified cells, executed natively, with per-cell witnesses."""
     world, anchors, ctx = anchored
@@ -216,8 +236,8 @@ def _status(guildhall: Guildhall, repo: Path) -> dict:
            "Run all ten adapters against native-format sources in isolated fixtures; at least "
            "seven participate in the recorded end-to-end build."),
 )
-def test_all_ten_adapters_run_against_native_sources(guildhall: Guildhall, matrix) -> None:
-    world, anchors, ctx, witnesses = matrix
+def test_all_ten_adapters_run_against_native_sources(guildhall: Guildhall, native_corpus) -> None:
+    world, anchors, ctx, witnesses = native_corpus
     receipts = _ingest_all(guildhall, world, ctx)
     require_nonempty(receipts, obligation="V-1.adapters-native",
                      why="every ratified adapter must produce a receipt",
@@ -256,9 +276,9 @@ def test_all_ten_adapters_run_against_native_sources(guildhall: Guildhall, matri
          "observations and derived facts."),
 )
 def test_adapter_receipt_reports_observations_not_counts(
-    guildhall: Guildhall, matrix
+    guildhall: Guildhall, native_corpus
 ) -> None:
-    world, anchors, ctx, witnesses = matrix
+    world, anchors, ctx, witnesses = native_corpus
     receipts = _ingest_all(guildhall, world, ctx)
     require_nonempty(receipts, obligation="V-1.receipt-not-count",
                      why="no adapter produced a receipt to inspect",
@@ -289,9 +309,9 @@ def test_adapter_receipt_reports_observations_not_counts(
            "and fact derivations."),
 )
 def test_end_to_end_build_uses_at_least_seven_source_classes(
-    guildhall: Guildhall, matrix
+    guildhall: Guildhall, native_corpus
 ) -> None:
-    world, anchors, ctx, witnesses = matrix
+    world, anchors, ctx, witnesses = native_corpus
     _ingest_all(guildhall, world, ctx)
     build = _rebuild(guildhall, world.repo.path)
     manifest = build.get("build_manifest")
@@ -310,9 +330,9 @@ def test_end_to_end_build_uses_at_least_seven_source_classes(
            "current views."),
 )
 def test_reingest_unchanged_is_idempotent_and_byte_identical(
-    guildhall: Guildhall, matrix
+    guildhall: Guildhall, native_corpus
 ) -> None:
-    world, anchors, ctx, witnesses = matrix
+    world, anchors, ctx, witnesses = native_corpus
     _ingest_all(guildhall, world, ctx)
     first = _rebuild(guildhall, world.repo.path)
     _ingest_all(guildhall, world, ctx)
@@ -685,13 +705,16 @@ def test_origin_trust_class_is_derived_and_bounds_trusted_direction(
 ) -> None:
     world, anchors, ctx = anchored
     repo = world.repo
-    repo.write("docs/adr/0021-merged.md", "# 21. merged decision\n\nStatus: Accepted\n")
+    synth.adr(repo.path / "docs/adr/0021-merged.md", number=21, title="merged decision",
+              status="accepted", body="the merged scheduling rule applies")
     repo.commit("record a merged decision")
     merged_head = repo.head()
     repo.branch("proposal/0022")
     repo.checkout("proposal/0022")
-    repo.write("docs/adr/0022-branch.md", "# 22. branch decision\n\nStatus: Accepted\n")
+    synth.adr(repo.path / "docs/adr/0022-branch.md", number=22, title="branch decision",
+              status="accepted", body="the proposed scheduling rule applies")
     repo.commit("record a branch decision")
+    _ingest(guildhall, repo.path, "docs_adr", repo.path / "docs" / "adr")
     repo.checkout(repo.default_branch)
 
     _ingest(guildhall, repo.path, "docs_adr", repo.path / "docs" / "adr")

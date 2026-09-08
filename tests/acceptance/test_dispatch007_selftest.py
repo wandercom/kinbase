@@ -516,7 +516,7 @@ def test_dispatch009_partial_fanout_binds_before_redirecting_company(roots, monk
     monkeypatch.setattr(gates, "start_session", lambda *args: "session-issued")
     monkeypatch.setattr(gates, "_observe", lambda *args: None)
     monkeypatch.setattr(gates, "_proposals", lambda *args: {})
-    monkeypatch.setattr(gates, "_first_candidate", lambda *args: "candidate-issued")
+    monkeypatch.setattr(gates, "_fanout_pair", lambda *args: ("local-issued", "company-issued"))
     monkeypatch.setattr(gates, "_decide", decide)
     monkeypatch.setattr(gates.O, "check", lambda oid, payload, **kw: captured.append(oid))
     anchors = SimpleNamespace(company_endpoint=endpoint, repository_uuid="uuid")
@@ -747,6 +747,8 @@ def test_dispatch010_completed_or_stale_journal_never_licenses_crash(roots, monk
 @pytest.mark.parametrize("event_count", [1, 2])
 def test_dispatch010_crash_gate_uses_five_fresh_worlds_and_checks_each_recovery(roots, monkeypatch, event_count):
     from . import test_v2_classification as gate
+    from ._harness import service
+    from contextlib import nullcontext
     seen = []
     stopped = []
     actions = []
@@ -757,12 +759,15 @@ def test_dispatch010_crash_gate_uses_five_fresh_worlds_and_checks_each_recovery(
         return SimpleNamespace(**kw)
     monkeypatch.setattr(gate, "Guildhall", driver)
     monkeypatch.setattr(gate, "start_company", lambda driver, layout: SimpleNamespace(stop=lambda: stopped.append(layout.repo_root)))
-    monkeypatch.setattr(gate.trust, "establish", lambda *a, **kw: SimpleNamespace(repository_uuid="fixture"))
+    monkeypatch.setattr(gate.trust, "establish", lambda *a, **kw: SimpleNamespace(repository_uuid="fixture", company_endpoint=lambda *a: nullcontext()))
     monkeypatch.setattr(gate.trust, "classifier_pinned", lambda *a, **kw: None)
     monkeypatch.setattr(gate, "start_session", lambda *a: "fixture-session")
     monkeypatch.setattr(gate, "_observe", lambda *a: None)
+    monkeypatch.setattr(gate, "_decide", lambda *a: None)
+    monkeypatch.setattr(service, "Blackhole", lambda *a: nullcontext(SimpleNamespace(port=0)))
     def listing(*args):
-        return {"candidates": [{"candidate_id": "fixture", "payload_digest": "f" * 64}],
+        return {"candidates": [{"candidate_id": "fixture", "payload_digest": "f" * 64, "destination": "codebase:fixture", "message_id": "source"},
+                               {"candidate_id": "company", "payload_digest": "e" * 64, "destination": "company:root", "message_id": "source"}],
                 "duplicate_events": 0, "recursive_apologies": 0,
                 "fanout_receipts": {"codebase": {"state": "committed"}},
                 "committed_event_count": event_count if len(seen) == 1 else 1}
@@ -830,3 +835,156 @@ def test_dispatch010_interleave_gate_feeds_both_pipes_before_waiting(roots, monk
         Driver(), (SimpleNamespace(repo=SimpleNamespace(path=roots.repo_root)), None), OpaqueIds(seed=b"pipe-fixture"))
     assert fed == list(gate.hosts.HOSTS)
     assert len(processes) == 3
+
+
+@spec_ref(_REMEDIATION_010)
+@pytest.mark.parametrize("source,second_digest,missing,passes", [
+    ("recorded-proof-clock", "a" * 64, False, True),
+    ("proof-clock:wall", "a" * 64, False, False),
+    ("recorded-proof-clock", "b" * 64, False, False),
+    ("recorded-proof-clock", "a" * 64, True, False),
+    (None, "a" * 64, False, False),
+])
+def test_dispatch011_omitted_as_of_requires_recorded_source_and_stability(
+        tmp_path, source, second_digest, missing, passes):
+    from . import test_v4_maintenance as gate
+    calls = []
+    def run(*argv, **kwargs):
+        calls.append(argv)
+        explicit = "--as-of" in argv
+        stamp = argv[argv.index("--as-of") + 1] if explicit else "2026-09-08T19:00:00.000Z"
+        body = {"inputs": {"as_of": stamp}, "as_of_source": source,
+                "current_view_digest": second_digest if len(calls) == 3 else "a" * 64}
+        if missing and not explicit:
+            body.pop("current_view_digest")
+        return SimpleNamespace(returncode=0, json=body)
+    args = (SimpleNamespace(run=run), (SimpleNamespace(repo=SimpleNamespace(path=tmp_path)), None))
+    if passes:
+        gate.test_omitting_as_of_breaks_determinism_and_is_refused(*args)
+    else:
+        with pytest.raises(ProductFailure):
+            gate.test_omitting_as_of_breaks_determinism_and_is_refused(*args)
+    assert len(calls) == 3
+    assert "--as-of" not in calls[1] and "--as-of" not in calls[2]
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch011_fanout_pairs_destination_bound_candidates_by_message():
+    from . import test_v2_classification as gate
+    local = {"candidate_id": "local", "destination": "codebase:uuid",
+             "message_id": "same", "payload_digest": "a" * 64}
+    company = {"candidate_id": "company", "destination": "company:root",
+               "message_id": "same", "payload_digest": "b" * 64}
+    unrelated = {**company, "message_id": "other", "candidate_id": "other"}
+    listing = {"candidates": [unrelated, company, local]}
+    assert gate._first_candidate(listing, "codebase:uuid") == local
+    assert gate._fanout_pair(listing, "codebase:uuid") == (local, company)
+    with pytest.raises(ProductFailure):
+        gate._fanout_pair({"candidates": [unrelated, local]}, "codebase:uuid")
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch011_retry_advances_clock_and_reuses_exact_approval(tmp_path):
+    from . import test_v2_classification as gate
+    calls = []
+    candidate = {"candidate_id": "local", "payload_digest": "a" * 64}
+    driver = SimpleNamespace(run=lambda *argv, **kw: calls.append((argv, kw)))
+    gate._decide(driver, tmp_path, candidate, "codebase:uuid",
+                 env={"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "960"})
+    argv, kwargs = calls[0]
+    assert argv[2] == "local" and argv[argv.index("--approve-digest") + 1] == "a" * 64
+    assert kwargs["env"]["GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS"] == "960"
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch011_public_adapter_receipts_never_replace_lifecycle_evidence():
+    cell = next(c for c in L.CELLS if c.key == "repo_code::create")
+    witness = {"source_tree_before": "a", "source_tree_after": "b"}
+    snapshot = _snapshot()
+    snapshot["adapter_receipts"] = snapshot.pop("receipt_counts")
+    observed = LO.derive(cell, witness, {}, snapshot)
+    assert observed["states_match"] and observed["adapter_receipts_present"]
+    snapshot["facts"] = []
+    assert not LO.derive(cell, witness, {}, snapshot)["states_match"]
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch011_ceiling_does_not_credit_a_path_escape(tmp_path):
+    from . import test_nonfunctional as gate
+    roots = SimpleNamespace(repo_root=tmp_path)
+    for code, expected in (("CONFIG_INVARIANT", False), ("LIMIT_EXCEEDED", True)):
+        result = SimpleNamespace(returncode=4, json={"error": {"code": code}, "omitted_count": 1})
+        driver = SimpleNamespace(run=lambda *a, **kw: result)
+        row = gate._ceiling_probe(driver, roots, "source_body", ("ingest",), constructed=True)
+        assert row["refused"] is expected
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch011_empty_rejected_alias_cannot_hide_negative_evidence():
+    from . import test_v5_temporal as gate
+    assert gate._list({"rejected_events": [], "negative_evidence": ["rejected-id"]},
+                      "rejected_events", "negative_evidence") == ["rejected-id"]
+    assert gate._list({"rejected_events": [], "negative_evidence": []},
+                      "rejected_events", "negative_evidence") == []
+
+
+@spec_ref(_REMEDIATION_010)
+@pytest.mark.parametrize("count,omitted,accepted", [(32, 1, True), (33, 1, False), (32, 0, False)])
+def test_dispatch011_projection_ceiling_accepts_only_bounded_omission(tmp_path, count, omitted, accepted):
+    from . import test_nonfunctional as gate
+    payload = {"selected": list(range(count)), "projection_bytes": 1000, "omitted_count": omitted}
+    driver = SimpleNamespace(run=lambda *a, **kw: SimpleNamespace(returncode=0, json=payload))
+    result = gate._ceiling_probe(driver, SimpleNamespace(repo_root=tmp_path),
+                                 "projection_call", ("project",), constructed=True)
+    assert result["refused"] is accepted
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch011_conflict_fixture_resolves_both_heads_in_their_own_scope(tmp_path):
+    import json
+    from . import test_v4_maintenance as gate
+    from ._harness.worldbuilder import OpaqueIds
+    world = SignedWorld.create(tmp_path / "repo")
+    world.company = SimpleNamespace(
+        registry=SimpleNamespace(is_registered=lambda identity: True),
+        admit_fact=lambda doc: {"admitted": True, "receipt": {"event_id": doc["event_id"]}})
+    states = iter(("conflict", "conflict", "current"))
+    driver = SimpleNamespace(run=lambda *a, **kw: SimpleNamespace(returncode=0, json={"state": next(states)}),
+                             base_env=lambda env: env)
+    gate.test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event(
+        driver, (world, world.company), OpaqueIds(), tmp_path)
+    events = [json.loads(p.read_bytes()) for p in (world.repo.path / ".kin/events").rglob("*.json")]
+    resolution = next(e for e in events if len(e["supersedes"]) == 2)
+    heads = {e["event_id"] for e in events if e is not resolution}
+    assert set(resolution["supersedes"]) == heads
+    assert heads <= set(resolution["parents"])
+    assert resolution["authority_scope"] == world.maintainer.scope
+    assert resolution["statement"] == "the drain order is oldest first"
+
+
+@spec_ref(_REMEDIATION_010)
+@pytest.mark.parametrize("body,expected", [
+    ({"checks": [{"code": "HOOK_APPROVAL_REQUIRED"}]}, "HOOK_APPROVAL_REQUIRED"),
+    ({"checks": [{"status": "ok"}]}, None),
+])
+def test_dispatch011_doctor_success_diagnostic_is_not_a_typed_error(body, expected):
+    from . import test_v9_host_lifecycle as gate
+    assert gate._doctor_approval_code(body) == expected
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch011_native_corpus_survives_without_lifecycle_teardown(tmp_path, monkeypatch):
+    import json
+    from . import test_v1_ingestion as gate
+    world = SignedWorld.create(tmp_path / "repo")
+    ctx = L.LifecycleContext(world, world.repo.path / "sources", tmp_path / "external")
+    ctx.sources.mkdir(parents=True)
+    ctx.external.mkdir()
+    monkeypatch.setattr(gate.trust, "classifier_pinned", lambda *a, **kw: None)
+    result = gate.native_corpus.__wrapped__((world, None, ctx))
+    assert set(result[3]) == set(gate.ADAPTERS)
+    envelopes = list((ctx.sources / "tests").glob("*.json"))
+    assert envelopes
+    assert all(json.loads(p.read_bytes())["schema"] == "guildhall-command-result/1" for p in envelopes)
+    assert (world.repo.path / "src").is_dir()
+    assert (ctx.sources / "answers").is_dir()

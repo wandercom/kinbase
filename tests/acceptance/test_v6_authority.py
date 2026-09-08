@@ -288,6 +288,8 @@ def test_another_roles_signature_is_rejected(
     _plant_ambiguity(world)
     _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
          "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
+    _run(guildhall, "project", "--repo", str(world.repo.path),
+         "--task", TASK, "--decision", DECISION, "--json", cwd=world.repo.path)
     questions = _questions(guildhall, world.repo.path)
     require_nonempty(
         questions, obligation="V-6.wrong-role",
@@ -334,30 +336,30 @@ def test_unavailable_authority_yields_declared_degraded_policy(
     _plant_ambiguity(world)
     _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
          "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
+    _run(guildhall, "project", "--repo", str(world.repo.path),
+         "--task", TASK, "--decision", DECISION, "--json", cwd=world.repo.path)
+    cached_files = [p for p in roots.company_cache.rglob("*")
+                    if p.is_file() and p not in trust.cached_certificate_paths(roots)]
     process.stop()
-    cache = roots.company_cache
-    removed = 0
-    for path in sorted(cache.rglob("*")):
-        if path.is_file():
-            path.unlink()
-            removed += 1
     witness = Witness(kind="authority_unavailable")
-    witness.note(helper_exit=process.process.returncode, cache_entries_removed=removed)
+    witness.note(helper_exit=process.process.returncode, cached_files=len(cached_files),
+                 expiry_offset_seconds=604800)
     witness.require("the authority process must actually have stopped")
 
     with Blackhole(0) as blackhole, anchors.company_endpoint(
         f"http://127.0.0.1:{blackhole.port}"
     ):
         projected = _json(_run(guildhall, "project", "--repo", str(world.repo.path),
-                               "--task", TASK, "--decision", DECISION, "--json",
-                               cwd=world.repo.path))
+                               "--task", TASK, "--decision", DECISION,
+                               "--as-of", synth.receipt_stamp(604800), "--json",
+                               cwd=world.repo.path, env=guildhall.base_env({
+                                   "GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "604800"})))
+    cache_expired = bool(cached_files) and process.process.returncode is not None
     rendered = json.dumps(projected).lower()
     O.check(
         "V-6.degraded",
         {
-            "cache_state_constructed": removed >= 0 and not any(
-                p.is_file() for p in cache.rglob("*")
-            ),
+            "cache_state_constructed": cache_expired,
             "degraded_policy": field(projected, "degraded_policy"),
             "trusted_recommendation_present":
                 field(projected, "trusted_recommendation") is not None,

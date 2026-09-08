@@ -152,12 +152,14 @@ def test_reset_clears_only_the_consecutive_counter_once_per_hour(
 ) -> None:
     world, anchors = anchored
     session, candidates = _eligible_candidates(guildhall, world, ids, 6)
-    primary = world.plant_event(
-        world.maintainer, store_kind="codebase",
-        logical_key="task/" + ids.token("primary"),
-        statement="a new primary task begins",
-        atom_kind="observation",
-    )
+    primary = {"event_id": ids.token("primary")}
+    event = world.repo.path.parent / (ids.token("primary-transcript") + ".jsonl")
+    event.write_text(json.dumps({"id": primary["event_id"], "role": "user",
+                                "text": "Start a new primary task: inspect scheduler compatibility.",
+                                "source_kind": "codex_jsonl",
+                                "observed_at": synth.receipt_stamp()}) + "\n")
+    _run(guildhall, "session", "observe", session, "--event", str(event),
+         "--json", cwd=world.repo.path)
     first = _run(guildhall, "proposals", "reset",
                  "--after-primary-event", primary["event_id"],
                  "--reason-code", "new-primary-task", "--json",

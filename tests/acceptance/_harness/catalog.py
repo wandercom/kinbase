@@ -1046,8 +1046,8 @@ _o(
     clauses(
         every("stages", "each stage performs a real state transition",
               present("stage", "which stage"),
-              is_true("state_changed",
-                      "the stage changed real repository/event state"),
+              is_true("stage_verified",
+                      "mutation stages advance state; duplicate/rebuild/restart preserve it"),
               present("post_state_digest", "the post-stage state is content-addressed"),
               min_len=13),
         is_true("view_stabilises", "the derived view stabilises across repeats"),

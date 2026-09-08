@@ -132,6 +132,7 @@ class ServiceClient:
     client_key: ClientKey
     authority_scopes: tuple[str, ...] = ()
     timeout: float = 30.0
+    clock_offset_seconds: int = 0
     _nonce: int = field(default=0, init=False)
 
     # -- request signing --------------------------------------------------
@@ -196,7 +197,7 @@ class ServiceClient:
         if sign:
             nonce = self.next_nonce()
             expires_at = time.strftime(
-                "%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + expires_in +
+                "%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + expires_in + self.clock_offset_seconds +
                     int(os.environ.get("GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS", "0")))
             )
             headers["X-Guildhall-Nonce"] = nonce
