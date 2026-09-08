@@ -435,6 +435,7 @@ class Guildhall:
         *args: str,
         cwd: Path | None = None,
         env: Mapping[str, str] | None = None,
+        stdin=None,
     ) -> subprocess.Popen:
         """Start a long-lived product process (for example ``company serve``)."""
         argv = tuple(self.entrypoint) + tuple(str(a) for a in args)
@@ -442,6 +443,7 @@ class Guildhall:
             argv,
             cwd=str(cwd or self.cwd),
             env=self.base_env(env),
+            stdin=stdin,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             start_new_session=True,

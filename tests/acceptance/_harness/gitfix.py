@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from .requirements import HarnessInvalid
+from .requirements import HarnessInvalid, ProductFailure
 
 VCS = "git"
 
@@ -102,6 +102,17 @@ class GitRepo:
             timeout=300,
         )
         if check and proc.returncode != 0:
+            # These private product stores are forbidden on the P-3 shared
+            # surface. Preserve Git's refusal and do not stash/clean them.
+            blocked = {line.strip() for line in proc.stderr.splitlines()} & {
+                ".kin/observations.jsonl", ".kin/atoms.jsonl",
+            }
+            if blocked and "local changes" in proc.stderr and "would be overwritten" in proc.stderr:
+                raise ProductFailure(
+                    f"[P-3] private-store surface violation blocks git {' '.join(args)}: "
+                    f"paths={sorted(blocked)!r}; exit={proc.returncode}; "
+                    f"stderr={proc.stderr.strip()!r}"
+                )
             raise HarnessInvalid(
                 f"{VCS} {' '.join(args)} failed in {self.path}: {proc.stderr.strip()}"
             )

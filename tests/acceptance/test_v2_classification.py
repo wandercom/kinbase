@@ -27,9 +27,14 @@ process exit --- and recovery is read back from the store, never reported.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import json
 import os
 import signal
+import subprocess
 import time
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -56,7 +61,7 @@ from ._harness.requirements import (
 )
 from ._harness.roots import ProofRoots
 from ._harness.vault import CanaryVault, VaultEntry
-from ._harness.worldbuilder import SignedWorld, start_session, Witness, witness_process_exit
+from ._harness.worldbuilder import SignedWorld, start_company, start_session, Witness, witness_process_exit
 
 pytestmark = [pytest.mark.v2, pytest.mark.requires_product]
 
@@ -71,14 +76,13 @@ TRANSITIONS: tuple[str, ...] = (
     "nonce_reservation", "event_append_rename", "manifest", "receipt", "apology",
 )
 
-#: Store subtrees each transition writes into. The kill is triggered by the
-#: artefact appearing, not by a sleep.
-TRANSITION_MARKERS: dict[str, str] = {
-    "nonce_reservation": ".kin/nonces",
-    "event_append_rename": ".kin/events",
-    "manifest": ".kin/manifests",
-    "receipt": ".kin/receipts",
-    "apology": ".kin/unknowns",
+#: Journal marker/state vocabulary, not inferred destination data directories.
+TRANSITION_MARKERS: dict[str, tuple[str, ...]] = {
+    "nonce_reservation": ("nonce_reservation", "nonce_reserved"),
+    "event_append_rename": ("event_append_rename", "event_append", "event_rename", "event_appended"),
+    "manifest": ("manifest", "manifest_written"),
+    "receipt": ("receipt", "receipt_written"),
+    "apology": ("apology", "apology_written"),
 }
 
 #: The five preregistered classifier runs. Replay freezes from run 1.
@@ -602,6 +606,55 @@ def test_expired_closing_deadline_emits_one_signed_orphan_abandoned(
     )
 
 
+def _journal_matches(value, transition: str, candidate: dict) -> bool:
+    if isinstance(value, str):
+        return value.replace("-", "_") in TRANSITION_MARKERS[transition]
+    if isinstance(value, list):
+        return any(_journal_matches(v, transition, candidate) for v in value)
+    if isinstance(value, dict):
+        if "candidate_id" in value and value["candidate_id"] != field(candidate, "candidate_id"):
+            return False
+        return any(_journal_matches(value.get(key), transition, candidate)
+                   for key in ("journal_state", "transition", "stage", "state"))
+    return False
+
+
+def _journal_files(guildhall: Guildhall, repo: Path) -> tuple[Path, ...]:
+    roots = [repo / ".kin" / "local" / "journal"]
+    config = guildhall.xdg_config_home / "guildhall" / "config.toml"
+    if config.is_file():
+        personal = tomllib.loads(config.read_text())["personal"]["data_root"]
+        private = Path(personal)
+        roots.append(private / "journal")
+        roots.extend(p for p in private.rglob("journal") if p.is_dir())
+    return tuple(sorted({p for root in roots for p in root.rglob("*") if p.is_file()}))
+
+
+def _journal_snapshot(guildhall: Guildhall, repo: Path, candidate: dict,
+                      transition: str) -> dict[str, str]:
+    observed = {}
+    for path in _journal_files(guildhall, repo):
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError:  # Atomic journal rename during polling.
+            continue
+        try:
+            value = json.loads(raw)
+        except (ValueError, UnicodeDecodeError):
+            value = raw.decode("utf-8", errors="replace").strip()
+        if isinstance(value, dict) and "candidate_id" in value and value["candidate_id"] != field(candidate, "candidate_id"):
+            continue
+        if _journal_matches(value, transition, candidate) or _journal_matches(path.stem, transition, candidate):
+            observed[str(path)] = hashlib.sha256(raw).hexdigest()
+    return observed
+
+
+def _journal_status(guildhall: Guildhall, repo: Path, candidate: dict, transition: str):
+    status = guildhall.run("status", "--repo", str(repo), "--json", cwd=repo, check=False)
+    value = field(status.json, "journal_state")
+    return value if _journal_matches(value, transition, candidate) else None
+
+
 def _kill_at_transition(guildhall: Guildhall, world, candidate: dict,
                         destination: str, transition: str) -> dict:
     """Start a fan-out and kill it once the transition's artefact appears.
@@ -612,31 +665,71 @@ def _kill_at_transition(guildhall: Guildhall, world, candidate: dict,
     observed exit status, so a run in which the process finished normally cannot
     be reported as an interrupted transition.
     """
-    marker = world.repo.path / TRANSITION_MARKERS[transition]
-    before = sorted(p.name for p in marker.rglob("*")) if marker.exists() else []
+    repo = world.repo.path
+    before = _journal_snapshot(guildhall, repo, candidate, transition)
+    prior_state = _journal_status(guildhall, repo, candidate, transition)
     process = _decide_async(guildhall, world.repo.path, candidate, destination)
     witness = Witness(kind="crash:" + transition)
     deadline = time.monotonic() + 20.0
     appeared = False
+    observed = {}
+    last_status = time.monotonic()
     while time.monotonic() < deadline:
-        now = sorted(p.name for p in marker.rglob("*")) if marker.exists() else []
-        if now != before:
+        now = _journal_snapshot(guildhall, repo, candidate, transition)
+        changed = {p: digest for p, digest in now.items() if before.get(p) != digest}
+        if changed:
             appeared = True
+            observed = {"journal_markers": changed}
             break
         if process.poll() is not None:
             break
-        time.sleep(0.01)
+        if time.monotonic() - last_status >= 0.05:
+            state = _journal_status(guildhall, repo, candidate, transition)
+            last_status = time.monotonic()
+            if state is not None and state != prior_state:
+                appeared = True
+                observed = {"journal_state": state}
+                break
+        time.sleep(0.001)
+    signal_sent = False
     if process.poll() is None:
-        process.send_signal(signal.SIGKILL)
+        try:
+            process.send_signal(signal.SIGKILL)
+            signal_sent = True
+        except ProcessLookupError:
+            pass  # A completed transaction is not an interrupted transition.
+    try:
+        process.communicate(timeout=30)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.communicate(timeout=30)
     exit_witness = witness_process_exit(process, "crash:" + transition)
     witness.note(transition=transition, artefact_observed=appeared,
-                 marker=str(marker), exit_status=process.returncode)
+                 observation=observed, signal_sent=signal_sent,
+                 exit_status=process.returncode)
     return {
         "transition": transition,
-        "crash_witnessed": bool(appeared and process.returncode not in (0, None)),
+        "crash_witnessed": bool(appeared and signal_sent and process.returncode == -signal.SIGKILL),
         "witness": witness.as_json(),
         "exit_witness": exit_witness.as_json(),
     }
+
+
+@contextlib.contextmanager
+def _crash_world(guildhall: Guildhall, roots: ProofRoots, transition: str):
+    """Each kill needs a fresh transaction, not the preceding probe's receipt."""
+    layout = ProofRoots.create(roots.run_root / "crash-probes" / transition)
+    driver = Guildhall(home=layout.home, xdg_config_home=layout.xdg_config_home,
+                      cwd=layout.repo_root, path_prefix=guildhall.path_prefix)
+    world = SignedWorld.create(layout.repo_root)
+    service = start_company(driver, layout)
+    try:
+        anchors = trust.establish(driver, layout, world, start_service=service,
+                                  classifier_model="ollama:qwen2.5:7b")
+        trust.classifier_pinned(anchors, what="V-2 crash recovery")
+        yield driver, world, anchors
+    finally:
+        service.stop()
 
 
 @spec_ref(
@@ -645,30 +738,28 @@ def _kill_at_transition(guildhall: Guildhall, world, candidate: dict,
            "receipt, and apology transitions, then retry concurrently."),
 )
 def test_kill_at_every_transition_then_concurrent_retry(
-    guildhall: Guildhall, anchored, held_out
+    guildhall: Guildhall, roots: ProofRoots, held_out
 ) -> None:
-    world, anchors = anchored
-    session = start_session(guildhall, world.repo.path)
-    _observe(guildhall, world.repo.path, held_out.path, session)
-    listing = _proposals(guildhall, world.repo.path, session)
-    candidate = _first_candidate(listing)
-    destination = "codebase:" + anchors.repository_uuid
-
     results = []
     for transition in TRANSITIONS:
-        killed = _kill_at_transition(guildhall, world, candidate, destination,
-                                     transition)
-        first = _decide_async(guildhall, world.repo.path, candidate, destination)
-        second = _decide_async(guildhall, world.repo.path, candidate, destination)
-        first.wait(timeout=120)
-        second.wait(timeout=120)
-        status = _proposals(guildhall, world.repo.path, session)
-        killed.update({
-            "duplicate_events": field(status, "duplicate_events"),
-            "recursive_apologies": field(status, "recursive_apologies"),
-            "recovered": field(status, "fanout_receipts", "codebase", "state")
-            == "committed",
-        })
+        with _crash_world(guildhall, roots, transition) as (driver, world, anchors):
+            session = start_session(driver, world.repo.path)
+            _observe(driver, world.repo.path, held_out.path, session)
+            candidate = _first_candidate(_proposals(driver, world.repo.path, session))
+            destination = "codebase:" + anchors.repository_uuid
+            killed = _kill_at_transition(driver, world, candidate, destination, transition)
+            first = _decide_async(driver, world.repo.path, candidate, destination)
+            second = _decide_async(driver, world.repo.path, candidate, destination)
+            first.communicate(timeout=120)
+            second.communicate(timeout=120)
+            status = _proposals(driver, world.repo.path, session)
+            killed.update({
+                "duplicate_events": field(status, "duplicate_events"),
+                "recursive_apologies": field(status, "recursive_apologies"),
+                "recovered": field(status, "fanout_receipts", "codebase", "state")
+                == "committed",
+                "total_events_after_recovery": field(status, "committed_event_count"),
+            })
         results.append(killed)
 
     require_all(
@@ -676,12 +767,17 @@ def test_kill_at_every_transition_then_concurrent_retry(
         why="each named transition must actually have been interrupted",
         minimum=len(TRANSITIONS), origin=Origin.HARNESS,
     )
-    final = _proposals(guildhall, world.repo.path, session)
+    require_all(
+        results, lambda r: r["total_events_after_recovery"] == 1,
+        obligation="V-2.crash-recovery", minimum=len(TRANSITIONS),
+        why="each independent crash probe leaves exactly one event",
+        origin=Origin.PRODUCT,
+    )
     O.check(
         "V-2.crash-recovery",
         {
             "transitions": results,
-            "total_events_after_recovery": field(final, "committed_event_count"),
+            "total_events_after_recovery": results[-1]["total_events_after_recovery"],
         },
         label="witnessed kill at each transition, then concurrent retry",
     )

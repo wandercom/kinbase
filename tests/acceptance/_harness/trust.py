@@ -539,6 +539,7 @@ def resolve_classifier(roots: ProofRoots, guildhall, *, model: str | None = None
     """R-11: pin the same executable used for product commands, without spawning it."""
     import shutil
 
+    model = os.environ.get("GUILDHALL_CLASSIFIER_MODEL", model)
     entrypoint = tuple(guildhall.entrypoint)
     if len(entrypoint) != 1:
         raise HarnessInvalid("R-11 requires GUILDHALL_BIN to name the single product executable")
@@ -547,7 +548,8 @@ def resolve_classifier(roots: ProofRoots, guildhall, *, model: str | None = None
         raise prereq.missing("binary", "product classifier", "product executable is absent")
     path = prereq.executable(resolved, what="product classifier executable",
                             why="R-11 pins the product binary with SHA-256")
-    if model is not None and not model.startswith("ollama:"):
+    if model is not None and (not model.startswith("ollama:") or
+                              not model[len("ollama:"):].strip()):
         raise HarnessInvalid("R-11 live model must use ollama:<name>")
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     return Classifier(path=path.resolve(), sha256=digest,

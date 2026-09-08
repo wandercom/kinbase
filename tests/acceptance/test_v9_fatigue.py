@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import statistics
+import subprocess
 import time
 from pathlib import Path
 
@@ -268,14 +269,21 @@ def test_interleaved_sessions_never_exceed_four_prompts_per_window(
             cwd=str(world.repo.path),
         )
         process = guildhall.popen("hooks", "dispatch", name, "UserPromptSubmit",
-                                  "--json", cwd=world.repo.path)
+                                  "--json", cwd=world.repo.path,
+                                  stdin=subprocess.PIPE)
         processes.append((name, process, envelope))
     started = time.monotonic()
     outcomes = []
     for name, process, envelope in processes:
-        process.stdin.write(json.dumps(envelope).encode())
-        process.stdin.close()
-        outcomes.append({"host": name, "exit": process.wait(timeout=180)})
+        try:
+            process.stdin.write(json.dumps(envelope).encode())
+            process.stdin.close()
+            process.stdin = None
+        except BrokenPipeError as exc:
+            raise ProductFailure(f"[V-9.interleave] {name} closed its input before the envelope") from exc
+    for name, process, envelope in processes:
+        process.communicate(timeout=180)
+        outcomes.append({"host": name, "exit": process.returncode})
     overlap = time.monotonic() - started
 
     crashed = guildhall.popen("proposals", "reissue",

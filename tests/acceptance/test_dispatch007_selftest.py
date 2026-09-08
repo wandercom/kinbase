@@ -228,10 +228,11 @@ def test_dispatch008_transcript_dependencies_survive_destructive_expiry(tmp_path
 
 
 @spec_ref(VERIFY("INSTRUMENT", "positive-controls", "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS."))
-def test_dispatch008_classifier_config_pins_product_and_uses_ruling_fields(roots, tmp_path):
+def test_dispatch008_classifier_config_pins_product_and_uses_ruling_fields(roots, tmp_path, monkeypatch):
     import hashlib
     import tomllib
     from ._harness import trust
+    monkeypatch.delenv("GUILDHALL_CLASSIFIER_MODEL", raising=False)
     executable = tmp_path / "guildhall-fixture"
     executable.write_text("#!/bin/sh\nexit 99\n")
     executable.chmod(0o700)
@@ -321,7 +322,8 @@ def test_dispatch008_normalisation_plants_a_codebase_alias_in_git(tmp_path, monk
     class Driver:
         def run(self, *args, **kwargs):
             assert args[:2] == ("fsck", "--repo")
-            return SimpleNamespace(returncode=0, json={"admitted_paths": []})
+            return SimpleNamespace(returncode=0, json={"admitted_paths": [
+                {"path": world.codebase_records()[0]["path"]}]})
     monkeypatch.setattr(maintenance.O, "check", lambda oid, payload, **kw: captured.append(payload))
     maintenance.test_case_crlf_normalisation_and_uppercase_alias_are_refused(Driver(), (world, None))
     event = world.codebase_records()[0]
@@ -522,3 +524,309 @@ def test_dispatch009_partial_fanout_binds_before_redirecting_company(roots, monk
         None, (world, anchors), SimpleNamespace(path=roots.run_root / "corpus"), roots)
     assert events == ["bind", "listen", "redirect", "restore", "close"]
     assert captured == ["V-2.partial-fanout"]
+
+
+_REMEDIATION_010 = VERIFY("INSTRUMENT", "positive-controls", "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS.")
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch010_control_removal_restores_native_bytes_and_keeps_detector_armed(roots):
+    from ._harness import matrix as MX
+    from ._harness.gitfix import GitRepo
+    surfaces = MX.SurfaceRoots.create(roots)
+    repo = GitRepo.init(surfaces.repo)
+    repo.write("baseline.md", "baseline must survive\n")
+    head = repo.commit("baseline")
+    log = surfaces.state / "guildhall.log"
+    log.write_text("original log\n")
+    planted = MX.Matrix.plant(surfaces, seed=20260907)
+    receipts = planted.receipts(planted.detector())
+    assert len(receipts) == planted.expected_cells
+    assert all(row["detected"] for row in receipts)
+    registry = dict(planted.registry)
+    # An unexpected copy is not a control location and must survive cleanup.
+    residual = surfaces.state / "unexpected-copy.log"
+    residual.write_text(planted.cells[0].raw_value)
+    assert planted.remove() == len(planted.cells)
+    assert planted.registry == registry
+    assert repo.head() == head
+    assert repo.run("status", "--porcelain") == ""
+    assert log.read_text() == "original log\n"
+    assert any(planted.sweep(planted.detector()).values())
+    residual.unlink()
+    assert not any(planted.sweep(planted.detector()).values())
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch010_positive_control_gate_reaches_real_clean_assertion(roots, vault):
+    from . import test_v3_privacy as gate
+    from ._harness.matrix import SurfaceRoots
+    gate.test_positive_control_precedes_and_licenses_the_clean_assertion(
+        SurfaceRoots.create(roots), vault)
+
+
+@spec_ref(_REMEDIATION_010)
+@pytest.mark.parametrize("destination", ["personal", "company", "codebase"])
+@pytest.mark.parametrize("pooled", [False, True])
+def test_dispatch010_zero_shared_predictions_are_product_failures(destination, pooled):
+    from ._harness import metrics
+    gold = {"m": metrics.GoldRecord("m", (("fact", "message", ("company", "codebase")),), False, "one")}
+    prediction = metrics.Prediction("m", (("fact", "message", (destination,)),))
+    joined = metrics.joined({"m": prediction}, gold, name="synthetic-empty-destination")
+    with pytest.raises(ProductFailure, match="empty predictions.*trials=0"):
+        if pooled:
+            metrics.pooled_shared_precision([joined] * 5)
+        else:
+            joined.shared_precision_lower_bounds()
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch010_empty_prediction_map_and_missing_instrument_pool_are_distinct():
+    from ._harness import metrics, stats
+    from ._harness.requirements import HarnessInvalid
+    gold = {"m": metrics.GoldRecord("m", (), False, "one")}
+    with pytest.raises(ProductFailure, match="empty predictions; predictions=0, gold=1"):
+        metrics.joined({}, gold, name="empty-product-response")
+    with pytest.raises(HarnessInvalid, match="at least one frozen run"):
+        metrics.pooled_shared_precision([])
+    with pytest.raises(ValueError, match="trials > 0"):
+        stats.wilson(0, 0)
+    gold["m"] = metrics.GoldRecord("m", (("fact", "message", ("company", "codebase")),), False, "one")
+    good = metrics.Joined(("m",), {"m": metrics.Prediction("m", gold["m"].atoms)}, gold)
+    bounds = metrics.pooled_shared_precision([good] * 100)
+    assert all(row["trials"] == 100 and row["value"] > .95 for row in bounds)
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch010_normalisation_reports_product_refusals_before_universal_claim(roots):
+    from . import test_v4_maintenance as gate
+    world = SignedWorld.create(roots.repo_root)
+    status = {"admitted_paths": [], "refusal_counts": {"INEFFECTIVE_ATTRIBUTES": 2},
+              "ineffective_git_attributes": True}
+    driver = SimpleNamespace(run=lambda *a, **kw: SimpleNamespace(returncode=3, json=status))
+    with pytest.raises(ProductFailure, match='"refusal_counts": {"INEFFECTIVE_ATTRIBUTES": 2}') as error:
+        gate.test_case_crlf_normalisation_and_uppercase_alias_are_refused(driver, (world, None))
+    assert "normalisation remains unmeasured" in str(error.value)
+    assert "[V-4.normalisation]" not in str(error.value)
+
+
+@spec_ref(_REMEDIATION_010)
+@pytest.mark.parametrize("path", [".kin/observations.jsonl", ".kin/atoms.jsonl", "ordinary.txt"])
+def test_dispatch010_merge_private_store_overwrite_is_typed_product_observation(tmp_path, path):
+    from ._harness.gitfix import GitRepo
+    from ._harness.requirements import HarnessInvalid
+    repo = GitRepo.init(tmp_path / "merge")
+    repo.write(path, "base\n")
+    repo.commit("base")
+    repo.branch("topic")
+    repo.write(path, "branch\n")
+    repo.commit("branch")
+    repo.checkout("main")
+    repo.write(path, "uncommitted product write\n")
+    expected = HarnessInvalid if path == "ordinary.txt" else ProductFailure
+    with pytest.raises(expected, match="would be overwritten") as error:
+        repo.merge("topic")
+    assert (repo.path / path).read_text() == "uncommitted product write\n"
+    if expected is ProductFailure:
+        assert "[P-3] private-store surface violation" in str(error.value)
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch010_classifier_override_is_config_only(roots, tmp_path, monkeypatch):
+    import tomllib
+    from ._harness import cli, trust
+    from ._harness.controls import HARNESS_ONLY
+    from ._harness.requirements import HarnessInvalid
+    executable = tmp_path / "fixture-classifier"
+    executable.write_text("#!/bin/sh\nexit 99\n")
+    executable.chmod(0o700)
+    monkeypatch.setattr(cli, "_resolve_entrypoint", lambda: (str(executable),))
+    driver = cli.Guildhall(home=roots.home, xdg_config_home=roots.xdg_config_home, cwd=roots.repo_root)
+    monkeypatch.setenv("GUILDHALL_CLASSIFIER_MODEL", "ollama:glm-5.3:cloud")
+    for default in (None, "ollama:qwen2.5:7b"):
+        pin = trust.resolve_classifier(roots, driver, model=default)
+        config, _ = trust.write_user_config(roots, company_url="http://127.0.0.1:1",
+                                          facts_token="fixture-token", root_key=tmp_path / "root.pub",
+                                          classifier=pin)
+        assert tomllib.loads(config.read_text())["classifier"]["model"] == "ollama:glm-5.3:cloud"
+        assert "GUILDHALL_CLASSIFIER_MODEL" not in driver.base_env()
+    assert "GUILDHALL_CLASSIFIER_MODEL" in HARNESS_ONLY
+    monkeypatch.setenv("GUILDHALL_CLASSIFIER_MODEL", "")
+    with pytest.raises(HarnessInvalid, match="live model"):
+        trust.resolve_classifier(roots, driver)
+    monkeypatch.delenv("GUILDHALL_CLASSIFIER_MODEL")
+    assert trust.resolve_classifier(roots, driver).model is None
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch010_popen_explicit_stdin_pipe_with_fixture_process(roots, monkeypatch):
+    import subprocess
+    import sys
+    from ._harness import cli
+    monkeypatch.setattr(cli, "_resolve_entrypoint", lambda: (sys.executable,))
+    driver = cli.Guildhall(home=roots.home, xdg_config_home=roots.xdg_config_home, cwd=roots.repo_root)
+    # A tester-owned Python echo process, never the product or a host executable.
+    child = driver.popen("-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())", stdin=subprocess.PIPE)
+    stdout, stderr = child.communicate(b'{"fixture":"envelope"}', timeout=10)
+    assert child.returncode == 0 and not stderr
+    assert stdout == b'{"fixture":"envelope"}'
+
+
+@spec_ref(_REMEDIATION_010)
+@pytest.mark.parametrize("transition", ["nonce_reservation", "event_append_rename", "manifest", "receipt", "apology"])
+@pytest.mark.parametrize("source", ["repo", "private", "status"])
+def test_dispatch010_kill_witness_uses_journal_and_reaps_sigkill(roots, monkeypatch, transition, source):
+    import json
+    import signal
+    from . import test_v2_classification as gate
+    candidate = {"candidate_id": "fixture-candidate"}
+    roots.user_config_path.parent.mkdir(parents=True, exist_ok=True)
+    roots.user_config_path.write_text('[personal]\ndata_root = ' + json.dumps(str(roots.personal_root)) + '\n')
+    marker_root = roots.repo_root / ".kin/local/journal" if source == "repo" else roots.personal_root / "journal"
+    marker_root.mkdir(parents=True, exist_ok=True)
+    marker = marker_root / "transaction.json"
+    marker.write_text(json.dumps({"candidate_id": "someone-else", "journal_state": transition}))
+    calls = []
+    class Process:
+        returncode = None
+        pid = 123
+        def poll(self):
+            return self.returncode
+        def send_signal(self, sig):
+            assert sig == signal.SIGKILL
+            calls.append("kill")
+        def communicate(self, timeout):
+            calls.append("reap")
+            self.returncode = -signal.SIGKILL
+            return b"", b""
+    process = Process()
+    running = False
+    def launch(*args):
+        nonlocal running
+        running = True
+        if source != "status":
+            marker.write_text(json.dumps({**candidate, "journal_state": transition}))
+        return process
+    def run(*args, **kwargs):
+        assert args[0] == "status"
+        return SimpleNamespace(json={"journal_state": {**candidate, "transition": transition} if running and source == "status" else None})
+    monkeypatch.setattr(gate, "_decide_async", launch)
+    driver = SimpleNamespace(xdg_config_home=roots.xdg_config_home, run=run)
+    result = gate._kill_at_transition(driver, SimpleNamespace(repo=SimpleNamespace(path=roots.repo_root)), candidate, "codebase:fixture", transition)
+    assert result["crash_witnessed"]
+    assert calls == ["kill", "reap"]
+    assert result["exit_witness"]["observations"][0]["exit_code"] == -signal.SIGKILL
+
+
+@spec_ref(_REMEDIATION_010)
+@pytest.mark.parametrize("ending", ["normal", "failure", "stale"])
+def test_dispatch010_completed_or_stale_journal_never_licenses_crash(roots, monkeypatch, ending):
+    from . import test_v2_classification as gate
+    marker = roots.repo_root / ".kin/local/journal/receipt"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text("receipt")
+    class Process:
+        returncode = 0 if ending != "failure" else 3
+        pid = 123
+        def poll(self):
+            return self.returncode
+        def communicate(self, timeout):
+            return b"", b""
+    def launch(*args):
+        if ending != "stale":
+            marker.write_text("receipt\n")
+        return Process()
+    monkeypatch.setattr(gate, "_decide_async", launch)
+    driver = SimpleNamespace(xdg_config_home=roots.xdg_config_home,
+                             run=lambda *a, **kw: SimpleNamespace(json={"journal_state": "receipt"}))
+    result = gate._kill_at_transition(driver, SimpleNamespace(repo=SimpleNamespace(path=roots.repo_root)), {"candidate_id": "fixture"}, "codebase:fixture", "receipt")
+    assert not result["crash_witnessed"]
+
+
+@spec_ref(_REMEDIATION_010)
+@pytest.mark.parametrize("event_count", [1, 2])
+def test_dispatch010_crash_gate_uses_five_fresh_worlds_and_checks_each_recovery(roots, monkeypatch, event_count):
+    from . import test_v2_classification as gate
+    seen = []
+    stopped = []
+    actions = []
+    original_create = gate.ProofRoots.create
+    monkeypatch.setattr(gate.ProofRoots, "create", lambda base: original_create(base, company_port=0))
+    def driver(**kw):
+        seen.append(kw["cwd"])
+        return SimpleNamespace(**kw)
+    monkeypatch.setattr(gate, "Guildhall", driver)
+    monkeypatch.setattr(gate, "start_company", lambda driver, layout: SimpleNamespace(stop=lambda: stopped.append(layout.repo_root)))
+    monkeypatch.setattr(gate.trust, "establish", lambda *a, **kw: SimpleNamespace(repository_uuid="fixture"))
+    monkeypatch.setattr(gate.trust, "classifier_pinned", lambda *a, **kw: None)
+    monkeypatch.setattr(gate, "start_session", lambda *a: "fixture-session")
+    monkeypatch.setattr(gate, "_observe", lambda *a: None)
+    def listing(*args):
+        return {"candidates": [{"candidate_id": "fixture", "payload_digest": "f" * 64}],
+                "duplicate_events": 0, "recursive_apologies": 0,
+                "fanout_receipts": {"codebase": {"state": "committed"}},
+                "committed_event_count": event_count if len(seen) == 1 else 1}
+    monkeypatch.setattr(gate, "_proposals", listing)
+    def killed(*args):
+        actions.clear()
+        return {"transition": args[-1], "crash_witnessed": True}
+    monkeypatch.setattr(gate, "_kill_at_transition", killed)
+    def retry(*args):
+        actions.append("launch")
+        def communicate(timeout):
+            assert actions[:2] == ["launch", "launch"]
+            actions.append("reap")
+        return SimpleNamespace(communicate=communicate)
+    monkeypatch.setattr(gate, "_decide_async", retry)
+    args = (SimpleNamespace(path_prefix=[]), roots, SimpleNamespace(path=roots.run_root / "held-out"))
+    if event_count == 1:
+        gate.test_kill_at_every_transition_then_concurrent_retry(*args)
+    else:
+        with pytest.raises(ProductFailure, match="exactly one event"):
+            gate.test_kill_at_every_transition_then_concurrent_retry(*args)
+    assert len(set(seen)) == 5
+    assert stopped == seen
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch010_interleave_gate_feeds_both_pipes_before_waiting(roots, monkeypatch):
+    import json
+    import subprocess
+    from . import test_v9_fatigue as gate
+    from ._harness.corpora import OpaqueIds
+    fed = []
+    processes = []
+    class Input:
+        def __init__(self, name):
+            self.name = name
+        def write(self, data):
+            assert isinstance(json.loads(data), dict)
+            fed.append(self.name)
+        def close(self):
+            pass
+    class Process:
+        returncode = 0
+        def __init__(self, name):
+            self.stdin = Input(name)
+        def communicate(self, timeout):
+            assert len(fed) == len(gate.hosts.HOSTS)
+            assert self.stdin is None
+        def kill(self):
+            self.returncode = -9
+        def wait(self, timeout):
+            return self.returncode
+    class Driver:
+        def popen(self, *args, **kw):
+            if args[0] == "hooks":
+                assert kw["stdin"] == subprocess.PIPE
+            process = Process(args[2])
+            processes.append(process)
+            return process
+        def run(self, *args, **kw):
+            return SimpleNamespace(returncode=0, json={"reservations_held_after_crash": 1,
+                "delivery_loss_rate": 0, "candidates": [{"rendered": True}]})
+    monkeypatch.setattr(gate, "_eligible_candidates", lambda *a: ("fixture", [{"candidate_id": str(n)} for n in range(8)]))
+    gate.test_interleaved_sessions_never_exceed_four_prompts_per_window(
+        Driver(), (SimpleNamespace(repo=SimpleNamespace(path=roots.repo_root)), None), OpaqueIds(seed=b"pipe-fixture"))
+    assert fed == list(gate.hosts.HOSTS)
+    assert len(processes) == 3

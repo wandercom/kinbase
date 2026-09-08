@@ -371,6 +371,12 @@ def test_case_crlf_normalisation_and_uppercase_alias_are_refused(
     status = _json(_run(guildhall, "fsck", "--repo", str(repo.path), "--json",
                         cwd=repo.path))
     admitted = rows(status, "admitted_paths")
+    if not admitted:
+        raise ProductFailure(
+            "[V-4] no admitted paths; product refusal observation: "
+            + json.dumps(status, sort_keys=True)
+            + "; normalisation remains unmeasured (requires at least one admitted path)"
+        )
     O.check(
         "V-4.normalisation",
         {

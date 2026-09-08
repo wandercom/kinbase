@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
 from . import prereq, stats
-from .requirements import HarnessInvalid
+from .requirements import HarnessInvalid, ProductFailure
 
 #: The four ratified destination labels.
 DESTINATIONS: tuple[str, ...] = ("personal", "company", "codebase", "none")
@@ -177,6 +177,7 @@ class Joined:
         out = []
         for destination in SHARED_DESTINATIONS:
             tp, fp, _ = counts[destination]
+            _require_predictions(destination, tp + fp)
             lower, _ = stats.wilson(tp, tp + fp)
             out.append({
                 "destination": destination,
@@ -265,6 +266,10 @@ class Joined:
 
 def joined(predictions: Mapping[str, Prediction],
            gold: Mapping[str, GoldRecord], *, name: str) -> Joined:
+    if gold and not predictions:
+        raise ProductFailure(
+            f"[V-2] {name}: empty predictions; predictions=0, gold={len(gold)}"
+        )
     tokens = prereq.gold_join(predictions, gold, name=name)
     return Joined(tokens=tokens, predictions=dict(predictions), gold=dict(gold))
 
@@ -274,6 +279,14 @@ def agrees(reported: Any, computed: float, *, tolerance: float = 1e-6) -> bool:
     if isinstance(reported, bool) or not isinstance(reported, (int, float)):
         return False
     return abs(float(reported) - computed) <= tolerance
+
+
+def _require_predictions(destination: str, trials: int) -> None:
+    if trials == 0:
+        raise ProductFailure(
+            f"[V-2] empty predictions for shared destination {destination}; "
+            "trials=0; Wilson precision cannot be measured"
+        )
 
 
 def pooled_shared_precision(runs: Sequence["Joined"]) -> list[dict]:
@@ -298,6 +311,7 @@ def pooled_shared_precision(runs: Sequence["Joined"]) -> list[dict]:
             counts = run.per_label_counts()[destination]
             tp += counts[0]
             fp += counts[1]
+        _require_predictions(destination, tp + fp)
         lower, upper = stats.wilson(tp, tp + fp)
         out.append({
             "destination": destination,

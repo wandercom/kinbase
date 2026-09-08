@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import sqlite3
 import tarfile
 from dataclasses import dataclass, field
@@ -35,6 +36,7 @@ from typing import Any, Callable, Mapping
 from . import canaries, scanners
 from .canaries import SURFACE_FAMILIES, TRANSFORMATION_FAMILIES
 from .detectors import CanaryDetector, Finding
+from .requirements import HarnessInvalid
 
 #: The nineteen frozen threat-model families and the surfaces each ranges over.
 #: A family with no surface would be untestable, so the mapping is total.
@@ -282,10 +284,23 @@ class Matrix:
     seed: int
     cells: list[PlantedCell] = field(default_factory=list)
     registry: dict[str, str] = field(default_factory=dict)
+    original_files: dict[Path, tuple[bytes, int]] = field(default_factory=dict, repr=False)
+    git_existed: bool = False
 
     @classmethod
     def plant(cls, roots: SurfaceRoots, *, seed: int) -> "Matrix":
         matrix = cls(roots=roots, seed=seed)
+        # No product runs during planting/removal. Preserve pre-control bytes,
+        # including the original object database: deleting the working copies
+        # cannot remove controls from packed/unreachable Git history.
+        git = roots.repo / ".git"
+        if git.exists() and not git.is_dir():
+            raise HarnessInvalid("positive-control matrix needs a standalone fixture repository")
+        matrix.git_existed = git.exists()
+        for root in {roots.repo, roots.company_cache, roots.state, roots.evidence, roots.outbox}:
+            for path in root.rglob("*"):
+                if path.is_file():
+                    matrix.original_files[path] = (path.read_bytes(), path.stat().st_mode)
         rng = canaries.make_rng(seed)
         index = 0
         for surface in SURFACE_FAMILIES:
@@ -362,22 +377,35 @@ class Matrix:
         return out
 
     def remove(self) -> int:
-        """Remove every planted control so the clean assertion can run."""
-        removed = 0
-        for cell in self.cells:
-            if cell.location.is_file():
-                cell.location.unlink()
-                removed += 1
-        db = self.roots.company_cache / "facts-cache.sqlite3"
-        if db.is_file():
-            db.unlink()
-            removed += 1
-        log = self.roots.state / "guildhall.log"
-        if log.is_file():
-            log.unlink()
-            removed += 1
-        self.registry.clear()
-        return removed
+        """Restore control locations, counting cells rather than shared files.
+
+        Keep the registry armed for the subsequent clean sweep. Unexpected
+        copies outside control locations remain present and detectable.
+        """
+        git = self.roots.repo / ".git"
+        for path in {cell.location for cell in self.cells} - {git}:
+            original = self.original_files.get(path)
+            if original is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.write_bytes(original[0])
+                path.chmod(original[1])
+        if any(cell.location == git for cell in self.cells):
+            shutil.rmtree(git)
+            for path, (raw, mode) in self.original_files.items():
+                if path.is_relative_to(git):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(raw)
+                    path.chmod(mode)
+            if not self.git_existed:
+                from .gitfix import GitRepo
+                GitRepo.init(self.roots.repo)
+        return sum(
+            cell.location == git or
+            (not cell.location.exists() if cell.location not in self.original_files
+             else cell.location.read_bytes() == self.original_files[cell.location][0])
+            for cell in self.cells
+        )
 
     def as_json(self) -> dict:
         return {

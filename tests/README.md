@@ -52,9 +52,13 @@ session, native lifecycle, and hook repairs:
   probes with a zero-connection obligation. Cache-clearing preserves the installed
   certificate, and `repo init` must copy the external certificate into the cache.
 * R-11 pins the resolved product executable with args `["classifier", "--json"]`.
-  V-2 uses `[classifier] model = "ollama:qwen2.5:7b"`; the Validator must provide
-  that local Ollama model for live quality measurement. Other worlds omit model
-  for structural rule/replay operation. Doctor's spawn pin is checked after
+  V-2 defaults to `[classifier] model = "ollama:qwen2.5:7b"`. Set the harness-only
+  `GUILDHALL_CLASSIFIER_MODEL=ollama:glm-5.3:cloud` (or another available Ollama
+  model) to write that model into every world's user-config `[classifier]` table.
+  The variable never reaches the product environment; the config chooses the
+  provider per R-11. The Validator provisions the selected live model. Without
+  an override, other worlds omit model for structural rule/replay operation.
+  Doctor's spawn pin and live provider are checked after
   extraction. No empty classifier stub licenses an extraction gate.
 * Dispatch 008 orders transcript create/update/delete/restart/expiry explicitly,
   republishes registries for revocation, preserves branch observations on the
@@ -76,6 +80,19 @@ failures quote the product output. Five new regression guards (ten nodes) cover
 these faults; the temporal guard also verifies every intermediate reducer HEAD.
 The 009 handover remains in the worktree and an exact scratch patch; Git metadata
 is read-only and the Validator owns application and commit.
+
+Dispatch 010 starts at `2e7163b`. Positive controls restore their native locations
+and pre-control Git object database, count removed cells rather than shared
+files, and retain the detector registry for the clean sweep. Empty V-2
+predictions and private-store Git overwrite refusals report typed product
+observations. V-4 reports complete refusal output when no path admits, leaving
+normalisation unmeasured. V-9 explicitly opens its input pipes and feeds both
+hosts before waiting. Crash probes observe new journal markers under
+`.kin/local/journal/` or the configured private store, with typed `journal_state`
+from `status --json` as a fallback. Each probe uses a fresh world and must witness
+a reaped SIGKILL exit and exactly one recovered event. No stale marker, ordinary
+nonzero exit, or completed transaction can license crash coverage. Live journal
+timing and model quality remain Validator measurements.
 
 ## Reviewer entrypoint
 
@@ -153,13 +170,13 @@ Every assertion cites an exact ratified requirement:
 
 | quantity | value |
 |---|---:|
-| collected by pytest | 269 |
+| collected by pytest | 305 |
 | catalogued obligations | 117 |
 | catalogued thresholds | 482 |
 | kill-ledger rows over frozen controls | 482 |
 | executable pre-execution planters | 35 |
 | detector mutations with a demonstrated escape | 6 |
-| product-independent self-tests | 150 |
+| product-independent self-tests | 186 |
 | unbackreferenced tests | 0 |
 
 Catalog digest `8320395313ff6f00`; kill-ledger digest `b16d7fd1b37174a5`;

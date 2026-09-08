@@ -164,6 +164,7 @@ def violations(names: Iterable[str]) -> list[tuple[str, str]]:
 #: the instrument itself and are asserted to be absent from the child environment.
 HARNESS_ONLY: frozenset[str] = frozenset({
     "GUILDHALL_BIN",
+    "GUILDHALL_CLASSIFIER_MODEL",
     "GUILDHALL_SPEC_ROOT",
     "GUILDHALL_TESTER_VAULT",
     "GUILDHALL_HOST_CODEX",
