@@ -12,7 +12,12 @@
 #   * installs nothing and touches no network;
 #   * creates no file inside the repository -- pytest's cache is disabled and its
 #     temporary root is redirected outside the tree;
-#   * runs only `selftest`-marked work, which never invokes the product.
+#   * runs pyflakes over tests/** before pytest (Tester dispatch 006), then
+#     only `selftest`-marked work, which never invokes the product.
+#
+# The interpreter must already have tests/requirements.txt available (pytest,
+# pytest-timeout, pyflakes). tests/.venv is used automatically when it exists;
+# otherwise pass ACCEPT_PYTHON. Nothing is installed here.
 #
 # Usage:  tests/reviewer-selftest.sh [extra pytest args]
 set -euo pipefail
@@ -20,7 +25,13 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
 
-PYTHON="${ACCEPT_PYTHON:-python3}"
+if [ -n "${ACCEPT_PYTHON:-}" ]; then
+  PYTHON="$ACCEPT_PYTHON"
+elif [ -x ".venv/bin/python" ]; then
+  PYTHON="./.venv/bin/python"
+else
+  PYTHON="python3"
+fi
 TMPROOT="$(mktemp -d "${TMPDIR:-/tmp}/guildhall-reviewer-XXXXXX")"
 trap 'rm -rf "$TMPROOT"' EXIT
 
@@ -37,9 +48,26 @@ echo "  installs:    nothing; no network access"
 echo "  writes:      $TMPROOT (outside the repository)"
 echo
 
+# Static analysis first: an undefined name inside a gate module raises only
+# when its node runs, which in the Validator's run means after real product
+# state has been built. pyflakes finds it with no product present. Tester
+# dispatch 006 made this a handover condition. pyflakes is a dependency of
+# tests/requirements.txt; an interpreter without it cannot attest cleanliness
+# and the entrypoint says so rather than skipping.
+if ! "$PYTHON" -c "import pyflakes" 2>/dev/null; then
+  echo "guildhall reviewer self-test: pyflakes is not importable by $PYTHON;" >&2
+  echo "  install tests/requirements.txt into tests/.venv (tests/run-acceptance.sh does) or pass ACCEPT_PYTHON" >&2
+  exit 70
+fi
+echo "static analysis: pyflakes over tests/**"
+"$PYTHON" -m pyflakes conftest.py acceptance tools
+echo "  clean"
+echo
+
+# pytest's cache provider is disabled, so its `cache_dir` option no longer
+# exists and --strict-config (pytest.ini) would refuse `-o cache_dir=...`.
 exec "$PYTHON" -m pytest -c pytest.ini \
     -p no:cacheprovider \
-    -o cache_dir="$TMPROOT/pytest-cache" \
     --basetemp="$TMPROOT/pytest-tmp" \
     -m selftest \
     "$@"

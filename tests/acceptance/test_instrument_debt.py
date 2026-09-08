@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from ._harness import debt
-from ._harness.requirements import THREAT, VERIFY, HarnessInvalid, spec_ref
+from ._harness.requirements import VERIFY, HarnessInvalid, spec_ref
 
 pytestmark = pytest.mark.selftest
 

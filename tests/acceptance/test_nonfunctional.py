@@ -12,49 +12,32 @@ from __future__ import annotations
 import json
 import os
 import stat
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 from ._harness import obligations as O
-from ._harness.evidence_model import Origin, require_all, require_nonempty
 
-from ._harness import canaries, synth
-from ._harness.cli import ERROR_CODES, EXIT_MEANING, Guildhall
-from ._harness.gitfix import GitRepo
+from ._harness import synth
+from ._harness import canonical
+from ._harness.cli import ERROR_CODES, ERROR_FIELDS, EXIT_MEANING, Guildhall
 from ._harness.hosts import (
     CANDIDATE_LIFETIME_SECONDS,
-    CEILING_STOP_CONFOUND_FRACTION,
-    KIN_INTAKE_BYTES,
-    KIN_INTAKE_EVENTS,
-    OBSERVATION_BATCH_BYTES,
     OBSERVATION_BATCH_ITEMS,
     PRIVATE_RAW_RETENTION_SECONDS,
-    PROJECTION_BYTES,
-    PROJECTION_FACTS,
     SHARED_EVENT_CEILING,
     SOURCE_BODY_CEILING,
 )
 from ._harness.requirements import (
     ARCH,
     CLI,
-    PRODUCT,
+    THREAT,
     VERIFY,
-    ProductFailure,
     spec_ref,
 )
-from ._harness.roots import ProofRoots, assert_mode_no_broader_than
+from ._harness.roots import ProofRoots
 from ._harness.worldbuilder import SignedWorld
-from ._harness.service import (
-    REJECTION_PROBES,
-    ClientKey,
-    ServiceClient,
-    assert_loopback_only,
-    wait_for_loopback,
-)
-from ._harness import ed25519_pure
 
 pytestmark = [pytest.mark.nonfunctional, pytest.mark.requires_product]
 
@@ -240,7 +223,7 @@ def test_external_calls_have_timeouts_and_failed_writes_are_not_admitted(
 ) -> None:
     import socket as _socket
 
-    world = SignedWorld.create(roots.repo_root)
+    SignedWorld.create(roots.repo_root)
     listener = _socket.socket()
     listener.bind(("127.0.0.1", 0))
     listener.listen(1)
@@ -456,7 +439,7 @@ def test_acceptance_suite_declares_all_its_dependencies() -> None:
 def test_every_operational_ceiling_refuses_with_an_omitted_count(
     guildhall: Guildhall, roots: ProofRoots, tmp_path: Path
 ) -> None:
-    world = SignedWorld.create(roots.repo_root)
+    SignedWorld.create(roots.repo_root)
     ceilings = []
 
     oversize = tmp_path / "oversize.txt"
@@ -529,7 +512,7 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
 def test_candidate_lifetime_and_private_retention_are_enforced(
     guildhall: Guildhall, roots: ProofRoots
 ) -> None:
-    world = SignedWorld.create(roots.repo_root)
+    SignedWorld.create(roots.repo_root)
     session = "s" + os.urandom(6).hex()
     corpus = roots.run_root / "lifetime.jsonl"
     corpus.parent.mkdir(parents=True, exist_ok=True)
@@ -596,30 +579,152 @@ def test_error_taxonomy_and_exit_table_match_the_ratified_contract(spec_root: Pa
     assert EXIT_MEANING[1] == "unused, reserved to prevent ambiguous generic failures"
 
 
+#: Bytes the threat model freezes as injection vectors, delivered as one argv
+#: element. ``spec/threat-model.md`` family 11: "SQL/LIKE/GLOB/FTS operators,
+#: wildcard scope/logical keys, NUL, separators". A raw NUL cannot travel in
+#: argv (execve refuses it, see ``_argv_nul_non_probe``); its textual escape
+#: forms can, and a product that unescapes before matching would then meet it.
+HOSTILE_KEY = "architecture/'; DROP TABLE facts; --/%/_/*/?/[a-z]/../..//\\u0000/%00/NEAR(a,b)"
+
+#: The same vectors as raw bytes on a channel that carries bytes.
+HOSTILE_BYTES = b"scheduler'; DROP TABLE facts; --\x00%_*?../\xff\xfe"
+
+
+def _argv_nul_non_probe(guildhall: Guildhall) -> dict:
+    """Attempt the argv-level NUL; record why it is not a probe.
+
+    Validator instrument-defect report, dispatch 006, item 5: Python refuses an
+    embedded NUL in an argv element before the product is spawned, so the
+    obligation was never exercised. The attempt is kept and *recorded* so the
+    channel is documented as undeliverable rather than silently dropped.
+    """
+    try:
+        guildhall.run("explain", "\x00not-a-key", "--repo", "/nonexistent",
+                      "--decision", "which rule applies", "--json", check=False)
+    except ValueError as exc:
+        return {"channel": "argv", "delivered": False,
+                "why": f"the OS cannot deliver a NUL inside argv: {exc}"}
+    return {"channel": "argv", "delivered": True,
+            "why": "unexpectedly deliverable; promote to a probe"}
+
+
+def _boundary_observation(channel: str, result, *, must_refuse: bool) -> dict:
+    """One typed observation of the exception boundary for one delivered probe."""
+    payload = result.json if isinstance(result.json, dict) else {}
+    error = payload.get("error") if isinstance(payload.get("error"), dict) else {}
+    combined = result.stdout + result.stderr
+    code = error.get("code")
+    fields_complete = all(f in error for f in ERROR_FIELDS)
+    typed = fields_complete and code in ERROR_CODES
+    return {
+        "channel": channel,
+        "delivered": True,
+        "exit_code": result.returncode,
+        "reserved_exit_1": result.returncode == 1,
+        "exit_in_contract": result.returncode in EXIT_MEANING and result.returncode != 1,
+        "must_refuse": must_refuse,
+        "refused_when_required": (result.returncode != 0) if must_refuse else True,
+        "typed_or_completed": result.returncode == 0 or typed,
+        "error": {"code": code, "fields_complete": fields_complete,
+                  "code_in_taxonomy": code in ERROR_CODES},
+        "stack_trace_leaked": 1 if "Traceback (most recent call last)" in combined else 0,
+    }
+
+
 @spec_ref(
     CLI(
         "NONFUNCTIONAL",
         "error-contract",
         "The CLI installs one top-level exception boundary that emits the typed internal error and exits "
         "70 for every caught application exception.",
-    )
+    ),
+    CLI(
+        "NONFUNCTIONAL",
+        "error-contract",
+        "Exit 1 can occur only before that boundary exists (for example interpreter/loader failure) and "
+        "therefore still means the executable itself failed outside its contract.",
+    ),
+    CLI(
+        "NONFUNCTIONAL",
+        "first-run-failures",
+        "| malformed certificate/config | exit 5 and quarantine; no trust-on-first-use fallback |",
+    ),
+    THREAT(
+        "NONFUNCTIONAL",
+        "attack-families",
+        "persistence and authority-matching injection using SQL/LIKE/GLOB/FTS operators, wildcard "
+        "scope/logical keys, NUL, separators, malicious `.kin/config` fields, and parameter/type "
+        "confusion;",
+    ),
 )
+def test_hostile_bytes_never_escape_the_exception_boundary(
+    guildhall: Guildhall, roots: ProofRoots
+) -> None:
+    """Frozen injection bytes, delivered on channels the product really reads.
 
-def test_uncaught_application_exceptions_exit_seventy(guildhall: Guildhall) -> None:
-    result = guildhall.run("explain", "\x00not-a-key", "--repo", "/nonexistent",
+    What is observable from outside the boundary is not *which* exception the
+    product caught but that nothing escaped it: no reserved exit 1, no raw
+    traceback, an exit in the ratified table, and a complete typed error on
+    every non-zero exit. Exit 70 itself cannot be forced from outside a
+    conforming product, so it is not demanded; a product that answers a
+    hostile ``.kin/config`` with anything but the table's exit 5 fails here.
+    """
+    world = SignedWorld.create(roots.repo_root)
+    repo = world.repo.path
+    probes = []
+
+    # argv: metacharacters, wildcards, separators, dot segments and the two
+    # textual NUL escapes a naive unescaper would turn into a real NUL.
+    result = guildhall.run("explain", HOSTILE_KEY, "--repo", str(repo),
                            "--decision", "which rule applies", "--json",
-                           check=False)
-    payload = result.json if isinstance(result.json, dict) else {}
-    combined = result.stdout + result.stderr
+                           cwd=repo, check=False)
+    probes.append(_boundary_observation("argv:logical-key", result, must_refuse=False))
+
+    # file bytes: `.kin/config` carrying a raw NUL and the operator set inside
+    # a value. spec/cli.md: malformed config exits 5 and quarantines.
+    config = repo / ".kin" / "config"
+    pristine = config.read_bytes()
+    config.write_bytes(
+        b'schema_version = "guildhall-repo/1"\n'
+        b'repository_uuid_hint = "018f0000-0000-7000-8000-000000000001"\n'
+        b'safe_name = "' + HOSTILE_BYTES + b'"\n'
+        b'domains = ["scheduling"]\n'
+    )
+    try:
+        result = guildhall.run("status", "--repo", str(repo), "--json",
+                               cwd=repo, check=False)
+    finally:
+        config.write_bytes(pristine)
+    probes.append(_boundary_observation("file:.kin/config", result, must_refuse=True))
+
+    # file bytes: an event whose bytes carry a raw NUL, placed at the content
+    # path its own digest computes, then read by fsck.
+    hostile_event = b'{"logical_key":"' + HOSTILE_BYTES + b'","statement":"x"}'
+    digest = canonical.content_digest_hex(hostile_event)
+    event_path = repo / ".kin" / "events" / canonical.event_shard_path(digest)
+    event_path.parent.mkdir(parents=True, exist_ok=True)
+    event_path.write_bytes(hostile_event)
+    try:
+        result = guildhall.run("fsck", "--repo", str(repo), "--json",
+                               cwd=repo, check=False)
+    finally:
+        event_path.unlink()
+    probes.append(_boundary_observation("file:.kin/events", result, must_refuse=False))
+
+    # stdin: no ratified command reads it, so hostile bytes there must simply
+    # not matter. The product is not allowed to fall over on an open descriptor.
+    result = guildhall.run("status", "--repo", str(repo), "--json",
+                           cwd=repo, check=False, stdin=HOSTILE_BYTES * 64)
+    probes.append(_boundary_observation("stdin", result, must_refuse=False))
+
     O.check(
         "NF.exit-boundary",
         {
-            "exit_code": result.returncode,
-            "error": {"code": _error_code(payload)},
-            "stack_trace_leaked": 1 if "Traceback (most recent call last)" in combined
-            else 0,
+            "probes": probes,
+            "config_probe": probes[1],
+            "non_probes": [_argv_nul_non_probe(guildhall)],
         },
-        label="one top-level exception boundary exits seventy",
+        label="hostile bytes never escape the exception boundary",
     )
 
 

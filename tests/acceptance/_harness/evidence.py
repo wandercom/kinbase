@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import stat
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
@@ -220,5 +221,12 @@ def sanitised_report_claims_are_qualified(report: str) -> list[str]:
     return problems
 
 
-def freshness_of(path: Path) -> float:
-    return max(0.0, os.stat(path).st_mtime)
+def freshness_of(path: Path, now: float | None = None) -> float:
+    """Age of ``path`` in seconds, measured from its last modification.
+
+    The ``EV.retention`` clause compares this against
+    ``RAW_EVIDENCE_MAX_AGE_SECONDS``; an absolute ``st_mtime`` would exceed
+    any sane age bound and could never satisfy it.
+    """
+    reference = time.time() if now is None else now
+    return max(0.0, reference - os.stat(path).st_mtime)

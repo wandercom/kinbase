@@ -28,7 +28,6 @@ process exit --- and recovery is read back from the store, never reported.
 
 from __future__ import annotations
 
-import json
 import os
 import signal
 import time
@@ -53,7 +52,6 @@ from ._harness.requirements import (
     PRODUCT,
     SRC,
     VERIFY,
-    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )

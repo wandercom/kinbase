@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import time
 from pathlib import Path
 
@@ -36,19 +35,13 @@ from ._harness import prereq, scale, synth, trust
 from ._harness.cli import Guildhall
 from ._harness.detectors import compare_manifests
 from ._harness.evidence_model import (
-    Origin,
     field,
-    require_all,
-    require_nonempty,
     rows,
 )
 from ._harness.gitfix import GitRepo
 from ._harness.hosts import FULL_FSCK_CEILING_SECONDS, SHARED_EVENT_CEILING
 from ._harness.requirements import (
-    ARCH,
-    PRODUCT,
     VERIFY,
-    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )
@@ -681,7 +674,7 @@ def test_legacy_kindex_bytes_preserved_and_collision_refuses(
     guildhall: Guildhall, roots: ProofRoots, guildhall_repo=None
 ) -> None:
     repo = GitRepo.init(roots.repo_root / "legacy")
-    inventory = synth.legacy_kin_inventory(repo.path)
+    synth.legacy_kin_inventory(repo.path)
     legacy = prereq.collected(
         sorted(p for p in (repo.path / ".kin").rglob("*") if p.is_file()),
         what="legacy Kindex inventory", minimum=4,

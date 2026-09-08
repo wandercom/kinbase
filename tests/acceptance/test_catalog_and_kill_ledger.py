@@ -13,12 +13,10 @@ from pathlib import Path
 import pytest
 
 from ._harness import catalog as C
-from ._harness.clauses import ClauseSet
-from ._harness.evidence_model import Evidence, Origin, Outcome
-from ._harness.killledger import ACCEPTED, BLIND, KILLED, run_ledger, run_row
+from ._harness.evidence_model import Evidence, Origin
+from ._harness.killledger import run_ledger
 from ._harness.requirements import (
     HarnessInvalid,
-    ProductFailure,
     VERIFY,
     THREAT,
     _artifact_variants,
@@ -416,7 +414,7 @@ def test_every_planter_mutates_raw_state_before_the_product_runs() -> None:
 
     assert not inert, (
         "these planters changed no byte at their declared seam, so they mutate "
-        f"nothing the product could read:\n  " + "\n  ".join(inert)
+        "nothing the product could read:\n  " + "\n  ".join(inert)
     )
 
 

@@ -15,14 +15,12 @@ timing, ordering and failure perturbations.
 from __future__ import annotations
 
 import ast
-import json
-import re
 from pathlib import Path
 
 import pytest
 
 from ._harness.controls import HARNESS_ONLY, PERMITTED, violations
-from ._harness.requirements import THREAT, VERIFY, HarnessInvalid, spec_ref
+from ._harness.requirements import THREAT, VERIFY, spec_ref
 
 pytestmark = pytest.mark.selftest
 

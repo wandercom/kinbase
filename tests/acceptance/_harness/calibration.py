@@ -29,8 +29,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from . import prereq
-from .corpora import PRODUCT_VISIBLE_KEYS, BoundCorpus, _emit, load_gold
-from .requirements import HarnessInvalid, repo_root
+from .corpora import BoundCorpus, _emit, load_gold
 from .worldbuilder import OpaqueIds
 
 CORPUS_NAME = "calibration_corpus.json"

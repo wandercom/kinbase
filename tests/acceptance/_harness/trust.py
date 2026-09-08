@@ -34,10 +34,9 @@ import json
 import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Sequence
 
 from . import canonical, planters, prereq, synth
-from .requirements import HarnessInvalid
 from .roots import ProofRoots
 from .service import ClientKey, ServiceClient
 
@@ -92,7 +91,7 @@ class AuthorityRegistry:
         entry = RegisteredAuthority(
             authority_id=signer.authority_id,
             scope=signer.scope,
-            public_key=signer.public_hex(),
+            public_key=signer.public_hex,
             channel=channel,
             capabilities=tuple(capabilities),
         )
@@ -196,7 +195,7 @@ def install_external_root(roots: ProofRoots, steward: synth.Signer) -> Path:
     target = roots.company_root / ROOT_KEY_NAME
     target.parent.mkdir(parents=True, exist_ok=True)
     material = planters.mutate(
-        "trust.root_key", {"public_key": steward.public_hex()}, target=str(target)
+        "trust.root_key", {"public_key": steward.public_hex}, target=str(target)
     )
     target.write_text(str(material["public_key"]) + "\n", encoding="utf-8")
     planters.witness_path(target)

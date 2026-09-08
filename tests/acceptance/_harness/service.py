@@ -30,7 +30,6 @@ import socket
 import subprocess
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Mapping
 
 from . import canonical, ed25519_pure

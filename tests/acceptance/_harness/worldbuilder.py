@@ -28,15 +28,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import random
 import secrets
 import socket
 import subprocess
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from . import canonical, ed25519_pure, planters, synth
 from .gitfix import REQUIRED_ATTRIBUTE_LINES, GitRepo
@@ -178,9 +176,17 @@ class SignedWorld:
         raw = canonical.jcs(signed)
         raw = planters.mutate("world.event_bytes", raw, logical_key=logical_key)
         digest = canonical.content_digest_hex(raw)
+        # ``spec/architecture.md`` "Codebase": event paths are constructed only
+        # from the computed lowercase SHA-256 digest of the exact canonical
+        # bytes, sharded ``<hex-0:2>/<hex-2:4>/<remaining-60-hex>.json``.
         rel = ".kin/events/" + canonical.event_shard_path(digest)
-        self.repo.write_bytes(rel, raw)
-        planters.witness_path(self.repo.path / rel)
+        target = self.repo.write_bytes(rel, raw)
+        planters.witness_path(target)
+        # Independent plant-time witness, before any product command can touch
+        # the repository: re-read the path and bind what the instrument itself
+        # observed. A later absence is then attributable -- the instrument
+        # proved the bytes were there.
+        witness = self._witness_write(target, raw, digest)
         record = {
             "event_id": signed["event_id"],
             "digest": digest,
@@ -190,11 +196,65 @@ class SignedWorld:
             "signer": signer.authority_id,
             "scope": signer.scope,
             "disposition": disposition,
+            "witness": witness,
         }
         self.planted.append(record)
         if commit:
             self.repo.commit(f"plant {digest[:12]}")
+        witness["head_at_witness"] = self.repo.head()
+        witness["tracked_at_witness"] = self._tracked(rel)
         return record
+
+    # -- plant-time witness -------------------------------------------------
+
+    def _witness_write(self, target: Path, raw: bytes, digest: str) -> dict[str, Any]:
+        """Re-read a freshly planted event and bind the observation.
+
+        Runs before the planted event is committed and before any product
+        command runs against the repository. A failure here is the planter's
+        own: nothing else has had a channel to the path yet.
+        """
+        if not target.is_file():
+            raise HarnessInvalid(
+                f"planter wrote {target} but cannot re-read it; the instrument "
+                "could not witness its own write"
+            )
+        observed = target.read_bytes()
+        observed_digest = canonical.content_digest_hex(observed)
+        if observed != raw or observed_digest != digest:
+            raise HarnessInvalid(
+                f"planter wrote {len(raw)} bytes with digest {digest[:12]} to "
+                f"{target} and read back digest {observed_digest[:12]}; the "
+                "instrument cannot hand the product a world it cannot witness"
+            )
+        return {
+            "witnessed_at": time.time(),
+            "witnessed_bytes": len(observed),
+            "witnessed_digest": observed_digest,
+            "witnessed_before_product": True,
+        }
+
+    def _tracked(self, rel: str) -> bool:
+        """Whether ``rel`` is a blob in the current HEAD tree."""
+        listing = self.repo.run("ls-tree", "HEAD", "--", rel, check=False)
+        return bool(listing.strip())
+
+    def _installed_hooks(self) -> list[str]:
+        """Non-sample hooks present in the fixture repository's hook directory.
+
+        The instrument installs none. Any present hook is a channel through
+        which a product ``repo init`` could act on the working tree during the
+        instrument's own ``git commit``.
+        """
+        hooks_dir = Path(self.repo.run("rev-parse", "--git-path", "hooks").strip())
+        if not hooks_dir.is_absolute():
+            hooks_dir = self.repo.path / hooks_dir
+        if not hooks_dir.is_dir():
+            return []
+        return sorted(
+            p.name for p in hooks_dir.iterdir()
+            if p.is_file() and not p.name.endswith(".sample")
+        )
 
     def verify_planted(self) -> None:
         """The instrument's own events must verify before the product sees them.
@@ -210,13 +270,12 @@ class SignedWorld:
             return
         for record in self.planted:
             path = self.repo.path / record["path"]
-            if not path.is_file():
-                raise HarnessInvalid(f"planted event missing at {record['path']}")
-            raw = path.read_bytes()
-            if canonical.content_digest_hex(raw) != record["digest"]:
-                raise HarnessInvalid(
-                    f"planted event {record['digest'][:12]} is not at its content path"
-                )
+            raw = path.read_bytes() if path.is_file() else None
+            observed_digest = (
+                canonical.content_digest_hex(raw) if raw is not None else None
+            )
+            if raw is None or observed_digest != record["digest"]:
+                self._report_planted_loss(record, observed_digest)
             payload = json.loads(raw.decode("utf-8"))
             signature = bytes.fromhex(payload.pop("signature"))
             public = bytes.fromhex(payload["signer"])
@@ -228,6 +287,56 @@ class SignedWorld:
                     f"planted event {record['digest'][:12]} does not verify; the "
                     "instrument must not hand the product invalid state"
                 )
+
+    def _report_planted_loss(self, record: dict[str, Any], observed_digest: str | None) -> None:
+        """A witnessed event is gone or altered. Say whose fault that is.
+
+        The plant-time witness proved the bytes were at their content path
+        before any product command ran. Two actors have had a channel since:
+        the instrument's own Git operations, and the product. If HEAD has moved
+        to a tree that does not carry the event, the instrument moved it and
+        the sequencing is an instrument fault. Otherwise the working-tree file
+        was removed or rewritten by something other than the instrument's Git
+        history, which is a product observation: ``spec/architecture.md``
+        "Codebase" makes ``.kin/events/`` signed shared state, and
+        ``spec/verification.md`` V-4 requires a deleted or modified event to be
+        *reported* by the product, never silently removed.
+        """
+        witness = record.get("witness") or {}
+        head_now = self.repo.head()
+        tracked_now = self._tracked(record["path"])
+        head_moved = witness.get("head_at_witness") not in (None, head_now)
+        observation = {
+            "path": record["path"],
+            "expected_digest": record["digest"],
+            "observed_digest": observed_digest,
+            "witnessed_before_product": witness.get("witnessed_before_product", False),
+            "witnessed_digest": witness.get("witnessed_digest"),
+            "head_at_witness": witness.get("head_at_witness"),
+            "head_now": head_now,
+            "tracked_at_witness": witness.get("tracked_at_witness"),
+            "tracked_in_head_now": tracked_now,
+            "installed_hooks": self._installed_hooks(),
+        }
+        rendered = json.dumps(observation, sort_keys=True)
+        if not witness.get("witnessed_before_product"):
+            raise HarnessInvalid(
+                "planted event was never witnessed by the instrument before the "
+                f"product ran; the planter is at fault: {rendered}"
+            )
+        if head_moved and not tracked_now:
+            raise HarnessInvalid(
+                "planted event is absent because the instrument moved HEAD to a "
+                f"tree that does not carry it; instrument sequencing fault: {rendered}"
+            )
+        what = "missing" if observed_digest is None else "rewritten"
+        raise ProductFailure(
+            f"planted signed event {record['digest'][:12]} is {what} at its content "
+            "path after the instrument witnessed it there and before the product's "
+            "output was read; spec/architecture.md 'Codebase' makes .kin/events/ "
+            "signed shared state and spec/verification.md V-4 requires a deleted or "
+            "modified event to be reported, not removed. Observation: " + rendered
+        )
 
     def event_count(self) -> int:
         root = self.repo.path / ".kin" / "events"
@@ -329,7 +438,6 @@ def plant_temporal_history(world: SignedWorld, case: TemporalCase) -> list[dict]
     key = case.logical_key
     planted: list[dict] = []
     a = world.architect
-    s = world.steward
     m = world.maintainer
 
     if case.case_id == "newer_rejected_pr_vs_adr":

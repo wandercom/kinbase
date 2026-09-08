@@ -36,7 +36,7 @@ import sqlite3
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 from .canaries import Canary, generate_canary, make_rng
 from .detectors import DETECTOR_MUTATIONS, CanaryDetector, ScannerError

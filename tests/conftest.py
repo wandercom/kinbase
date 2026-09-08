@@ -175,11 +175,19 @@ def pytest_deselected(items: Sequence[pytest.Item]) -> None:
 
 def _classify(item: pytest.Item, call: pytest.CallInfo) -> tuple[Outcome, str]:
     """Instrument defect or product finding? Ordered, total, fail-closed."""
-    if call.when != "call":
-        return Outcome.INVALID_HARNESS, f"failure during {call.when}"
     if item.get_closest_marker("selftest") is not None:
         return Outcome.INVALID_HARNESS, "selftest failure (no product involved)"
     exc = call.excinfo.value if call.excinfo is not None else None
+    if call.when != "call":
+        # Tester dispatch 006, item 6. A fixture that builds real state and
+        # drives the product can observe a product defect before the test body
+        # runs -- a planted signed event the product removed, a reserved exit 1
+        # from an ingest. That observation is typed at the raise site; the
+        # phase it surfaced in does not change whose fault it is. Everything
+        # untyped in setup or teardown stays an instrument failure.
+        if isinstance(exc, ProductFailure):
+            return Outcome.PRODUCT_FAILURE, f"ProductFailure during {call.when}"
+        return Outcome.INVALID_HARNESS, f"failure during {call.when}"
     if isinstance(exc, HarnessInvalid):
         return Outcome.INVALID_HARNESS, "HarnessInvalid"
     if isinstance(exc, ProductFailure):

@@ -24,10 +24,7 @@ does not have.
 
 from __future__ import annotations
 
-import base64
-import json
 import os
-from pathlib import Path
 
 import pytest
 
@@ -35,17 +32,15 @@ from ._harness import canaries, matrix as MX
 from ._harness import obligations as O
 from ._harness import prereq, scanners, trust
 from ._harness.cli import Guildhall
-from ._harness.evidence_model import Origin, field, require_all, rows
+from ._harness.evidence_model import Origin, field, require_all
 from ._harness.requirements import (
     THREAT,
     VERIFY,
-    HarnessInvalid,
-    ProductFailure,
     spec_ref,
 )
 from ._harness.roots import ProofRoots
 from ._harness.vault import CanaryVault, VaultEntry
-from ._harness.worldbuilder import SignedWorld, Witness
+from ._harness.worldbuilder import SignedWorld
 
 pytestmark = [pytest.mark.v3, pytest.mark.denial, pytest.mark.requires_product]
 

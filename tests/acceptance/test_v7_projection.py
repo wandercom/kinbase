@@ -27,7 +27,7 @@ import pytest
 from ._harness import obligations as O
 from ._harness.cli import Guildhall
 from ._harness.evidence_model import Origin, require_all, require_nonempty
-from ._harness.hosts import PROJECTION_BYTES, PROJECTION_FACTS
+from ._harness.hosts import PROJECTION_BYTES
 from ._harness.requirements import (
     ARCH,
     PRODUCT,

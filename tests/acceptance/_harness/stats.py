@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import dataclass
-from typing import Callable, Sequence
+from typing import Sequence
 
 Z95 = 1.959963984540054  # two-sided 95%
 Z90_ONE_SIDED = 1.2815515655446004  # one-sided 90%

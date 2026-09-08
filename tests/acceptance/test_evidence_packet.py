@@ -17,21 +17,17 @@ from pathlib import Path
 import pytest
 
 from ._harness import obligations as O
-from ._harness.evidence_model import Origin, require_all, require_nonempty
+from ._harness.evidence_model import Origin, require_nonempty
 
-from ._harness import canaries
 from ._harness.cli import Guildhall
 from ._harness.evidence import (
     FAILURE_ROW_FIELDS,
     FORBIDDEN_PACKET_FIELDS,
     INCIDENT_HOLD_FIELDS,
-    INCIDENT_HOLD_MAX_SECONDS,
-    INCIDENT_HOLD_REVIEW_SECONDS,
-    RAW_EVIDENCE_MAX_AGE_SECONDS,
     REPOSITORY_PROVENANCE_FIELDS,
     REQUIRED_PACKET_SECTIONS,
-    assert_no_raw_bytes_in,
     assert_packet_root_private,
+    freshness_of,
     sanitised_report_claims_are_qualified,
     validate_packet,
 )
@@ -45,7 +41,6 @@ from ._harness.requirements import (
     PRODUCT,
     THREAT,
     VERIFY,
-    ProductFailure,
     spec_ref,
 )
 from ._harness.roots import ProofRoots
@@ -228,17 +223,32 @@ def test_sanitised_report_claim_discipline_is_checkable() -> None:
         "raw bytes Git-reachable.",
     ),
 )
-@pytest.mark.requires_product
+@pytest.mark.selftest
+def test_retention_and_incident_hold_fields_are_enforced(tmp_path: Path) -> None:
+    """The packet schema carries every hold field the specification names.
 
-def test_retention_and_incident_hold_fields_are_enforced(
-    guildhall: Guildhall, tmp_path: Path
-) -> None:
+    Instrument-only (``EV.retention`` fails closed to ``INVALID_HARNESS``): the
+    expected field set is transcribed from the ratified sentence, so a schema
+    that drops one of them fails here rather than silently accepting a hold
+    without, say, an access list.
+    """
     raw = tmp_path / "raw-transcript.jsonl"
     raw.write_text(json.dumps({"turn": 1}) + "\n", encoding="utf-8")
     age = freshness_of(raw)
+    # spec/verification.md "incident-hold": "founder and named security-custodian
+    # signatures, reason, asset IDs, encrypted vault, access list, and `expires_at`".
+    spec_named = (
+        "founder_signature",
+        "security_custodian_signature",
+        "reason",
+        "asset_ids",
+        "encrypted_vault",
+        "access_list",
+        "expires_at",
+    )
     fields = [
         {"field": name, "present": name in INCIDENT_HOLD_FIELDS}
-        for name in INCIDENT_HOLD_FIELDS
+        for name in spec_named
     ]
     O.check(
         "EV.retention",
@@ -246,8 +256,8 @@ def test_retention_and_incident_hold_fields_are_enforced(
             "raw_evidence_age_seconds": age,
             "incident_hold_fields": fields,
             "hold_requires_two_named_authorities": (
-                "founder_ratification" in INCIDENT_HOLD_FIELDS
-                and "security_custodian" in INCIDENT_HOLD_FIELDS
+                "founder_signature" in INCIDENT_HOLD_FIELDS
+                and "security_custodian_signature" in INCIDENT_HOLD_FIELDS
             ),
         },
         label="retention and incident-hold fields are enforced",
@@ -440,7 +450,7 @@ def test_only_ciphertext_metadata_reaches_the_manifest(
             "schema": manifest_binding["schema"],
             "count": manifest_binding["count"],
             "plaintext_values_in_manifest": rendered.count(raw),
-            "key_material_in_manifest": rendered.count(vault.key().hex()),
+            "key_material_in_manifest": rendered.count(vault.key.hex()),
         },
         label="only ciphertext metadata reaches the manifest",
     )

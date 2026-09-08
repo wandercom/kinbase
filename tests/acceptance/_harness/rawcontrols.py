@@ -22,12 +22,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
 
 from . import prereq
-from .requirements import HarnessInvalid
 
 CONTROLS_PATH = Path(__file__).resolve().parents[2] / "fixtures" / "controls" / "controls.json"
 DIGEST_PATH = CONTROLS_PATH.parent / "CONTROLS-DIGEST"

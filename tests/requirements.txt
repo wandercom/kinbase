@@ -9,6 +9,10 @@
 pytest>=8.0
 pytest-timeout>=2.3
 
+# Static analysis run by tests/reviewer-selftest.sh before pytest. An undefined
+# name in a gate module must fail with no product present (Tester dispatch 006).
+pyflakes>=3.2
+
 # Optional accelerator for Ed25519 test keys. The suite ships a self-contained
 # RFC 8032 implementation in acceptance/_harness/ed25519_pure.py and runs without
 # this package; when present it is used for speed only and must agree byte-for-byte

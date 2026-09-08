@@ -26,17 +26,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import sqlite3
 import tarfile
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Mapping
 
-from . import canaries, prereq, scanners
-from .canaries import SURFACE_FAMILIES, TRANSFORMATION_FAMILIES, Canary
+from . import canaries, scanners
+from .canaries import SURFACE_FAMILIES, TRANSFORMATION_FAMILIES
 from .detectors import CanaryDetector, Finding
-from .requirements import HarnessInvalid
 
 #: The nineteen frozen threat-model families and the surfaces each ranges over.
 #: A family with no surface would be untestable, so the mapping is total.

@@ -36,7 +36,7 @@ import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping
 
 from .mutations import CATALOG, Mutation, active_mutation
 from .requirements import HarnessInvalid

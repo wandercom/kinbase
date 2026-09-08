@@ -43,11 +43,7 @@ from ._harness.evidence_model import (
 )
 from ._harness.gates import V3_CLAIM_FRAGMENT
 from ._harness.requirements import (
-    ARCH,
-    PRODUCT,
-    THREAT,
     VERIFY,
-    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )

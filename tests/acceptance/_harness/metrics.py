@@ -20,8 +20,8 @@ rather than a silently partial denominator.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Any, Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, Mapping, Sequence
 
 from . import prereq, stats
 from .requirements import HarnessInvalid

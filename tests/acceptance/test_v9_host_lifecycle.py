@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import statistics
 import time
 from pathlib import Path
 
@@ -36,13 +35,11 @@ import pytest
 
 from ._harness import hosts
 from ._harness import obligations as O
-from ._harness import prereq, scale, synth, trust
+from ._harness import prereq, scale, trust
 from ._harness.cli import Guildhall
-from ._harness.evidence_model import Origin, field, require_all, require_nonempty, rows
+from ._harness.evidence_model import field, rows
 from ._harness.gitfix import GitRepo
 from ._harness.requirements import (
-    ARCH,
-    PRODUCT,
     VERIFY,
     HarnessInvalid,
     ProductFailure,
@@ -50,7 +47,7 @@ from ._harness.requirements import (
 )
 from ._harness.roots import ProofRoots
 from ._harness.service import Blackhole
-from ._harness.worldbuilder import REPO_UUID, OpaqueIds, SignedWorld, Witness
+from ._harness.worldbuilder import OpaqueIds, SignedWorld, Witness
 
 pytestmark = [pytest.mark.v9, pytest.mark.requires_product]
 
@@ -158,8 +155,6 @@ def test_hooks_plan_is_read_only_and_install_requires_native_approval(
                     cwd=world.repo.path)
     after_approved = _tree(roots.home)
     installed = sorted(set(after_approved) - set(after_denied))
-    expected = {str(f) for f in rows(plan, "files")
-                if isinstance(field(f, "path"), str)}
     declared = {str(field(f, "path")) for f in rows(plan, "files")}
     rendered_plan = json.dumps(plan).lower()
     O.check(
@@ -391,7 +386,7 @@ def test_blackholed_company_endpoint_degrades_loudly_inside_the_budget(
     payloads: list[dict] = []
     durations: list[float] = []
     connect_durations: list[float] = []
-    with Blackhole(roots.company_port) as hole:
+    with Blackhole(roots.company_port):
         for index in range(20):
             envelope = hosts.envelope_for(
                 host, "SessionStart", session_id=ids.token("blackhole" + str(index)),

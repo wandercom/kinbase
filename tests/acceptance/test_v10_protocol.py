@@ -24,17 +24,16 @@ can be checked rather than trusted.
 from __future__ import annotations
 
 import json
-import math
 from pathlib import Path
 
 import pytest
 
 from ._harness import obligations as O
-from ._harness.evidence_model import Origin, require_all, require_nonempty, require_total_coverage
+from ._harness.evidence_model import Origin, require_all, require_total_coverage
 
-from ._harness import ordering, prereq, stats
-from ._harness.cli import Guildhall
-from ._harness.gates import UNFUNDED_DIAGNOSTIC
+from ._harness import prereq, stats
+from ._harness.cli import EXIT_POLICY_REFUSAL, Guildhall
+from ._harness.gates import FORBIDDEN_CLAIMS, LICENSED_CLAIM_FRAGMENT, UNFUNDED_DIAGNOSTIC
 from ._harness.ordering import (
     ARM_DIFFERENCES,
     ARMS,
@@ -57,12 +56,9 @@ from ._harness.requirements import (
     ARCH,
     CLI,
     PRODUCT,
-    SRC,
     VERIFY,
-    ProductFailure,
     spec_ref,
 )
-from ._harness.roots import ProofRoots
 
 pytestmark = [pytest.mark.v10]
 

@@ -27,8 +27,8 @@ Each obligation also names:
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Mapping, Sequence
 
 from .clauses import (
     ClauseSet,
@@ -2393,15 +2393,39 @@ _o("NF.lifetimes", "NONFUNCTIONAL", "candidate lifetime and private retention ho
    surfaces=("guildhall proposals decide",), vectors=("expiry", "retention"),
    nodes=("test_nonfunctional.py::test_candidate_lifetime_and_private_retention_are_enforced",))
 
-_o("NF.exit-boundary", "NONFUNCTIONAL", "uncaught exceptions exit seventy",
+# Tester dispatch 006, item 5. The earlier form of this obligation drove one
+# probe with a NUL inside an argv element; the OS refuses that before the
+# product exists, so the obligation was never exercised. The probes now travel
+# on channels the product really reads (argv text, `.kin/config` bytes, event
+# bytes, stdin) and the obligation binds what is observable from outside the
+# boundary: no reserved exit 1, no raw traceback, an exit in the ratified
+# table, a complete typed error on every non-zero exit, and the table's exit 5
+# for a malformed `.kin/config`. Exit 70 specifically cannot be forced from
+# outside a conforming product and is not demanded.
+_o("NF.exit-boundary", "NONFUNCTIONAL",
+   "hostile bytes never escape the exception boundary",
    L, "error-contract",
    "The CLI installs one top-level exception boundary that emits the typed "
    "internal error and exits 70 for every caught application exception.",
-   clauses(equals("exit_code", 70, "the boundary exits seventy"),
-           present("error.code", "the internal error is typed"),
-           equals("stack_trace_leaked", 0, "no raw trace reaches the operator")),
-   surfaces=("guildhall",), vectors=("uncaught application exception",),
-   nodes=("test_nonfunctional.py::test_uncaught_application_exceptions_exit_seventy",))
+   clauses(every("probes", "each delivered probe stays inside the boundary",
+                 present("channel", "the channel the bytes travelled on"),
+                 is_true("delivered", "the product really received the bytes"),
+                 is_false("reserved_exit_1", "exit 1 is reserved and never emitted"),
+                 is_true("exit_in_contract", "the exit is one the table names"),
+                 is_true("refused_when_required",
+                         "a probe the table says to refuse is refused"),
+                 is_true("typed_or_completed",
+                         "every non-zero exit carries the complete typed error"),
+                 equals("stack_trace_leaked", 0, "no raw trace reaches the operator"),
+                 min_len=4),
+           equals("config_probe.exit_code", 5,
+                  "a malformed .kin/config exits five per the first-run table"),
+           present("config_probe.error.code",
+                   "the malformed-config refusal is typed")),
+   surfaces=("guildhall",),
+   vectors=("argv metacharacters and NUL escapes", ".kin/config bytes with NUL",
+            "event bytes with NUL", "stdin bytes"),
+   nodes=("test_nonfunctional.py::test_hostile_bytes_never_escape_the_exception_boundary",))
 
 _o("NF.token-mode", "NONFUNCTIONAL", "a broad token mode is refused with remediation",
    L, "first-run-failures", "| token/key mode broader than 0600 | exit 4; chmod remediation |",

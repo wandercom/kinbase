@@ -19,7 +19,6 @@ identifiers to gold that never reaches the product.
 from __future__ import annotations
 
 import json
-import os
 import statistics
 import time
 from pathlib import Path
@@ -30,13 +29,10 @@ from ._harness import corpora, hosts
 from ._harness import obligations as O
 from ._harness import prereq, trust
 from ._harness.cli import Guildhall
-from ._harness.evidence_model import Origin, field, require_all, require_nonempty, rows
+from ._harness.evidence_model import Origin, field, require_nonempty, rows
 from ._harness.requirements import (
-    ARCH,
     CLI,
-    PRODUCT,
     VERIFY,
-    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )

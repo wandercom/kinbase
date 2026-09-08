@@ -19,7 +19,6 @@ call for one task and returns a fact and rationale only, never code.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -32,9 +31,7 @@ from ._harness import prereq, synth, trust
 from ._harness.cli import Guildhall
 from ._harness.evidence_model import Origin, field, require_nonempty, rows
 from ._harness.requirements import (
-    PRODUCT,
     VERIFY,
-    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )
@@ -162,7 +159,7 @@ def test_high_distortion_unknown_sends_a_targeted_question_and_withholds_guidanc
     guildhall: Guildhall, registered
 ) -> None:
     world, anchors, process = registered
-    unknown = _plant_ambiguity(world)
+    _plant_ambiguity(world)
     _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
          "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
     projected = _json(_run(guildhall, "project", "--repo", str(world.repo.path),

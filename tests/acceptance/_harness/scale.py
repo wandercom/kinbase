@@ -27,12 +27,9 @@ reached.
 from __future__ import annotations
 
 import hashlib
-import json
-import os
 import random
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Sequence
 
 from . import canonical, ed25519_pure, prereq, synth
 

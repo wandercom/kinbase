@@ -23,11 +23,9 @@ runner sets. A mutated detector must (a) miss its planted positive control and
 
 from __future__ import annotations
 
-import hashlib
-import json
-
 import base64
 import binascii
+import hashlib
 import json
 import os
 import re

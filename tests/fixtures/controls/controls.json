@@ -27768,73 +27768,345 @@
       "negatives": [
         {
           "benign": {
-            "error": {
-              "code": "present"
+            "config_probe": {
+              "error": {
+                "code": "present"
+              },
+              "exit_code": 5
             },
-            "exit_code": 70,
-            "stack_trace_leaked": 0,
+            "probes": [
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              }
+            ],
             "unrelated_additional_field": "must not trip the checker"
           },
-          "expected_failing_tag": "equals:exit_code",
-          "kind": "equals",
+          "expected_failing_tag": "every:probes",
+          "kind": "every",
           "payload": {
-            "error": {
-              "code": "present"
+            "config_probe": {
+              "error": {
+                "code": "present"
+              },
+              "exit_code": 5
             },
-            "exit_code": "70-mutated",
-            "stack_trace_leaked": 0
+            "probes": [
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              }
+            ]
           },
-          "tag": "equals:exit_code"
+          "tag": "every:probes"
         },
         {
           "benign": {
-            "error": {
-              "code": "present"
+            "config_probe": {
+              "error": {
+                "code": "present"
+              },
+              "exit_code": 5
             },
-            "exit_code": 70,
-            "stack_trace_leaked": 0,
+            "probes": [
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              }
+            ],
             "unrelated_additional_field": "must not trip the checker"
           },
-          "expected_failing_tag": "present:error.code",
+          "expected_failing_tag": "equals:config_probe.exit_code",
+          "kind": "equals",
+          "payload": {
+            "config_probe": {
+              "error": {
+                "code": "present"
+              },
+              "exit_code": "5-mutated"
+            },
+            "probes": [
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              }
+            ]
+          },
+          "tag": "equals:config_probe.exit_code"
+        },
+        {
+          "benign": {
+            "config_probe": {
+              "error": {
+                "code": "present"
+              },
+              "exit_code": 5
+            },
+            "probes": [
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              }
+            ],
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "present:config_probe.error.code",
           "kind": "present",
           "payload": {
-            "error": {},
-            "exit_code": 70,
-            "stack_trace_leaked": 0
-          },
-          "tag": "present:error.code"
-        },
-        {
-          "benign": {
-            "error": {
-              "code": "present"
+            "config_probe": {
+              "error": {},
+              "exit_code": 5
             },
-            "exit_code": 70,
-            "stack_trace_leaked": 0,
-            "unrelated_additional_field": "must not trip the checker"
+            "probes": [
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              },
+              {
+                "channel": "present",
+                "delivered": true,
+                "exit_in_contract": true,
+                "refused_when_required": true,
+                "reserved_exit_1": false,
+                "stack_trace_leaked": 0,
+                "typed_or_completed": true
+              }
+            ]
           },
-          "expected_failing_tag": "equals:stack_trace_leaked",
-          "kind": "equals",
-          "payload": {
-            "error": {
-              "code": "present"
-            },
-            "exit_code": 70,
-            "stack_trace_leaked": "0-mutated"
-          },
-          "tag": "equals:stack_trace_leaked"
+          "tag": "present:config_probe.error.code"
         }
       ],
       "nodes": [
-        "test_nonfunctional.py::test_uncaught_application_exceptions_exit_seventy"
+        "test_nonfunctional.py::test_hostile_bytes_never_escape_the_exception_boundary"
       ],
       "oid": "NF.exit-boundary",
       "positive": {
-        "error": {
-          "code": "present"
+        "config_probe": {
+          "error": {
+            "code": "present"
+          },
+          "exit_code": 5
         },
-        "exit_code": 70,
-        "stack_trace_leaked": 0
+        "probes": [
+          {
+            "channel": "present",
+            "delivered": true,
+            "exit_in_contract": true,
+            "refused_when_required": true,
+            "reserved_exit_1": false,
+            "stack_trace_leaked": 0,
+            "typed_or_completed": true
+          },
+          {
+            "channel": "present",
+            "delivered": true,
+            "exit_in_contract": true,
+            "refused_when_required": true,
+            "reserved_exit_1": false,
+            "stack_trace_leaked": 0,
+            "typed_or_completed": true
+          },
+          {
+            "channel": "present",
+            "delivered": true,
+            "exit_in_contract": true,
+            "refused_when_required": true,
+            "reserved_exit_1": false,
+            "stack_trace_leaked": 0,
+            "typed_or_completed": true
+          },
+          {
+            "channel": "present",
+            "delivered": true,
+            "exit_in_contract": true,
+            "refused_when_required": true,
+            "reserved_exit_1": false,
+            "stack_trace_leaked": 0,
+            "typed_or_completed": true
+          }
+        ]
       },
       "product_mutations": []
     },

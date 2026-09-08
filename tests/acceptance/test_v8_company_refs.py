@@ -22,8 +22,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import time
 from pathlib import Path
 
 import pytest
@@ -32,12 +30,10 @@ from ._harness import canonical, matrix as MX
 from ._harness import obligations as O
 from ._harness import prereq, scanners, synth, trust
 from ._harness.cli import Guildhall
-from ._harness.evidence_model import Origin, field, require_nonempty, rows
+from ._harness.evidence_model import field, rows
 from ._harness.requirements import (
     ARCH,
-    PRODUCT,
     VERIFY,
-    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )

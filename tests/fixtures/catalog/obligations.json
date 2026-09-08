@@ -7805,7 +7805,7 @@
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "NONFUNCTIONAL",
       "nodes": [
-        "test_nonfunctional.py::test_uncaught_application_exceptions_exit_seventy"
+        "test_nonfunctional.py::test_hostile_bytes_never_escape_the_exception_boundary"
       ],
       "oid": "NF.exit-boundary",
       "requirement": "The CLI installs one top-level exception boundary that emits the typed internal error and exits 70 for every caught application exception.",
@@ -7814,45 +7814,48 @@
       ],
       "thresholds": [
         {
-          "bound": 70,
-          "detector_mutation": "NF.exit-boundary#dm:equals:exit_code",
+          "bound": null,
+          "detector_mutation": "NF.exit-boundary#dm:every:probes",
+          "kind": "every",
+          "min_len": 4,
+          "negative_control": "NF.exit-boundary#nc:every:probes",
+          "path": "probes",
+          "positive_control": "NF.exit-boundary#pc:every:probes",
+          "product_mutation": "NF.exit-boundary#pm:every:probes",
+          "tag": "every:probes",
+          "why": "each delivered probe stays inside the boundary"
+        },
+        {
+          "bound": 5,
+          "detector_mutation": "NF.exit-boundary#dm:equals:config_probe.exit_code",
           "kind": "equals",
           "min_len": 1,
-          "negative_control": "NF.exit-boundary#nc:equals:exit_code",
-          "path": "exit_code",
-          "positive_control": "NF.exit-boundary#pc:equals:exit_code",
-          "product_mutation": "NF.exit-boundary#pm:equals:exit_code",
-          "tag": "equals:exit_code",
-          "why": "the boundary exits seventy"
+          "negative_control": "NF.exit-boundary#nc:equals:config_probe.exit_code",
+          "path": "config_probe.exit_code",
+          "positive_control": "NF.exit-boundary#pc:equals:config_probe.exit_code",
+          "product_mutation": "NF.exit-boundary#pm:equals:config_probe.exit_code",
+          "tag": "equals:config_probe.exit_code",
+          "why": "a malformed .kin/config exits five per the first-run table"
         },
         {
           "bound": null,
-          "detector_mutation": "NF.exit-boundary#dm:present:error.code",
+          "detector_mutation": "NF.exit-boundary#dm:present:config_probe.error.code",
           "kind": "present",
           "min_len": 1,
-          "negative_control": "NF.exit-boundary#nc:present:error.code",
-          "path": "error.code",
-          "positive_control": "NF.exit-boundary#pc:present:error.code",
-          "product_mutation": "NF.exit-boundary#pm:present:error.code",
-          "tag": "present:error.code",
-          "why": "the internal error is typed"
-        },
-        {
-          "bound": 0,
-          "detector_mutation": "NF.exit-boundary#dm:equals:stack_trace_leaked",
-          "kind": "equals",
-          "min_len": 1,
-          "negative_control": "NF.exit-boundary#nc:equals:stack_trace_leaked",
-          "path": "stack_trace_leaked",
-          "positive_control": "NF.exit-boundary#pc:equals:stack_trace_leaked",
-          "product_mutation": "NF.exit-boundary#pm:equals:stack_trace_leaked",
-          "tag": "equals:stack_trace_leaked",
-          "why": "no raw trace reaches the operator"
+          "negative_control": "NF.exit-boundary#nc:present:config_probe.error.code",
+          "path": "config_probe.error.code",
+          "positive_control": "NF.exit-boundary#pc:present:config_probe.error.code",
+          "product_mutation": "NF.exit-boundary#pm:present:config_probe.error.code",
+          "tag": "present:config_probe.error.code",
+          "why": "the malformed-config refusal is typed"
         }
       ],
-      "title": "uncaught exceptions exit seventy",
+      "title": "hostile bytes never escape the exception boundary",
       "vectors": [
-        "uncaught application exception"
+        "argv metacharacters and NUL escapes",
+        ".kin/config bytes with NUL",
+        "event bytes with NUL",
+        "stdin bytes"
       ]
     },
     {

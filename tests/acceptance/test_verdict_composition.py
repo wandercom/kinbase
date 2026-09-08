@@ -14,7 +14,6 @@ are stated.
 from __future__ import annotations
 
 import itertools
-import json
 from pathlib import Path
 
 import pytest

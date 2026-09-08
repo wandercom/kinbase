@@ -19,7 +19,6 @@ import json
 import os
 import sqlite3
 import subprocess
-import sys
 import unicodedata
 from pathlib import Path
 
@@ -955,3 +954,176 @@ def test_decoded_views_preserve_surrounding_context() -> None:
             f"no view of the {family} form contains the whole canary; the decoder "
             "collapsed it to a fragment"
         )
+
+
+# --------------------------------------------------------------------------
+# Trust prerequisites and planted-world witness (product-independent)
+# --------------------------------------------------------------------------
+#
+# Validator instrument-defect report, dispatch 006: an ``AttributeError`` or
+# ``TypeError`` inside a setup helper erred seventy-three live-Company nodes
+# before the product was reached, and nothing in the selftest tier could see
+# it because no product-independent test ever executed the helper. The tests
+# below execute every trust installer and the planted-event witness with no
+# product present, so an unreachable setup path fails here first.
+
+
+@spec_ref(
+    ARCH(
+        "INSTRUMENT",
+        "trust-and-key-lifecycle",
+        "User config contains only the root public key, Company endpoint, per-instance bearer-token "
+        "file, and repository-discovery hints; it is outside every worktree and mode 0600.",
+    ),
+    VERIFY(
+        "INSTRUMENT",
+        "positive-controls",
+        "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS.",
+    ),
+)
+def test_trust_installers_run_without_the_product(roots) -> None:
+    """Every setup helper on the live-Company path executes end to end.
+
+    ``synth.Signer.public_hex`` is a string attribute; the installers must
+    consume it as one. The registry document and certificate must both verify
+    under the signer that produced them, so a wrong key shape cannot hide
+    behind a successful write.
+    """
+    from ._harness import trust
+    from ._harness.worldbuilder import REPO_UUID, SignedWorld
+
+    world = SignedWorld.create(roots.repo_root)
+    assert isinstance(world.steward.public_hex, str)
+    assert len(bytes.fromhex(world.steward.public_hex)) == 32
+
+    root_key = trust.install_external_root(roots, world.steward)
+    assert root_key.is_file()
+    assert root_key.read_text(encoding="utf-8").strip() == world.steward.public_hex
+    assert roots.repo_root.resolve() not in root_key.resolve().parents, (
+        "the Company root key must be installed outside the repository work tree"
+    )
+
+    certificate = trust.install_repository_certificate(
+        world, world.steward, repository_uuid=REPO_UUID
+    )
+    payload = json.loads(certificate.read_bytes().decode("utf-8"))
+    assert payload["repository_uuid"] == REPO_UUID
+    assert payload["signer"] == world.steward.public_hex
+    signature = bytes.fromhex(payload.pop("signature"))
+    body = dict(payload)
+    body.pop("signer")
+    digest = canonical.signing_digest("repo-certificate", canonical.jcs(body))
+    assert ed25519_pure.verify(bytes.fromhex(world.steward.public_hex), digest, signature)
+
+    registry = trust.AuthorityRegistry(steward=world.steward)
+    registry.register(world.steward, channel="company:root", capabilities=("publish",))
+    registry.register(world.maintainer, channel=f"codebase:{REPO_UUID}")
+    registry.register(world.architect, channel="process:architecture-answer")
+    assert [e.public_key for e in registry.entries] == [
+        world.steward.public_hex, world.maintainer.public_hex, world.architect.public_hex,
+    ]
+    document = registry.document(cursor="1000")
+    assert document["signer"] == world.steward.public_hex
+    assert len(document["entries"]) == 3
+    assert registry.entry_for(world.architect.authority_id).public_key == world.architect.public_hex
+
+
+@spec_ref(
+    VERIFY(
+        "INSTRUMENT",
+        "positive-controls",
+        "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS.",
+    )
+)
+def test_signer_public_key_has_one_shape_across_the_instrument() -> None:
+    """No instrument module may call ``public_hex`` as a method.
+
+    Static, so a regression is caught even on a code path no selftest drives.
+    """
+    import ast
+
+    package = Path(__file__).resolve().parent
+    offenders = []
+    for source in sorted(package.rglob("*.py")):
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=str(source))
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "public_hex"
+            ):
+                offenders.append(f"{source.relative_to(package)}:{node.lineno}")
+    assert not offenders, (
+        "public_hex is a string attribute, not a method:\n  " + "\n  ".join(offenders)
+    )
+
+
+@spec_ref(
+    ARCH(
+        "INSTRUMENT",
+        "codebase",
+        "Event and manifest paths are constructed only from a computed lowercase ASCII SHA-256 "
+        "digest with fixed sharded length.",
+    ),
+    VERIFY(
+        "INSTRUMENT",
+        "v4",
+        "Delete/modify an event, delete its local manifest, use a shallow clone, use a sparse "
+        "checkout, rebase, force-push, and squash.",
+    ),
+)
+def test_planted_events_are_witnessed_at_their_content_path_before_any_product_command(
+    roots,
+) -> None:
+    """The planter writes where the architecture places events and proves it did.
+
+    Validator instrument-defect report, dispatch 006, item 6.
+    """
+    from ._harness import planters
+    from ._harness.requirements import ProductFailure
+    from ._harness.worldbuilder import SignedWorld
+
+    planters.reset()
+    world = SignedWorld.create(roots.repo_root)
+    record = world.plant_event(
+        world.architect, store_kind="company",
+        logical_key="architecture/scheduler/witness",
+        statement="the witness precedes the product",
+    )
+    path = roots.repo_root / record["path"]
+    raw = path.read_bytes()
+    digest = canonical.content_digest_hex(raw)
+    assert record["path"] == ".kin/events/" + f"{digest[:2]}/{digest[2:4]}/{digest[4:]}.json"
+    assert record["digest"] == digest
+    witness = record["witness"]
+    assert witness["witnessed_before_product"] is True
+    assert witness["witnessed_digest"] == digest
+    assert witness["witnessed_bytes"] == len(raw)
+    assert witness["head_at_witness"] == world.repo.head()
+    assert witness["tracked_at_witness"] is True
+    world.verify_planted()
+
+    # Loss after the witness, with the instrument's Git history untouched, is a
+    # typed product observation: only something outside the instrument's own
+    # history had a channel to the working tree.
+    path.unlink()
+    with pytest.raises(ProductFailure) as missing:
+        world.verify_planted()
+    assert "\"observed_digest\": null" in str(missing.value)
+    assert "\"tracked_in_head_now\": true" in str(missing.value)
+
+    # Rewritten bytes at the content path are the same channel.
+    path.write_bytes(raw + b"\n")
+    with pytest.raises(ProductFailure) as rewritten:
+        world.verify_planted()
+    assert "rewritten" in str(rewritten.value)
+    path.write_bytes(raw)
+    world.verify_planted()
+
+    # The instrument moving HEAD off the commit that carries the event is its
+    # own sequencing fault, never a product finding.
+    world.repo.run("checkout", "-q", "-b", "elsewhere", witness["head_at_witness"] + "~1")
+    assert not path.is_file()
+    with pytest.raises(HarnessInvalid) as moved:
+        world.verify_planted()
+    assert "instrument sequencing fault" in str(moved.value)

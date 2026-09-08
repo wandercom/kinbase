@@ -5,12 +5,12 @@ resolved `@spec_ref` backreferences, not test counts; a single test may carry
 several exact citations.
 
 The machine-readable catalog is `tests/fixtures/catalog/obligations.json`
-(digest `ff52499a2c0c5f8f`): 117 obligations and
+(digest `5fb755956f3e2cca`): 117 obligations and
 479 thresholds, each freezing a
 threshold, positive control, negative control, product mutation and detector
 mutation. `tests/fixtures/catalog/planters.json` records the 35
 executable pre-execution planters and `tests/fixtures/controls/controls.json` the frozen raw positive and
-negative controls. 239 node ids collect; none is unbackreferenced.
+negative controls. 242 node ids collect; none is unbackreferenced.
 
 Authority precedence (`spec/ratification-manifest.json`):
 `source-request.md > product.md > architecture.md > threat-model.md >
@@ -28,10 +28,10 @@ verification.md > cli.md`.
 | `V-8` | `test_v8_company_refs.py` (12) |
 | `V-9` | `test_v9_fatigue.py` (6), `test_v9_host_lifecycle.py` (7) |
 | `V-10` | `test_v10_protocol.py` (47) |
-| `NONFUNCTIONAL` | `test_nonfunctional.py` (24) |
+| `NONFUNCTIONAL` | `test_nonfunctional.py` (27) |
 | `EVIDENCE` | `test_evidence_packet.py` (20) |
 | `VERDICT` | `test_verdict_composition.py` (18) |
-| `INSTRUMENT` | `test_backreference_integrity.py` (6), `test_harness_selftest.py` (28) |
+| `INSTRUMENT` | `test_backreference_integrity.py` (6), `test_harness_selftest.py` (33) |
 
 ## Instruments
 

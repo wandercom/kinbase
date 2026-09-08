@@ -21,7 +21,6 @@ exist.
 
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -30,13 +29,12 @@ import pytest
 from ._harness import auxgen, canaries, matrix as MX
 from ._harness import obligations as O
 from ._harness import prereq, scanners
-from ._harness.canaries import SURFACE_FAMILIES, TRANSFORMATION_FAMILIES
+from ._harness.canaries import TRANSFORMATION_FAMILIES
 from ._harness.detectors import stratification_ok, wilson_interval
-from ._harness.evidence_model import Origin, field, require_all, require_nonempty
+from ._harness.evidence_model import Origin, require_nonempty
 from ._harness.requirements import (
     THREAT,
     VERIFY,
-    HarnessInvalid,
     spec_ref,
 )
 from ._harness.roots import ProofRoots
@@ -190,9 +188,14 @@ def test_auxiliary_corpus_selection_record_is_complete_and_frozen() -> None:
         origin=Origin.HARNESS,
     )
     regenerated = auxgen.regenerate()
+    # ``regenerate`` yields components keyed by stem; the committed files are
+    # ``<stem>.json`` in the serialisation ``recipe()`` records. Compare the
+    # same serialisation, not a raw dict against file bytes.
     diverged = [
-        name for name, raw in regenerated.items()
-        if (AUXILIARY / name).read_bytes() != raw
+        name for name, component in regenerated.items()
+        if not (AUXILIARY / f"{name}.json").is_file()
+        or (AUXILIARY / f"{name}.json").read_text(encoding="utf-8")
+        != auxgen.serialise(component)
     ]
     recorded = auxgen.recipe()
     grant = AUXILIARY / "GRANT.md"

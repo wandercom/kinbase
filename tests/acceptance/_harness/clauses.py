@@ -32,10 +32,10 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping
 
-from .evidence_model import Evidence, Origin
-from .requirements import HarnessInvalid, ProductFailure
+from .evidence_model import Evidence
+from .requirements import HarnessInvalid
 
 #: Every clause kind the catalog may use. Closed set: an unknown kind is an
 #: instrument defect, not a silently ignored declaration.

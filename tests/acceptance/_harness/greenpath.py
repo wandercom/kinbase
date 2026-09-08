@@ -26,7 +26,7 @@ from __future__ import annotations
 import ast
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 #: Calls that constitute a typed claim: they either evaluate a catalogued
 #: obligation or refuse an empty/absent domain in a declared channel.

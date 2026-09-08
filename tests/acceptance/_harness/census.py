@@ -28,9 +28,9 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping, Sequence
+from typing import Mapping
 
-from .catalog import OBLIGATIONS, REQUIRED_GATES, Obligation
+from .catalog import OBLIGATIONS, REQUIRED_GATES
 from .evidence_model import Outcome
 
 #: Non-gate reporting groups. They are censused the same way.

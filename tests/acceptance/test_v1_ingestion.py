@@ -21,7 +21,6 @@ a missing fixture can never be reported as a product failure.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import pytest
@@ -33,7 +32,6 @@ from ._harness.cli import Guildhall
 from ._harness.evidence_model import (
     Origin,
     field,
-    find_row,
     require_all,
     require_nonempty,
     require_total_coverage,
@@ -41,10 +39,8 @@ from ._harness.evidence_model import (
 )
 from ._harness.requirements import (
     ARCH,
-    PRODUCT,
     SRC,
     VERIFY,
-    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )
@@ -315,7 +311,7 @@ def test_change_delete_reject_revert_preserve_history_and_change_disposition(
     # The change/delete/reject/revert transitions are the ratified cells that
     # perform exactly those four operations, already executed by the matrix
     # fixture in native form. Re-ingesting reads their result.
-    after = _ingest_all(guildhall, world, ctx)
+    _ingest_all(guildhall, world, ctx)
     status = _status(guildhall, world.repo.path)
     changed = status.get("changed_dispositions")
     O.check(
@@ -411,7 +407,7 @@ def test_retiring_supports_one_at_a_time_recomputes_then_withdraws(
         statement="the retry ceiling is four attempts per hour",
         evidence_refs=("src/scheduler/retry.py",),
     )
-    dependent = world.plant_event(
+    world.plant_event(
         world.architect, store_kind="company",
         logical_key="architecture/scheduler/backoff",
         statement="backoff derives from the retry ceiling",

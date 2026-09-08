@@ -35,8 +35,12 @@ tests/reviewer-selftest.sh
 ```
 
 Product-independent, offline, and creates nothing inside the repository. It runs
-the instrument-validity work only: catalog totality, the kill ledger, the control
-policy, the green-path guard and the backreference integrity checks.
+pyflakes over `tests/**` first (an undefined name in a gate module must fail with
+no product present), then the instrument-validity work only: catalog totality,
+the kill ledger, the control policy, the green-path guard, the backreference
+integrity checks, and the trust-installer and planted-event witness selftests.
+It needs an interpreter carrying `tests/requirements.txt`; `tests/.venv` is used
+automatically when present.
 
 ## Exact Validator invocation
 
@@ -100,16 +104,17 @@ Every assertion cites an exact ratified requirement:
 
 | quantity | value |
 |---|---:|
-| collected by pytest | 239 |
+| collected by pytest | 242 |
 | catalogued obligations | 117 |
 | catalogued thresholds | 479 |
 | kill-ledger rows over frozen controls | 479 |
 | executable pre-execution planters | 35 |
 | detector mutations with a demonstrated escape | 6 |
-| product-independent self-tests | 119 |
+| product-independent self-tests | 122 |
 | unbackreferenced tests | 0 |
 
-Catalog digest `ff52499a2c0c5f8f`; kill-ledger digest `9ffdbce2580053ff`;
+Catalog digest `5fb755956f3e2cca`; kill-ledger digest `865ddcb0d58570e9`;
+frozen-controls digest `410a94c2c5d2e09c`;
 instrument-debt digest `99d8a395782c8760`.
 
 Collected node ids exceed authored functions because `@pytest.mark.parametrize`
