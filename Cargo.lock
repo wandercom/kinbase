@@ -413,6 +413,7 @@ dependencies = [
  "chrono",
  "clap",
  "ed25519-dalek",
+ "libc",
  "rand",
  "rusqlite",
  "serde",

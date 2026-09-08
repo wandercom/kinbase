@@ -1,0 +1,760 @@
+//! The Codebase store (architecture §6 "Codebase", §2 admission, §11
+//! repository compatibility): one signed event per content-addressed path
+//! under `.kin/events/`, parent-linked manifests under `.kin/manifests/`, a
+//! recoverable journal plus an exclusive OS file lock in Git's common
+//! directory, and a deterministic `fsck`.
+
+use crate::error::ContractError;
+use crate::model::{FactEvent, UnknownEvent};
+use crate::paths;
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::collections::{BTreeMap, BTreeSet};
+use std::os::fd::AsRawFd;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+pub const REPO_CONFIG_SCHEMA: &str = "guildhall-repo/1";
+pub const EVENT_CEILING: usize = 10_000;
+pub const BYTES_CEILING: u64 = 128 * 1024 * 1024;
+pub const GIT_ATTRIBUTES: [&str; 2] = [
+    ".kin/events/** -text -diff -merge",
+    ".kin/manifests/** -text -diff -merge",
+];
+/// Paths Guildhall reserves under `.kin/`; a pinned-Kindex inventory that
+/// collides with one refuses `repo init` (architecture §11).
+pub const RESERVED_PATHS: [&str; 4] = ["config", "events", "manifests", "local/guildhall-index.json"];
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RepoConfig {
+    pub schema_version: String,
+    pub repository_uuid_hint: String,
+    pub safe_name: String,
+    pub domains: Vec<String>,
+    #[serde(default)]
+    pub local_policy: BTreeMap<String, String>,
+}
+
+impl RepoConfig {
+    pub fn parse(text: &str) -> Result<Self, ContractError> {
+        let table: toml::Table = text.parse().map_err(|error: toml::de::Error| {
+            ContractError::integrity(
+                "DIGEST_MISMATCH",
+                format!(".kin/config is not valid TOML ({error})"),
+                "Quarantine the malformed config; no trust-on-first-use fallback exists.",
+            )
+        })?;
+        for key in table.keys() {
+            if !["schema_version", "repository_uuid_hint", "safe_name", "domains", "local_policy"].contains(&key.as_str()) {
+                return Err(ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    format!(".kin/config contains unknown key `{key}`; it cannot name roots, keys, authorities, or endpoints"),
+                    "Remove the key; unknown keys fail closed.",
+                ));
+            }
+        }
+        let schema = table.get("schema_version").and_then(toml::Value::as_str).unwrap_or_default();
+        if schema != REPO_CONFIG_SCHEMA {
+            return Err(ContractError::integrity(
+                "DIGEST_MISMATCH",
+                format!(".kin/config schema_version {schema:?} is incompatible"),
+                "Preserve the bytes; an incompatible schema blocks and is never overwritten.",
+            ));
+        }
+        let hint = table.get("repository_uuid_hint").and_then(toml::Value::as_str).unwrap_or_default();
+        if uuid::Uuid::parse_str(hint).is_err() {
+            return Err(ContractError::integrity(
+                "DIGEST_MISMATCH",
+                ".kin/config repository_uuid_hint is not a UUID",
+                "Reinstall the steward-issued certificate with `guildhall repo init`.",
+            ));
+        }
+        let safe_name = table.get("safe_name").and_then(toml::Value::as_str).unwrap_or_default();
+        if safe_name.is_empty() || !safe_name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.') {
+            return Err(ContractError::integrity(
+                "DIGEST_MISMATCH",
+                ".kin/config safe_name must be a non-empty ASCII identifier",
+                "Correct the safe name.",
+            ));
+        }
+        let domains = table
+            .get("domains")
+            .and_then(toml::Value::as_array)
+            .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_owned)).collect())
+            .unwrap_or_default();
+        let local_policy: BTreeMap<String, String> = table
+            .get("local_policy")
+            .and_then(toml::Value::as_table)
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_owned())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for value in local_policy.values().chain(std::iter::once(&safe_name.to_owned())) {
+            if value.starts_with('/') || value.contains("http://") || value.contains("https://") {
+                return Err(ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    ".kin/config values cannot name absolute paths or endpoints",
+                    "Remove the offending hint; worktree bytes cannot introduce trust roots.",
+                ));
+            }
+        }
+        Ok(Self {
+            schema_version: schema.to_owned(),
+            repository_uuid_hint: hint.to_owned(),
+            safe_name: safe_name.to_owned(),
+            domains,
+            local_policy,
+        })
+    }
+
+    pub fn to_toml(&self) -> String {
+        let domains = self
+            .domains
+            .iter()
+            .map(|domain| format!("{domain:?}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "schema_version = \"{}\"\nrepository_uuid_hint = \"{}\"\nsafe_name = \"{}\"\ndomains = [{}]\n",
+            self.schema_version, self.repository_uuid_hint, self.safe_name, domains
+        )
+    }
+}
+
+/// A repository resolved through Git's common directory.
+#[derive(Debug, Clone)]
+pub struct Repository {
+    pub root: PathBuf,
+    pub kin: PathBuf,
+    pub common_dir: PathBuf,
+    pub config: Option<RepoConfig>,
+}
+
+pub fn git(repo: &Path, args: &[&str]) -> Result<String, ContractError> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .map_err(|error| ContractError::io("run git", error))?;
+    if !output.status.success() {
+        return Err(ContractError::user_action(
+            "REPO_UNCERTIFIED",
+            format!("git {} failed: {}", args.first().unwrap_or(&""), String::from_utf8_lossy(&output.stderr).trim()),
+            "Run the command inside a Git worktree; an ordinary non-repository Personal session may continue.",
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+pub fn git_ok(repo: &Path, args: &[&str]) -> bool {
+    Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+impl Repository {
+    /// Resolve the worktree root and Git common directory; linked worktrees
+    /// share the common directory (and therefore the certified UUID).
+    pub fn discover(path: &Path) -> Result<Self, ContractError> {
+        let start = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir().map_err(|error| ContractError::io("current dir", error))?.join(path)
+        };
+        if !start.exists() {
+            return Err(ContractError::user_action(
+                "REPO_UNCERTIFIED",
+                "the repository path does not exist",
+                "Pass an existing Git worktree with --repo.",
+            ));
+        }
+        let root = git(&start, &["rev-parse", "--show-toplevel"])?;
+        let common = git(&start, &["rev-parse", "--git-common-dir"])?;
+        let root = PathBuf::from(root);
+        let common_dir = if Path::new(&common).is_absolute() {
+            PathBuf::from(common)
+        } else {
+            root.join(common)
+        };
+        let common_dir = common_dir.canonicalize().unwrap_or(common_dir);
+        let kin = root.join(".kin");
+        paths::reject_symlink(&kin, ".kin")?;
+        let config = if kin.join("config").exists() {
+            paths::reject_symlink(&kin.join("config"), ".kin/config")?;
+            let text = std::fs::read_to_string(kin.join("config"))
+                .map_err(|error| ContractError::unreadable(".kin/config", &error))?;
+            Some(RepoConfig::parse(&text)?)
+        } else {
+            None
+        };
+        Ok(Self {
+            root,
+            kin,
+            common_dir,
+            config,
+        })
+    }
+
+    pub fn uuid_hint(&self) -> Option<&str> {
+        self.config.as_ref().map(|config| config.repository_uuid_hint.as_str())
+    }
+
+    pub fn require_initialized(&self) -> Result<&RepoConfig, ContractError> {
+        self.config
+            .as_ref()
+            .ok_or_else(|| ContractError::repo_uninitialized(&self.root))
+    }
+
+    pub fn revision(&self) -> Result<String, ContractError> {
+        git(&self.root, &["rev-parse", "HEAD"])
+    }
+
+    pub fn branch(&self) -> Result<String, ContractError> {
+        git(&self.root, &["rev-parse", "--abbrev-ref", "HEAD"])
+    }
+
+    pub fn default_branch(&self) -> String {
+        git(&self.root, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])
+            .map(|value| value.trim_start_matches("origin/").to_owned())
+            .or_else(|_| git(&self.root, &["config", "--get", "init.defaultBranch"]))
+            .ok()
+            .filter(|value| !value.is_empty() && git_ok(&self.root, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{value}")]))
+            .or_else(|| {
+                ["main", "master"]
+                    .into_iter()
+                    .find(|name| git_ok(&self.root, &["rev-parse", "--verify", "--quiet", &format!("refs/heads/{name}")]))
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| self.branch().unwrap_or_else(|_| "HEAD".to_owned()))
+    }
+
+    pub fn default_branch_revision(&self) -> Result<String, ContractError> {
+        let branch = self.default_branch();
+        git(&self.root, &["rev-parse", &branch]).or_else(|_| self.revision())
+    }
+
+    pub fn is_reachable_from_default(&self, revision: &str) -> bool {
+        let default = self.default_branch();
+        git_ok(&self.root, &["merge-base", "--is-ancestor", revision, &default])
+    }
+
+    /// Origin trust class for a path (architecture §4).
+    pub fn origin_trust(&self, path: &Path) -> String {
+        let relative = path.strip_prefix(&self.root).unwrap_or(path);
+        let relative = relative.to_string_lossy();
+        if !git_ok(&self.root, &["ls-files", "--error-unmatch", "--", &relative]) {
+            return "uncommitted-worktree".to_owned();
+        }
+        let dirty = git(&self.root, &["status", "--porcelain", "--", &relative])
+            .map(|output| !output.is_empty())
+            .unwrap_or(true);
+        if dirty {
+            return "uncommitted-worktree".to_owned();
+        }
+        let head = self.revision().unwrap_or_default();
+        if self.is_reachable_from_default(&head) {
+            "merged-default".to_owned()
+        } else {
+            "unreviewed-branch".to_owned()
+        }
+    }
+
+    pub fn is_sparse_checkout(&self) -> bool {
+        let sparse = git(&self.root, &["config", "--get", "core.sparseCheckout"])
+            .map(|value| value == "true")
+            .unwrap_or(false);
+        sparse && !self.kin.join("events").exists()
+    }
+
+    pub fn is_shallow(&self) -> bool {
+        self.common_dir.join("shallow").exists()
+    }
+
+    /// Effective Git attributes for the event and manifest trees.
+    pub fn attributes_effective(&self) -> Result<bool, ContractError> {
+        for probe in [".kin/events/aa/bb/probe.json", ".kin/manifests/aa/bb/probe.json"] {
+            let output = git(&self.root, &["check-attr", "text", "diff", "merge", "--", probe])?;
+            let unset = output.lines().filter(|line| line.ends_with(": unset")).count();
+            if unset != 3 {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    pub fn ensure_git_attributes(&self) -> Result<Vec<String>, ContractError> {
+        let path = self.root.join(".gitattributes");
+        paths::reject_symlink(&path, ".gitattributes")?;
+        let mut text = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut added = Vec::new();
+        for line in text.lines() {
+            let trimmed = line.trim();
+            for rule in GIT_ATTRIBUTES {
+                let pattern = rule.split_whitespace().next().unwrap_or_default();
+                if trimmed.starts_with(pattern) && trimmed != rule {
+                    return Err(ContractError::refused(
+                        "CONFIG_INVARIANT",
+                        format!(".gitattributes already carries a contradictory rule for {pattern}"),
+                        "Reconcile the existing .gitattributes rule manually; repo init never replaces the file.",
+                    ));
+                }
+            }
+        }
+        for rule in GIT_ATTRIBUTES {
+            if !text.lines().any(|line| line.trim() == rule) {
+                if !text.is_empty() && !text.ends_with('\n') {
+                    text.push('\n');
+                }
+                text.push_str(rule);
+                text.push('\n');
+                added.push(rule.to_owned());
+            }
+        }
+        if !added.is_empty() {
+            paths::write_atomic(&path, text.as_bytes(), 0o644, false)?;
+        }
+        Ok(added)
+    }
+
+    /// Ignore `.kin/local/` through the common directory's info/exclude so no
+    /// tracked file is added beyond config/events/manifests/.gitattributes.
+    pub fn ensure_local_excluded(&self) -> Result<(), ContractError> {
+        let info = self.common_dir.join("info");
+        paths::ensure_dir(&info, "git info directory")?;
+        let exclude = info.join("exclude");
+        let mut text = std::fs::read_to_string(&exclude).unwrap_or_default();
+        if !text.lines().any(|line| line.trim() == ".kin/local/") {
+            if !text.is_empty() && !text.ends_with('\n') {
+                text.push('\n');
+            }
+            text.push_str(".kin/local/\n");
+            paths::write_atomic(&exclude, text.as_bytes(), 0o644, false)?;
+        }
+        Ok(())
+    }
+
+    pub fn local_dir(&self) -> PathBuf {
+        self.kin.join("local")
+    }
+
+    pub fn ensure_local(&self) -> Result<PathBuf, ContractError> {
+        let local = self.local_dir();
+        paths::ensure_private_dir(&local, ".kin/local")?;
+        Ok(local)
+    }
+
+    // ----- events -----
+
+    pub fn stored_events(&self) -> Result<Vec<StoredFile>, ContractError> {
+        stored_files(&self.kin.join("events"))
+    }
+
+    pub fn stored_manifests(&self) -> Result<Vec<StoredFile>, ContractError> {
+        stored_files(&self.kin.join("manifests"))
+    }
+
+    pub fn total_event_bytes(&self) -> u64 {
+        self.stored_events()
+            .map(|files| files.iter().map(|file| file.bytes.len() as u64).sum())
+            .unwrap_or(0)
+    }
+
+    /// Intake ceiling check (architecture §11, verification limits).
+    pub fn check_intake_ceiling(&self, incoming: usize, incoming_bytes: u64) -> Result<(), ContractError> {
+        let files = self.stored_events()?;
+        let count = files.len();
+        let bytes: u64 = files.iter().map(|file| file.bytes.len() as u64).sum();
+        if count + incoming > EVENT_CEILING || bytes + incoming_bytes > BYTES_CEILING {
+            return Err(ContractError::limit(
+                "the .kin/ intake ceiling of 10,000 events / 128 MiB would be crossed",
+                json!({
+                    "event_count": count,
+                    "event_bytes": bytes,
+                    "incoming_count": incoming,
+                    "incoming_bytes": incoming_bytes,
+                    "refused_count": incoming,
+                    "omitted_count": incoming,
+                    "ceiling_events": EVENT_CEILING,
+                    "ceiling_bytes": BYTES_CEILING
+                }),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Exclusive repository-scoped admission lock in Git's common directory,
+    /// keyed by certified repository UUID.
+    pub fn admission_lock(&self, repository_uuid: &str) -> Result<AdmissionLock, ContractError> {
+        let path = self.common_dir.join(format!("guildhall-{repository_uuid}.lock"));
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)
+            .map_err(|error| ContractError::io("open admission lock", error))?;
+        // SAFETY: flock on a descriptor we own; EX blocks until acquired.
+        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
+        if result != 0 {
+            return Err(ContractError::io("acquire admission lock", std::io::Error::last_os_error()));
+        }
+        Ok(AdmissionLock { _file: file, path })
+    }
+
+    /// Admit one already-verified canonical event buffer through the
+    /// journaled state machine. Returns the receipt (existing receipt when
+    /// the exact event was already admitted).
+    pub fn admit_event(
+        &self,
+        repository_uuid: &str,
+        canonical: &[u8],
+        kind: &str,
+        receipt_extra: Value,
+    ) -> Result<Value, ContractError> {
+        if canonical.len() > crate::model::MAX_EVENT_BYTES {
+            return Err(ContractError::limit(
+                "shared event exceeds the 64 KiB ceiling",
+                json!({"bytes": canonical.len(), "ceiling_bytes": crate::model::MAX_EVENT_BYTES, "refused_count": 1}),
+            ));
+        }
+        let digest = crate::hash::sha256_bytes(canonical);
+        let relative = paths::sharded_relative(&digest)?;
+        let local = self.ensure_local()?;
+        let journal_dir = local.join("journal");
+        paths::ensure_private_dir(&journal_dir, "journal")?;
+        let receipts_dir = local.join("receipts");
+        paths::ensure_private_dir(&receipts_dir, "receipts")?;
+        let _lock = self.admission_lock(repository_uuid)?;
+        self.recover_journal(repository_uuid)?;
+        let receipt_path = receipts_dir.join(format!("{digest}.json"));
+        if receipt_path.exists() {
+            let bytes = std::fs::read(&receipt_path).map_err(|error| ContractError::io("read receipt", error))?;
+            if let Ok(existing) = crate::json::parse_strict_value(&bytes) {
+                return Ok(existing);
+            }
+        }
+        self.check_intake_ceiling(1, canonical.len() as u64)?;
+        let generation = next_generation(&journal_dir)?;
+        let journal_path = journal_dir.join(format!("{generation:012}.json"));
+        let final_path = paths::contained(&self.kin.join("events"), &relative)?;
+        let staging = local.join("staging");
+        paths::ensure_private_dir(&staging, "staging")?;
+        let staged = staging.join(format!("{digest}.json"));
+        let mut entry = json!({
+            "schema": "guildhall-journal/1",
+            "generation": generation,
+            "repository_uuid": repository_uuid,
+            "digest": digest,
+            "kind": kind,
+            "relative_path": relative.to_string_lossy(),
+            "state": "prepared",
+            "updated_at": crate::time::now_rfc3339_millis()
+        });
+        paths::write_atomic(&staged, canonical, 0o600, false)?;
+        paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
+        // renamed
+        let created = paths::write_atomic(&final_path, canonical, 0o644, true)?;
+        let _ = std::fs::remove_file(&staged);
+        entry["state"] = Value::String("renamed".to_owned());
+        entry["created"] = Value::Bool(created);
+        paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
+        // indexed
+        self.update_index_cache()?;
+        entry["state"] = Value::String("indexed".to_owned());
+        paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
+        // receipted
+        let mut receipt = json!({
+            "schema": crate::model::RECEIPT_SCHEMA,
+            "destination": format!("codebase:{repository_uuid}"),
+            "status": "committed",
+            "event_digest": digest,
+            "event_path": format!(".kin/events/{}", relative.to_string_lossy()),
+            "kind": kind,
+            "created": created,
+            "committed_at": crate::time::now_rfc3339_millis(),
+            "journal_generation": generation
+        });
+        if let Value::Object(extra) = receipt_extra {
+            for (key, value) in extra {
+                receipt[key] = value;
+            }
+        }
+        paths::write_atomic(&receipt_path, &crate::json::canonical_bytes(&receipt), 0o600, false)?;
+        entry["state"] = Value::String("done".to_owned());
+        paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
+        Ok(receipt)
+    }
+
+    /// Replay every incomplete journal entry (crash recovery). A `prepared`
+    /// entry whose staged bytes are gone is rolled back; every later state is
+    /// completed forward.
+    pub fn recover_journal(&self, repository_uuid: &str) -> Result<Vec<Value>, ContractError> {
+        let local = self.local_dir();
+        let journal_dir = local.join("journal");
+        if !journal_dir.exists() {
+            return Ok(Vec::new());
+        }
+        let mut replayed = Vec::new();
+        for relative in paths::list_files(&journal_dir)? {
+            let path = journal_dir.join(&relative);
+            let bytes = std::fs::read(&path).map_err(|error| ContractError::io("read journal", error))?;
+            let Ok(mut entry) = crate::json::parse_strict_value(&bytes) else {
+                continue;
+            };
+            let state = crate::json::get_str(&entry, "state").unwrap_or_default().to_owned();
+            if state == "done" {
+                continue;
+            }
+            let digest = crate::json::get_str(&entry, "digest").unwrap_or_default().to_owned();
+            let rel = PathBuf::from(crate::json::get_str(&entry, "relative_path").unwrap_or_default());
+            let final_path = paths::contained(&self.kin.join("events"), &rel)?;
+            let staged = local.join("staging").join(format!("{digest}.json"));
+            let receipt_path = local.join("receipts").join(format!("{digest}.json"));
+            let mut action = "completed";
+            if state == "prepared" {
+                if staged.exists() {
+                    let staged_bytes = std::fs::read(&staged).map_err(|error| ContractError::io("read staged", error))?;
+                    if crate::hash::sha256_bytes(&staged_bytes) == digest {
+                        paths::write_atomic(&final_path, &staged_bytes, 0o644, true)?;
+                    } else {
+                        action = "rolled-back";
+                    }
+                    let _ = std::fs::remove_file(&staged);
+                } else if !final_path.exists() {
+                    action = "rolled-back";
+                }
+            }
+            if action == "completed" {
+                self.update_index_cache()?;
+                if !receipt_path.exists() {
+                    let receipt = json!({
+                        "schema": crate::model::RECEIPT_SCHEMA,
+                        "destination": format!("codebase:{repository_uuid}"),
+                        "status": "committed",
+                        "event_digest": digest,
+                        "event_path": format!(".kin/events/{}", rel.to_string_lossy()),
+                        "kind": crate::json::get_str(&entry, "kind").unwrap_or("fact-event"),
+                        "recovered": true,
+                        "committed_at": crate::time::now_rfc3339_millis(),
+                        "journal_generation": entry.get("generation").cloned().unwrap_or(Value::Null)
+                    });
+                    paths::write_atomic(&receipt_path, &crate::json::canonical_bytes(&receipt), 0o600, false)?;
+                }
+            }
+            entry["state"] = Value::String("done".to_owned());
+            entry["recovery"] = Value::String(action.to_owned());
+            paths::write_atomic(&path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
+            replayed.push(json!({"generation": entry.get("generation").cloned().unwrap_or(Value::Null), "digest": digest, "from_state": state, "action": action}));
+        }
+        Ok(replayed)
+    }
+
+    /// The reducer-owned compatibility cache `.kin/local/guildhall-index.json`
+    /// (a sorted list of event digests and byte counts).
+    pub fn update_index_cache(&self) -> Result<(), ContractError> {
+        let files = self.stored_events()?;
+        let index = index_value(&files);
+        let path = self.local_dir().join("guildhall-index.json");
+        paths::write_atomic(&path, &crate::json::canonical_bytes(&index), 0o600, false)?;
+        Ok(())
+    }
+
+    pub fn index_cache_matches(&self) -> Result<Option<bool>, ContractError> {
+        let path = self.local_dir().join("guildhall-index.json");
+        if !path.exists() {
+            return Ok(None);
+        }
+        let bytes = std::fs::read(&path).map_err(|error| ContractError::io("read index cache", error))?;
+        let files = self.stored_events()?;
+        Ok(Some(bytes == crate::json::canonical_bytes(&index_value(&files))))
+    }
+
+    // ----- manifests -----
+
+    /// Build, sign, and store a parent-linked manifest over the current
+    /// event set. Returns the signed manifest document.
+    pub fn publish_manifest(
+        &self,
+        repository_uuid: &str,
+        signer: &crate::crypto::PrivateKey,
+        observed_at: &str,
+        fresh_seconds: i64,
+    ) -> Result<Value, ContractError> {
+        let events = self.stored_events()?;
+        let leaves: Vec<Vec<u8>> = events.iter().map(|file| file.bytes.clone()).collect();
+        let heads = self.manifest_heads()?;
+        let branch = self.branch()?;
+        let revision = self.default_branch_revision()?;
+        let manifest = json!({
+            "schema": crate::model::MANIFEST_SCHEMA,
+            "repository_uuid": repository_uuid,
+            "branch": branch,
+            "observed_default_branch_revision": revision,
+            "manifest_head_set": heads,
+            "event_count": events.len(),
+            "event_digests": events.iter().map(|file| file.digest.clone()).collect::<Vec<_>>(),
+            "merkle_root": merkle_root(&leaves),
+            "observed_at": observed_at,
+            "fresh_until": crate::time::plus_seconds(observed_at, fresh_seconds).map_err(ContractError::internal)?
+        });
+        let signed = signer.sign_document("manifest", &manifest)?;
+        let bytes = crate::json::canonical_bytes(&signed);
+        let digest = crate::hash::sha256_bytes(&bytes);
+        let relative = paths::sharded_relative(&digest)?;
+        let path = paths::contained(&self.kin.join("manifests"), &relative)?;
+        paths::write_atomic(&path, &bytes, 0o644, true)?;
+        let mut result = signed;
+        result["manifest_digest"] = Value::String(digest);
+        result["manifest_path"] = Value::String(format!(".kin/manifests/{}", relative.to_string_lossy()));
+        Ok(result)
+    }
+
+    /// Manifest heads: stored manifests not referenced as a parent by any
+    /// other stored manifest.
+    pub fn manifest_heads(&self) -> Result<Vec<String>, ContractError> {
+        let manifests = self.stored_manifests()?;
+        let mut referenced: BTreeSet<String> = BTreeSet::new();
+        let mut all: BTreeSet<String> = BTreeSet::new();
+        for file in &manifests {
+            all.insert(file.digest.clone());
+            if let Ok(value) = crate::json::parse_strict_value(&file.bytes) {
+                if let Some(parents) = crate::json::get_array(&value, "manifest_head_set") {
+                    for parent in parents {
+                        if let Some(parent) = parent.as_str() {
+                            referenced.insert(parent.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+        Ok(all.difference(&referenced).cloned().collect())
+    }
+}
+
+pub struct AdmissionLock {
+    _file: std::fs::File,
+    pub path: PathBuf,
+}
+
+impl Drop for AdmissionLock {
+    fn drop(&mut self) {
+        // SAFETY: releasing a lock on a descriptor we still own.
+        unsafe {
+            libc::flock(self._file.as_raw_fd(), libc::LOCK_UN);
+        }
+    }
+}
+
+fn next_generation(journal_dir: &Path) -> Result<u64, ContractError> {
+    let mut max = 0u64;
+    for relative in paths::list_files(journal_dir)? {
+        if let Some(stem) = relative.file_stem().and_then(|stem| stem.to_str()) {
+            if let Ok(value) = stem.parse::<u64>() {
+                max = max.max(value);
+            }
+        }
+    }
+    Ok(max + 1)
+}
+
+/// One regular file under `.kin/events` or `.kin/manifests` with its path
+/// digest (from the sharded path) and content digest.
+#[derive(Debug, Clone)]
+pub struct StoredFile {
+    pub relative: PathBuf,
+    pub digest: String,
+    pub bytes: Vec<u8>,
+    pub path_alias: bool,
+}
+
+fn stored_files(root: &Path) -> Result<Vec<StoredFile>, ContractError> {
+    let mut output = Vec::new();
+    for relative in paths::list_files(root)? {
+        let path = root.join(&relative);
+        let bytes = std::fs::read(&path).map_err(|error| ContractError::io("read stored file", error))?;
+        let content_digest = crate::hash::sha256_bytes(&bytes);
+        let path_digest = paths::digest_from_sharded(&relative);
+        let path_alias = path_digest.as_deref() != Some(content_digest.as_str());
+        output.push(StoredFile {
+            relative,
+            digest: content_digest,
+            bytes,
+            path_alias,
+        });
+    }
+    output.sort_by(|left, right| left.relative.cmp(&right.relative));
+    Ok(output)
+}
+
+fn index_value(files: &[StoredFile]) -> Value {
+    json!({
+        "schema": "guildhall-index/1",
+        "event_count": files.len(),
+        "events": files.iter().map(|file| json!({"digest": file.digest, "bytes": file.bytes.len()})).collect::<Vec<_>>()
+    })
+}
+
+pub fn merkle_root(leaves: &[Vec<u8>]) -> String {
+    if leaves.is_empty() {
+        return crate::hash::sha256_bytes(&[]);
+    }
+    let mut level: Vec<[u8; 32]> = leaves.iter().map(|leaf| crate::hash::sha256_raw(leaf)).collect();
+    while level.len() > 1 {
+        let mut next = Vec::with_capacity(level.len().div_ceil(2));
+        for pair in level.chunks(2) {
+            let left = pair[0];
+            let right = pair.get(1).copied().unwrap_or(pair[0]);
+            next.push(crate::hash::sha256_raw(&[left, right].concat()));
+        }
+        level = next;
+    }
+    crate::hash::hex_string(&level[0])
+}
+
+/// Parsed content of a stored event file.
+#[derive(Debug, Clone)]
+pub enum ParsedEvent {
+    Fact(FactEvent),
+    Unknown(UnknownEvent),
+    Tombstone(Value),
+    Malformed(String),
+}
+
+pub fn parse_stored(bytes: &[u8]) -> ParsedEvent {
+    let Ok(value) = crate::json::parse_strict_value(bytes) else {
+        return ParsedEvent::Malformed("not canonical JSON".to_owned());
+    };
+    match crate::json::get_str(&value, "schema") {
+        Some(crate::model::EVENT_SCHEMA) => match FactEvent::parse(bytes) {
+            Ok(event) => ParsedEvent::Fact(event),
+            Err(error) => ParsedEvent::Malformed(error),
+        },
+        Some(crate::model::UNKNOWN_SCHEMA) => match UnknownEvent::parse(bytes) {
+            Ok(event) => ParsedEvent::Unknown(event),
+            Err(error) => ParsedEvent::Malformed(error),
+        },
+        Some(crate::model::TOMBSTONE_SCHEMA) => ParsedEvent::Tombstone(value),
+        _ => ParsedEvent::Malformed("unsupported schema".to_owned()),
+    }
+}
+
+/// Manifest comparison against a published observation (architecture §6):
+/// equal, strict superset (normal lag), strict subset (INCOMPLETE), or
+/// incomparable.
+pub fn compare_event_sets(local: &BTreeSet<String>, published: &BTreeSet<String>) -> &'static str {
+    if local == published {
+        "equal"
+    } else if local.is_superset(published) {
+        "superset"
+    } else if local.is_subset(published) {
+        "subset"
+    } else {
+        "incomparable"
+    }
+}
