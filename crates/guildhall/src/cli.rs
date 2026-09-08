@@ -3,7 +3,7 @@ use crate::command_types::*;
 use crate::error::ContractError;
 use clap::Parser;
 use clap::error::ErrorKind;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Parse the CLI while preserving the process contract.
 ///
@@ -136,7 +136,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         Command::Status { repo, as_of } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            let as_of = resolve_as_of(as_of.as_deref())?;
+            let as_of = resolve_as_of(&launcher, &repo, as_of.as_deref())?;
             crate::repository::status(launcher, &repo, &as_of, json).map_err(internal)?;
         }
         Command::Doctor { host, repo } => {
@@ -162,7 +162,9 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             if crate::ingest::store_for_source(&source_kind) == crate::StoreKind::Codebase {
-                crate::repository::ensure_authority_snapshot(&launcher, None)?;
+                let repository = crate::codebase::Repository::discover(&repo)?;
+                let clock = crate::repository::recorded_clock(&launcher, &repository)?;
+                crate::repository::ensure_authority_snapshot(&launcher, None, &clock)?;
             }
             crate::ingest::ingest(
                 &launcher,
@@ -193,7 +195,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         }) => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            let as_of = resolve_as_of(as_of.as_deref())?;
+            let as_of = resolve_as_of(&launcher, &repo, as_of.as_deref())?;
             crate::corpus::rebuild(
                 &launcher,
                 &repo,
@@ -208,7 +210,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         Command::Fsck { repo, full, as_of } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            let as_of = resolve_as_of(as_of.as_deref())?;
+            let as_of = resolve_as_of(&launcher, &repo, as_of.as_deref())?;
             crate::repository::fsck(launcher, &repo, full, &as_of, json).map_err(internal)?;
         }
         Command::Explain {
@@ -220,7 +222,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            let as_of = resolve_as_of(as_of.as_deref())?;
+            let as_of = resolve_as_of(&launcher, &repo, as_of.as_deref())?;
             crate::corpus::explain(
                 &launcher,
                 &repo,
@@ -241,7 +243,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            let as_of = resolve_as_of(as_of.as_deref())?;
+            let as_of = resolve_as_of(&launcher, &repo, as_of.as_deref())?;
             crate::projector::run(
                 &launcher,
                 &repo,
@@ -295,16 +297,47 @@ fn internal(error: crate::error::ContractError) -> ContractError {
     error
 }
 
-fn resolve_as_of(explicit: Option<&str>) -> Result<crate::time::AsOf, ContractError> {
-    crate::time::resolve_as_of(explicit).map_err(|message| {
+fn resolve_as_of(
+    launcher: &crate::launcher::Launcher,
+    repo_path: &Path,
+    explicit: Option<&str>,
+) -> Result<crate::time::AsOf, ContractError> {
+    if let Some(text) = explicit {
+        return crate::time::AsOf::explicit(text).map_err(|message| {
+            ContractError::new(
+                "CONFIG_INVARIANT",
+                message,
+                "Pass --as-of as RFC 3339 UTC with millisecond precision, e.g. 2026-09-07T12:00:00.000Z.",
+                false,
+                crate::error::ExitCode::Refused,
+            )
+        });
+    }
+
+    let as_of_error = |message: String| {
         ContractError::new(
             "CONFIG_INVARIANT",
             message,
-            "Pass --as-of as RFC 3339 UTC with millisecond precision, e.g. 2026-09-07T12:00:00.000Z.",
+            "Run `guildhall repo init` once, or pass --as-of as RFC 3339 UTC with millisecond precision.",
             false,
             crate::error::ExitCode::Refused,
         )
-    })
+    };
+    let repo = crate::codebase::Repository::discover(repo_path)?;
+    let local = repo.local_dir().join("proof-clock");
+    if let Ok(text) = std::fs::read_to_string(&local) {
+        return crate::time::AsOf::recorded(text.trim()).map_err(as_of_error);
+    }
+    if let Some(uuid) = repo.uuid_hint() {
+        let store = launcher.private_store()?;
+        let key = format!("proof-clock:{uuid}");
+        if let Some(value) = store.meta(&key)? {
+            return crate::time::AsOf::recorded(value.trim()).map_err(as_of_error);
+        }
+    }
+    Err(as_of_error(
+        "no recorded proof clock is available; --as-of is required".to_owned(),
+    ))
 }
 
 fn store_to_kind(store: Store) -> crate::StoreKind {

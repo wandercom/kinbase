@@ -816,7 +816,7 @@ fn reset(
         reason,
         &now,
     )?;
-    result["first_reset_accepted"] = Value::Bool(true);
+    result["first_reset_accepted"] = Value::Bool(result.get("reset_id").is_some());
     print_value(&result, json);
     Ok(())
 }

@@ -877,3 +877,314 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         "query log selected_ids must match the projection"
     );
 }
+
+#[test]
+fn packet19_fresh_clone_resolves_cached_company_reference() {
+    let root = TempDir::new().expect("temporary root");
+    let home = root.path().join("home");
+    let config_home = root.path().join("config-home");
+    let guildhall_config = config_home.join("guildhall");
+    let cache_root = root.path().join("company-cache");
+    let personal_root = root.path().join("personal");
+    let repo = root.path().join("repository");
+    fs::create_dir_all(&home).expect("create home");
+    fs::create_dir_all(&guildhall_config).expect("create config directory");
+    fs::create_dir_all(&personal_root).expect("create personal root");
+
+    let root_key = PrivateKey::generate();
+    private_write(
+        &guildhall_config.join("root-public.key"),
+        format!("{}\n", root_key.public().to_hex()).as_bytes(),
+    );
+    private_write(&guildhall_config.join("facts.token"), b"facts-token\n");
+    private_write(
+        &guildhall_config.join("config.toml"),
+        format!(
+            "schema_version = \"1\"\n\n[personal]\ndata_root = {}\n\n[company]\nurl = \"http://127.0.0.1:1\"\nfacts_token_file = {}\nroot_public_key_file = {}\ncache_root = {}\n",
+            quoted(&personal_root),
+            quoted(&guildhall_config.join("facts.token")),
+            quoted(&guildhall_config.join("root-public.key")),
+            quoted(&cache_root)
+        )
+        .as_bytes(),
+    );
+
+    let git = Command::new("git")
+        .args(["init", "--initial-branch=main", &repo.display().to_string()])
+        .output()
+        .expect("run git init");
+    assert!(git.status.success(), "git init failed");
+
+    let repository_uuid = "32323232-89ab-cdef-0123-456789abcdef";
+    let certificate_file = root.path().join("certificate.json");
+    private_write(
+        &certificate_file,
+        &signed_certificate(&root_key, repository_uuid, "2026-09-08T12:00:00.000Z"),
+    );
+    let init = run_init(&home, &config_home, &repo, &certificate_file);
+    assert!(init.status.success(), "repo init failed");
+
+    let company_statement = "The live Company authorizes the packet 19 classifier policy.";
+    let mut company_fact = packet11_project_fact(
+        repository_uuid,
+        "event_company_packet19",
+        "fact_company_packet19",
+        "fact_company_packet19",
+        "decision",
+        company_statement,
+        "the packet 19 policy is unavailable",
+        3000,
+        None,
+    );
+    company_fact.store_kind = "company".to_owned();
+    company_fact.authority_id = "company-steward".to_owned();
+    company_fact.authority_scope = "company:root".to_owned();
+    company_fact.scope = "company:root".to_owned();
+    company_fact.repository_id = None;
+    company_fact
+        .sign(&root_key)
+        .expect("sign packet 19 Company fact");
+    let company_fact = company_fact.document();
+    let unsigned_snapshot = json!({
+        "schema": "guildhall-snapshot/1",
+        "company_id": "company-test",
+        "cursor": "1000",
+        "authority_cursor": "1000",
+        "revocation_cursor": "1000",
+        "client_nonce": "packet19-offline-cache",
+        "issued_at": "2026-09-08T12:00:00.000Z",
+        "revocation_valid_until": "2030-01-01T00:00:00.000Z",
+        "fact_valid_until": "2030-01-01T00:00:00.000Z",
+        "registry": [
+            {"authority_id": "company-steward", "scope": "company:root", "public_key": root_key.public().to_hex(), "status": "active"},
+            {"authority_id": "repository-maintainer", "scope": format!("codebase:{repository_uuid}"), "public_key": root_key.public().to_hex(), "status": "active"}
+        ],
+        "revocations": [],
+        "facts": [company_fact],
+        "unknowns": [],
+        "relaxations": [],
+        "certificates": [],
+        "fact_versions": {}
+    });
+    let signed_snapshot = root_key
+        .sign_document("receipt", &unsigned_snapshot)
+        .expect("sign authority snapshot");
+    let mut cache =
+        guildhall::company::cache::Cache::open(&cache_root).expect("open authority cache");
+    cache
+        .store_snapshot(
+            &signed_snapshot,
+            &root_key.public(),
+            "2026-09-08T12:00:00.000Z",
+        )
+        .expect("store fresh authority snapshot");
+
+    let mut fact = packet11_project_fact(
+        repository_uuid,
+        "event_packet19_company_reference",
+        "fact_packet19_company_reference",
+        "logical_packet19_company_reference",
+        "constraint",
+        "The packet 19 clone policy depends on the Company fact.",
+        "the Company fact is unavailable",
+        7000,
+        None,
+    );
+    fact.company_refs = vec![guildhall::model::CompanyReference {
+        company_id: "company-test".to_owned(),
+        fact_id: "fact_company_packet19".to_owned(),
+        semantic_digest: guildhall::model::semantic_digest(company_statement),
+        digest_alg_version: guildhall::model::DIGEST_ALG_VERSION.to_owned(),
+        authority: "company-steward".to_owned(),
+        valid_from: "2026-09-08T12:00:00.000Z".to_owned(),
+        valid_until: None,
+        company_criticality: "advisory".to_owned(),
+        relation: "applies".to_owned(),
+        fact_version: Some("current".to_owned()),
+    }];
+    fact.sign(&root_key).expect("sign packet 19 fact");
+    let bytes = guildhall::json::canonical_bytes(&fact.document());
+    let digest = guildhall::hash::sha256_bytes(&bytes);
+    let relative = format!("{}/{}/{}.json", &digest[..2], &digest[2..4], &digest[4..]);
+    private_write(&repo.join(".kin/events").join(&relative), &bytes);
+
+    let event_git_path = format!(".kin/events/{relative}");
+    let git = Command::new("git")
+        .current_dir(&repo)
+        .args([
+            "add",
+            ".gitattributes",
+            ".kin/config",
+            event_git_path.as_str(),
+        ])
+        .output()
+        .expect("stage packet 19 corpus");
+    assert!(git.status.success(), "git add failed");
+    let git = Command::new("git")
+        .current_dir(&repo)
+        .env("GIT_AUTHOR_NAME", "packet19")
+        .env("GIT_AUTHOR_EMAIL", "packet19@example.invalid")
+        .env("GIT_COMMITTER_NAME", "packet19")
+        .env("GIT_COMMITTER_EMAIL", "packet19@example.invalid")
+        .args(["commit", "-m", "packet 19 company reference"])
+        .output()
+        .expect("commit packet 19 corpus");
+    assert!(git.status.success(), "git commit failed");
+
+    let rebuild = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+        .current_dir(&repo)
+        .args([
+            "corpus",
+            "rebuild",
+            "--store",
+            "company",
+            "--repo",
+            &repo.display().to_string(),
+            "--as-of",
+            "2026-09-08T12:00:00.000Z",
+            "--json",
+        ])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env_remove("GUILDHALL_COMPANY_URL")
+        .output()
+        .expect("run packet 19 corpus rebuild");
+    assert!(
+        rebuild.status.success(),
+        "corpus rebuild failed: {}{}",
+        String::from_utf8_lossy(&rebuild.stdout),
+        String::from_utf8_lossy(&rebuild.stderr)
+    );
+    let rebuild_result: Value =
+        serde_json::from_slice(&rebuild.stdout).expect("corpus rebuild receipt is JSON");
+    assert_eq!(rebuild_result["manifest_publication"].is_null(), false);
+
+    let fsck = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+        .current_dir(&repo)
+        .args([
+            "fsck",
+            "--repo",
+            &repo.display().to_string(),
+            "--full",
+            "--json",
+        ])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env_remove("GUILDHALL_COMPANY_URL")
+        .output()
+        .expect("run packet 19 fsck");
+    assert!(
+        fsck.status.success(),
+        "fsck failed: {}{}",
+        String::from_utf8_lossy(&fsck.stdout),
+        String::from_utf8_lossy(&fsck.stderr)
+    );
+    let fsck_result: Value = serde_json::from_slice(&fsck.stdout).expect("fsck receipt is JSON");
+    assert_eq!(fsck_result["status"], "ok");
+    assert!(
+        fsck_result["manifest_problems"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        fsck_result["manifest_comparison"]["classification"],
+        "complete"
+    );
+
+    let first_unpinned = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+        .current_dir(&repo)
+        .args([
+            "corpus",
+            "rebuild",
+            "--store",
+            "company",
+            "--repo",
+            &repo.display().to_string(),
+            "--json",
+        ])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env_remove("GUILDHALL_COMPANY_URL")
+        .output()
+        .expect("run first recorded-clock rebuild");
+    assert!(
+        first_unpinned.status.success(),
+        "recorded-clock rebuild failed: {}{}",
+        String::from_utf8_lossy(&first_unpinned.stdout),
+        String::from_utf8_lossy(&first_unpinned.stderr)
+    );
+    let first_unpinned: Value = serde_json::from_slice(&first_unpinned.stdout)
+        .expect("first recorded-clock receipt is JSON");
+    assert_eq!(first_unpinned["as_of_source"], "recorded-proof-clock");
+    let second_unpinned = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+        .current_dir(&repo)
+        .args([
+            "corpus",
+            "rebuild",
+            "--store",
+            "company",
+            "--repo",
+            &repo.display().to_string(),
+            "--json",
+        ])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env_remove("GUILDHALL_COMPANY_URL")
+        .output()
+        .expect("run second recorded-clock rebuild");
+    assert!(
+        second_unpinned.status.success(),
+        "second recorded-clock rebuild failed: {}{}",
+        String::from_utf8_lossy(&second_unpinned.stdout),
+        String::from_utf8_lossy(&second_unpinned.stderr)
+    );
+    let second_unpinned: Value = serde_json::from_slice(&second_unpinned.stdout)
+        .expect("second recorded-clock receipt is JSON");
+    assert_eq!(second_unpinned["as_of_source"], "recorded-proof-clock");
+    assert_eq!(second_unpinned["as_of"], first_unpinned["as_of"]);
+    assert_eq!(
+        second_unpinned["current_view_digest"],
+        first_unpinned["current_view_digest"]
+    );
+
+    let clone = root.path().join("clone");
+    let git = Command::new("git")
+        .current_dir(root.path())
+        .args([
+            "clone",
+            "--no-local",
+            &repo.display().to_string(),
+            &clone.display().to_string(),
+        ])
+        .output()
+        .expect("clone packet 19 repository");
+    assert!(git.status.success(), "git clone failed");
+
+    let project = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+        .current_dir(&clone)
+        .args([
+            "project",
+            "--repo",
+            &clone.display().to_string(),
+            "--task",
+            "prove cloned Company reference resolution",
+            "--decision",
+            "packet 19 clone release",
+            "--json",
+        ])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env_remove("GUILDHALL_COMPANY_URL")
+        .output()
+        .expect("run cloned guildhall project");
+    assert!(
+        project.status.success(),
+        "cloned project failed: {}",
+        String::from_utf8_lossy(&project.stderr)
+    );
+    let result: Value = serde_json::from_slice(&project.stdout).expect("project receipt is JSON");
+    assert_eq!(result["as_of_source"], "recorded-proof-clock");
+    assert_eq!(result["company_reference_resolved"], true);
+    assert_eq!(result["company_statement"], company_statement);
+}

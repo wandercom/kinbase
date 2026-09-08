@@ -195,6 +195,7 @@ pub fn explain(
                 .map(|cursor| cursor.to_string())
                 .as_deref()
                 .or(Some(cached_cursor.as_str())),
+            &as_of.as_of,
         )?;
     let service_cursor = launcher
         .company_cache()?
@@ -261,9 +262,12 @@ pub fn explain(
     if has_codebase {
         if let Ok(repository) = Repository::discover(repo) {
             let _ = repository;
-            if let Ok(context) =
-                crate::repository::RepoContext::load(crate::launcher::Launcher::load()?, repo, true)
-            {
+            if let Ok(context) = crate::repository::RepoContext::load(
+                crate::launcher::Launcher::load()?,
+                repo,
+                true,
+                Some(&as_of.as_of),
+            ) {
                 if let Ok((resolved_view, _counts, company_references)) =
                     context.current_view(&as_of.as_of, Some(authority_snapshot_cursor.as_str()))
                 {
@@ -707,6 +711,7 @@ pub(crate) fn load_store(
                 crate::launcher::Launcher::load()?,
                 repo,
                 false,
+                None,
             )?;
             let (events, unknowns, tombstones, revocations) = context.reducer_parts()?;
             Ok(StoreData {

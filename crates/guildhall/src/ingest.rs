@@ -4,7 +4,7 @@ use crate::hash::sha256_bytes;
 use crate::launcher::Launcher;
 use crate::model::{Atom, CompanyReference, Distortion, FactEvent, Observation, UnknownEvent};
 use crate::scanner::hard_blocked;
-use crate::time::{now_rfc3339_millis, parse_rfc3339_millis};
+use crate::time::parse_rfc3339_millis;
 use rusqlite::Connection;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -72,7 +72,8 @@ pub fn ingest(
     let journal_root = crate::store::ensure_store_root(journal_store, repo)?;
     let private = crate::private::PrivateStore::open_personal(&journal_root)?;
     let source_identity = source_identity(source_kind, source);
-    let now = now_rfc3339_millis();
+    let discovered_repository = crate::codebase::Repository::discover(repo)?;
+    let now = crate::repository::recorded_clock(launcher, &discovered_repository)?;
     let prior_observations = private.observations_for_source(&source_identity)?;
     let source_available = source.exists();
 
@@ -312,7 +313,7 @@ pub fn ingest(
     let mut historical_receipts = Vec::new();
     let mut revocation_observed_count = 0;
     let trust = if source_kind == "kindex" {
-        crate::repository::RepoContext::load(launcher.clone(), repo, false)
+        crate::repository::RepoContext::load(launcher.clone(), repo, false, Some(&now))
             .ok()
             .map(|context| context.trust)
     } else {
