@@ -278,7 +278,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             crate::session::end(&session, json).map_err(internal)?;
         }
         Command::Proposals(command) => {
-            crate::proposals::dispatch(command, json).map_err(internal)?;
+            crate::proposals::dispatch(&launcher, command, json).map_err(internal)?;
         }
         Command::Questions(command) => {
             crate::questions::dispatch(command, json).map_err(internal)?;

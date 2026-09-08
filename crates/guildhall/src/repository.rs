@@ -2061,7 +2061,7 @@ pub fn status(
     json_output: bool,
 ) -> Result<(), ContractError> {
     let context = RepoContext::load(launcher, repo_path, true, Some(&as_of.as_of))?;
-    crate::proposals::emit_due_orphan_abandonments(repo_path)?;
+    crate::proposals::emit_due_orphan_abandonments(&context.launcher, repo_path)?;
     let (view, counts, references) = if context.repo.config.is_some() {
         context.current_view(&as_of.as_of, None)?
     } else {
@@ -2179,6 +2179,16 @@ pub fn status(
                 .and_then(|raw| crate::json::get_str(raw, "unresponsive_closing_authority"))
             {
                 record["unresponsive_closing_authority"] = Value::String(closing.to_owned());
+            }
+            // A terminal saga event emitted by the destination service carries
+            // the saga's own state for the orphaned claim (withdrawn) and the
+            // unresponsive closing authority; the fan-out saga owns that fact.
+            if let Some(Value::Object(saga)) =
+                crate::proposals::saga_terminal_event_fields(&event.event_id)
+            {
+                for (key, value) in saga {
+                    record[key] = value;
+                }
             }
             event_records.push(record);
             let action = crate::model::action_of(event).unwrap_or(event.atom_kind.as_str());
@@ -2358,7 +2368,8 @@ pub fn status(
                 })
                 .count()
         })
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .max(crate::proposals::pending_orphan_count(repo_path));
     let mut origin_trust_classes: BTreeMap<&str, usize> = BTreeMap::new();
     for event in &events {
         *origin_trust_classes
@@ -2436,6 +2447,7 @@ pub fn status(
         "company_references": references,
         "observation_status": if event_records.iter().any(|e| crate::json::get_str(e, "atom_kind") == Some("observation_expired")) { "historical-only" } else { "current" },
         "pending_orphans": pending_orphans,
+        "journal_state": crate::proposals::inflight_journal_state(repo_path),
         "query_log": query_log,
         "privacy_claim": PRIVACY_CLAIM,
         "threat_model": "guildhall-atm/1",
