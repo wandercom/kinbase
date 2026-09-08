@@ -450,6 +450,9 @@ pub fn run(
                 .unwrap_or(&fact.criticality),
         ) && fact.trust == "excluded"
     });
+    // Architecture §6: an expired or revocation-stale safety dependency
+    // withholds the projection; an open high-distortion Unknown does too.
+    let projection_withheld = has_blocking_unknown || safety_is_degraded;
     let degraded_policy = if safety_is_degraded
         || open_unknowns
             .iter()
@@ -509,7 +512,7 @@ pub fn run(
             .as_ref()
             .and_then(|record| crate::json::get_str(record, "max_rule")),
         "dominating_input": dominating_input,
-        "projection_state": if has_blocking_unknown { "withheld" } else { "projected" },
+        "projection_state": if projection_withheld { "withheld" } else { "projected" },
         "question_id": question_id,
         "omitted_count": omitted_count
     });
@@ -829,6 +832,9 @@ fn candidate_value(fact: &CurrentFact, all_facts: &[CurrentFact]) -> Value {
         "roles": roles,
         "derived_role": derived_role,
         "reason": reason,
+        "trust": fact.trust,
+        "stale_reasons": fact.stale_reasons,
+        "store_kind": fact.store_kind,
         "authority_id": fact.authority_id
     })
 }
@@ -860,16 +866,18 @@ fn unknown_outputs(
     view_unknowns: &[crate::reducer::DerivedUnknown],
     question_unknowns: &[UnknownOut],
 ) -> Vec<UnknownOut> {
+    // Keyed by Unknown id: one logical key may carry several owned Unknowns
+    // (the Company fact's own expiry and the repository reference to it).
     let mut by_key: BTreeMap<String, UnknownOut> = BTreeMap::new();
     for unknown in question_unknowns {
-        by_key.insert(unknown.logical_key.clone(), unknown.clone());
+        by_key.insert(unknown.unknown_id.clone(), unknown.clone());
     }
     for unknown in view_unknowns {
         if unknown.status != "open" && unknown.status != "asked" {
             continue;
         }
         by_key.insert(
-            unknown.logical_key.clone(),
+            unknown.unknown_id.clone(),
             UnknownOut {
                 unknown_id: unknown.unknown_id.clone(),
                 logical_key: unknown.logical_key.clone(),
@@ -885,6 +893,10 @@ fn unknown_outputs(
             },
         );
     }
+    let represented_keys: BTreeSet<String> = by_key
+        .values()
+        .map(|unknown| unknown.logical_key.clone())
+        .collect();
     for fact in facts {
         let ineligible = fact.status != "current"
             || fact.trust != "trusted"
@@ -893,16 +905,20 @@ fn unknown_outputs(
                 fact.disposition.as_str(),
                 "disputed" | "expired" | "conflict"
             );
-        if ineligible && !by_key.contains_key(&fact.logical_key) {
+        if ineligible && !represented_keys.contains(&fact.logical_key) {
             let owner_role = if fact.store_kind == "company" {
                 "company-steward"
             } else {
                 "repository-maintainer"
             };
+            let unknown_id = format!("unknown_{}", &fact.fact_id[5.min(fact.fact_id.len())..]);
+            if by_key.contains_key(&unknown_id) {
+                continue;
+            }
             by_key.insert(
-                fact.logical_key.clone(),
+                unknown_id.clone(),
                 UnknownOut {
-                    unknown_id: format!("unknown_{}", &fact.fact_id[5.min(fact.fact_id.len())..]),
+                    unknown_id,
                     logical_key: fact.logical_key.clone(),
                     scope: fact.scope.clone(),
                     decision_blocked: fact.distortion.trigger.clone(),

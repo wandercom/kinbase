@@ -832,38 +832,94 @@ impl RepoContext {
                             view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, "company-steward", "the referenced Company fact is no longer in the authorized current view; update or retire the reference"));
                         }
                     }
-                    (Some(_), Some(digest)) if digest == reference.semantic_digest => {
+                    (Some(company_value), Some(digest)) if digest == reference.semantic_digest => {
                         record["resolution"] = Value::String("resolved".to_owned());
                         record["company_statement"] =
                             Value::String(company_statement.clone().unwrap_or_default());
                         record["digest_attribution"] =
                             json!({"owner_role": "none", "owner_matches_expected": true});
                         record["reference_resolved"] = Value::Bool(true);
-                        let expected_projection = freshness
-                            .map(|freshness| {
-                                freshness
-                                    .projection(
-                                        stricter == "safety_critical",
-                                        self.trust.certificate_valid,
-                                    )
-                                    .0
-                            })
-                            .unwrap_or("trusted");
-                        if let Some(freshness) = freshness {
-                            let (projection, reasons) = freshness.projection(
-                                stricter == "safety_critical",
-                                self.trust.certificate_valid,
-                            );
-                            if projection != "trusted" {
-                                fact.trust = projection.to_owned();
-                                fact.stale_reasons
-                                    .extend(reasons.iter().map(|r| (*r).to_owned()));
+                        // Fact validity is the stricter of the cache's
+                        // fact-valid-until clock and the referenced fact's own
+                        // window (its effective_until and the reference's
+                        // valid_until); either lapsing expires the row.
+                        let validity_lapsed = [
+                            crate::json::get_str(company_value, "effective_until"),
+                            reference.valid_until.as_deref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .any(|until| until <= as_of);
+                        let effective_freshness = freshness.map(|freshness| {
+                            let mut clocks = freshness.clone();
+                            clocks.fact_fresh = clocks.fact_fresh && !validity_lapsed;
+                            clocks
+                        });
+                        let safety = stricter == "safety_critical";
+                        let (projection, reasons) = effective_freshness
+                            .as_ref()
+                            .map(|clocks| clocks.projection(safety, self.trust.certificate_valid))
+                            .unwrap_or_else(|| {
+                                if !self.trust.certificate_valid {
+                                    ("withheld", vec!["certificate-or-root-invalid"])
+                                } else if validity_lapsed && safety {
+                                    ("withheld", vec!["CACHE_EXPIRED"])
+                                } else if validity_lapsed {
+                                    ("excluded", vec!["CACHE_EXPIRED"])
+                                } else {
+                                    ("trusted", Vec::new())
+                                }
+                            });
+                        record["fact_validity_lapsed"] = Value::Bool(validity_lapsed);
+                        if projection != "trusted" {
+                            fact.trust = projection.to_owned();
+                            fact.stale_reasons
+                                .extend(reasons.iter().map(|r| (*r).to_owned()));
+                            if validity_lapsed {
+                                fact.stale_reasons.push("fact-validity-expired".to_owned());
                             }
+                            // Architecture §6: a stale revocation snapshot opens a
+                            // Company-steward Unknown; an expired fact opens the
+                            // fact owner's Unknown.
+                            let revocation_stale =
+                                reasons.iter().any(|reason| *reason == "REVOCATION_STALE");
+                            let (owner_role, owner_identity) = if revocation_stale {
+                                (
+                                    "company-steward".to_owned(),
+                                    self.trust
+                                        .steward_authority_id()
+                                        .unwrap_or_else(|| "company-steward".to_owned()),
+                                )
+                            } else {
+                                let scope = crate::json::get_str(company_value, "authority_scope")
+                                    .unwrap_or_default();
+                                (
+                                    company_owner_role(scope).to_owned(),
+                                    crate::json::get_str(company_value, "authority_id")
+                                        .unwrap_or(reference.authority.as_str())
+                                        .to_owned(),
+                                )
+                            };
+                            view.unknowns.push(reference_unknown(
+                                &fact.logical_key,
+                                &reference.fact_id,
+                                &owner_role,
+                                &owner_identity,
+                                &format!(
+                                    "the referenced Company fact is {} ({}); refresh Company state or update the reference before this repository relies on it",
+                                    projection,
+                                    fact.stale_reasons.join(",")
+                                ),
+                                if safety { 9_000 } else { 3_000 },
+                            ));
                         }
                         record["cache_truth_table"] = json!({
-                            "expected": expected_projection,
+                            "revocation_fresh": effective_freshness.as_ref().map(|clocks| clocks.revocation_fresh),
+                            "fact_fresh": effective_freshness.as_ref().map(|clocks| clocks.fact_fresh),
+                            "dependence_class": stricter,
+                            "expected": projection,
                             "actual": fact.trust,
-                            "matches_expected": fact.trust == expected_projection
+                            "matches_expected": fact.trust == projection
                         });
                     }
                     (Some(_), _) => {
@@ -1022,6 +1078,51 @@ fn local_dependence_class(statement: &str) -> Option<String> {
         Some("advisory".to_owned())
     } else {
         None
+    }
+}
+
+/// The role that owns a Company fact, from its authority scope.
+fn company_owner_role(scope: &str) -> &'static str {
+    if scope.starts_with("architecture:") {
+        "chief-architect"
+    } else if scope.starts_with("environment:") {
+        "deploy-owner"
+    } else {
+        "company-steward"
+    }
+}
+
+/// An Unknown a withheld or excluded Company reference opens, owned by a
+/// named authority rather than a role label.
+fn reference_unknown(
+    logical_key: &str,
+    company_fact_id: &str,
+    owner_role: &str,
+    owner_identity: &str,
+    question: &str,
+    loss_if_absent: u16,
+) -> crate::reducer::DerivedUnknown {
+    crate::reducer::DerivedUnknown {
+        unknown_id: format!(
+            "unknown_ref_{}",
+            &crate::hash::sha256_text(&format!(
+                "{logical_key}\0{company_fact_id}\0{owner_role}\0{owner_identity}"
+            ))[..24]
+        ),
+        logical_key: logical_key.to_owned(),
+        scope: format!("company-reference:{company_fact_id}"),
+        decision_blocked: format!("use of Company reference {company_fact_id}"),
+        owner_role: owner_role.to_owned(),
+        owner_identity: owner_identity.to_owned(),
+        question: question.to_owned(),
+        closure_evidence: vec![
+            "a refreshed Company snapshot or an updated reference event naming a current fact version"
+                .to_owned(),
+        ],
+        loss_if_absent,
+        discriminating_evidence: vec![company_fact_id.to_owned()],
+        status: "open".to_owned(),
+        kind: "reference".to_owned(),
     }
 }
 
