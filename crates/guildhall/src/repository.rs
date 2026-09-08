@@ -3112,6 +3112,7 @@ pub fn doctor(
     let mut result = json!({
         "status": if apology_quarantine > 0 { "quarantined" } else { "ok" },
         "processes": processes,
+        "personal_processes": capabilities["personal_processes"],
         "mode": launcher.mode,
         "fd_attestation": capabilities["fd_attestation"],
         "capabilities": ["company", "codebase"],
