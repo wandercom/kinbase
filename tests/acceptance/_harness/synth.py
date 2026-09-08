@@ -209,6 +209,16 @@ RESET_REASON_CODES: tuple[str, ...] = (
 )
 
 
+def receipt_stamp(offset_seconds: int = 0) -> str:
+    """R-14 receipt time on the proof clock; validity dates use _stamp instead."""
+    import os
+    import time
+
+    offset = int(os.environ.get("GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS", "0"))
+    return time.strftime("%Y-%m-%dT%H:%M:%S.000Z",
+                         time.gmtime(time.time() + offset + offset_seconds))
+
+
 def _stamp(day: int = 1, hour: int = 0, minute: int = 0) -> str:
     return f"2026-03-{day:02d}T{hour:02d}:{minute:02d}:00.000Z"
 
@@ -681,7 +691,7 @@ def fact_event(
             distortion
             or {
                 "trigger": "scheduler diagnosis edit",
-                "loss_if_absent": "high",
+                "loss_if_absent": "safety_critical" if store_kind == "company" else "high",
                 "rationale": "dependent edit selects the wrong lookahead",
             }
         ),

@@ -48,7 +48,6 @@ import hashlib
 import json
 import os
 import secrets
-import shlex
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -72,21 +71,8 @@ CERTIFICATE_DIR = "certificates"
 #: packet. Publication is the admission through Company, never this file.
 REGISTRY_MIRROR = "authority-registry.json"
 
-#: Environment variables the Validator uses to pin the classifier executable
-#: for a run. Harness-only; never forwarded to the product.
-CLASSIFIER_VARIABLE = "GUILDHALL_CLASSIFIER"
-CLASSIFIER_ARGS_VARIABLE = "GUILDHALL_CLASSIFIER_ARGS"
+# R-11: classifier executable and argv come from the resolved product binary.
 
-#: The stand-in classifier written when the Validator pins none. It answers the
-#: model contract with an empty candidate list so processes that only need a
-#: *configured* classifier (status, fsck, explain, project over planted state)
-#: can start; every gate that needs real extraction checks
-#: :func:`classifier_pinned` first and reports ``INVALID_HARNESS`` otherwise.
-STUB_CLASSIFIER = '''#!/bin/sh
-# Acceptance stand-in classifier: no model, no candidates.
-cat >/dev/null
-printf '%s\\n' '{"schema":"guildhall-classifier-stub/1","candidates":[]}'
-'''
 
 
 @dataclass(frozen=True)
@@ -180,7 +166,8 @@ class Classifier:
     path: Path
     sha256: str
     args: tuple[str, ...]
-    source: str          # "pinned" (GUILDHALL_CLASSIFIER) | "stub"
+    source: str          # "product"
+    model: str | None = None
 
     def as_json(self) -> dict:
         return {
@@ -188,6 +175,7 @@ class Classifier:
             "sha256": self.sha256,
             "args": list(self.args),
             "source": self.source,
+            "model": self.model,
         }
 
 
@@ -547,45 +535,52 @@ def publish_registry(
 # --------------------------------------------------------------------------
 
 
-def resolve_classifier(roots: ProofRoots) -> Classifier:
-    """The classifier the user config pins: Validator-pinned or the stub."""
-    pinned = os.environ.get(CLASSIFIER_VARIABLE, "").strip()
-    if pinned:
-        path = prereq.executable(
-            pinned, what="pinned classifier executable",
-            why="spec/cli.md [classifier] requires an absolute regular-file path "
-                "owned by the effective UID with a pinned SHA-256",
-        )
-        args = tuple(shlex.split(os.environ.get(CLASSIFIER_ARGS_VARIABLE, "--json")))
-        source = "pinned"
-    else:
-        directory = roots.client_root / "classifier"
-        directory.mkdir(parents=True, exist_ok=True)
-        os.chmod(directory, 0o700)
-        path = directory / "local-classifier"
-        path.write_text(STUB_CLASSIFIER, encoding="utf-8")
-        os.chmod(path, 0o700)
-        args = ("--json",)
-        source = "stub"
+def resolve_classifier(roots: ProofRoots, guildhall, *, model: str | None = None) -> Classifier:
+    """R-11: pin the same executable used for product commands, without spawning it."""
+    import shutil
+
+    entrypoint = tuple(guildhall.entrypoint)
+    if len(entrypoint) != 1:
+        raise HarnessInvalid("R-11 requires GUILDHALL_BIN to name the single product executable")
+    resolved = shutil.which(entrypoint[0])
+    if resolved is None:
+        raise prereq.missing("binary", "product classifier", "product executable is absent")
+    path = prereq.executable(resolved, what="product classifier executable",
+                            why="R-11 pins the product binary with SHA-256")
+    if model is not None and not model.startswith("ollama:"):
+        raise HarnessInvalid("R-11 live model must use ollama:<name>")
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    return Classifier(path=path.resolve(), sha256=digest, args=args, source=source)
+    return Classifier(path=path.resolve(), sha256=digest,
+                      args=("classifier", "--json"),
+                      source="product", model=model)
 
 
 def classifier_pinned(anchors: TrustAnchors, *, what: str) -> Classifier:
-    """Require a Validator-pinned classifier for a gate that extracts.
+    """Extraction requires a reverified product classifier, never an empty stub."""
+    classifier = anchors.classifier
+    if classifier.source != "product" or hashlib.sha256(
+            classifier.path.read_bytes()).hexdigest() != classifier.sha256:
+        raise HarnessInvalid(what + ": product classifier pin changed")
+    return classifier
 
-    A gate whose obligation ranges over real classification cannot be satisfied
-    by the stand-in, so an unpinned classifier is an instrument condition.
-    """
-    if anchors.classifier.source != "pinned":
-        raise prereq.missing(
-            "binary", what,
-            f"set {CLASSIFIER_VARIABLE} to the run's pinned classifier executable "
-            f"(and {CLASSIFIER_ARGS_VARIABLE} if it needs arguments); the "
-            "stand-in classifier returns no candidates and cannot substantiate "
-            "a classification obligation",
-        )
-    return anchors.classifier
+
+def verify_classifier_spawn(guildhall, repo: Path) -> None:
+    """R-11 doctor attests the pin after an extraction has spawned the child."""
+    import tomllib
+
+    config = guildhall.xdg_config_home / "guildhall" / "config.toml"
+    table = tomllib.loads(config.read_text(encoding="utf-8"))["classifier"]
+    doctor = guildhall.run("doctor", "--repo", str(repo), "--json",
+                          cwd=repo, check=False).json
+    reported = doctor.get("classifier", {}) if isinstance(doctor, dict) else {}
+    pinned = doctor.get("classifier_pinned") if isinstance(doctor, dict) else None
+    provider = reported.get("provider")
+    if reported.get("executable_sha256") != table["executable_sha256"] or pinned is not True:
+        raise ProductFailure("R-11 doctor did not reverify the classifier pin after spawn")
+    if not isinstance(provider, str) or not provider:
+        raise ProductFailure("R-11 doctor omitted classifier.provider")
+    if table.get("model") is not None and "ollama" not in provider.lower():
+        raise ProductFailure("R-11 live-model measurement requires the Ollama provider")
 
 
 # --------------------------------------------------------------------------
@@ -604,6 +599,7 @@ def write_user_config(roots: ProofRoots, *, company_url: str,
         classifier_path=classifier.path,
         classifier_sha256=classifier.sha256,
         classifier_args=classifier.args,
+        classifier_model=classifier.model,
         facts_token_file=token_path,
         root_public_key_file=root_key,
         company_url=company_url,
@@ -618,6 +614,7 @@ def establish(
     *,
     extra_authorities: Sequence[tuple[synth.Signer, str]] = (),
     start_service=None,
+    classifier_model: str | None = None,
 ) -> TrustAnchors:
     """Build every external trust prerequisite, in ratified order.
 
@@ -634,7 +631,7 @@ def establish(
     )
 
     root_key = install_external_root(roots, world.steward)
-    classifier = resolve_classifier(roots)
+    classifier = resolve_classifier(roots, guildhall, model=classifier_model)
     user_config, token_path = write_user_config(
         roots, company_url=service.url, facts_token=service.facts_token,
         root_key=root_key, classifier=classifier,

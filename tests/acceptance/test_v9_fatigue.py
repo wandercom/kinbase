@@ -27,7 +27,7 @@ import pytest
 
 from ._harness import corpora, hosts
 from ._harness import obligations as O
-from ._harness import prereq, trust
+from ._harness import prereq, synth, trust
 from ._harness.cli import Guildhall
 from ._harness.evidence_model import Origin, field, require_nonempty, rows
 from ._harness.requirements import (
@@ -94,7 +94,7 @@ def _eligible_candidates(guildhall: Guildhall, world, ids: OpaqueIds,
             "role": "user",
             "text": "the retry ceiling for shard " + str(index)
                     + " is four attempts per hour",
-            "observed_at": "2026-03-01T00:" + format(index, "02d") + ":00.000Z",
+            "observed_at": synth.receipt_stamp(),
             "source_kind": "codex_jsonl",
         }))
     corpus.write_text("\n".join(lines) + "\n", encoding="utf-8")

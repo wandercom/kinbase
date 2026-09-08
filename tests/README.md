@@ -51,14 +51,25 @@ session, native lifecycle, and hook repairs:
   Timeout/blackhole endpoints come from user config. Env endpoints remain refusal
   probes with a zero-connection obligation. Cache-clearing preserves the installed
   certificate, and `repo init` must copy the external certificate into the cache.
-* Extraction gates require the Validator-pinned classifier. Product-independent
-  selftests allocate no network listener merely to construct filesystem roots.
+* R-11 pins the resolved product executable with args `["classifier", "--json"]`.
+  V-2 uses `[classifier] model = "ollama:qwen2.5:7b"`; the Validator must provide
+  that local Ollama model for live quality measurement. Other worlds omit model
+  for structural rule/replay operation. Doctor's spawn pin is checked after
+  extraction. No empty classifier stub licenses an extraction gate.
+* Dispatch 008 orders transcript create/update/delete/restart/expiry explicitly,
+  republishes registries for revocation, preserves branch observations on the
+  reducer revision, and uses receipt-time claims for CLOCK_SKEW (R-14).
+  Historical validity timestamps are not clock-skew probes. Hooks dispatch JSON
+  carries one base64 envelope (R-12); all macro-F1 scoring is instrument-owned
+  (R-13). Product-independent selftests allocate no network listener merely to
+  construct filesystem roots.
 
 `test_dispatch007_selftest.py` exercises the native transitions and regression
-oracles without a product. Catalog controls were re-frozen only for the C9/C15
-ruling changes; ratified numeric thresholds and the human-signature debt remain.
-The scratch report records remaining specification ambiguities, test results,
-and the sandbox restriction preventing a commit in this session.
+oracles without a product, including ten dispatch-008 regression guards.
+Frozen controls retain their dispatch-007 digest; dispatch 008 updates catalog
+wording for R-13/R-14 without changing numeric thresholds or human-signature debt.
+The 008 handover remains in the worktree and an exact scratch patch; Git metadata
+is read-only and the Validator owns application and commit.
 
 ## Reviewer entrypoint
 
@@ -136,16 +147,16 @@ Every assertion cites an exact ratified requirement:
 
 | quantity | value |
 |---|---:|
-| collected by pytest | 249 |
+| collected by pytest | 259 |
 | catalogued obligations | 117 |
 | catalogued thresholds | 482 |
 | kill-ledger rows over frozen controls | 482 |
 | executable pre-execution planters | 35 |
 | detector mutations with a demonstrated escape | 6 |
-| product-independent self-tests | 130 |
+| product-independent self-tests | 140 |
 | unbackreferenced tests | 0 |
 
-Catalog digest `8b0c2dd1365aa5ea`; kill-ledger digest `36c569eba96f48df`;
+Catalog digest `8320395313ff6f00`; kill-ledger digest `b16d7fd1b37174a5`;
 frozen-controls digest `584e528d085ba7f6`;
 instrument-debt digest `99d8a395782c8760`.
 

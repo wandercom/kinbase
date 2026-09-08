@@ -42,6 +42,7 @@ from ._harness.gitfix import GitRepo
 from ._harness.hosts import FULL_FSCK_CEILING_SECONDS, SHARED_EVENT_CEILING
 from ._harness.requirements import (
     VERIFY,
+    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )
@@ -228,7 +229,7 @@ def test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event(
     right_world = SignedWorld(repo=right, steward=world.steward,
                               maintainer=world.maintainer, architect=world.architect)
     left_event = left_world.plant_event(
-        world.architect, store_kind="company", logical_key=key,
+        world.maintainer, store_kind="codebase", logical_key=key,
         statement="the drain order is newest first")
     right_event = right_world.plant_event(
         world.maintainer, store_kind="codebase", logical_key=key,
@@ -236,14 +237,15 @@ def test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event(
     left.push(world.repo.path, "HEAD:refs/heads/incoming-left")
     right.push(world.repo.path, "HEAD:refs/heads/incoming-right")
     world.repo.merge("incoming-left", message="merge one clone")
+    world.repo.merge("incoming-right", message="merge the other clone")
 
     before = _json(_run(guildhall, "explain", key, "--repo", str(world.repo.path),
                         "--decision", "which drain order applies", "--json",
                         cwd=world.repo.path))
-    time.sleep(0.01)
     after_time = _json(_run(guildhall, "explain", key, "--repo", str(world.repo.path),
                             "--decision", "which drain order applies", "--json",
-                            cwd=world.repo.path))
+                            cwd=world.repo.path, env=guildhall.base_env({
+                                "GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "60"})))
 
     world.plant_event(
         world.steward, store_kind="company", logical_key=key,
@@ -348,19 +350,23 @@ def test_case_crlf_normalisation_and_uppercase_alias_are_refused(
     repo.set_config("core.ignorecase", "true")
     repo.set_config("core.autocrlf", "true")
     planted = world.plant_event(
-        world.architect, store_kind="company",
+        world.maintainer, store_kind="codebase",
         logical_key="architecture/scheduler/normalisation",
         statement="paths admit only in lowercase",
     )
     original = (repo.path / planted["path"]).read_bytes()
-    alias = repo.path / planted["path"].replace(
-        planted["digest"], planted["digest"].upper()
-    )
+    alias_rel = ".kin/events/" + planted["path"][len(".kin/events/"):-5].upper() + ".json"
+    alias = repo.path / alias_rel
     alias.parent.mkdir(parents=True, exist_ok=True)
     alias.write_bytes(original)
     repo.install_attributes((), append=False)
     repo.run("add", "-A")
-    repo.commit("record a case-aliased path")
+    # Git trees can represent both names even on a case-insensitive worktree.
+    blob = repo.run("hash-object", "-w", str(alias)).strip()
+    repo.run("update-index", "--add", "--cacheinfo", "100644", blob, alias_rel)
+    repo.run("commit", "-q", "-m", "record a case-aliased path")
+    if not repo.run("ls-tree", "HEAD", "--", alias_rel).strip():
+        raise HarnessInvalid("uppercase alias was not planted in the Git tree")
 
     status = _json(_run(guildhall, "fsck", "--repo", str(repo.path), "--json",
                         cwd=repo.path))
@@ -378,7 +384,7 @@ def test_case_crlf_normalisation_and_uppercase_alias_are_refused(
                 (repo.path / planted["path"]).read_bytes() == original,
             "uppercase_alias_admitted": any(
                 isinstance(field(p, "path"), str)
-                and planted["digest"].upper() in field(p, "path")
+                and field(p, "path") == alias_rel
                 for p in admitted
             ),
             "ineffective_attributes_detected": field(

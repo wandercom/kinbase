@@ -681,7 +681,18 @@ def plant_temporal_history(world: SignedWorld, case: TemporalCase) -> list[dict]
             statement="Disable the scheduling window check entirely.",
             atom_kind="decision", disposition="proposed",
             asserted_at="2026-03-03T00:00:00.000Z", commit=True))
+        # Capture the signed observation while the branch carrying it is checked
+        # out, then publish that proposed observation on the reducer's revision.
+        # The ADR branch remains unmerged; proposed is never accepted/merged.
+        branch_event = planted[-1]
+        branch_bytes = (world.repo.path / branch_event["path"]).read_bytes()
         world.repo.checkout(world.repo.default_branch)
+        target = world.repo.write_bytes(branch_event["path"], branch_bytes)
+        branch_event["witness"] = world._witness_write(
+            target, branch_bytes, branch_event["digest"])
+        world.repo.commit("observe the unmerged branch ADR as proposed")
+        branch_event["witness"].update(
+            head_at_witness=world.repo.head(), tracked_at_witness=True)
     elif case.case_id == "runtime_freshness_lapsed":
         planted.append(world.plant_event(
             DEPLOY_OWNER,
@@ -768,7 +779,7 @@ def plant_v7_corpus(world: SignedWorld) -> list[dict]:
             effective_until=record.effective_until,
             distortion={
                 "trigger": "scheduler diagnosis edit",
-                "loss_if_absent": "high" if record.distortion_rank >= 8 else "low",
+                "loss_if_absent": "safety_critical" if record.distortion_rank >= 8 else "advisory",
                 "rationale": "dependent edit selects the wrong compatibility path",
             },
             commit=False,

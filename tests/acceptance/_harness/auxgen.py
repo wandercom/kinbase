@@ -136,6 +136,18 @@ def serialise(component: dict[str, Any]) -> str:
     return json.dumps(component, indent=1, sort_keys=True)
 
 
+def pool_digest() -> str:
+    """Read the frozen auxiliary pool identity, separate from its recipe."""
+    from pathlib import Path
+    from .requirements import HarnessInvalid
+
+    path = Path(__file__).resolve().parents[2] / "fixtures" / "auxiliary" / "POOL-DIGEST"
+    digest = path.read_text(encoding="utf-8").strip()
+    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise HarnessInvalid("auxiliary POOL-DIGEST must be a lowercase SHA-256")
+    return digest
+
+
 def recipe() -> dict[str, Any]:
     return {
         "schema": "guildhall-acceptance-auxiliary-generation/1",

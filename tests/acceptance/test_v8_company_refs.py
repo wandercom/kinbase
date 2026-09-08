@@ -12,13 +12,10 @@ FactEvents (C7, C22), and constructs each cache-table row by really expiring or
 revoking state and reading the result back. "Uncertified" is constructed by
 withholding the user config and cache, never by deleting a tracked file (C2).
 
-Two conventions this module needs and the ratified field set does not name are
-recorded as spec gaps in the Tester report rather than resolved silently:
+Validator addendum 2 rulings R-8 and R-9 bind these serializations:
 
 * a Company fact's criticality travels in ``distortion.loss_if_absent`` as
-  exactly ``safety_critical`` or ``advisory``, because the ``FactEvent`` field
-  set carries no other loss class and ``spec/architecture.md`` ties distortion
-  to "severity";
+  exactly ``safety_critical`` or ``advisory``;
 * the maintainer-owned ``local_dependence_class`` is a Codebase ``constraint``
   whose logical key is the referencing key plus ``/local_dependence_class`` and
   whose statement is exactly the class token.

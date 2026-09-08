@@ -81,9 +81,9 @@ def parse_predictions(payload: Any) -> dict[str, Prediction]:
         for atom in atoms:
             if not isinstance(atom, Mapping):
                 continue
-            kind = atom.get("kind")
+            kind = atom.get("atom_kind", atom.get("kind"))
             text = atom.get("text")
-            destinations = atom.get("destinations")
+            destinations = atom.get("proposed_destinations", atom.get("destinations"))
             if isinstance(destinations, str):
                 destinations = [destinations]
             if not isinstance(destinations, list):

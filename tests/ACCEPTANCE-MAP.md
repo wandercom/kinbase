@@ -5,14 +5,14 @@ resolved `@spec_ref` backreferences, not test counts; a single test may carry
 several exact citations.
 
 The machine-readable catalog is `tests/fixtures/catalog/obligations.json`
-(digest `8b0c2dd1365aa5ea`): 117 obligations and
+(digest `8320395313ff6f00`): 117 obligations and
 482 thresholds, each freezing a
 threshold, positive control, negative control, product mutation and detector
 mutation. `tests/fixtures/catalog/planters.json` records the 35
 executable pre-execution planters and `tests/fixtures/controls/controls.json` the frozen raw positive and
-negative controls. 249 node ids collect; none is unbackreferenced.
-Kill-ledger digest: `36c569eba96f48df`; frozen-controls digest: `584e528d085ba7f6`.
-The 130 selftest nodes include seven dispatch-007 regression guards.
+negative controls. 259 node ids collect; none is unbackreferenced.
+Kill-ledger digest: `b16d7fd1b37174a5`; frozen-controls digest: `584e528d085ba7f6`.
+The 140 selftest nodes include seven dispatch-007 and ten dispatch-008 regression guards.
 
 Authority precedence (`spec/ratification-manifest.json`):
 `source-request.md > product.md > architecture.md > threat-model.md >

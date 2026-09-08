@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from . import planters
+from . import planters, synth
 from .requirements import HarnessInvalid
 from .worldbuilder import OpaqueIds
 
@@ -107,7 +107,7 @@ def bind_routing_corpus(
     ids = OpaqueIds(seed)
     records: list[dict] = []
     gold: dict[str, dict] = {}
-    for index, message in enumerate(gold_corpus["messages"]):
+    for message in gold_corpus["messages"]:
         text = message["template"]
         for slot in message["canary_slots"]:
             if slot not in canary_values:
@@ -118,7 +118,7 @@ def bind_routing_corpus(
             "id": token,
             "role": "user",
             "text": text,
-            "observed_at": f"2026-03-01T00:{index // 60:02d}:{index % 60:02d}.000Z",
+            "observed_at": synth.receipt_stamp(),
             "source_kind": "codex_jsonl",
         })
         gold[token] = {
@@ -153,13 +153,13 @@ def bind_maintenance_workload(
     records: list[dict] = []
     gold: dict[str, dict] = {}
     for observation in workload["observations"]:
-        token = ids.token(observation["observation_id"])
         window = observation["arrival_window"]
+        token = ids.token(observation["observation_id"])
         records.append({
             "id": token,
             "role": "user",
             "text": _observation_text(observation),
-            "observed_at": f"2026-03-{window + 1:02d}T00:00:00.000Z",
+            "observed_at": synth.receipt_stamp(),
             "source_kind": observation["source_kind"],
         })
         gold[token] = {
@@ -224,7 +224,7 @@ def bind_operator_exercise(
             "id": token,
             "role": "assistant",
             "text": item["rendered_statement"],
-            "observed_at": "2026-03-01T00:00:00.000Z",
+            "observed_at": synth.receipt_stamp(),
             "source_kind": "codex_jsonl",
         })
         gold[token] = {

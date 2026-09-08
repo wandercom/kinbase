@@ -30,6 +30,7 @@ from pathlib import Path
 import pytest
 
 from ._harness import matrix as MX
+from ._harness import synth
 from ._harness import obligations as O
 from ._harness import prereq, scanners, service, trust
 from ._harness.cli import Guildhall
@@ -84,6 +85,7 @@ def surfaces(roots: ProofRoots, anchored) -> MX.SurfaceRoots:
 
 
 def _run(guildhall: Guildhall, *argv: str, cwd: Path, **kwargs):
+    """Forward driver keywords, including stdin/env (dispatch 008 regression)."""
     result = guildhall.run(*argv, cwd=cwd, check=False, **kwargs)
     if result.returncode == 1:
         raise ProductFailure(
@@ -224,7 +226,7 @@ def test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle(
     seeded.write_text(
         json.dumps({"id": "s" + os.urandom(6).hex(), "role": "user",
                     "text": "private marker " + canary,
-                    "observed_at": "2026-03-01T00:00:00.000Z",
+                    "observed_at": synth.receipt_stamp(),
                     "source_kind": "codex_jsonl"}) + "\n",
         encoding="utf-8",
     )
@@ -427,7 +429,7 @@ def test_hard_blocking_taint_is_never_cleared_by_deidentification(
         json.dumps({"id": session, "role": "user",
                     "text": "hard blocking marker " + canary
                             + " and a general scheduling constraint",
-                    "observed_at": "2026-03-01T00:00:00.000Z",
+                    "observed_at": synth.receipt_stamp(),
                     "source_kind": "codex_jsonl"}) + "\n",
         encoding="utf-8",
     )
@@ -472,7 +474,7 @@ def test_paraphrase_only_output_stays_private_by_taint_policy(
     corpus.write_text(
         json.dumps({"id": session, "role": "user",
                     "text": "the marker " + canary + " belongs to me personally",
-                    "observed_at": "2026-03-01T00:00:00.000Z",
+                    "observed_at": synth.receipt_stamp(),
                     "source_kind": "codex_jsonl"}) + "\n",
         encoding="utf-8",
     )
@@ -645,7 +647,7 @@ def test_reconstructor_findings_are_independent_and_content_addressed(
             "reconstructor_finding_digest": reconstructor_digest,
             "sealed_before_comparison": tester_digest != reconstructor_digest,
             "registry_capability_granted": "registry" in reconstructor_view,
-            "auxiliary_corpus_digest": auxgen.recipe()["pool_digest"],
+            "auxiliary_corpus_digest": auxgen.pool_digest(),
             "exact_recovery": {"cells": len(exact_recovery)},
             "semantic_guesses": {"count": 0,
                                  "reported_separately_from_exact_recovery": True},

@@ -264,27 +264,47 @@ def assert_projection_envelope(payload: Mapping[str, Any]) -> None:
 
 
 def decode_length_prefixed(payload: bytes) -> list[dict[str, Any]]:
-    """Parse the length-prefixed canonical JSON envelope stream.
+    """Decode complete decimal-length/newline canonical envelopes; reject tails."""
+    from . import canonical
 
-    ``spec/architecture.md`` section 9: "Their emitted payload is a
-    length-prefixed canonical JSON tool-result envelope whose fact bodies are
-    base64 encoded".
-    """
-    out: list[dict[str, Any]] = []
+    out = []
     offset = 0
-    while offset < len(payload):
-        newline = payload.find(b"\n", offset)
-        if newline == -1:
-            break
-        try:
-            length = int(payload[offset:newline])
-        except ValueError:
-            break
-        start = newline + 1
-        chunk = payload[start : start + length]
-        out.append(json.loads(chunk.decode("utf-8")))
-        offset = start + length
+    try:
+        while offset < len(payload):
+            newline = payload.index(b"\n", offset)
+            prefix = payload[offset:newline]
+            if not prefix.isdigit():
+                raise ValueError("non-decimal length")
+            length = int(prefix)
+            start = newline + 1
+            chunk = payload[start:start + length]
+            if length == 0 or len(chunk) != length:
+                raise ValueError("truncated or empty envelope")
+            document = json.loads(chunk)
+            if not isinstance(document, dict) or canonical.jcs(document) != chunk:
+                raise ValueError("envelope is not a canonical JSON object")
+            out.append(document)
+            offset = start + length
+        if not out:
+            raise ValueError("no envelope")
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise ProductFailure("invalid length-prefixed hook envelope: " + str(exc)) from exc
     return out
+
+
+def decode_dispatch_json(stdout: str) -> list[dict[str, Any]]:
+    """R-12: one host response document carrying a base64 envelope field."""
+    import base64
+    import binascii
+
+    try:
+        response = json.loads(stdout)
+        if not isinstance(response, dict) or not isinstance(response.get("envelope"), str):
+            raise ValueError("missing base64 envelope field")
+        raw = base64.b64decode(response["envelope"], validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise ProductFailure("R-12 hooks dispatch --json: " + str(exc)) from exc
+    return decode_length_prefixed(raw)
 
 
 # --------------------------------------------------------------------------

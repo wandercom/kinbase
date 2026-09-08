@@ -542,7 +542,7 @@
           "positive_control": "V-1.clock-skew#pc:covers:skew_dispositions",
           "product_mutation": "V-1.clock-skew#pm:covers:skew_dispositions",
           "tag": "covers:skew_dispositions",
-          "why": "events outside the five-minute bound quarantine as CLOCK_SKEW"
+          "why": "receipt-time claims outside the five-minute bound quarantine as CLOCK_SKEW (R-14)"
         },
         {
           "bound": [
@@ -1254,7 +1254,7 @@
           "positive_control": "V-2.metrics#pc:is_true:harness_recomputation_agrees",
           "product_mutation": "V-2.metrics#pm:is_true:harness_recomputation_agrees",
           "tag": "is_true:harness_recomputation_agrees",
-          "why": "the instrument's independent recomputation agrees with the report"
+          "why": "macro-F1 equals the instrument mean of per-label F1 (R-13)"
         }
       ],
       "title": "every declared metric is computed",

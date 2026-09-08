@@ -30,6 +30,7 @@ from typing import Any, Mapping
 
 from . import prereq
 from .corpora import BoundCorpus, _emit, load_gold
+from . import synth
 from .worldbuilder import OpaqueIds
 
 CORPUS_NAME = "calibration_corpus.json"
@@ -123,13 +124,13 @@ def bind(destination: Path, *, seed: bytes | None = None) -> BoundCorpus:
     ids = OpaqueIds(seed)
     records: list[dict] = []
     gold: dict[str, dict] = {}
-    for index, message in enumerate(payload["messages"]):
+    for message in payload["messages"]:
         token = ids.token(message["message_id"])
         records.append({
             "id": token,
             "role": "user",
             "text": message["template"],
-            "observed_at": f"2026-02-01T00:{index // 60:02d}:{index % 60:02d}.000Z",
+            "observed_at": synth.receipt_stamp(),
             "source_kind": "codex_jsonl",
         })
         gold[token] = {

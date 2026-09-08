@@ -29,7 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -63,6 +63,7 @@ class LifecycleContext:
     world: Any                      # SignedWorld
     sources: Path                   # native source tree, inside the repo
     external: Path                  # native sources outside the work tree
+    last_transcript: dict[str, str] = dataclass_field(default_factory=dict)
     clock_day: int = 1
     _counter: int = 0
 
@@ -267,6 +268,7 @@ def synth_retention_seconds() -> int:
 def _transcript_missing_source(host: str):
     def run(ctx: LifecycleContext) -> dict:
         path = _latest(ctx, host)
+        ctx.last_transcript[host] = path.stem
         payload = path.read_bytes()
         digest = hashlib.sha256(payload).hexdigest()
         path.unlink()
@@ -298,6 +300,8 @@ def _latest(ctx: LifecycleContext, host: str) -> Path:
 
 
 def _latest_name(ctx: LifecycleContext, host: str) -> str:
+    if host in ctx.last_transcript:
+        return ctx.last_transcript[host]
     files = sorted(_transcript_dir(ctx, host).glob("*.jsonl"))
     if files:
         return files[-1].stem
@@ -397,7 +401,7 @@ def _test_envelope(ctx: LifecycleContext, *, exit_code: int, stdout: str,
     path.parent.mkdir(parents=True, exist_ok=True)
     synth.command_result_envelope(
         path, command=["pytest", "-q", "tests/test_window.py"],
-        exit_code=exit_code, stdout=stdout, observed_at=ctx.stamp(hour=hour),
+        exit_code=exit_code, stdout=stdout, observed_at=synth.receipt_stamp(),
     )
     return path
 
@@ -648,7 +652,8 @@ def _runtime(ctx: LifecycleContext, name: str, *, stdout: str, hour: int,
     path.parent.mkdir(parents=True, exist_ok=True)
     synth.command_result_envelope(
         path, command=["kubectl", "get", "cm", "scheduler", "-o", "json"],
-        exit_code=0, stdout=stdout, observed_at=ctx.stamp(hour=hour),
+        exit_code=0, stdout=stdout, observed_at=synth.receipt_stamp(
+            -240 if name == "obs-6-skew" else -60 if "late" in name else 0),
         environment_id=environment_id, owner=owner,
         effective_until=effective_until,
     )
@@ -690,7 +695,7 @@ def _runtime_late_arrival(ctx: LifecycleContext) -> dict:
 def _runtime_bounded_skew(ctx: LifecycleContext) -> dict:
     path = _runtime(ctx, "obs-6-skew", stdout='{"lookahead_seconds": 240}', hour=0,
                     effective_until=synth._stamp(day=ctx.clock_day + 7))
-    return {"native_path": str(path), "skew_minutes": 240, "bounded": True}
+    return {"native_path": str(path), "skew_minutes": 4, "bounded": True}
 
 
 def _runtime_unregistered_environment(ctx: LifecycleContext) -> dict:
@@ -755,11 +760,11 @@ def _kindex_retract(ctx: LifecycleContext) -> dict:
 
 
 def _kindex_revoke(ctx: LifecycleContext) -> dict:
-    path = _kindex_write(ctx, [_kindex_node(
-        "kx-revocation", "signing key withdrawn", disposition="support_withdrawn",
-        parents=["kx-2"],
-    )])
-    return {"native_path": str(path), "revoked": "kx-2"}
+    # R-10: the fixture runner republishes the authority registry. A native
+    # support_withdrawn row would not exercise an authority revocation.
+    return {"native_path": str(_kindex_path(ctx)),
+            "registry_revoke": ctx.world.maintainer.authority_id,
+            "tree_unchanged_is_the_point": "revocation occurs in the external registry"}
 
 
 def _kindex_expire(ctx: LifecycleContext) -> dict:
@@ -842,17 +847,10 @@ def _answer_unparented_conflict(ctx: LifecycleContext) -> dict:
 
 
 def _answer_revoke(ctx: LifecycleContext) -> dict:
-    payload = synth.authority_answer(
-        ctx.world.architect, question_id="q-lookahead-1",
-        answer="", rationale="the answering key is withdrawn at this cursor",
-    )
-    payload["revocation"] = {"authority_id": ctx.world.architect.authority_id,
-                             "cursor": "1001"}
-    payload = ctx.world.architect.sign_message("answer", payload)
-    path = _answer_path(ctx, "answer-4")
-    path.write_bytes(canonical.jcs(payload))
-    return {"native_path": str(path), "revoked_authority":
-            ctx.world.architect.authority_id}
+    # Re-read the previously admitted answer after actual registry republication.
+    return {"native_path": str(_answer_path(ctx, "answer-3")),
+            "registry_revoke": ctx.world.architect.authority_id,
+            "tree_unchanged_is_the_point": "revocation occurs in the external registry"}
 
 
 def _answer_late_arrival(ctx: LifecycleContext) -> dict:
@@ -866,7 +864,7 @@ def _answer_late_arrival(ctx: LifecycleContext) -> dict:
     path = _answer_path(ctx, "answer-5-late")
     path.write_bytes(canonical.jcs(payload))
     return {"native_path": str(path), "asserted_hour": 0,
-            "arrived_after": "answer-4"}
+            "arrived_after": "registry revocation"}
 
 
 # ==========================================================================
@@ -1137,6 +1135,27 @@ def verify_table() -> tuple[Cell, ...]:
 
 
 CELL_COUNT = sum(len(v) for v in synth.LIFECYCLE_MATRIX.values())
+
+
+def execution_cells(cells: Sequence[Cell] | None = None) -> tuple[Cell, ...]:
+    """Dispatch 008: deterministic dependencies, with destructive expiry last.
+
+    The ratified declaration stays intact. Missing-source runs before expiry
+    can remove the raw file; restart follows missing-source and precedes expiry.
+    Input enumeration (including pytest collection) cannot change this order.
+    """
+    declared = verify_table()
+    selected = tuple(declared if cells is None else cells)
+    if {c.key for c in selected} != {c.key for c in declared} or len(selected) != len(declared):
+        raise HarnessInvalid("lifecycle execution requires all 64 declared cells")
+    order = {c.key: i for i, c in enumerate(declared)}
+    for adapter in ("codex_jsonl", "claude_jsonl"):
+        names = ("create", "append", "edited/duplicate event",
+                 "end" if adapter == "codex_jsonl" else "stop",
+                 "missing source", "restart", "raw expiry")
+        first = order[adapter + "::create"]
+        order.update({adapter + "::" + name: first + i for i, name in enumerate(names)})
+    return tuple(sorted(selected, key=lambda c: order[c.key]))
 
 
 def by_adapter() -> dict[str, tuple[Cell, ...]]:

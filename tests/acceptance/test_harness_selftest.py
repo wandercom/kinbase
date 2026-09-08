@@ -1023,7 +1023,12 @@ def test_trust_installers_run_without_the_product(roots) -> None:
 
     # Validator ruling C1: the launcher user config is written with exactly
     # the spec/cli.md keys, mode 0600, under the isolated XDG root.
-    classifier = trust.resolve_classifier(roots)
+    from types import SimpleNamespace
+    # Instrument-only executable fixture: it is pinned but never spawned.
+    executable = roots.client_root / "classifier-fixture"
+    executable.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+    executable.chmod(0o700)
+    classifier = trust.resolve_classifier(roots, SimpleNamespace(entrypoint=(str(executable),)))
     config, token = trust.write_user_config(
         roots, company_url="http://127.0.0.1:1", facts_token="facts-selftest",
         root_key=root_key, classifier=classifier,

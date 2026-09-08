@@ -46,7 +46,7 @@ from ._harness.requirements import (
     spec_ref,
 )
 from ._harness.roots import ProofRoots
-from ._harness.worldbuilder import SignedWorld
+from ._harness.worldbuilder import SignedWorld, start_session, temporal_extra_authorities, DEPLOY_OWNER, OpaqueIds
 
 pytestmark = [pytest.mark.v1, pytest.mark.requires_product]
 
@@ -93,7 +93,7 @@ def anchored(roots: ProofRoots, guildhall: Guildhall):
     # the never_true withdrawal from either must still be refused.
     anchors = trust.establish(
         guildhall, roots, world,
-        extra_authorities=tuple((a, "approver:local") for a in APPROVERS),
+        extra_authorities=tuple((a, "approver:local") for a in APPROVERS) + temporal_extra_authorities(),
     )
     sources = roots.repo_root / "sources"
     sources.mkdir(parents=True, exist_ok=True)
@@ -108,11 +108,18 @@ def matrix(anchored, guildhall: Guildhall):
     """All 64 ratified cells, executed natively, with per-cell witnesses."""
     world, anchors, ctx = anchored
     trust.classifier_pinned(anchors, what="V-1 native source extraction")
-    cells = L.verify_table()
+    cells = L.execution_cells()
     witnesses: dict[str, dict] = {}
     for cell in cells:
         before = _status(guildhall, world.repo.path)
         witness = cell.run(ctx)
+        revoked_entry = None
+        if witness.get("registry_revoke"):
+            authority_id = witness["registry_revoke"]
+            revoked_entry = anchors.registry.entry_for(authority_id)
+            signer = world.maintainer if authority_id == world.maintainer.authority_id else world.architect
+            witness["registry_publication"] = anchors.revoke(
+                signer, cursor=str(int(anchors.registry.cursor) + 1))
         target_repo = Path(witness.get("clone", world.repo.path))
         source = ctx.sources / SOURCE_ROOTS[cell.adapter]
         if cell.adapter == "repo_code":
@@ -128,6 +135,10 @@ def matrix(anchored, guildhall: Guildhall):
             witness["replay_status"] = _status(guildhall, target_repo)
         witness["derived"] = LO.derive(cell, witness, before, after)
         witnesses[cell.key] = witness
+        if revoked_entry is not None:
+            # Subsequent independent cells use a newly published authority epoch.
+            anchors.registry.entries.append(revoked_entry)
+            anchors.republish_registry(cursor=str(int(anchors.registry.cursor) + 1))
     prereq.corpus_at_scale(
         len(witnesses), L.CELL_COUNT, what="adapter lifecycle matrix",
         why="spec/verification.md V-1 freezes a table that sums to 64 cells",
@@ -481,58 +492,80 @@ def test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors(
     guildhall: Guildhall, anchored
 ) -> None:
     world, anchors, ctx = anchored
-    stores = {"personal": "personal", "company": "company", "codebase": "codebase"}
-    for cursor in CURSORS:
-        base = f"architecture/scheduler/{cursor}-window"
-        world.plant_event(
-            world.architect if cursor != "codebase" else world.maintainer,
-            store_kind=stores[cursor], logical_key=base,
-            statement="the window is 568 seconds",
-            asserted_at=synth._stamp(day=2, hour=12),
-        )
-        world.plant_event(
-            world.architect if cursor != "codebase" else world.maintainer,
-            store_kind=stores[cursor], logical_key=base,
-            statement="the window is 300 seconds",
-            asserted_at=synth._stamp(day=2, hour=6),
-        )
-        world.plant_event(
-            world.architect if cursor != "codebase" else world.maintainer,
-            store_kind=stores[cursor], logical_key=base,
-            statement="the window is 90 seconds",
-            asserted_at=synth._stamp(day=9, hour=0),
-        )
-    world.verify_planted()
-    _ingest(guildhall, world.repo.path, "kindex", world.repo.path / ".kin")
-    status = _status(guildhall, world.repo.path)
+    # R-14: mutate receipt times, never historical validity dates. Personal
+    # uses native observations, Codebase uses runtime observation envelopes,
+    # Company uses signed request expiry (C7 forbids Personal FactEvents).
+    import json
 
-    reported = status.get("cursor_skew")
-    by_cursor = {}
-    if isinstance(reported, list):
-        for entry in reported:
-            if isinstance(entry, dict) and entry.get("cursor") in stores:
-                by_cursor[entry["cursor"]] = entry
-    detail = [
-        {
-            "cursor": cursor,
-            "positive_skew_quarantined": field(
-                by_cursor, cursor, "positive_skew_quarantined"),
-            "negative_skew_quarantined": field(
-                by_cursor, cursor, "negative_skew_quarantined"),
-            "out_of_order_handled": field(by_cursor, cursor, "out_of_order_handled"),
-        }
-        for cursor in CURSORS
-    ]
-    dispositions = status.get("skew_dispositions")
-    O.check(
-        "V-1.clock-skew",
-        {
-            "skew_dispositions": dispositions if isinstance(dispositions, list) else [],
-            "cursors_exercised": sorted(by_cursor),
-            "cursors_exercised_detail": detail,
-        },
-        label="skew and out-of-order across all three cursors",
-    )
+    def codes(payload):
+        if isinstance(payload, dict):
+            return {v for k, v in payload.items()
+                    if k in ("code", "disposition", "state") and isinstance(v, str)} | set().union(
+                        *(codes(v) for v in payload.values()))
+        if isinstance(payload, list):
+            return set().union(*(codes(v) for v in payload))
+        return set()
+
+    detail = []
+    identities = OpaqueIds()
+    all_codes = set()
+    for cursor in CURSORS:
+        outcomes = {}
+        # Both in-bound arrivals are delivered newest first. Two out-of-bound
+        # claims exercise both polarities without depending on exact boundaries.
+        session = start_session(guildhall, world.repo.path) if cursor == "personal" else None
+        for label, offset in (("newer", 0), ("older", -60), ("positive", 600), ("negative", -600)):
+            token = identities.token(cursor + "/" + label)
+            if cursor == "company":
+                response = anchors.client.get("/facts", expires_in=60 if abs(offset) < 300 else offset)
+                payload = response.json
+                success = response.status == 200
+                if abs(offset) < 300:
+                    event = world.plant_event(
+                        world.architect, store_kind="company",
+                        logical_key="architecture/scheduler/" + identities.token("company-history"),
+                        statement="the scheduler window is " + ("568" if label == "newer" else "300"),
+                        asserted_at=synth._stamp(day=2 if label == "newer" else 1),
+                    )
+                    success = success and bool(event.get("document"))
+            elif cursor == "personal":
+                path = ctx.external / (token + ".jsonl")
+                path.write_text(json.dumps({
+                    "id": token, "role": "user", "text": "I prefer quiet notifications " + token,
+                    "source_kind": "codex_jsonl", "observed_at": synth.receipt_stamp(offset),
+                }) + "\n", encoding="utf-8")
+                result = guildhall.run("session", "observe", session, "--event", str(path),
+                                      "--json", cwd=world.repo.path, check=False)
+                payload, success = result.json, result.returncode == 0
+            else:
+                path = ctx.sources / "runtime" / (token + ".json")
+                synth.command_result_envelope(
+                    path, command=["printf", token], exit_code=0, stdout=token,
+                    observed_at=synth.receipt_stamp(offset),
+                    environment_id="prod-eu", owner=DEPLOY_OWNER.authority_id,
+                )
+                result = guildhall.run("ingest", "runtime_evidence", str(path),
+                                      "--repo", str(world.repo.path), "--json",
+                                      cwd=world.repo.path, check=False)
+                payload, success = result.json, result.returncode == 0
+            observed_codes = codes(payload)
+            all_codes.update(observed_codes)
+            outcomes[label] = "CLOCK_SKEW" in observed_codes if abs(offset) > 300 else (
+                success and "CLOCK_SKEW" not in observed_codes)
+        # Preserve the existing ordering obligation as well as witnessing both
+        # valid deliveries; successful command exits alone do not prove ordering.
+        cursor_report = next((row for row in rows(_status(guildhall, world.repo.path), "cursor_skew")
+                              if field(row, "cursor") == cursor), {})
+        detail.append({"cursor": cursor,
+                       "positive_skew_quarantined": outcomes["positive"],
+                       "negative_skew_quarantined": outcomes["negative"],
+                       "out_of_order_handled": outcomes["newer"] and outcomes["older"]
+                       and field(cursor_report, "out_of_order_handled") is True})
+    O.check("V-1.clock-skew", {
+        "skew_dispositions": sorted(all_codes),
+        "cursors_exercised": [row["cursor"] for row in detail],
+        "cursors_exercised_detail": detail,
+    }, label="receipt-time skew on all three cursors (R-14)")
 
 
 @spec_ref(

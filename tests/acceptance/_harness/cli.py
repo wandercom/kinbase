@@ -165,6 +165,11 @@ class Result:
                 f"empty stdout for {' '.join(self.argv)} (exit {self.returncode});"
                 f" stderr={self.stderr[:2000]!r}"
             )
+        if self.returncode == 0 and "--json" in self.argv and any(
+                self.argv[i:i + 2] == ("hooks", "dispatch")
+                for i in range(len(self.argv) - 1)):
+            from .hosts import decode_dispatch_json
+            decode_dispatch_json(text)
         try:
             return json.loads(text)
         except json.JSONDecodeError:

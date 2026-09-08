@@ -479,7 +479,7 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
     batch.write_text(
         "\n".join(
             json.dumps({"id": "b" + str(i), "role": "user", "text": "t",
-                        "observed_at": "2026-03-01T00:00:00.000Z",
+                        "observed_at": synth.receipt_stamp(),
                         "source_kind": "codex_jsonl"})
             for i in range(OBSERVATION_BATCH_ITEMS + 1)
         ) + "\n",
@@ -547,7 +547,7 @@ def test_candidate_lifetime_and_private_retention_are_enforced(
     corpus.write_text(
         json.dumps({"id": "m" + os.urandom(6).hex(), "role": "user",
                     "text": "the retry ceiling is four attempts per hour",
-                    "observed_at": "2026-03-01T00:00:00.000Z",
+                    "observed_at": synth.receipt_stamp(),
                     "source_kind": "codex_jsonl"}) + "\n",
         encoding="utf-8",
     )

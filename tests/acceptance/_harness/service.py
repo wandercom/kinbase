@@ -28,6 +28,7 @@ import http.client
 import json
 import socket
 import subprocess
+import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Mapping
@@ -195,7 +196,8 @@ class ServiceClient:
         if sign:
             nonce = self.next_nonce()
             expires_at = time.strftime(
-                "%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + expires_in)
+                "%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + expires_in +
+                    int(os.environ.get("GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS", "0")))
             )
             headers["X-Guildhall-Nonce"] = nonce
             headers["X-Guildhall-Expires-At"] = expires_at

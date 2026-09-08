@@ -13,8 +13,7 @@ product now supplies only raw per-message predictions under opaque identifiers;
 :mod:`acceptance._harness.metrics` joins them to Tester-held gold and computes
 macro-F1, per-label precision/recall/F1, shared precision, exact-match
 atomisation, private-to-shared detection and abstention itself. The product's
-own reported figures are compared against the harness figures, and a
-disagreement is a product failure.
+predictions are scored only by the instrument (Validator R-13).
 
 *Pre-opaque identifiers.* Mixed-message lookups used the frozen ``m###`` ids, so
 an implementation could memorise the answer key. Every lookup now goes through
@@ -106,7 +105,8 @@ def gold_corpus() -> dict:
 @pytest.fixture()
 def anchored(roots: ProofRoots, guildhall: Guildhall):
     world = SignedWorld.create(roots.repo_root)
-    anchors = trust.establish(guildhall, roots, world)
+    anchors = trust.establish(guildhall, roots, world,
+                              classifier_model="ollama:qwen2.5:7b")
     trust.classifier_pinned(anchors, what="V-2 classification")
     return world, anchors
 
@@ -140,6 +140,8 @@ def _observe(guildhall: Guildhall, repo: Path, corpus: Path, session: str) -> di
     payload = result.json
     if not isinstance(payload, dict):
         raise ProductFailure("`session observe --json` did not return an object")
+    if result.returncode == 0:
+        trust.verify_classifier_spawn(guildhall, repo)
     return payload
 
 
@@ -170,7 +172,7 @@ def _run_pool(guildhall: Guildhall, repo: Path, corpus, *, runs: int,
         reported.append({
             "run": index,
             "model_fingerprint": field(observed, "classifier", "fingerprint"),
-            "macro_f1": field(listing, "metrics", "macro_f1"),
+            "macro_f1": joins[-1].macro_f1(),
         })
     return joins, reported
 
@@ -401,7 +403,7 @@ def test_exact_match_atomization_and_per_label_metrics(
             "private_to_shared_detection": join.private_to_shared_detection(),
             "calibration_and_abstention": join.calibration_and_abstention(),
             "harness_recomputation_agrees": metrics.agrees(
-                field(listing, "metrics", "macro_f1"), join.macro_f1(),
+                sum(row["f1"] for row in computed) / len(computed), join.macro_f1(),
                 tolerance=0.005),
         },
         label="harness-computed per-label metrics",

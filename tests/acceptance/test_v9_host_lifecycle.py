@@ -143,6 +143,16 @@ def test_hooks_plan_is_read_only_and_install_requires_native_approval(
     host_binary: hosts.HostBinary
 ) -> None:
     world, anchors = anchored
+    # R-7 supersedes C9's old exit-2 wording. Every bypass is a typed
+    # usage refusal, with no user or repository state changes.
+    for forbidden in ("--approve", "--yes", "--all", "--accept-all",
+                      "--yes-to-all", "--unlisted-008"):
+        before_usage = (_tree(roots.home), _tree(world.repo.path))
+        refusal = _run(guildhall, "hooks", "install", host, forbidden, "--json",
+                       cwd=world.repo.path)
+        refusal.refused("CONFIG_INVARIANT")
+        if before_usage != (_tree(roots.home), _tree(world.repo.path)):
+            raise ProductFailure("R-7 unknown hook-install flag changed state: " + forbidden)
     before = _tree(roots.home)
     text_before = {str(p.relative_to(roots.home)): p.read_text(errors="replace")
                    for p in roots.home.rglob("*") if p.is_file()}
