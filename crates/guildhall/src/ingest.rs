@@ -56,15 +56,19 @@ pub fn ingest(
         ));
     }
     let bytes = read_source(source_kind, source)?;
-    let records = parse_native(source_kind, &bytes).map_err(|message| {
-        ContractError::new(
-            "CONFIG_INVARIANT",
-            message,
-            "Use a valid native source envelope.",
-            false,
-            ExitCode::Refused,
-        )
-    })?;
+    let records = if source_kind == "kindex" {
+        parse_kindex_events(&bytes)?
+    } else {
+        parse_native(source_kind, &bytes).map_err(|message| {
+            ContractError::new(
+                "CONFIG_INVARIANT",
+                message,
+                "Use a valid native source envelope.",
+                false,
+                ExitCode::Refused,
+            )
+        })?
+    };
     if records.len() > MAX_ITEMS {
         return Err(ContractError::new(
             "LIMIT_EXCEEDED",
@@ -75,10 +79,11 @@ pub fn ingest(
         ));
     }
     let store = store_for_source(source_kind);
-    let root = crate::store::ensure_store_root(store, repo)?;
-    if matches!(store, crate::StoreKind::Personal) {
-        crate::store::write_private_body(&root, &bytes)?;
-    }
+    // Runtime observations, atoms, and raw source bytes are always private.
+    // `store` remains the semantic destination for signed fact events only.
+    let journal_store = crate::StoreKind::Personal;
+    let journal_root = crate::store::ensure_store_root(journal_store, repo)?;
+    crate::store::write_private_body(&journal_root, &bytes)?;
     let repository_id = (store == crate::StoreKind::Codebase)
         .then(|| crate::repository::repository_id(repo))
         .transpose()?;
@@ -141,7 +146,7 @@ pub fn ingest(
             owner_id: None,
             lifecycle: "observed".to_owned(),
         };
-        let existing = crate::store::read_records(store, repo, "observations.jsonl")
+        let existing = crate::store::read_records(journal_store, repo, "observations.jsonl")
             .unwrap_or_default()
             .into_iter()
             .find(|value| {
@@ -154,14 +159,14 @@ pub fn ingest(
         let observation_value = serde_json::to_value(&observation)
             .map_err(|error| ContractError::internal(error.to_string()))?;
         mark_changed_source(
-            store,
+            journal_store,
             repo,
             &source_identity,
             &record.native_id,
             &digest,
             &now,
         )?;
-        crate::store::append_record(store, repo, "observations.jsonl", &observation_value)?;
+        crate::store::append_record(journal_store, repo, "observations.jsonl", &observation_value)?;
         observation_count += 1;
         reported_observations.push(json!({
             "source_kind": source_kind,
@@ -213,7 +218,7 @@ pub fn ingest(
         for atom in atoms {
             let atom_value = serde_json::to_value(&atom)
                 .map_err(|error| ContractError::internal(error.to_string()))?;
-            crate::store::append_record(store, repo, "atoms.jsonl", &atom_value)?;
+            crate::store::append_record(journal_store, repo, "atoms.jsonl", &atom_value)?;
             atom_count += 1;
             let eligible = store != crate::StoreKind::Personal
                 && trust_class == "merged-default"
@@ -520,6 +525,72 @@ fn apply_classifier_atom(
     if let Some(value) = external.get("unresolved_uncertainty").and_then(Value::as_str) {
         atom.unresolved_uncertainty = (!value.is_empty()).then(|| value.to_owned());
     }
+}
+
+/// Validate `.kin/events/` as signed FactEvents. Malformed data-model bytes
+/// and invalid signatures are counted typed integrity failures; neither can
+/// reach the canonical renderer or panic.
+fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError> {
+    let text = std::str::from_utf8(bytes).map_err(|error| {
+        ContractError::integrity(
+            "DIGEST_MISMATCH",
+            format!("kindex event source is not valid UTF-8 ({})", error.valid_up_to()),
+            "Quarantine the malformed event; no bytes were admitted.",
+        )
+        .with_detail(json!({"malformed_count": 1}))
+    })?;
+    let mut records = Vec::new();
+    let mut malformed = Vec::new();
+    let mut invalid_signatures = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        match FactEvent::parse(line.as_bytes()) {
+            Ok(event) => {
+                if event.verify_signature().is_none() {
+                    invalid_signatures.push(index + 1);
+                    continue;
+                }
+                records.push(NativeRecord {
+                    native_id: event.event_id.clone(),
+                    statement: event.statement.clone(),
+                    scope: event.authority_scope.clone(),
+                    confidence: event.confidence.0,
+                    disposition: event.disposition.clone(),
+                    asserted_at: Some(event.asserted_at.clone()),
+                    effective_from: Some(event.effective_from.clone()),
+                    effective_until: event.effective_until.clone(),
+                });
+            }
+            Err(_) => malformed.push(index + 1),
+        }
+    }
+    if !malformed.is_empty() {
+        return Err(ContractError::integrity(
+            "DIGEST_MISMATCH",
+            format!("{} kindex event(s) violate the FactEvent data model", malformed.len()),
+            "Quarantine the malformed events; no bytes were admitted.",
+        )
+        .with_detail(json!({"malformed_count": malformed.len(), "line_numbers": malformed})));
+    }
+    if !invalid_signatures.is_empty() {
+        return Err(ContractError::integrity(
+            "SIGNATURE_INVALID",
+            format!("{} kindex event(s) have invalid signatures", invalid_signatures.len()),
+            "Quarantine the unsigned or forged events; no bytes were admitted.",
+        )
+        .with_detail(json!({"signature_invalid_count": invalid_signatures.len(), "line_numbers": invalid_signatures})));
+    }
+    if records.is_empty() {
+        return Err(ContractError::integrity(
+            "DIGEST_MISMATCH",
+            "kindex event source contains no FactEvents",
+            "Point the kindex adapter at a repository `.kin/events/` tree.",
+        )
+        .with_detail(json!({"malformed_count": 0, "event_count": 0})));
+    }
+    Ok(records)
 }
 
 fn parse_native(source_kind: &str, bytes: &[u8]) -> Result<Vec<NativeRecord>, String> {

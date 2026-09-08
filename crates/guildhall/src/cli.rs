@@ -225,7 +225,14 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             crate::session::start(&repo, host_kind(host), json).map_err(internal)?;
         }
         Command::Session(SessionCommand::Observe { session, event }) => {
-            crate::session::observe(launcher.shared.classifier.as_ref(), &session, &event, json).map_err(internal)?;
+            crate::session::observe(
+                launcher.shared.classifier.as_ref(),
+                launcher.shared.principal_id.as_str(),
+                launcher.shared.host_instance_id.as_str(),
+                &session,
+                &event,
+                json,
+            ).map_err(internal)?;
         }
         Command::Session(SessionCommand::Checkpoint { session }) => {
             crate::session::checkpoint(&session, json).map_err(internal)?;

@@ -680,6 +680,14 @@ impl PrivateStore {
             .unwrap_or(0);
         if consecutive >= CONSECUTIVE_LIMIT {
             self_bump(&transaction, "suppressed")?;
+            // The suppressed opportunity itself breaks the consecutive run,
+            // allowing a fourth non-consecutive slot within the hourly cap.
+            transaction
+                .execute(
+                    "UPDATE consecutive SET count=0, updated_at=?3 WHERE principal_id=?1 AND host_instance_id=?2",
+                    params![principal_id, host_instance_id, now],
+                )
+                .map_err(sqlite_error("reset consecutive after suppression"))?;
             transaction.commit().map_err(sqlite_error("commit"))?;
             return Err(ContractError::limit(
                 "three consecutive shared prompts were surfaced without returning to the primary task",

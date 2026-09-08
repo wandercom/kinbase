@@ -55,7 +55,13 @@ fn deterministic(document: &Value) -> Result<Value, ContractError> {
         let body = map.get("body").and_then(Value::as_str).unwrap_or_default();
         let base = base_confidence(map);
         for sentence in sentences(body) {
-            atoms.push(atom_from_observation(map, &sentence, base));
+            let confidence = if base == "low" {
+                "low"
+            } else {
+                let hedged = sentence_confidence(&sentence);
+                if base == "medium" && hedged == "high" { "medium" } else { hedged }
+            };
+            atoms.push(atom_from_observation(map, &sentence, confidence));
         }
     }
     Ok(json!({
@@ -222,6 +228,44 @@ fn base_confidence(map: &Map<String, Value>) -> &'static str {
     }
 }
 
+fn sentence_confidence(text: &str) -> &'static str {
+    let lower = text.to_lowercase();
+    const HEDGES: [&str; 16] = [
+        "maybe", "perhaps", "possibly", "probably", "might", "could",
+        "seems", "appears", "not sure", "unclear", "uncertain", "i think",
+        "we think", "as far as i know", "not certain", "hedged",
+    ];
+    if HEDGES.iter().any(|hedge| lower.contains(hedge)) {
+        "low"
+    } else if lower.contains("likely") || lower.contains("should") {
+        "medium"
+    } else {
+        "high"
+    }
+}
+
+fn is_company_statement(lower: &str) -> bool {
+    [
+        "architecture", "company policy", "organization", "company-wide",
+        "corporate", "product policy", "standard", "governance", "roadmap",
+        "company decision", "all teams", "every team",
+    ]
+    .iter()
+    .any(|token| lower.contains(token))
+}
+
+fn is_codebase_statement(lower: &str) -> bool {
+    [
+        "repository", "codebase", "code", "function", "module", "test",
+        "tests", "build", "dependency", "dependencies", "api", "schema",
+        "migration", "service", "scheduler", "worker", "queue", "bug",
+        "compiler", "type", "interface", "library", "branch", "commit",
+        "deployment", "config", "configuration", "database",
+    ]
+    .iter()
+    .any(|token| lower.contains(token))
+}
+
 fn sentences(body: &str) -> Vec<String> {
     let normalized = body.replace(['\r', '\n'], ". ");
     let mut output = Vec::new();
@@ -263,22 +307,19 @@ fn atom_from_observation(map: &Map<String, Value>, text: &str, confidence: &str)
     }
     let mut destinations = destination_boundary(source_kind);
     let lower = text.to_lowercase();
-    if confidence != "low" && !hard_block {
-        if lower.contains("architecture") || lower.contains("company policy") || scope.contains("company") {
+    if !hard_block && confidence != "low" {
+        if is_company_statement(&lower) || scope.contains("company") {
             push_unique(&mut destinations, "company");
         }
-        if lower.contains("repository") || lower.contains("codebase") || lower.contains("test") || scope.contains("repository") {
+        if is_codebase_statement(&lower) || scope.contains("repository") {
             push_unique(&mut destinations, "codebase");
         }
     }
     if hard_block {
-        destinations.retain(|destination| destination == "personal" || destination == "none");
-    }
-    if confidence == "low" {
+        destinations = vec!["none".to_owned()];
+    } else if confidence == "low" {
         destinations.retain(|destination| destination == "personal");
-        if destinations.is_empty() {
-            destinations.push("none".to_owned());
-        }
+        push_unique(&mut destinations, "none");
     }
     if destinations.is_empty() {
         destinations.push("none".to_owned());
@@ -318,13 +359,25 @@ fn destination_boundary(source_kind: &str) -> Vec<String> {
 
 fn infer_kind(text: &str) -> &'static str {
     let lower = text.to_lowercase();
-    if lower.contains('?') {
+    if lower.contains('?') || lower.starts_with("what ") || lower.starts_with("why ") || lower.starts_with("how ") {
         "question"
-    } else if lower.contains("must") || lower.contains("required") || lower.contains("never") {
+    } else if [
+        "must", "required", "shall", "always", "never", "do not",
+        "don't", "only", "forbid", "forbidden", "ensure",
+    ]
+    .iter()
+    .any(|token| lower.contains(token))
+    {
         "constraint"
-    } else if lower.contains("because") || lower.contains("rationale") {
+    } else if lower.contains("because") || lower.contains("rationale") || lower.contains("the reason is") {
         "rationale"
-    } else if lower.contains("use ") || lower.contains("choose ") || lower.contains("decide") {
+    } else if [
+        "we decided", "decision", "we choose", "we chose", "use ",
+        "adopt", "selected", "preferred approach", "agreed to",
+    ]
+    .iter()
+    .any(|token| lower.contains(token))
+    {
         "decision"
     } else {
         "claim"

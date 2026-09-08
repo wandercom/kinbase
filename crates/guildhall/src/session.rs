@@ -6,7 +6,7 @@ use crate::time::{format_rfc3339_millis, now_rfc3339_millis};
 use chrono::{Duration, Utc};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -90,23 +90,13 @@ pub fn record_hook_observation(
 
 pub fn observe(
     classifier: Option<&crate::config::SharedClassifier>,
+    principal_id: &str,
+    host_instance_id: &str,
     session: &str,
     event: &Path,
     json: bool,
 ) -> Result<(), ContractError> {
-    let sessions = personal_records("sessions.jsonl");
-    sessions
-        .into_iter()
-        .find(|record| record.get("session_id").and_then(Value::as_str) == Some(session))
-        .ok_or_else(|| {
-            ContractError::new(
-                "CONFIG_INVARIANT",
-                "session not found",
-                "Start a session before observing events.",
-                false,
-                ExitCode::Refused,
-            )
-        })?;
+    ensure_session_record(session)?;
     let bytes = std::fs::read(event).map_err(io_error)?;
     let records = parse_session_corpus(&bytes)?;
     if records.len() > SESSION_OBSERVATION_LIMIT {
@@ -203,7 +193,7 @@ pub fn observe(
                 )?);
             }
         }
-        if atoms.is_empty() && classifier.is_none() {
+        if atoms.is_empty() {
             atoms.push(crate::classify::atomize(
                 "codex_jsonl",
                 native_id,
@@ -216,33 +206,32 @@ pub fn observe(
             ));
         }
         for atom in atoms {
-            let suppressed = atom.hard_blocked;
-            let destinations: Vec<String> = if suppressed {
-                Vec::new()
-            } else {
-                atom.eligible_destinations
-                    .iter()
-                    .filter(|destination| destination.as_str() != "personal" && destination.as_str() != "none")
-                    .cloned()
-                    .collect()
-            };
-            let destinations = if suppressed && destinations.is_empty() {
-                vec![repository_id
-                    .as_ref()
-                    .map(|id| format!("codebase:{id}"))
-                    .unwrap_or_else(|| "company:root".to_owned())]
-            } else {
-                destinations
-            };
+            // Hard-blocked material never has a shared candidate, including
+            // a Personal candidate: the only reported destination is `none`.
+            if atom.hard_blocked {
+                atom_records.push(
+                    serde_json::to_value(&atom)
+                        .map_err(|error| ContractError::internal(error.to_string()))?,
+                );
+                continue;
+            }
+            let destinations = atom
+                .eligible_destinations
+                .iter()
+                .filter(|destination| destination.as_str() != "none")
+                .cloned()
+                .collect::<Vec<_>>();
             for destination in destinations {
-                let destination = if destination == "company" { "company:root".to_owned() } else { destination };
-                candidate_records.push(build_candidate(
-                    session,
-                    &destination,
-                    &atom,
-                    native_id,
-                    crate::proposals::prompt_budget_allows(),
-                )?);
+                let destination = if destination == "company" {
+                    "company:root".to_owned()
+                } else {
+                    destination
+                };
+                let mut candidate = build_candidate(session, &destination, &atom, native_id, false)?;
+                let rendered = reserve_candidate_prompt(&candidate, principal_id, host_instance_id)?;
+                candidate["rendered"] = Value::Bool(rendered);
+                candidate["suppressed"] = Value::Bool(!rendered);
+                candidate_records.push(candidate);
             }
             atom_records.push(
                 serde_json::to_value(&atom)
@@ -276,6 +265,61 @@ pub fn observe(
     });
     print_value(&result, json);
     Ok(())
+}
+
+/// A host session token is caller-supplied and opaque.  Record it as active
+/// when it has not been seen before so Stop/SessionEnd can checkpoint it.
+fn ensure_session_record(session: &str) -> Result<(), ContractError> {
+    if personal_records("sessions.jsonl").into_iter().any(|record| {
+        record.get("session_id").and_then(Value::as_str) == Some(session)
+            && record.get("status").and_then(Value::as_str) != Some("ended")
+    }) {
+        return Ok(());
+    }
+    let repo = std::env::current_dir().map_err(io_error)?;
+    let record = json!({
+        "session_id": session,
+        "host": "codex",
+        "repository_id": crate::repository::repository_id(&repo).ok(),
+        "started_at": now_rfc3339_millis(),
+        "status": "started",
+        "caller_supplied": true
+    });
+    append_personal("sessions.jsonl", &record)
+}
+
+/// Reserve one display slot in the private Core shard.  A typed budget
+/// refusal means this eligible candidate remains private and suppressed; it
+/// is never an observation failure.
+fn reserve_candidate_prompt(
+    record: &Value,
+    principal_id: &str,
+    host_instance_id: &str,
+) -> Result<bool, ContractError> {
+    let candidate_id = record.get("candidate_id").and_then(Value::as_str).unwrap_or_default();
+    let destination = record.get("destination").and_then(Value::as_str).unwrap_or_default();
+    let content_digest = record.get("payload_digest").and_then(Value::as_str).unwrap_or_default();
+    let source_revision = record.get("source_revision").and_then(Value::as_str).unwrap_or_default();
+    let principal = principal_id.to_owned();
+    let host_instance = host_instance_id.to_owned();
+    let now = now_rfc3339_millis();
+    let mut core = crate::private::PrivateStore::open_core()?;
+    match core.reserve_prompt_slot(
+        &principal,
+        &host_instance,
+        destination,
+        candidate_id,
+        content_digest,
+        source_revision,
+        &now,
+    ) {
+        Ok(_) => {
+            core.mark_reservation(candidate_id, "rendered")?;
+            Ok(true)
+        }
+        Err(error) if error.code == "LIMIT_EXCEEDED" => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 fn parse_session_corpus(bytes: &[u8]) -> Result<Vec<Map<String, Value>>, ContractError> {
@@ -408,16 +452,32 @@ fn atom_from_classifier(
         atom.atom_kind = value.to_owned();
     }
     if let Some(values) = external.get("proposed_destinations").and_then(Value::as_array) {
-        let destinations = values
+        let mut destinations = values
             .iter()
             .filter_map(Value::as_str)
             .map(|value| match value {
-                "codebase" => repository_id.map(|id| format!("codebase:{id}")).unwrap_or_else(|| "codebase".to_owned()),
+                "codebase" => repository_id
+                    .map(|id| format!("codebase:{id}"))
+                    .unwrap_or_else(|| "codebase".to_owned()),
                 other => other.to_owned(),
             })
             .collect::<Vec<_>>();
+        if atom.hard_blocked {
+            destinations = vec!["none".to_owned()];
+        } else if atom.confidence < 6_000 {
+            destinations.retain(|destination| destination == "personal");
+            if !destinations.contains(&"none".to_owned()) {
+                destinations.push("none".to_owned());
+            }
+        }
+        if destinations.is_empty() {
+            destinations.push("none".to_owned());
+        }
         atom.proposed_destinations = destinations.clone();
-        atom.eligible_destinations = destinations;
+        atom.eligible_destinations = destinations
+            .into_iter()
+            .filter(|destination| destination != "none")
+            .collect();
     }
     if let Some(values) = external.get("taint").and_then(Value::as_array) {
         atom.taints = values.iter().filter_map(Value::as_str).map(str::to_owned).collect();
@@ -462,6 +522,7 @@ fn build_candidate(
 ) -> Result<Value, ContractError> {
     crate::proposals::destination_store(destination)?;
     let payload = json!({
+        "destination": destination,
         "atom_kind": atom.atom_kind,
         "scope": atom.scope,
         "statement": atom.statement
@@ -483,9 +544,9 @@ fn build_candidate(
         "created_at": now_rfc3339_millis(),
         "expires_at": format_rfc3339_millis(Utc::now() + Duration::seconds(900)),
         "nonce": Uuid::new_v4().to_string(),
-        "rendered": rendered && !atom.hard_blocked,
-        "suppressed": atom.hard_blocked,
-        "taint_cleared": !atom.hard_blocked,
+        "rendered": rendered,
+        "suppressed": !rendered,
+        "taint_cleared": false,
         "hard_block_respected": true
     });
     let token = json!({
@@ -508,16 +569,71 @@ fn build_candidate(
 }
 
 pub fn checkpoint(session: &str, json: bool) -> Result<(), ContractError> {
-    require_session(session)?;
+    let record = checkpoint_internal(session)?;
+    print_value(&record, json);
+    Ok(())
+}
+
+/// Checkpoint a session without emitting host output.  Stop and SessionEnd
+/// use this path so Personal facts survive the host process.
+pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
+    let observations = personal_records("observations.jsonl")
+        .into_iter()
+        .filter(|record| {
+            record.get("source_identity").and_then(Value::as_str) == Some(&format!("session:{session}"))
+        })
+        .collect::<Vec<_>>();
+    let observation_ids = observations
+        .iter()
+        .filter_map(|record| record.get("observation_id").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    let atoms = personal_records("atoms.jsonl")
+        .into_iter()
+        .filter(|atom| {
+            atom.get("observation_id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| observation_ids.contains(id))
+        })
+        .collect::<Vec<_>>();
+    let mut core = crate::private::PrivateStore::open_core()?;
+    let now = now_rfc3339_millis();
+    let mut personal_fact_count = 0;
+    for atom in &atoms {
+        let personal = atom
+            .get("proposed_destinations")
+            .and_then(Value::as_array)
+            .map(|destinations| destinations.iter().any(|value| value.as_str() == Some("personal")))
+            .unwrap_or(false);
+        let hard_blocked = atom.get("hard_blocked").and_then(Value::as_bool).unwrap_or(false);
+        if !personal || hard_blocked {
+            continue;
+        }
+        let fact = json!({
+            "schema": "guildhall-personal-fact/1",
+            "fact_id": format!("fact_{}", atom.get("atom_id").and_then(Value::as_str).unwrap_or_default()),
+            "logical_key": format!("logical_{}", atom.get("atom_id").and_then(Value::as_str).unwrap_or_default()),
+            "session_id": session,
+            "atom_id": atom.get("atom_id"),
+            "statement": atom.get("statement"),
+            "confidence": atom.get("confidence"),
+            "status": "current"
+        });
+        if core.upsert_personal_fact(&fact, &now)? {
+            personal_fact_count += 1;
+        }
+    }
     let record = json!({
         "session_id": session,
         "checkpoint_id": format!("checkpoint_{}", Uuid::new_v4()),
         "status": "checkpointed",
-        "checkpointed_at": now_rfc3339_millis()
+        "checkpointed": true,
+        "checkpointed_at": now,
+        "observation_count": observations.len(),
+        "atom_count": atoms.len(),
+        "personal_fact_count": personal_fact_count
     });
     append_personal("session-checkpoints.jsonl", &record)?;
-    print_value(&record, json);
-    Ok(())
+    Ok(record)
 }
 
 pub fn end(session: &str, json: bool) -> Result<(), ContractError> {

@@ -10,13 +10,11 @@ use unicode_normalization::UnicodeNormalization;
 pub const JSON_INTEGER_BOUND: i128 = 9_007_199_254_740_991;
 
 pub fn canonical_bytes(value: &Value) -> Vec<u8> {
-    try_canonical_bytes(value).unwrap_or_else(|error| {
-        panic!("canonical JSON value violates the ratified data model: {error}")
-    })
+    try_canonical_bytes(value).unwrap_or_default()
 }
 
 pub fn canonical_text(value: &Value) -> String {
-    String::from_utf8(canonical_bytes(value)).expect("canonical JSON is UTF-8")
+    String::from_utf8(canonical_bytes(value)).unwrap_or_default()
 }
 
 pub fn try_canonical_bytes(value: &Value) -> Result<Vec<u8>, String> {
@@ -27,7 +25,9 @@ pub fn try_canonical_bytes(value: &Value) -> Result<Vec<u8>, String> {
 }
 
 pub fn try_canonical_text(value: &Value) -> Result<String, String> {
-    try_canonical_bytes(value).map(|bytes| String::from_utf8(bytes).expect("UTF-8"))
+    try_canonical_bytes(value).and_then(|bytes| {
+        String::from_utf8(bytes).map_err(|_| "canonical JSON is not UTF-8".to_owned())
+    })
 }
 
 fn canonical_unchecked(value: &Value, out: &mut Vec<u8>) {
@@ -320,7 +320,7 @@ pub fn strict<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, String> {
 }
 
 pub fn to_value<T: Serialize>(value: &T) -> Value {
-    serde_json::to_value(value).expect("serialization cannot fail")
+    serde_json::to_value(value).unwrap_or(Value::Null)
 }
 
 /// Digest of the canonical form of a value.

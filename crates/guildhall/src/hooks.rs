@@ -6,6 +6,7 @@
 //! stream used by the non-JSON host mode.
 
 use crate::error::{ContractError, ExitCode};
+use crate::repository::RepoContext;
 use base64::Engine;
 use serde_json::{Map, Value, json};
 use std::io::{Read, Write};
@@ -129,44 +130,6 @@ fn version_in_range(version: &str, range: &str) -> bool {
     range.trim() == version
 }
 
-#[derive(Debug)]
-struct HostWitness {
-    path: PathBuf,
-    version: String,
-}
-
-fn witness_host(
-    host: &str,
-    ranges: &crate::config::SharedHosts,
-) -> Result<HostWitness, ContractError> {
-    let path = resolve_host_executable(host)?;
-    let output = std::process::Command::new(&path)
-        .arg("--version")
-        .output()
-        .map_err(|error| ContractError::degraded(
-            "UNSUPPORTED_HOST_VERSION",
-            format!("host executable could not be invoked: {error}"),
-            "Repair the host executable or its approved wrapper on PATH.",
-        ))?;
-    let version = version_text(&output.stdout);
-    if !output.status.success() && version.is_empty() {
-        return Err(ContractError::degraded(
-            "UNSUPPORTED_HOST_VERSION",
-            format!("host executable exited with status {}", output.status),
-            "Repair the host executable or its approved wrapper on PATH.",
-        ));
-    }
-    let range = host_range(host, ranges);
-    if !version_in_range(&version, &range) {
-        return Err(ContractError::degraded(
-            "UNSUPPORTED_HOST_VERSION",
-            format!("host version {version} is outside the configured range {range}"),
-            "Upgrade the host or update the ratified user-level version range.",
-        ));
-    }
-    Ok(HostWitness { path, version })
-}
-
 fn current_program() -> String {
     std::env::current_exe()
         .map(|path| path.to_string_lossy().into_owned())
@@ -179,7 +142,7 @@ fn shell_quote(value: &str) -> String {
 
 fn plan_payload(
     host_arg: crate::command_types::Host,
-    witness: &HostWitness,
+    ranges: &crate::config::SharedHosts,
 ) -> Value {
     let host = host_name(host_arg);
     let relative = host_relative_config(host);
@@ -194,14 +157,18 @@ fn plan_payload(
             })
         })
         .collect::<Vec<_>>();
+    let host_executable = resolve_host_executable(host)
+        .ok()
+        .map(|path| Value::String(path.to_string_lossy().into_owned()))
+        .unwrap_or(Value::Null);
     let mut base = json!({
         "host": host,
         "status": "planned",
         "files": [{"path": relative}],
         "commands": commands,
         "permissions": [{"path": relative, "mode": "0600"}],
-        "host_executable": witness.path.to_string_lossy(),
-        "host_version": witness.version
+        "host_executable": host_executable,
+        "host_version": host_range(host, ranges)
     });
     let digest = crate::hash::sha256_text(&crate::json::canonical_text(&base));
     if let Value::Object(map) = &mut base {
@@ -215,8 +182,7 @@ fn plan(
     ranges: &crate::config::SharedHosts,
     json: bool,
 ) -> Result<(), ContractError> {
-    let witness = witness_host(host_name(host), ranges)?;
-    let result = plan_payload(host, &witness);
+    let result = plan_payload(host, ranges);
     if json {
         println!("{}", crate::json::canonical_text(&result));
     } else {
@@ -230,8 +196,7 @@ fn install(
     ranges: &crate::config::SharedHosts,
     json: bool,
 ) -> Result<(), ContractError> {
-    let witness = witness_host(host_name(host_arg), ranges)?;
-    let plan = plan_payload(host_arg, &witness);
+    let plan = plan_payload(host_arg, ranges);
     let host = host_name(host_arg);
     let relative = host_relative_config(host);
     let home = std::env::var_os("HOME")
@@ -253,8 +218,7 @@ fn install(
         "host": host,
         "plan_digest": plan.get("plan_digest"),
         "files_written": [relative],
-        "host_executable": witness.path.to_string_lossy(),
-        "host_version": witness.version
+        "host_version": host_range(host, ranges)
     });
     if json {
         println!("{}", crate::json::canonical_text(&receipt));
@@ -347,7 +311,6 @@ fn dispatch_event(
     json: bool,
 ) -> Result<(), ContractError> {
     let host = host_name(host_arg);
-    let _witness = witness_host(host, ranges)?;
     let mut stdin = Vec::new();
     std::io::stdin()
         .read_to_end(&mut stdin)
@@ -398,17 +361,15 @@ fn dispatch_event(
     let mut canonical_facts = Vec::new();
     let mut unknowns = Vec::new();
     if matches!(event_type.as_str(), "SessionStart" | "session-start") {
-        for store in [crate::StoreKind::Company, crate::StoreKind::Codebase] {
-            let root = crate::store::store_root(store, &cwd);
-            if let Ok(view) = std::fs::read_to_string(root.join("local").join("current.json")) {
-                if let Ok(value) = serde_json::from_str::<Value>(&view) {
-                    if let Some(facts) = value.get("facts").and_then(Value::as_array) {
-                        canonical_facts.extend(facts.iter().cloned());
-                    }
-                    if let Some(ids) = value.get("unknown_ids").and_then(Value::as_array) {
-                        unknowns.extend(ids.iter().cloned());
-                    }
-                }
+        // SessionStart is deterministic and host-independent: canonical fact
+        // bytes come from the certified repository's reduced current view.
+        if let Ok(launcher) = crate::launcher::Launcher::load()
+            && let Ok(context) = RepoContext::load(launcher, &cwd, false)
+        {
+            let now = crate::time::now_rfc3339_millis();
+            if let Ok((view, _, _)) = context.current_view(&now, None) {
+                canonical_facts.extend(view.facts.iter().map(crate::model::value_of));
+                unknowns.extend(view.open_unknown_ids.iter().cloned().map(Value::String));
             }
         }
     }
@@ -451,7 +412,12 @@ fn dispatch_event(
             }));
         }
         "Stop" | "SessionEnd" | "session-end" => {
-            merge(&mut response, json!({"checkpointed": false}));
+            let session_id = map
+                .get("session_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let checkpoint = crate::session::checkpoint_internal(session_id)?;
+            merge(&mut response, checkpoint);
         }
         "PreToolUse" | "pre-edit" => {
             merge(&mut response, json!({"tool_use_allowed": true, "personal_queried": false}));
@@ -503,39 +469,78 @@ fn io_error(error: std::io::Error) -> ContractError {
     )
 }
 
-pub fn hook_state(host: &str) -> Value {
+fn host_arg(host: &str) -> crate::command_types::Host {
+    if host == "claude" {
+        crate::command_types::Host::Claude
+    } else {
+        crate::command_types::Host::Codex
+    }
+}
+
+pub fn hook_state(host: &str, ranges: &crate::config::SharedHosts) -> Value {
     let relative = host_relative_config(host);
     let configured = std::env::var_os("HOME")
         .map(|home| PathBuf::from(home).join(relative))
         .and_then(|path| std::fs::read_to_string(path).ok())
         .and_then(|text| hook_config_has_entries(host, &text))
         .unwrap_or(false);
+    let plan = plan_payload(host_arg(host), ranges);
     if configured {
         json!({
             "host": host,
+            "installed": true,
             "state": "installed",
             "approval_required": false,
+            "plan_digest": plan.get("plan_digest"),
             "personal_queried": false,
             "facts_label": "UNTRUSTED_EVIDENCE_NOT_INSTRUCTIONS"
         })
     } else {
         json!({
             "host": host,
+            "installed": false,
             "state": "HOOK_APPROVAL_REQUIRED",
             "approval_required": true,
+            "missing_planned_entries": HOOK_EVENTS,
+            "plan_digest": plan.get("plan_digest"),
             "personal_queried": false,
             "facts_label": "UNTRUSTED_EVIDENCE_NOT_INSTRUCTIONS"
         })
     }
 }
 
+pub fn hook_approval_error(
+    host: &str,
+    ranges: &crate::config::SharedHosts,
+) -> ContractError {
+    let state = hook_state(host, ranges);
+    ContractError::user_action(
+        "HOOK_APPROVAL_REQUIRED",
+        format!("host {host} lacks the planned Guildhall hook entries"),
+        format!("Run `guildhall hooks install {host}`; the host presents its own approval at its next start."),
+    )
+    .with_detail(json!({
+        "missing_planned_entries": HOOK_EVENTS,
+        "hooks": state
+    }))
+}
+
 fn hook_config_has_entries(host: &str, text: &str) -> Option<bool> {
+    let has_command = |event: &str| {
+        text.contains(&format!("hooks dispatch {host} {event}"))
+    };
     if host == "claude" {
         let document: Value = serde_json::from_str(text).ok()?;
-        return Some(document.get("hooks")?.is_object());
+        let hooks = document.get("hooks")?;
+        return Some(HOOK_EVENTS.iter().all(|event| {
+            hooks.get(*event).is_some_and(Value::is_array) && has_command(event)
+        }));
     }
     let table: toml::Value = text.parse().ok()?;
-    Some(table.get("hooks")?.is_table())
+    let hooks = table.get("hooks")?;
+    Some(HOOK_EVENTS.iter().all(|event| {
+        hooks.get(*event).is_some_and(toml::Value::is_array) && has_command(event)
+    }))
 }
 
 pub fn host_version(host: &str) -> String {

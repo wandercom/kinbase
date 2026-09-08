@@ -110,9 +110,9 @@ impl PrivateKey {
             ContractError::invariant(format!("document violates the canonical data model: {error}"))
         })?;
         let signature = self.sign(message_type, &bytes)?;
-        copy.as_object_mut()
-            .expect("object")
-            .insert("signature".to_owned(), serde_json::Value::String(signature));
+        if let Some(map) = copy.as_object_mut() {
+            map.insert("signature".to_owned(), serde_json::Value::String(signature));
+        }
         Ok(copy)
     }
 
@@ -121,7 +121,9 @@ impl PrivateKey {
     pub fn load(path: &Path, role: &str) -> Result<Self, ContractError> {
         let bytes = read_private_bytes(path, role)?;
         if bytes.len() == 32 {
-            let seed: [u8; 32] = bytes.as_slice().try_into().expect("32 bytes");
+            let Ok(seed) = bytes.as_slice().try_into() else {
+                return Err(signature_invalid("private key file does not contain a 32-byte seed"));
+            };
             return Ok(Self {
                 key: SigningKey::from_bytes(&seed),
             });

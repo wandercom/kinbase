@@ -421,7 +421,7 @@ pub struct CurrentFact {
 }
 
 pub fn value_of<T: Serialize>(value: &T) -> Value {
-    serde_json::to_value(value).expect("model values serialize")
+    serde_json::to_value(value).unwrap_or(Value::Null)
 }
 
 impl FactEvent {

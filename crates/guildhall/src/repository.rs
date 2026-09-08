@@ -749,6 +749,7 @@ pub fn init(launcher: Launcher, repo_path: &Path, certificate_path: &Path, json_
     }
     let local_existed = repo.local_dir().exists();
     repo.ensure_local()?;
+    repo.ensure_local_excluded()?;
     if !local_existed {
         worktree_paths_written.push(".kin/local/".to_owned());
     }
@@ -1372,8 +1373,27 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
     let sweep = core.sweep(&now)?;
     let metrics = shard.get("metrics").cloned().unwrap_or(Value::Null);
     let reserved = metrics.get("reserved").and_then(Value::as_i64).unwrap_or(0);
+    let rendered_count = metrics.get("rendered").and_then(Value::as_i64).unwrap_or(0);
+    let suppressed_count = metrics.get("suppressed").and_then(Value::as_i64).unwrap_or(0);
     let lost = metrics.get("delivery_loss").and_then(Value::as_i64).unwrap_or(0);
-    let hooks = host.map(|host| crate::hooks::hook_state(host));
+    let prompt_budget_shard = json!({
+        "principal_id": launcher.principal_id(),
+        "host_instance_id": launcher.host_instance_id(),
+        "reserved": reserved,
+        "rendered": rendered_count,
+        "suppressed": suppressed_count,
+        "delivery_loss": lost,
+        "reserved_in_window": shard.get("reserved_in_window").cloned().unwrap_or(Value::from(0)),
+        "consecutive": shard.get("consecutive").cloned().unwrap_or(Value::from(0)),
+        "warning": "no global cross-machine prompt total is known; this shard covers exactly one (principal_id, host_instance_id)"
+    });
+    let hooks = host.map(|host| crate::hooks::hook_state(host, &launcher.shared.hosts));
+    if let Some(state) = hooks.as_ref() {
+        if state.get("installed").and_then(Value::as_bool) != Some(true) {
+            let host = host.unwrap_or("codex");
+            return Err(crate::hooks::hook_approval_error(host, &launcher.shared.hosts));
+        }
+    }
     let sandbox = launcher.personal_root().map(|root| {
         let probe = crate::sandbox::denial_probe(&root, &repo.as_ref().map(|r| vec![r.root.clone()]).unwrap_or_default(), launcher.company_port());
         json!({"enforced": probe.enforced, "personal_root_readable": probe.personal_root_readable, "disabled_loudly": probe.disabled_loudly, "detail": probe.detail})
@@ -1434,6 +1454,7 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
         "host": host,
         "host_versions": {"codex": crate::hooks::host_version("codex"), "claude": crate::hooks::host_version("claude"), "supported_ranges": launcher.shared.hosts},
         "hooks": hooks,
+        "prompt_budget_shard": prompt_budget_shard,
         "budget_shard": {"shard_id": shard_id, "signed": signed_shard.is_some(), "signature": signed_shard.as_ref().and_then(|s| s.get("signature").cloned()), "shard": shard},
         "unknown_global_total_warning": true,
         "hourly_prompts_consumed": shard.get("reserved_in_window").cloned().unwrap_or(Value::from(0)),

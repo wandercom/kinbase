@@ -649,10 +649,9 @@ fn coding_model(value: &Value) -> Result<Option<PathBuf>, ContractError> {
     if named.is_none() {
         return Ok(None);
     }
-    let named = named.expect("checked");
     let command = match named {
-        Value::String(text) => Value::String(text.clone()),
-        Value::Object(object) => object
+        Some(Value::String(text)) => Value::String(text.clone()),
+        Some(Value::Object(object)) => object
             .get("command")
             .or_else(|| object.get("path"))
             .or_else(|| object.get("executable"))
@@ -803,17 +802,24 @@ fn verdict(run_path: &Path, json: bool) -> Result<(), ContractError> {
     {
         explicit_gate
     } else if let Some(vector) = input_gate_vector {
-        let observations = vector.as_object().expect("checked object");
-        if observations.is_empty()
+        let invalid_harness = !vector.is_object()
             || vector.get("invalid_harness").and_then(Value::as_bool) == Some(true)
             || vector.get("harness_valid").and_then(Value::as_bool) == Some(false)
             || vector.get("run_integrity").and_then(Value::as_bool) == Some(false)
-        {
+            || vector
+                .as_object()
+                .map(|observations| observations.is_empty())
+                .unwrap_or(true);
+        let product_failure = !invalid_harness
+            && vector.as_object().is_some_and(|observations| {
+                observations.values().any(|value| {
+                    value.as_bool() == Some(false)
+                        || value.get("valid").and_then(Value::as_bool) == Some(false)
+                })
+            });
+        if invalid_harness {
             "INVALID_HARNESS"
-        } else if observations.values().any(|value| {
-            value.as_bool() == Some(false)
-                || value.get("valid").and_then(Value::as_bool) == Some(false)
-        }) {
+        } else if product_failure {
             "PRODUCT_FAILURE"
         } else {
             "PASS"

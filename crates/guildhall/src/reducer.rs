@@ -469,22 +469,26 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                         .unwrap_or_else(|| format!("{}|{}", member.event.authority_id, member.event.signer)),
                 );
             }
-            let representative = members
+            let Some(representative) = members
                 .iter()
                 .copied()
                 .min_by(|left, right| {
                     cursor_order(&left.store_cursor, &right.store_cursor)
                         .then_with(|| left.event.event_id.cmp(&right.event.event_id))
                 })
-                .expect("cluster is non-empty");
-            let newest = members
+            else {
+                continue;
+            };
+            let Some(newest) = members
                 .iter()
                 .copied()
                 .max_by(|left, right| {
                     cursor_order(&left.store_cursor, &right.store_cursor)
                         .then_with(|| left.event.event_id.cmp(&right.event.event_id))
                 })
-                .expect("cluster is non-empty");
+            else {
+                continue;
+            };
             let rank = members
                 .iter()
                 .map(|member| authority_rank(&member.event, member.origin_trust.as_deref()))

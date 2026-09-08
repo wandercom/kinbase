@@ -120,17 +120,41 @@ fn list(session: &str, json: bool) -> Result<(), ContractError> {
                 .unwrap_or_default()
                 .into_iter()
                 .map(|atom| {
+                    let confidence = confidence_label(atom.get("confidence").and_then(Value::as_u64).unwrap_or(6_000));
+                    let destinations = atom
+                        .get("proposed_destinations")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter_map(|value| value.as_str().map(str::to_owned))
+                        .map(|destination| match destination.as_str() {
+                            "personal" => "personal".to_owned(),
+                            "company" | "company:root" => "company".to_owned(),
+                            value if value.starts_with("codebase") => "codebase".to_owned(),
+                            _ => "none".to_owned(),
+                        })
+                        .collect::<Vec<_>>();
+                    let destinations = if destinations.is_empty() {
+                        vec!["none".to_owned()]
+                    } else {
+                        destinations
+                    };
                     json!({
                         "kind": atom.get("atom_kind").cloned().unwrap_or(Value::Null),
                         "text": atom.get("statement").cloned().unwrap_or(Value::Null),
-                        "destinations": atom.get("proposed_destinations").cloned().unwrap_or(json!(["none"]))
+                        "destinations": destinations,
+                        "confidence": confidence
                     })
                 })
                 .collect::<Vec<_>>();
             json!({
                 "id": observation.get("native_id").cloned().unwrap_or(Value::Null),
                 "atoms": atoms,
-                "confidence": "high"
+                "confidence": atoms
+                    .first()
+                    .and_then(|atom| atom.get("confidence").cloned())
+                    .unwrap_or(Value::String("low".to_owned()))
             })
         })
         .collect::<Vec<_>>();
@@ -160,20 +184,27 @@ fn list(session: &str, json: bool) -> Result<(), ContractError> {
             })
         })
         .collect::<Vec<_>>();
-    let atoms = atom_records
-        .iter()
-        .map(|atom| {
-            json!({
+    let mut atoms = Vec::new();
+    for atom in &atom_records {
+        let confidence = confidence_label(atom.get("confidence").and_then(Value::as_u64).unwrap_or(6_000));
+        let destinations = atom
+            .get("proposed_destinations")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let destinations = if destinations.is_empty() {
+            vec![json!("none")]
+        } else {
+            destinations
+        };
+        for destination in destinations {
+            atoms.push(json!({
                 "atom_id": atom.get("atom_id").cloned().unwrap_or(Value::Null),
-                "destination": atom
-                    .get("proposed_destinations")
-                    .and_then(Value::as_array)
-                    .and_then(|destinations| destinations.first().cloned())
-                    .unwrap_or(json!("none")),
-                "confidence": confidence_label(atom.get("confidence").and_then(Value::as_u64).unwrap_or(6_000))
-            })
-        })
-        .collect::<Vec<_>>();
+                "destination": destination,
+                "confidence": confidence
+            }));
+        }
+    }
     let session_events = personal_records("session-events.jsonl")
         .into_iter()
         .filter(|event| event.get("session_id").and_then(Value::as_str) == Some(session))
@@ -705,7 +736,9 @@ fn reset(
 }
 
 pub fn destination_store(destination: &str) -> Result<crate::StoreKind, ContractError> {
-    if destination == "company" || destination == "company:root" {
+    if destination == "personal" {
+        Ok(crate::StoreKind::Personal)
+    } else if destination == "company" || destination == "company:root" {
         Ok(crate::StoreKind::Company)
     } else if destination.starts_with("codebase:") && destination.len() > "codebase:".len() {
         Ok(crate::StoreKind::Codebase)
@@ -881,7 +914,9 @@ fn create_unknown(
     )?;
     unknown.sign(&private_key)?;
     let record = unknown.to_value();
-    crate::store::append_record(store, repo, "unknowns.jsonl", &record)?;
+    // Unknowns are private runtime state, never additional tracked `.kin/`
+    // artefacts. Signed fact events remain the only Codebase writes.
+    crate::store::append_record(crate::StoreKind::Personal, repo, "unknowns.jsonl", &record)?;
     Ok(unknown_id)
 }
 
