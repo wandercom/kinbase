@@ -61,20 +61,25 @@ pub fn run(
     as_of: &crate::time::AsOf,
     json: bool,
 ) -> Result<(), ContractError> {
+    crate::repository::ensure_authority_snapshot(launcher, None)?;
     let mut facts = Vec::new();
     let mut ingested_events = Vec::new();
     let mut conflict_event_ids = BTreeSet::new();
     let mut view_unknowns = Vec::new();
+    let mut references = Vec::new();
     for store in [crate::StoreKind::Company, crate::StoreKind::Codebase] {
-        let (view, store_events) = load_view(launcher, repo, store, as_of)?;
+        let store_view = load_view(launcher, repo, store, as_of)?;
         conflict_event_ids.extend(
-            view.traces
+            store_view
+                .view
+                .traces
                 .iter()
                 .flat_map(|trace| trace.conflict_event_ids.iter().cloned()),
         );
-        facts.extend(view.facts);
-        view_unknowns.extend(view.unknowns);
-        ingested_events.extend(store_events);
+        facts.extend(store_view.view.facts);
+        view_unknowns.extend(store_view.view.unknowns);
+        ingested_events.extend(store_view.events);
+        references.extend(store_view.references);
     }
     // A closure record is authoritative across stores: the original Unknown
     // remains in append-only history, but no later projection may treat it as
@@ -280,6 +285,28 @@ pub fn run(
     let projection_bytes =
         crate::json::canonical_text(&Value::Array(selected_values.clone())).len();
     let company_reference = company_reference(&selected, &facts);
+    let selected_ids: BTreeSet<&str> = selected.iter().map(|fact| fact.fact_id.as_str()).collect();
+    let selected_reference = references
+        .iter()
+        .filter(|record| crate::json::get_str(record, "fact_id").is_some_and(|fact_id| selected_ids.contains(fact_id)))
+        .find(|record| crate::json::get_str(record, "resolution") == Some("resolved"))
+        .cloned();
+    let effective_reference = selected_reference.clone().or_else(|| references.first().cloned());
+    let company_owner = effective_reference
+        .as_ref()
+        .and_then(|record| crate::json::get_str(record, "company_owner").map(str::to_owned));
+    let local_owner = effective_reference
+        .as_ref()
+        .and_then(|record| crate::json::get_str(record, "local_owner").map(str::to_owned));
+    let effective_criticality = effective_reference
+        .as_ref()
+        .and_then(|record| crate::json::get_str(record, "effective_dependence_class").map(str::to_owned));
+    let dominating_input = effective_reference
+        .as_ref()
+        .and_then(|record| crate::json::get_str(record, "dominating_input").map(str::to_owned));
+    let cache_state_constructed = launcher
+        .company_cache()?
+        .is_some_and(|(cache, _root)| cache.state == crate::company::cache::CacheState::Warm);
     let recommendation = if open_unknowns.is_empty() {
         selected
             .iter()
@@ -288,12 +315,18 @@ pub fn run(
     } else {
         None
     };
-    let degraded_policy = if open_unknowns.is_empty() {
+    let safety_is_degraded = facts.iter().any(|fact| {
+        crate::model::criticality_is_safety(fact.effective_dependence_class.as_deref().unwrap_or(&fact.criticality))
+            && fact.trust != "trusted"
+            && fact.stale_reasons.iter().any(|reason| reason == "CACHE_EXPIRED" || reason == "REVOCATION_STALE")
+    });
+    let advisory_is_degraded = facts.iter().any(|fact| {
+        !crate::model::criticality_is_safety(fact.effective_dependence_class.as_deref().unwrap_or(&fact.criticality))
+            && fact.trust == "excluded"
+    });
+    let degraded_policy = if safety_is_degraded || open_unknowns.iter().any(|unknown| unknown.loss_if_absent >= 7_500) {
         "block_dependent_decision"
-    } else if open_unknowns
-        .iter()
-        .any(|unknown| unknown.loss_if_absent >= 7_500)
-    {
+    } else if open_unknowns.is_empty() && !advisory_is_degraded {
         "block_dependent_decision"
     } else {
         "reversible_sandbox_only_experiment"
@@ -313,8 +346,20 @@ pub fn run(
         "voi_approximation": "additive deterministic basis-point approximation over conditional distortion, authority, complementarity, uncertainty, redundancy, retrieval, and staleness",
         "trusted_recommendation": recommendation,
         "degraded_policy": degraded_policy,
-        "company_reference_resolved": company_reference.is_some(),
-        "company_statement": company_reference.unwrap_or_default(),
+        "cache_state_constructed": cache_state_constructed,
+        "company_reference_resolved": selected_reference.is_some(),
+        "company_statement": selected_reference
+            .as_ref()
+            .and_then(|record| crate::json::get_str(record, "company_statement"))
+            .or(company_reference.as_deref())
+            .unwrap_or_default(),
+        "effective_criticality": effective_criticality,
+        "company_owner": company_owner,
+        "local_owner": local_owner,
+        "max_rule": effective_reference
+            .as_ref()
+            .and_then(|record| crate::json::get_str(record, "max_rule")),
+        "dominating_input": dominating_input,
         "projection_state": if open_unknowns.is_empty() { "projected" } else { "withheld" },
         "omitted_count": omitted_count
     });
@@ -348,13 +393,20 @@ pub fn run(
     Ok(())
 }
 
+struct StoreView {
+    view: CurrentView,
+    events: Vec<FactEvent>,
+    references: Vec<Value>,
+}
+
 fn load_view(
     launcher: &Launcher,
     repo: &Path,
     store: crate::StoreKind,
     as_of: &crate::time::AsOf,
-) -> Result<(CurrentView, Vec<FactEvent>), ContractError> {
+) -> Result<StoreView, ContractError> {
     let mut data = crate::corpus::load_store(launcher, repo, store)?;
+    let mut references = Vec::new();
     if store == crate::StoreKind::Codebase {
         if let Ok(repository) = crate::codebase::Repository::discover(repo) {
             let repository_uuid = repository.uuid_hint().map(str::to_owned);
@@ -366,8 +418,26 @@ fn load_view(
                     .map(|bound| repository_uuid.as_deref().is_some_and(|uuid| bound == uuid))
                     .unwrap_or(true)
             });
+            let ingested_events: Vec<FactEvent> = data
+                .events
+                .iter()
+                .map(|admitted| admitted.event.clone())
+                .collect();
+            let context = crate::repository::RepoContext::load(
+                crate::launcher::Launcher::load()?,
+                repo,
+                true,
+            )?;
+            let (view, _counts, store_references) = context.current_view(&as_of.as_of, None)?;
+            references = store_references;
+            return Ok(StoreView {
+                view,
+                events: ingested_events,
+                references,
+            });
         }
     }
+
     let store_name_value = match store {
         crate::StoreKind::Company => "company",
         crate::StoreKind::Personal => "personal",
@@ -378,6 +448,9 @@ fn load_view(
         .iter()
         .map(|admitted| admitted.event.clone())
         .collect();
+    let cache_freshness = launcher
+        .company_cache()?
+        .map(|(cache, _root)| cache.freshness(&as_of.as_of));
     let input = ReducerInput {
         store_kind: store_name_value.to_owned(),
         events: data.events,
@@ -386,11 +459,17 @@ fn load_view(
         revocations: data.revocations,
         as_of: as_of.as_of.clone(),
         authority_cursor: data.authority_cursor,
-        revocation_fresh: true,
-        fact_valid_until: None,
+        revocation_fresh: cache_freshness.as_ref().map(|freshness| freshness.revocation_fresh).unwrap_or(true),
+        fact_valid_until: cache_freshness.and_then(|freshness| freshness.fact_valid_until),
         certificate_valid: data.certificate_valid,
+        authority_owner_by_scope: data.authority_owner_by_scope,
+        steward_authority_id: data.steward_authority_id,
     };
-    Ok((crate::reducer::reduce(&input), ingested_events))
+    Ok(StoreView {
+        view: crate::reducer::reduce(&input),
+        events: ingested_events,
+        references,
+    })
 }
 
 fn event_candidate_value(

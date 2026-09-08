@@ -119,6 +119,50 @@ impl Client {
         Ok(snapshot)
     }
 
+    /// Fetch and root-verify the latest steward-signed authority registry.
+    pub fn authority_registry(&self) -> Result<Value, ContractError> {
+        let response = self.get_ok("/v1/authority-registry")?;
+        let registry = response.get("registry").cloned().ok_or_else(|| {
+            ContractError::integrity("SIGNATURE_INVALID", "authority-registry response lacks its signed document", "Refresh from the configured Company endpoint; do not reconstruct trust from partial state.")
+        })?;
+        let root = self.root.as_ref().ok_or_else(|| {
+            ContractError::invariant("a Company root public key is required to verify the authority registry")
+        })?;
+        let signer = PublicKey::verify_document("authority-registry-entry", &registry).ok_or_else(|| {
+            ContractError::integrity("SIGNATURE_INVALID", "authority registry signature failed", "Quarantine the response and contact the Company steward.")
+        })?;
+        if signer != *root {
+            return Err(ContractError::integrity(
+                "SIGNATURE_INVALID",
+                "authority registry is not signed by the configured root key",
+                "Verify the root public key in the user config before accepting authority.",
+            ));
+        }
+        Ok(response)
+    }
+
+    /// Fetch and root-verify signed revocation documents and their cursor.
+    pub fn revocations(&self) -> Result<Value, ContractError> {
+        let response = self.get_ok("/v1/revocations")?;
+        let documents = response.get("revocations").cloned().unwrap_or_else(|| Value::Array(Vec::new()));
+        let root = self.root.as_ref().ok_or_else(|| {
+            ContractError::invariant("a Company root public key is required to verify revocations")
+        })?;
+        for document in documents.as_array().cloned().unwrap_or_default() {
+            let signer = PublicKey::verify_document("revocation", &document).ok_or_else(|| {
+                ContractError::integrity("SIGNATURE_INVALID", "revocation signature failed", "Quarantine the revocation snapshot and contact the Company steward.")
+            })?;
+            if signer != *root {
+                return Err(ContractError::integrity(
+                    "SIGNATURE_INVALID",
+                    "revocation is not signed by the configured root key",
+                    "Verify the root public key in the user config before changing trust.",
+                ));
+            }
+        }
+        Ok(response)
+    }
+
     pub fn post_fact(&self, event: &Value) -> Result<Value, ContractError> {
         self.post_ok("/facts", event)
     }

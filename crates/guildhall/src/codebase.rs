@@ -77,21 +77,45 @@ impl RepoConfig {
                 "Correct the safe name.",
             ));
         }
-        let domains = table
-            .get("domains")
-            .and_then(toml::Value::as_array)
-            .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_owned)).collect())
-            .unwrap_or_default();
-        let local_policy: BTreeMap<String, String> = table
-            .get("local_policy")
-            .and_then(toml::Value::as_table)
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(|(key, value)| value.as_str().map(|value| (key.clone(), value.to_owned())))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let Some(domain_values) = table.get("domains").and_then(toml::Value::as_array) else {
+            return Err(ContractError::integrity(
+                "DIGEST_MISMATCH",
+                ".kin/config domains is required and must be an array of strings",
+                "Correct the repository config; missing keys fail closed.",
+            ));
+        };
+        let mut domains = Vec::new();
+        for item in domain_values {
+            let Some(domain) = item.as_str() else {
+                return Err(ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    ".kin/config domains contains a non-string entry",
+                    "Every domain must be an exact string; malformed config bytes are preserved.",
+                ));
+            };
+            domains.push(domain.to_owned());
+        }
+        let local_policy_values = table.get("local_policy");
+        if local_policy_values.is_some_and(|value| !value.is_table()) {
+            return Err(ContractError::integrity(
+                "DIGEST_MISMATCH",
+                ".kin/config local_policy must be a table with string values",
+                "Correct the repository config; malformed config bytes are preserved.",
+            ));
+        }
+        let mut local_policy: BTreeMap<String, String> = BTreeMap::new();
+        if let Some(items) = local_policy_values.and_then(toml::Value::as_table) {
+            for (key, value) in items {
+                let Some(value) = value.as_str() else {
+                    return Err(ContractError::integrity(
+                        "DIGEST_MISMATCH",
+                        format!(".kin/config local_policy.{key} is not a string"),
+                        "Every local policy value must be an exact string.",
+                    ));
+                };
+                local_policy.insert(key.clone(), value.to_owned());
+            }
+        }
         for value in local_policy.values().chain(std::iter::once(&safe_name.to_owned())) {
             if value.starts_with('/') || value.contains("http://") || value.contains("https://") {
                 return Err(ContractError::integrity(
@@ -111,16 +135,26 @@ impl RepoConfig {
     }
 
     pub fn to_toml(&self) -> String {
-        let domains = self
-            .domains
-            .iter()
-            .map(|domain| format!("{domain:?}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!(
-            "schema_version = \"{}\"\nrepository_uuid_hint = \"{}\"\nsafe_name = \"{}\"\ndomains = [{}]\n",
-            self.schema_version, self.repository_uuid_hint, self.safe_name, domains
-        )
+        let mut text = format!(
+            "schema_version = {:?}\nrepository_uuid_hint = {:?}\nsafe_name = {:?}\ndomains = [",
+            self.schema_version, self.repository_uuid_hint, self.safe_name
+        );
+        text.push_str(
+            &self
+                .domains
+                .iter()
+                .map(|domain| format!("{domain:?}"))
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        text.push_str("]\n");
+        if !self.local_policy.is_empty() {
+            text.push_str("[local_policy]\n");
+            for (key, value) in &self.local_policy {
+                text.push_str(&format!("{key} = {value:?}\n"));
+            }
+        }
+        text
     }
 }
 
@@ -245,9 +279,19 @@ impl Repository {
         git_ok(&self.root, &["merge-base", "--is-ancestor", revision, &default])
     }
 
-    /// Origin trust class for a path (architecture §4).
+    /// Origin trust class for a path (architecture §4): canonicalize and
+    /// contain first, then classify from the committed path history. Dirtiness
+    /// can only demote the exact dirty path, never promote another origin.
     pub fn origin_trust(&self, path: &Path) -> String {
-        let relative = path.strip_prefix(&self.root).unwrap_or(path);
+        let Ok(root) = self.root.canonicalize() else {
+            return "uncommitted-worktree".to_owned();
+        };
+        let Ok(canonical) = path.canonicalize() else {
+            return "uncommitted-worktree".to_owned();
+        };
+        let Ok(relative) = canonical.strip_prefix(&root) else {
+            return "uncommitted-worktree".to_owned();
+        };
         let relative = relative.to_string_lossy();
         if !git_ok(&self.root, &["ls-files", "--error-unmatch", "--", &relative]) {
             return "uncommitted-worktree".to_owned();
@@ -258,12 +302,44 @@ impl Repository {
         if dirty {
             return "uncommitted-worktree".to_owned();
         }
-        let head = self.revision().unwrap_or_default();
-        if self.is_reachable_from_default(&head) {
-            "merged-default".to_owned()
-        } else {
-            "unreviewed-branch".to_owned()
+        let last_path_commit = git(
+            &self.root,
+            &["log", "-1", "--format=%H", "--", &relative],
+        )
+        .unwrap_or_default();
+        if last_path_commit.trim().is_empty() {
+            return "uncommitted-worktree".to_owned();
         }
+        if git_ok(
+            &self.root,
+            &["merge-base", "--is-ancestor", last_path_commit.trim(), &self.default_branch()],
+        ) {
+            return "merged-default".to_owned();
+        }
+        let merged_pr_refs = git(
+            &self.root,
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/pull/*/merge",
+                "refs/remotes/pull/*/merge",
+            ],
+        )
+        .unwrap_or_default();
+        if merged_pr_refs
+            .lines()
+            .map(str::trim)
+            .filter(|reference| !reference.is_empty())
+            .any(|reference| {
+                git_ok(
+                    &self.root,
+                    &["merge-base", "--is-ancestor", last_path_commit.trim(), reference],
+                )
+            })
+        {
+            return "merged-pull".to_owned();
+        }
+        "unreviewed-branch".to_owned()
     }
 
     pub fn is_sparse_checkout(&self) -> bool {
@@ -399,12 +475,37 @@ impl Repository {
             .write(true)
             .open(&path)
             .map_err(|error| ContractError::io("open admission lock", error))?;
-        // SAFETY: flock on a descriptor we own; EX blocks until acquired.
-        let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
-        if result != 0 {
-            return Err(ContractError::io("acquire admission lock", std::io::Error::last_os_error()));
+        let configured = self
+            .config
+            .as_ref()
+            .and_then(|config| config.local_policy.get("admission_lock_timeout_seconds"))
+            .and_then(|value| value.parse::<u64>().ok())
+            .or_else(|| std::env::var("GUILDHALL_ADMISSION_LOCK_TIMEOUT_SECONDS").ok().and_then(|value| value.parse().ok()));
+        let timeout_seconds = configured.unwrap_or(30).min(300);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_seconds);
+        loop {
+            // SAFETY: flock on a descriptor we own. The nonblocking form plus
+            // a bounded deadline prevents an abandoned common-dir lock from
+            // making every linked worktree wait forever.
+            let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if result == 0 {
+                return Ok(AdmissionLock { _file: file, path });
+            }
+            if std::time::Instant::now() >= deadline {
+                let error = std::io::Error::last_os_error();
+                return Err(ContractError::limit(
+                    format!("admission lock was not acquired within {timeout_seconds}s ({error})"),
+                    json!({
+                        "timeout_seconds": timeout_seconds,
+                        "retryable": true,
+                        "refused_count": 1,
+                        "omitted_count": 1,
+                        "remediation": "Retry after the holder commits or releases the lock; increase the bounded timeout if the holder is known healthy."
+                    }),
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        Ok(AdmissionLock { _file: file, path })
     }
 
     /// Admit one already-verified canonical event buffer through the
@@ -432,10 +533,20 @@ impl Repository {
         paths::ensure_private_dir(&receipts_dir, "receipts")?;
         let _lock = self.admission_lock(repository_uuid)?;
         self.recover_journal(repository_uuid)?;
-        let receipt_path = receipts_dir.join(format!("{digest}.json"));
+        let receipt_path = receipts_dir.join(repository_uuid).join(format!("{digest}.json"));
         if receipt_path.exists() {
             let bytes = std::fs::read(&receipt_path).map_err(|error| ContractError::io("read receipt", error))?;
             if let Ok(mut existing) = crate::json::parse_strict_value(&bytes) {
+                let expected_destination = format!("codebase:{repository_uuid}");
+                let stored_destination = crate::json::get_str(&existing, "destination").unwrap_or_default();
+                let stored_repository = crate::json::get_str(&existing, "repository_uuid").unwrap_or_default();
+                if stored_destination != expected_destination || stored_repository != repository_uuid {
+                    return Err(ContractError::integrity(
+                        "DIGEST_MISMATCH",
+                        format!("receipt lookup for digest {digest} is bound to {stored_destination}/{stored_repository}, not {expected_destination}/{repository_uuid}"),
+                        "Do not reuse a receipt across repositories or destinations; run fsck if the local receipt store moved.",
+                    ));
+                }
                 let event_value = crate::json::parse_strict_value(canonical).ok();
                 let signer = event_value.as_ref().and_then(|value| crate::json::get_str(value, "signer")).map(str::to_owned);
                 let logical_key = event_value.as_ref().and_then(|value| crate::json::get_str(value, "logical_key")).map(str::to_owned);
@@ -491,14 +602,14 @@ impl Repository {
             "digest": digest,
             "kind": kind,
             "relative_path": relative.to_string_lossy(),
-            "state": "prepared",
+            "state": "staged",
             "updated_at": crate::time::now_rfc3339_millis()
         });
         paths::write_atomic(&staged, canonical, 0o600, false)?;
         paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
         // renamed
         let created = paths::write_atomic(&final_path, canonical, 0o644, true)?;
-        let _ = std::fs::remove_file(&staged);
+        std::fs::remove_file(&staged).map_err(|error| ContractError::io("remove staged event after rename", error))?;
         entry["state"] = Value::String("renamed".to_owned());
         entry["created"] = Value::Bool(created);
         paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
@@ -510,6 +621,7 @@ impl Repository {
         let mut receipt = json!({
             "schema": crate::model::RECEIPT_SCHEMA,
             "destination": format!("codebase:{repository_uuid}"),
+            "repository_uuid": repository_uuid,
             "status": "committed",
             "event_digest": digest,
             "event_path": format!(".kin/events/{}", relative.to_string_lossy()),
@@ -529,6 +641,8 @@ impl Repository {
             }
         }
         paths::write_atomic(&receipt_path, &crate::json::canonical_bytes(&receipt), 0o600, false)?;
+        entry["state"] = Value::String("receipted".to_owned());
+        paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
         entry["state"] = Value::String("done".to_owned());
         paths::write_atomic(&journal_path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
         Ok(receipt)
@@ -548,19 +662,37 @@ impl Repository {
             let path = journal_dir.join(&relative);
             let bytes = std::fs::read(&path).map_err(|error| ContractError::io("read journal", error))?;
             let Ok(mut entry) = crate::json::parse_strict_value(&bytes) else {
-                continue;
+                return Err(ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    format!("journal entry {} is not canonical JSON", relative.to_string_lossy()),
+                    "Preserve the journal bytes and repair the destination explicitly; recovery never ignores a malformed marker.",
+                ));
             };
             let state = crate::json::get_str(&entry, "state").unwrap_or_default().to_owned();
             if state == "done" {
                 continue;
             }
+            if crate::json::get_str(&entry, "repository_uuid").unwrap_or_default() != repository_uuid {
+                return Err(ContractError::refused(
+                    "FOREIGN_REPO_EVENTS",
+                    format!("journal entry {} belongs to another repository", relative.to_string_lossy()),
+                    "Preserve the foreign journal and repair this repository explicitly; recovery never adopts another identity.",
+                ));
+            }
+            if !["staged", "prepared", "renamed", "indexed", "receipted"].contains(&state.as_str()) {
+                return Err(ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    format!("journal entry {} has unknown state {state:?}", relative.to_string_lossy()),
+                    "Preserve the journal bytes; the closed recovery state machine refuses an unknown transition.",
+                ));
+            }
             let digest = crate::json::get_str(&entry, "digest").unwrap_or_default().to_owned();
             let rel = PathBuf::from(crate::json::get_str(&entry, "relative_path").unwrap_or_default());
             let final_path = paths::contained(&self.kin.join("events"), &rel)?;
             let staged = local.join("staging").join(format!("{digest}.json"));
-            let receipt_path = local.join("receipts").join(format!("{digest}.json"));
+            let receipt_path = local.join("receipts").join(repository_uuid).join(format!("{digest}.json"));
             let mut action = "completed";
-            if state == "prepared" {
+            if state == "staged" || state == "prepared" {
                 if staged.exists() {
                     let staged_bytes = std::fs::read(&staged).map_err(|error| ContractError::io("read staged", error))?;
                     if crate::hash::sha256_bytes(&staged_bytes) == digest {
@@ -568,10 +700,17 @@ impl Repository {
                     } else {
                         action = "rolled-back";
                     }
-                    let _ = std::fs::remove_file(&staged);
+                    std::fs::remove_file(&staged)
+                        .map_err(|error| ContractError::io("remove stale staged event", error))?;
                 } else if !final_path.exists() {
                     action = "rolled-back";
                 }
+            } else if !final_path.exists() {
+                return Err(ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    format!("journal entry {} claims {state} but the content-addressed event is absent", relative.to_string_lossy()),
+                    "Preserve the journal and event tree; recovery never invents admitted bytes.",
+                ));
             }
             if action == "completed" {
                 self.update_index_cache()?;
@@ -579,6 +718,7 @@ impl Repository {
                     let receipt = json!({
                         "schema": crate::model::RECEIPT_SCHEMA,
                         "destination": format!("codebase:{repository_uuid}"),
+                        "repository_uuid": repository_uuid,
                         "status": "committed",
                         "event_digest": digest,
                         "event_path": format!(".kin/events/{}", rel.to_string_lossy()),

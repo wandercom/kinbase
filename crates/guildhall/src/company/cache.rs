@@ -426,6 +426,21 @@ pub struct Freshness {
 }
 
 impl Freshness {
+    /// Re-evaluate both bounded clocks at the caller's proof time. A projection
+    /// never reuses booleans captured when the cache was built.
+    pub fn at(&self, now: &str) -> Freshness {
+        Freshness {
+            state: self.state.clone(),
+            revocation_fresh: self.revocation_valid_until.as_deref().is_some_and(|until| until > now),
+            fact_fresh: self.fact_valid_until.as_deref().is_some_and(|until| until > now),
+            revocation_valid_until: self.revocation_valid_until.clone(),
+            fact_valid_until: self.fact_valid_until.clone(),
+            cursor: self.cursor.clone(),
+            revocation_cursor: self.revocation_cursor.clone(),
+            refreshed_at: self.refreshed_at.clone(),
+        }
+    }
+
     /// Architecture §6 truth table row for one fact.
     pub fn projection(&self, safety: bool, certificate_valid: bool) -> (&'static str, Vec<&'static str>) {
         if !certificate_valid {
@@ -452,5 +467,73 @@ impl Freshness {
             "revocation_cursor": self.revocation_cursor,
             "refreshed_at": self.refreshed_at
         })
+    }
+}
+
+
+#[cfg(test)]
+mod freshness_tests {
+    use super::*;
+
+    fn freshness(revocation: &str, fact: &str, now: &str) -> Freshness {
+        let value = Freshness {
+            state: CacheState::Warm,
+            revocation_fresh: revocation > now,
+            fact_fresh: fact > now,
+            revocation_valid_until: Some(revocation.to_owned()),
+            fact_valid_until: Some(fact.to_owned()),
+            cursor: "10".to_owned(),
+            revocation_cursor: "9".to_owned(),
+            refreshed_at: None,
+        };
+        value.at(now)
+    }
+
+    #[test]
+    fn projection_applies_six_row_cache_truth_table() {
+        let now = "2026-01-02T00:00:00.000Z";
+        let fresh = "2026-01-03T00:00:00.000Z";
+        let expired = "2026-01-01T00:00:00.000Z";
+        let fresh_fresh = freshness(fresh, fresh, now);
+        assert_eq!(fresh_fresh.projection(true, true), ("trusted", Vec::<&str>::new()));
+        assert_eq!(fresh_fresh.projection(false, true), ("trusted", Vec::<&str>::new()));
+        assert_eq!(
+            freshness(fresh, expired, now).projection(true, true),
+            ("withheld", vec!["CACHE_EXPIRED"])
+        );
+        assert_eq!(
+            freshness(fresh, expired, now).projection(false, true),
+            ("excluded", vec!["CACHE_EXPIRED"])
+        );
+        assert_eq!(
+            freshness(expired, fresh, now).projection(true, true),
+            ("withheld", vec!["REVOCATION_STALE"])
+        );
+        assert_eq!(
+            freshness(expired, expired, now).projection(true, true),
+            ("withheld", vec!["REVOCATION_STALE"])
+        );
+        assert_eq!(
+            freshness(expired, fresh, now).projection(false, true),
+            ("excluded", vec!["REVOCATION_STALE"])
+        );
+        assert_eq!(
+            freshness(expired, expired, now).projection(false, true),
+            ("excluded", vec!["REVOCATION_STALE", "CACHE_EXPIRED"])
+        );
+    }
+
+    #[test]
+    fn certificate_or_root_failure_dominates_and_clocks_are_rechecked() {
+        let now = "2026-01-02T00:00:00.000Z";
+        let fresh = "2026-01-03T00:00:00.000Z";
+        let value = freshness(fresh, fresh, now);
+        assert_eq!(
+            value.projection(true, false),
+            ("withheld", vec!["certificate-or-root-invalid"])
+        );
+        let later = value.at("2026-01-04T00:00:00.000Z");
+        assert!(!later.revocation_fresh);
+        assert!(!later.fact_fresh);
     }
 }

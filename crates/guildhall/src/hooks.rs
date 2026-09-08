@@ -392,7 +392,7 @@ fn dispatch_event(
         // SessionStart is deterministic and host-independent: canonical fact
         // bytes come from the certified repository's reduced current view.
         if let Ok(launcher) = crate::launcher::Launcher::load()
-            && let Ok(context) = RepoContext::load(launcher, &cwd, false)
+            && let Ok(context) = RepoContext::load(launcher, &cwd, true)
         {
             let now = crate::time::now_rfc3339_millis();
             if let Ok((view, _, _)) = context.current_view(&now, None) {

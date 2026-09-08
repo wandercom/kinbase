@@ -111,6 +111,8 @@ impl CompanyDb {
                     revision TEXT NOT NULL, event_count INTEGER NOT NULL, merkle_root TEXT NOT NULL,
                     event_digests TEXT NOT NULL, observed_at TEXT NOT NULL, fresh_until TEXT NOT NULL,
                     document TEXT NOT NULL, status TEXT NOT NULL, cursor INTEGER NOT NULL);
+                 CREATE UNIQUE INDEX IF NOT EXISTS manifest_observation_lineage
+                    ON manifest_observations(repository_uuid, branch, revision);
                  CREATE TABLE IF NOT EXISTS fact_versions(
                     fact_id TEXT NOT NULL, version INTEGER NOT NULL, semantic_digest TEXT NOT NULL,
                     digest_alg_version TEXT NOT NULL, event_id TEXT NOT NULL, cursor INTEGER NOT NULL,
@@ -218,6 +220,23 @@ impl CompanyDb {
             .map_err(sqlite_error("prepare"))?;
         let rows = statement
             .query_map(params![kind], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
+            .map_err(sqlite_error("query"))?;
+        let mut output = Vec::new();
+        for row in rows {
+            let (cursor, payload, verification) = row.map_err(sqlite_error("row"))?;
+            let value: Value = serde_json::from_str(&payload).map_err(|error| ContractError::internal(error.to_string()))?;
+            output.push((cursor, value, verification));
+        }
+        Ok(output)
+    }
+
+    pub fn events_of_message_type(&self, message_type: &str) -> Result<Vec<(i64, Value, String)>, ContractError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT cursor, payload, verification FROM events WHERE message_type=?1 ORDER BY cursor")
+            .map_err(sqlite_error("prepare"))?;
+        let rows = statement
+            .query_map(params![message_type], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
             .map_err(sqlite_error("query"))?;
         let mut output = Vec::new();
         for row in rows {
@@ -804,7 +823,19 @@ impl CompanyDb {
                     cursor
                 ],
             )
-            .map_err(sqlite_error("manifest observation insert"))?;
+            .map_err(|error| {
+                if matches!(
+                    &error,
+                    rusqlite::Error::SqliteFailure(code, _) if code.code == rusqlite::ErrorCode::ConstraintViolation
+                ) {
+                    return ContractError::integrity(
+                        "DIGEST_MISMATCH",
+                        "manifest lineage head is already observed for this repository and branch",
+                        "Return the existing observation; a lineage head cannot be admitted twice.",
+                    );
+                }
+                sqlite_error("manifest observation insert")(error)
+            })?;
         Ok(self.connection.last_insert_rowid())
     }
 
@@ -881,6 +912,16 @@ impl CompanyDb {
             )
             .map_err(sqlite_error("steward queue"))?;
         Ok(inserted == 1)
+    }
+
+    pub fn resolve_steward_queue(&self, event_id: &str) -> Result<(), ContractError> {
+        self.connection
+            .execute(
+                "UPDATE steward_queue SET status='admitted' WHERE event_id=?1 AND status='pending-steward-review'",
+                params![event_id],
+            )
+            .map(|_| ())
+            .map_err(sqlite_error("steward queue resolution"))
     }
 
     pub fn steward_queue(&self) -> Result<Vec<Value>, ContractError> {

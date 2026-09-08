@@ -597,6 +597,48 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         String::from_utf8_lossy(&init.stderr)
     );
 
+    // Packet 12: projection is reducer-invoking, so it requires a fresh
+    // authority snapshot. Seed the offline cache with the same steward root
+    // used for this test's certificate and codebase facts.
+    let unsigned_snapshot = json!({
+        "schema": "guildhall-snapshot/1",
+        "company_id": "company-test",
+        "cursor": "1000",
+        "authority_cursor": "1000",
+        "revocation_cursor": "1000",
+        "client_nonce": "packet12-offline-cache",
+        "issued_at": "2026-09-08T12:00:00.000Z",
+        "revocation_valid_until": "2030-01-01T00:00:00.000Z",
+        "fact_valid_until": "2030-01-01T00:00:00.000Z",
+        "registry": [
+            {
+                "authority_id": "company-steward",
+                "scope": "company:root",
+                "public_key": root_key.public().to_hex(),
+                "status": "active"
+            },
+            {
+                "authority_id": "repository-maintainer",
+                "scope": format!("codebase:{repository_uuid}"),
+                "public_key": root_key.public().to_hex(),
+                "status": "active"
+            }
+        ],
+        "revocations": [],
+        "facts": [],
+        "unknowns": [],
+        "relaxations": [],
+        "certificates": [],
+        "fact_versions": {}
+    });
+    let signed_snapshot = root_key
+        .sign_document("receipt", &unsigned_snapshot)
+        .expect("sign authority snapshot");
+    let mut cache = guildhall::company::cache::Cache::open(&cache_root).expect("open authority cache");
+    cache
+        .store_snapshot(&signed_snapshot, &root_key.public(), "2026-09-08T12:00:00.000Z")
+        .expect("store fresh authority snapshot");
+
     let mut facts = vec![
         packet11_project_fact(
             repository_uuid,

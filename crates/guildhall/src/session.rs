@@ -503,6 +503,11 @@ fn atom_from_classifier(
     if let Some(value) = external.get("atom_kind").and_then(Value::as_str) {
         atom.atom_kind = value.to_owned();
     }
+    let external_taints: Vec<crate::scanner::Taint> = external
+        .get("taint")
+        .and_then(Value::as_array)
+        .map(|values| values.iter().filter_map(|value| value.as_str()).filter_map(crate::scanner::Taint::parse).collect())
+        .unwrap_or_default();
     if let Some(values) = external.get("proposed_destinations").and_then(Value::as_array) {
         let mut destinations = values
             .iter()
@@ -514,8 +519,15 @@ fn atom_from_classifier(
                 other => other.to_owned(),
             })
             .collect::<Vec<_>>();
-        if atom.hard_blocked {
-            destinations = vec!["none".to_owned()];
+        if atom.hard_blocked
+            || external_taints
+                .iter()
+                .any(|taint| taint.hard_block() || matches!(taint, crate::scanner::Taint::PersonalSession | crate::scanner::Taint::CompanyConfidential))
+        {
+            destinations.retain(|destination| destination == "personal");
+            if destinations.is_empty() {
+                destinations.push("none".to_owned());
+            }
         } else if atom.confidence < 6_000 {
             destinations.retain(|destination| destination == "personal");
             if !destinations.contains(&"none".to_owned()) {

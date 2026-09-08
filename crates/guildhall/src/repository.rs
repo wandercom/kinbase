@@ -76,6 +76,40 @@ impl TrustContext {
         })
     }
 
+    /// Stable authority identities by exact active registry scope. Ambiguous
+    /// scopes are omitted; the reducer then emits an unresolved Unknown.
+    pub fn authority_owner_by_scope(&self) -> BTreeMap<String, String> {
+        let mut by_scope: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for entry in &self.registry {
+            if crate::json::get_str(entry, "status").unwrap_or("active") != "active" {
+                continue;
+            }
+            if let (Some(scope), Some(identity)) = (
+                crate::json::get_str(entry, "scope"),
+                crate::json::get_str(entry, "authority_id"),
+            ) {
+                by_scope.entry(scope.to_owned()).or_default().push(identity.to_owned());
+            }
+        }
+        by_scope
+            .into_iter()
+            .filter_map(|(scope, identities)| (identities.len() == 1).then(|| (scope, identities.into_iter().next().unwrap())))
+            .collect()
+    }
+
+    pub fn steward_authority_id(&self) -> Option<String> {
+        let identities = self
+            .registry
+            .iter()
+            .filter(|entry| {
+                crate::json::get_str(entry, "scope") == Some("company:root")
+                    && crate::json::get_str(entry, "status").unwrap_or("active") == "active"
+            })
+            .filter_map(|entry| crate::json::get_str(entry, "authority_id").map(str::to_owned))
+            .collect::<Vec<_>>();
+        (identities.len() == 1).then(|| identities[0].clone())
+    }
+
     pub fn maintainer_entries(&self) -> Vec<Value> {
         let Some(uuid) = &self.repository_uuid else { return Vec::new() };
         self.registry
@@ -463,6 +497,7 @@ impl RepoContext {
         let (loaded, counts) = self.load_events()?;
         let (admitted, unknowns, tombstones, revocations) = self.reducer_parts()?;
         let cursor = cursor_override.map(str::to_owned).unwrap_or_else(|| self.trust.authority_cursor.clone());
+        let effective_freshness = self.trust.freshness.as_ref().map(|freshness| freshness.at(as_of));
         let input = ReducerInput {
             store_kind: "codebase".to_owned(),
             events: admitted,
@@ -471,22 +506,39 @@ impl RepoContext {
             revocations,
             as_of: as_of.to_owned(),
             authority_cursor: cursor,
-            revocation_fresh: true,
-            fact_valid_until: None,
+            revocation_fresh: effective_freshness.as_ref().map(|freshness| freshness.revocation_fresh).unwrap_or(true),
+            fact_valid_until: effective_freshness.as_ref().and_then(|freshness| freshness.fact_valid_until.clone()),
             certificate_valid: self.trust.certificate_valid,
+            authority_owner_by_scope: self.trust.authority_owner_by_scope(),
+            steward_authority_id: self.trust.steward_authority_id(),
         };
         let mut view = crate::reducer::reduce(&input);
         let mut dependence_events: Vec<FactEvent> = loaded
             .iter()
             .filter_map(|item| {
                 if let ParsedEvent::Fact(event) = &item.parsed {
-                    (event.atom_kind == "dependence").then(|| event.clone())
+                    (event.atom_kind == "dependence"
+                        || (event.atom_kind == "constraint"
+                            && event.logical_key.ends_with("/local_dependence_class")))
+                        .then(|| event.clone())
                 } else {
                     None
                 }
             })
             .collect();
-        let references = self.resolve_company_references(&mut view, &dependence_events, as_of);
+        let exception_requests: Vec<FactEvent> = loaded
+            .iter()
+            .filter_map(|item| {
+                if let ParsedEvent::Fact(event) = &item.parsed {
+                    (crate::model::action_of(event) == Some("exception_request")
+                        && item.verification == Some(Verification::Verified))
+                        .then(|| event.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let references = self.resolve_company_references(&mut view, &dependence_events, &exception_requests, effective_freshness.as_ref(), as_of);
         dependence_events.clear();
         Ok((view, counts, references))
     }
@@ -494,47 +546,110 @@ impl RepoContext {
     /// P-8: resolve each Company reference through the cached authorized
     /// Company view; apply the max rule between Company criticality and the
     /// maintainer-owned local dependence class; honor steward relaxations.
-    fn resolve_company_references(&self, view: &mut crate::reducer::CurrentView, dependence_events: &[FactEvent], as_of: &str) -> Vec<Value> {
+    fn resolve_company_references(
+        &self,
+        view: &mut crate::reducer::CurrentView,
+        dependence_events: &[FactEvent],
+        exception_requests: &[FactEvent],
+        freshness: Option<&crate::company::cache::Freshness>,
+        as_of: &str,
+    ) -> Vec<Value> {
         let mut results = Vec::new();
         let repository_uuid = self.trust.repository_uuid.clone().unwrap_or_default();
-        let freshness = self.trust.freshness.as_ref();
         for fact in view.facts.iter_mut() {
             if fact.company_refs.is_empty() {
                 continue;
             }
             let local = dependence_events
                 .iter()
-                .filter(|event| event.parents.contains(&fact.event_id) || event.parents.contains(&fact.fact_id))
+                .filter(|event| {
+                    (event.atom_kind == "dependence"
+                        && (event.parents.contains(&fact.event_id) || event.parents.contains(&fact.fact_id)))
+                        || (event.atom_kind == "constraint"
+                            && event.logical_key == format!("{}/local_dependence_class", fact.logical_key))
+                })
                 .max_by_key(|event| event.asserted_at.clone());
-            let local_class = local.map(|event| {
-                if event.statement.contains("safety") { "safety_critical".to_owned() } else { "advisory".to_owned() }
-            });
+            let local_class = local.and_then(|event| local_dependence_class(&event.statement));
             let local_owner = local.map(|event| event.authority_id.clone());
             for reference in &fact.company_refs {
                 let mut record = json!({
                     "fact_id": fact.fact_id,
                     "company_fact_id": reference.fact_id,
                     "relation": reference.relation,
+                    "reference_company_criticality": reference.company_criticality,
                     "company_criticality": reference.company_criticality,
                     "company_owner": reference.authority,
                     "local_dependence_class": local_class,
                     "local_owner": local_owner,
-                    "digest_alg_version": reference.digest_alg_version
+                    "digest_alg_version": reference.digest_alg_version,
+                    "max_rule": "deterministic max: stricter of Company criticality and local dependence class",
+                    "dominating_input": "company"
                 });
-                if reference.digest_alg_version != crate::model::DIGEST_ALG_VERSION {
-                    record["resolution"] = Value::String("DIGEST_ALGORITHM_UNSUPPORTED".to_owned());
-                    record["digest_attribution"] = json!({"owner_role": "client", "reason": "unknown digest algorithm version means client upgrade/degraded mode"});
+                if let Some((resolution, owner, reason)) = unsupported_digest_algorithm(reference) {
+                    record["resolution"] = Value::String(resolution.to_owned());
+                    record["digest_attribution"] = json!({"owner_role": owner, "reason": reason});
                     fact.trust = "withheld".to_owned();
-                    fact.stale_reasons.push("DIGEST_ALGORITHM_UNSUPPORTED".to_owned());
-                    view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, "client", "DIGEST_ALGORITHM_UNSUPPORTED: upgrade the client adapter; the steward changed nothing"));
+                    fact.stale_reasons.push(resolution.to_owned());
+                    view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, owner, "DIGEST_ALGORITHM_UNSUPPORTED: upgrade the client adapter; the steward changed nothing"));
                     results.push(record);
                     continue;
                 }
                 let company_fact = self.trust.company_fact(&reference.fact_id).cloned();
                 let versions = self.trust.fact_versions.get(&reference.fact_id).cloned().unwrap_or_default();
-                let live_digest = company_fact.as_ref().and_then(|value| crate::json::get_str(value, "statement").map(crate::model::semantic_digest));
+                let request = exception_requests.iter().find(|event| {
+                    event.repository_id.as_deref() == Some(repository_uuid.as_str())
+                        && (crate::json::get_str(&event.document(), "relaxed_fact_id")
+                            == Some(reference.fact_id.as_str())
+                            || event.parents.contains(&fact.event_id)
+                            || event.parents.contains(&fact.fact_id))
+                });
+                if let Some(event) = request {
+                    let document = event.document();
+                    record["exception"] = json!({
+                        "owner": event.authority_id,
+                        "scope": event.authority_scope,
+                        "fact_id": crate::json::get_str(&document, "relaxed_fact_id").unwrap_or(reference.fact_id.as_str()),
+                        "fact_version": crate::json::get_str(&document, "relaxed_fact_version").or_else(|| crate::json::get_str(&document, "fact_version")).unwrap_or("current"),
+                        "requested_class": crate::json::get_str(&document, "requested_class").unwrap_or("advisory"),
+                        "reason": crate::json::get_str(&document, "reason").unwrap_or_default(),
+                        "expires_at": crate::json::get_str(&document, "expires_at").or_else(|| crate::json::get_str(&document, "effective_until")).unwrap_or_default(),
+                        "accepted": true,
+                        "changes_effective_class": false
+                    });
+                }
+                let live_digest = company_fact
+                    .as_ref()
+                    .and_then(|value| crate::json::get_str(value, "semantic_digest"))
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        company_fact
+                            .as_ref()
+                            .and_then(|value| crate::json::get_str(value, "statement"))
+                            .map(crate::model::semantic_digest)
+                    });
+                let live_digest_alg = company_fact
+                    .as_ref()
+                    .and_then(|value| crate::json::get_str(value, "digest_alg_version"))
+                    .unwrap_or(crate::model::DIGEST_ALG_VERSION);
                 let company_statement = company_fact.as_ref().and_then(|value| crate::json::get_str(value, "statement").map(str::to_owned));
-                let effective_company_class = self.effective_company_class(&repository_uuid, reference, as_of);
+                let live_company_class = company_fact
+                    .as_ref()
+                    .and_then(|value| crate::json::get_str(value, "company_criticality"))
+                    .unwrap_or(reference.company_criticality.as_str());
+                record["company_criticality"] = Value::String(live_company_class.to_owned());
+                record["published_digest_alg_version"] = Value::String(live_digest_alg.to_owned());
+                let effective_company_class = self.effective_company_class(&repository_uuid, reference, live_company_class, as_of);
+                if let Some(relaxation) = self.active_relaxation(&repository_uuid, reference, as_of) {
+                    record["relaxation"] = json!({
+                        "owner": crate::json::get_str(relaxation, "authority_id").unwrap_or("company-steward"),
+                        "scope": format!("codebase:{repository_uuid}"),
+                        "fact_id": reference.fact_id,
+                        "fact_version": crate::json::get_str(relaxation, "relaxed_fact_version").unwrap_or("current"),
+                        "relaxed_class": crate::json::get_str(relaxation, "relaxed_class").unwrap_or("advisory"),
+                        "expires_at": crate::json::get_str(relaxation, "expires_at").or_else(|| crate::json::get_str(relaxation, "effective_until")),
+                        "changes_effective_class": true
+                    });
+                }
                 let stricter = if crate::model::criticality_is_safety(&effective_company_class) || local_class.as_deref().is_some_and(crate::model::criticality_is_safety) {
                     "safety_critical"
                 } else {
@@ -587,26 +702,31 @@ impl RepoContext {
                         // reference's exact fact version and Company's head.
                         let version = reference.fact_version.clone().unwrap_or_else(|| "1".to_owned());
                         let historical = versions.iter().find(|item| crate::json::get_str(item, "version") == Some(version.as_str()));
-                        match historical {
-                            Some(item) if crate::json::get_str(item, "semantic_content_digest") == Some(reference.semantic_digest.as_str()) => {
-                                record["resolution"] = Value::String("changed-company-content".to_owned());
-                                record["digest_attribution"] = json!({"owner_role": "company-steward", "reason": "historical digest matches the reference; Company content changed since"});
-                                view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, "company-steward", "Company content changed since the reference was taken; confirm the repository still complies"));
-                            }
-                            Some(_) => {
-                                record["resolution"] = Value::String("client-canonicalization-defect".to_owned());
-                                record["digest_attribution"] = json!({"owner_role": "client", "reason": "historical digest at the reference's version differs from what the client recorded"});
-                                view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, "client", "client canonicalization defect: recompute the reference from the published digest"));
-                            }
-                            None if self.trust.company_reachable == Some(false) => {
-                                record["resolution"] = Value::String("company-unavailable".to_owned());
-                                record["digest_attribution"] = json!({"owner_role": "none", "reason": "Company unavailable; withheld without accusation"});
-                            }
-                            None => {
-                                record["resolution"] = Value::String("company-retention".to_owned());
-                                record["digest_attribution"] = json!({"owner_role": "company-steward", "reason": "the historical version is no longer retained; publication-retention Unknown"});
-                                view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, "company-steward", "Company no longer retains the referenced fact version; publication-retention Unknown"));
-                            }
+                        let (resolution, owner, reason) = digest_mismatch_attribution(
+                            reference,
+                            historical,
+                            self.trust.company_reachable,
+                        );
+                        record["resolution"] = Value::String(resolution.to_owned());
+                        record["digest_attribution"] = json!({"owner_role": owner, "reason": reason});
+                        match owner {
+                            "client" => view.unknowns.push(client_unknown(
+                                &fact.logical_key,
+                                &reference.fact_id,
+                                "client",
+                                "client canonicalization defect: recompute the reference from the published digest",
+                            )),
+                            "company-steward" => view.unknowns.push(client_unknown(
+                                &fact.logical_key,
+                                &reference.fact_id,
+                                "company-steward",
+                                if resolution == "company-retention" {
+                                    "Company no longer retains the referenced fact version; publication-retention Unknown"
+                                } else {
+                                    "the referenced digest changed or is corrupt; the Company steward must reconcile the reference"
+                                },
+                            )),
+                            _ => {}
                         }
                         fact.trust = "withheld".to_owned();
                         fact.stale_reasons.push("DIGEST_MISMATCH".to_owned());
@@ -621,17 +741,26 @@ impl RepoContext {
         results
     }
 
-    fn effective_company_class(&self, repository_uuid: &str, reference: &crate::model::CompanyReference, as_of: &str) -> String {
-        let relaxed = self.trust.relaxations.iter().find(|relaxation| {
-            crate::json::get_str(relaxation, "repository_id") == Some(repository_uuid)
-                && crate::json::get_str(relaxation, "relaxed_fact_id") == Some(reference.fact_id.as_str())
-                && crate::json::get_str(relaxation, "expires_at").is_none_or(|until| until > as_of)
+    fn active_relaxation<'a>(&'a self, repository_uuid: &str, reference: &crate::model::CompanyReference, as_of: &str) -> Option<&'a Value> {
+        self.trust.relaxations.iter().find(|relaxation| {
+            let repository = crate::json::get_str(relaxation, "repository_id")
+                .or_else(|| crate::json::get_str(relaxation, "repository_uuid"));
+            let fact_id = crate::json::get_str(relaxation, "relaxed_fact_id")
+                .or_else(|| crate::json::get_str(relaxation, "fact_id"));
+            let expiry = crate::json::get_str(relaxation, "expires_at")
+                .or_else(|| crate::json::get_str(relaxation, "effective_until"));
+            repository == Some(repository_uuid)
+                && fact_id == Some(reference.fact_id.as_str())
+                && expiry.is_some_and(|until| until > as_of)
                 && crate::json::get_str(relaxation, "status").unwrap_or("active") == "active"
-        });
-        match relaxed {
-            Some(relaxation) => crate::json::get_str(relaxation, "relaxed_class").unwrap_or("advisory").to_owned(),
-            None => reference.company_criticality.clone(),
-        }
+        })
+    }
+
+    fn effective_company_class(&self, repository_uuid: &str, reference: &crate::model::CompanyReference, live_class: &str, as_of: &str) -> String {
+        self.active_relaxation(repository_uuid, reference, as_of)
+            .and_then(|relaxation| crate::json::get_str(relaxation, "relaxed_class"))
+            .unwrap_or(live_class)
+            .to_owned()
     }
 
     pub fn repository_uuid(&self) -> Result<String, ContractError> {
@@ -639,6 +768,60 @@ impl RepoContext {
             .repository_uuid
             .clone()
             .ok_or_else(|| ContractError::repo_uninitialized(&self.repo.root))
+    }
+}
+
+fn unsupported_digest_algorithm(
+    reference: &crate::model::CompanyReference,
+) -> Option<(&'static str, &'static str, &'static str)> {
+    (reference.digest_alg_version != crate::model::DIGEST_ALG_VERSION).then(|| {
+        (
+            "DIGEST_ALGORITHM_UNSUPPORTED",
+            "client",
+            "unknown digest algorithm version means client upgrade/degraded mode",
+        )
+    })
+}
+
+fn digest_mismatch_attribution(
+    reference: &crate::model::CompanyReference,
+    historical: Option<&Value>,
+    company_reachable: Option<bool>,
+) -> (&'static str, &'static str, &'static str) {
+    match historical {
+        Some(item) if crate::json::get_str(item, "semantic_content_digest") == Some(reference.semantic_digest.as_str()) => {
+            (
+                "client-canonicalization-defect",
+                "client",
+                "the historical digest matches the reference, so the live digest mismatch is client-owned canonicalisation",
+            )
+        }
+        Some(_) => (
+            "changed-or-corrupt-reference",
+            "company-steward",
+            "the historical digest for the exact referenced version differs; the reference changed or is corrupt",
+        ),
+        None if company_reachable == Some(false) => (
+            "company-unavailable",
+            "none",
+            "Company unavailable; withheld without accusation",
+        ),
+        None => (
+            "company-retention",
+            "company-steward",
+            "the historical version is no longer retained; publication-retention Unknown",
+        ),
+    }
+}
+
+fn local_dependence_class(statement: &str) -> Option<String> {
+    let value = statement.trim().trim_end_matches('.').to_ascii_lowercase();
+    if value.ends_with("safety_critical") {
+        Some("safety_critical".to_owned())
+    } else if value.ends_with("advisory") {
+        Some("advisory".to_owned())
+    } else {
+        None
     }
 }
 
@@ -770,6 +953,8 @@ pub fn build_trust(launcher: &Launcher, repo: &Repository, online: bool) -> Resu
                             "unknown_id": format!("unknown_identity_{}", &crate::hash::sha256_text(&hint)[..24]),
                             "owner_role": "company-steward",
                             "owner_identity": "company-steward",
+                            "repin_unknown_owner_roles": ["company-steward"],
+                            "repin_blocked": true,
                             "response_due_at": crate::time::plus_seconds(&now, 24 * 3600).unwrap_or_default(),
                             "question": format!("discovery hint resolves to UUID {uuid} but was pinned to {other}; only a signed Company lineage/move event may update the binding"),
                             "status": "open"
@@ -785,6 +970,59 @@ pub fn build_trust(launcher: &Launcher, repo: &Repository, online: bool) -> Resu
 fn cache_needs_refresh(cache: &crate::company::cache::Cache, now: &str) -> bool {
     let freshness = cache.freshness(now);
     !(freshness.revocation_fresh && freshness.fact_fresh)
+}
+
+/// Ensure a verified authority snapshot is available for the requested cursor.
+/// Returns `(cursor, source)`; offline callers receive the fresh cache or a
+/// typed degraded error rather than silently treating "no snapshot" as "no
+/// authority".
+pub fn ensure_authority_snapshot(
+    launcher: &Launcher,
+    requested_cursor: Option<&str>,
+) -> Result<(String, &'static str), ContractError> {
+    let Some(mut company) = launcher.company()? else {
+        return Err(ContractError::degraded(
+            "CACHE_EXPIRED",
+            "no configured Company authority snapshot source is available",
+            "Configure the Company endpoint and cache root; authority is withheld rather than assumed absent.",
+        ));
+    };
+    let now = crate::time::now_rfc3339_millis();
+    let cached_cursor = company.cache.meta("authority_cursor").unwrap_or_else(|| "0".to_owned());
+    let requested = requested_cursor.unwrap_or(cached_cursor.as_str());
+    let cache_fresh = company.cache.state == crate::company::cache::CacheState::Warm
+        && !cache_needs_refresh(&company.cache, &now);
+    if cache_fresh
+        && crate::reducer::cursor_order(&cached_cursor, requested) != std::cmp::Ordering::Less
+    {
+        return Ok((cached_cursor, "cache"));
+    }
+    match company.client.snapshot() {
+        Ok(snapshot) => {
+            company.cache.store_snapshot(&snapshot, &company.root, &now)?;
+            let cursor = crate::json::get_str(&snapshot, "authority_cursor")
+                .map(str::to_owned)
+                .unwrap_or_else(|| "0".to_owned());
+            if crate::reducer::cursor_order(&cursor, requested) == std::cmp::Ordering::Less {
+                return Err(ContractError::degraded(
+                    "CACHE_EXPIRED",
+                    format!("Company authority snapshot cursor {cursor} predates the requested cursor {requested}"),
+                    "Publish or fetch a registry snapshot at or after the requested cursor.",
+                ));
+            }
+            Ok((cursor, "fetched"))
+        }
+        Err(error) => {
+            if cache_fresh && crate::reducer::cursor_order(&cached_cursor, requested) != std::cmp::Ordering::Less {
+                return Ok((cached_cursor, "cache"));
+            }
+            Err(ContractError::degraded(
+                "CACHE_EXPIRED",
+                format!("no fresh authority snapshot is available ({})", error.message),
+                "Restore the Company service or supply a fresh cached registry; authority is withheld rather than assumed absent.",
+            ))
+        }
+    }
 }
 
 pub fn normalize_hint(remote: &str) -> String {
@@ -881,6 +1119,7 @@ pub fn init(launcher: Launcher, repo_path: &Path, certificate_path: &Path, json_
             return Err(ContractError::refused("FOREIGN_REPO_EVENTS", ".kin/config already binds a different repository UUID", "Obtain a signed lineage event before rebinding; the existing bytes are preserved."));
         }
     }
+    let authority_snapshot = ensure_authority_snapshot(&launcher, None);
     let Some((cache, root)) = launcher.company_cache()? else {
         return Err(ContractError::user_action("REPO_UNCERTIFIED", "no Company root or cache is configured to verify and install the certificate", "Create the launcher user config with [company] root_public_key_file and cache_root first."));
     };
@@ -942,7 +1181,11 @@ pub fn init(launcher: Launcher, repo_path: &Path, certificate_path: &Path, json_
         "worktree_paths_written": worktree_paths_written,
         "gitattributes_lines_added": attributes_added,
         "commit_only": [".kin/config", ".kin/events/", ".kin/manifests/", ".gitattributes"],
-        "trust_on_first_use": false
+        "trust_on_first_use": false,
+        "authority_snapshot": match &authority_snapshot {
+            Ok((cursor, source)) => json!({"cursor": cursor, "source": source}),
+            Err(error) => json!({"source": "unavailable", "error": {"code": error.code, "message": error.message, "remediation": error.remediation}}),
+        }
     });
     crate::output::emit(&result, json_output);
     Ok(())
@@ -1219,6 +1462,66 @@ pub fn published_observations(repo: &Repository) -> Vec<Value> {
     output
 }
 
+/// Compare local event digests with every dated manifest observation. The
+/// observation never changes current truth; it is only a completeness report.
+fn manifest_observation_report(
+    repo: &Repository,
+    local_digests: &BTreeSet<String>,
+    now: &str,
+) -> Result<(String, usize, bool, Vec<Value>), ContractError> {
+    let mut classification = "no-published-observation".to_owned();
+    let mut missing_heads = 0usize;
+    let mut expired_publication = false;
+    let mut comparisons = Vec::new();
+    for observation in published_observations(repo) {
+        let count = observation.get("count").and_then(Value::as_i64).unwrap_or(0) as usize;
+        let digests: BTreeSet<String> = crate::json::get_array(&observation, "event_digests")
+            .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_owned)).collect())
+            .unwrap_or_default();
+        let fresh_until = crate::json::get_str(&observation, "fresh_until").unwrap_or_default().to_owned();
+        let expired = !fresh_until.is_empty() && fresh_until.as_str() <= now;
+        if expired {
+            expired_publication = true;
+        }
+        let comparison = if digests.is_empty() {
+            match local_digests.len().cmp(&count) {
+                std::cmp::Ordering::Equal => "equal",
+                std::cmp::Ordering::Greater => "superset",
+                std::cmp::Ordering::Less => "subset",
+            }
+        } else {
+            crate::codebase::compare_event_sets(local_digests, &digests)
+        };
+        let unreachable = observation.get("unreachable").and_then(Value::as_bool).unwrap_or(false);
+        if !expired {
+            classification = match comparison {
+                "equal" => "complete".to_owned(),
+                "superset" => "normal_lag".to_owned(),
+                "subset" => {
+                    missing_heads += count.saturating_sub(local_digests.len()).max(1);
+                    "INCOMPLETE".to_owned()
+                }
+                _ if unreachable => "divergent-branch".to_owned(),
+                _ => {
+                    missing_heads += 1;
+                    "INCOMPLETE".to_owned()
+                }
+            };
+        }
+        comparisons.push(json!({
+            "repository_uuid": observation.get("repository_uuid").cloned().unwrap_or(Value::Null),
+            "branch": observation.get("branch").cloned().unwrap_or(Value::Null),
+            "revision": observation.get("observed_default_branch_revision").or_else(|| observation.get("revision")).cloned().unwrap_or(Value::Null),
+            "comparison": comparison,
+            "lifecycle": if expired { "manifest_observation_expired" } else { "current" },
+            "fresh_until": fresh_until,
+            "published_count": count,
+            "local_count": local_digests.len()
+        }));
+    }
+    Ok((classification, missing_heads, expired_publication, comparisons))
+}
+
 /// `status --json` (interface contract §1.2).
 pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, json_output: bool) -> Result<(), ContractError> {
     let context = RepoContext::load(launcher, repo_path, true)?;
@@ -1275,6 +1578,9 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
         }));
     }
     let (events, _) = if context.repo.config.is_some() { context.load_events()? } else { (Vec::new(), LoadCounts::default()) };
+    let local_digests: BTreeSet<String> = events.iter().filter(|event| !event.file.path_alias).map(|event| event.file.digest.clone()).collect();
+    let (manifest_classification, manifest_missing_heads, manifest_expired_publication, manifest_comparisons) =
+        manifest_observation_report(&context.repo, &local_digests, &as_of.as_of)?;
     let mut event_records = Vec::new();
     let mut exceptions = Vec::new();
     let mut exception_request_accepted = false;
@@ -1297,13 +1603,23 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
                 record["unresponsive_closing_authority"] = Value::String(closing.to_owned());
             }
             event_records.push(record);
-            match event.atom_kind.as_str() {
+            let action = crate::model::action_of(event).unwrap_or(event.atom_kind.as_str());
+            match action {
                 "exception_request" => {
-                    let accepted = context.trust.relaxations.iter().any(|relaxation| {
-                        crate::json::get_str(relaxation, "repository_id") == context.trust.repository_uuid.as_deref()
-                    });
-                    exception_request_accepted = exception_request_accepted || verified;
-                    exceptions.push(json!({"signed_by": event.authority_id, "kind": "exception_request", "accepted": accepted, "refusal_code": if accepted { Value::Null } else { Value::String("awaiting-steward-relaxation".to_owned()) }}));
+                    let document = event.document();
+                    let bound = event.repository_id.as_deref() == context.trust.repository_uuid.as_deref()
+                        && crate::json::get_str(&document, "relaxed_fact_id").is_some()
+                        && crate::json::get_str(&document, "requested_class").is_some_and(|class| crate::model::CRITICALITIES.contains(&class))
+                        && !crate::json::get_str(&document, "reason").unwrap_or_default().is_empty()
+                        && crate::json::get_str(&document, "expires_at").is_some();
+                    let accepted = verified && bound;
+                    exception_request_accepted = exception_request_accepted || accepted;
+                    exceptions.push(json!({
+                        "signed_by": event.authority_id,
+                        "kind": "exception_request",
+                        "accepted": accepted,
+                        "refusal_code": if accepted { Value::Null } else { Value::String("CONFIG_INVARIANT".to_owned()) }
+                    }));
                 }
                 "exception_to" | "relaxation" => {
                     let steward = context.trust.steward_keys().contains(&event.signer) && verified;
@@ -1407,6 +1723,13 @@ pub fn status(launcher: Launcher, repo_path: &Path, as_of: &crate::time::AsOf, j
         "as_of_source": as_of.as_of_source,
         "ambient_clock_read": false,
         "origin_trust_classes": origin_trust_classes,
+        "manifest_observation_comparison": {
+            "classification": manifest_classification,
+            "missing_heads": manifest_missing_heads,
+            "expired_publication": manifest_expired_publication,
+            "published_observations": manifest_comparisons.len(),
+            "comparisons": manifest_comparisons
+        },
         "negative_evidence": negative_evidence,
         "unknown_owner_roles": unknown_owner_roles,
         "notice_admitted": misextraction_notices.iter().any(|notice| notice.get("notice_admitted") == Some(&Value::Bool(true))),
@@ -1466,6 +1789,8 @@ pub fn empty_view(as_of: &str) -> crate::reducer::CurrentView {
         revocation_fresh: false,
         fact_valid_until: None,
         certificate_valid: false,
+        authority_owner_by_scope: BTreeMap::new(),
+        steward_authority_id: None,
     })
 }
 
@@ -1621,6 +1946,25 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
             })
         }
     };
+    let mut processes = capabilities["processes"].clone();
+    if let Some(items) = processes.as_array_mut() {
+        for process in items {
+            let role = crate::json::get_str(process, "role").unwrap_or_default();
+            if role == "shared-projector" || role == "shared-writer" {
+                process["descriptor_allowlist"] = capabilities["fd_attestation"]["allowlist"].clone();
+                process["descriptor_attestation"] = json!({
+                    "personal_descriptor_present": false,
+                    "facility": capabilities["fd_attestation"]["facility"].clone(),
+                    "startup_refusal_enforced": true
+                });
+                process["startup_denial_probe"] = sandbox.clone().unwrap_or(Value::Null);
+            }
+        }
+    }
+    let cache_clocks = launcher
+        .company_cache()?
+        .map(|(cache, _root)| cache.freshness(&now).to_value())
+        .unwrap_or(Value::Null);
     let kindex = crate::adapters::kindex_seam_conformance();
     let mut boundaries = Vec::new();
     if let Some(repo) = &repo {
@@ -1636,7 +1980,7 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
     let apology_quarantine = core.quarantine_count("apology-unwritable")?;
     let mut result = json!({
         "status": if apology_quarantine > 0 { "quarantined" } else { "ok" },
-        "processes": capabilities["processes"],
+        "processes": processes,
         "mode": launcher.mode,
         "fd_attestation": capabilities["fd_attestation"],
         "capabilities": ["company", "codebase"],
@@ -1656,6 +2000,7 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
         "low_authority_displaced_high_distortion": false,
         "sweep": sweep,
         "sandbox": sandbox,
+        "cache_clocks": cache_clocks,
         "classifier": classifier,
         "classifier_pinned": classifier_pinned,
         "kindex_seams": kindex,
@@ -1713,44 +2058,9 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
     }
     let local_digests: BTreeSet<String> = events.iter().filter(|e| !e.file.path_alias).map(|e| e.file.digest.clone()).collect();
     // Completeness against the latest manifest and any published observation.
-    let mut classification = "no-published-observation".to_owned();
-    let mut missing_heads = 0usize;
-    let mut expired_publication = false;
-    let published = published_observations(repo);
     let now = as_of.as_of.clone();
-    for observation in &published {
-        if let Some(until) = crate::json::get_str(observation, "fresh_until") {
-            if until <= now.as_str() {
-                expired_publication = true;
-                continue;
-            }
-        }
-        let count = observation.get("count").and_then(Value::as_i64).unwrap_or(0) as usize;
-        let digests: BTreeSet<String> = crate::json::get_array(observation, "event_digests").map(|items| items.iter().filter_map(|i| i.as_str().map(str::to_owned)).collect()).unwrap_or_default();
-        let comparison = if digests.is_empty() {
-            match local_digests.len().cmp(&count) {
-                std::cmp::Ordering::Equal => "equal",
-                std::cmp::Ordering::Greater => "superset",
-                std::cmp::Ordering::Less => "subset",
-            }
-        } else {
-            crate::codebase::compare_event_sets(&local_digests, &digests)
-        };
-        let unreachable = observation.get("unreachable").and_then(Value::as_bool).unwrap_or(false);
-        classification = match comparison {
-            "equal" => "complete".to_owned(),
-            "superset" => "normal_lag".to_owned(),
-            "subset" => {
-                missing_heads += count.saturating_sub(local_digests.len()).max(1);
-                "INCOMPLETE".to_owned()
-            }
-            _ if unreachable => "divergent-branch".to_owned(),
-            _ => {
-                missing_heads += 1;
-                "INCOMPLETE".to_owned()
-            }
-        };
-    }
+    let (mut classification, mut missing_heads, expired_publication, manifest_comparisons) =
+        manifest_observation_report(repo, &local_digests, &now)?;
     for digests in &published_digest_sets {
         if !digests.is_subset(&local_digests) {
             missing_heads += digests.difference(&local_digests).count();
@@ -1841,7 +2151,7 @@ pub fn fsck(launcher: Launcher, repo_path: &Path, full: bool, as_of: &crate::tim
         "manifest_lineage_count": manifest_heads.len().max(if manifest_count > 0 { 1 } else { 0 }),
         "manifest_heads": manifest_heads,
         "manifest_problems": manifest_problems,
-        "manifest_comparison": {"classification": classification, "missing_heads": missing_heads, "expired_publication": expired_publication, "published_observations": published.len()},
+        "manifest_comparison": {"classification": classification, "missing_heads": missing_heads, "expired_publication": expired_publication, "published_observations": manifest_comparisons.len(), "comparisons": manifest_comparisons},
         "manifest_relations": {"superset": "normal_lag", "missing_head": "INCOMPLETE", "expired_owner": "company-steward", "incomparable_local_only": "divergent-branch"},
         "admitted_paths": admitted_paths,
         "refused_paths": refused_paths,
@@ -1968,5 +2278,64 @@ mod packet10_repository_tests {
             event_path_origin_class(Path::new("."), relative, &tracked, &dirty, "merged-default"),
             "uncommitted-worktree"
         );
+    }
+}
+
+
+#[cfg(test)]
+mod company_reference_tests {
+    use super::*;
+    use crate::model::CompanyReference;
+
+    fn make_reference(alg: &str, digest: &str) -> CompanyReference {
+        CompanyReference {
+            company_id: "company-demo".to_owned(),
+            fact_id: "fact-global".to_owned(),
+            semantic_digest: digest.to_owned(),
+            digest_alg_version: alg.to_owned(),
+            authority: "company-steward".to_owned(),
+            valid_from: "2026-01-01T00:00:00.000Z".to_owned(),
+            valid_until: None,
+            company_criticality: "safety_critical".to_owned(),
+            relation: "applies".to_owned(),
+            fact_version: Some("2".to_owned()),
+        }
+    }
+
+    #[test]
+    fn digest_mismatch_attribution_matches_architecture_truth_table() {
+        let reference = make_reference(crate::model::DIGEST_ALG_VERSION, "aa");
+        assert_eq!(
+            unsupported_digest_algorithm(&reference),
+            None
+        );
+        assert_eq!(
+            digest_mismatch_attribution(&reference, Some(&json!({"version": "2", "semantic_content_digest": "aa"})), Some(true)),
+            ("client-canonicalization-defect", "client", "the historical digest matches the reference, so the live digest mismatch is client-owned canonicalisation")
+        );
+        assert_eq!(
+            digest_mismatch_attribution(&reference, Some(&json!({"version": "2", "semantic_content_digest": "bb"})), Some(true)),
+            ("changed-or-corrupt-reference", "company-steward", "the historical digest for the exact referenced version differs; the reference changed or is corrupt")
+        );
+        assert_eq!(
+            digest_mismatch_attribution(&reference, None, Some(true)),
+            ("company-retention", "company-steward", "the historical version is no longer retained; publication-retention Unknown")
+        );
+        assert_eq!(
+            digest_mismatch_attribution(&reference, None, Some(false)),
+            ("company-unavailable", "none", "Company unavailable; withheld without accusation")
+        );
+        let unknown = make_reference("guildhall-digest/9", "aa");
+        assert_eq!(
+            unsupported_digest_algorithm(&unknown),
+            Some(("DIGEST_ALGORITHM_UNSUPPORTED", "client", "unknown digest algorithm version means client upgrade/degraded mode"))
+        );
+    }
+
+    #[test]
+    fn local_dependence_accepts_constraint_and_legacy_forms() {
+        assert_eq!(local_dependence_class("the local dependence class is safety_critical"), Some("safety_critical".to_owned()));
+        assert_eq!(local_dependence_class("the local dependence class is advisory."), Some("advisory".to_owned()));
+        assert_eq!(local_dependence_class("unrelated"), None);
     }
 }

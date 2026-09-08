@@ -8,7 +8,7 @@ use crate::error::ContractError;
 use crate::model::FactEvent;
 use crate::reducer::{Revocation, Verification};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub struct TrustState {
     pub root: PublicKey,
@@ -156,6 +156,32 @@ impl TrustState {
             .ok()
             .flatten()
             .is_some()
+    }
+
+    /// Stable authority identities by exact scope. A scope with multiple
+    /// active owners is intentionally omitted so the reducer must surface an
+    /// unresolved registry Unknown.
+    pub fn authority_owner_by_scope(&self) -> BTreeMap<String, String> {
+        let mut owners = BTreeMap::new();
+        for entry in &self.registry {
+            if crate::json::get_str(entry, "status") != Some("active") {
+                continue;
+            }
+            let Some(scope) = crate::json::get_str(entry, "scope") else { continue };
+            if self.authority_for_scope(scope).ok().flatten().is_some() {
+                if let Some(identity) = crate::json::get_str(entry, "authority_id") {
+                    owners.insert(scope.to_owned(), identity.to_owned());
+                }
+            }
+        }
+        owners
+    }
+
+    pub fn steward_authority_id(&self) -> Option<String> {
+        self.authority_for_scope("company:root")
+            .ok()
+            .flatten()
+            .and_then(|entry| crate::json::get_str(&entry, "authority_id").map(str::to_owned))
     }
 
     pub fn public_registry(&self) -> Vec<Value> {

@@ -35,6 +35,25 @@ fn refuse(status: u16, error: ContractError) -> (u16, ContractError) {
     (status, error)
 }
 
+/// Run a destination write as one immediate SQLite transaction. Every side
+/// effect in `work` commits together or rolls back together.
+fn with_immediate_transaction<T>(db: &CompanyDb, work: impl FnOnce() -> Result<T, (u16, ContractError)>) -> Result<T, (u16, ContractError)> {
+    db.connection
+        .execute_batch("BEGIN IMMEDIATE")
+        .map_err(|error| refuse(500, ContractError::internal(format!("begin transaction: {error}"))))?;
+    let result = work();
+    match result {
+        Ok(value) => db.connection.execute_batch("COMMIT").map(|_| value).map_err(|error| {
+            let _ = db.connection.execute_batch("ROLLBACK");
+            refuse(500, ContractError::internal(format!("commit transaction: {error}")))
+        }),
+        Err(error) => {
+            let _ = db.connection.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    }
+}
+
 /// The one indistinguishable auth refusal body (architecture §6).
 fn auth_refusal() -> (u16, ContractError) {
     (
@@ -182,10 +201,7 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
         ("GET", "/snapshot") => snapshot(&db, state, &auth, &trust_state, request, &now),
         ("GET", "/events") => events(&db, &auth, request),
         ("POST", "/authority-registry") => publish_registry(&db, &auth, &trust_state, parsed_body, &now),
-        ("GET", "/authority-registry") => {
-            require_scope(&auth, "facts:read")?;
-            Ok((200, json!({"entries": trust_state.public_registry(), "cursor": trust_state.cursor.to_string()})))
-        }
+        ("GET", "/authority-registry") => authority_registry(&db, &auth),
         ("POST", "/directory") => directory_write(&db, state, &auth, &trust_state, parsed_body, &now),
         ("POST", "/questions") => post_question(&db, state, &auth, &trust_state, parsed_body, &now),
         ("GET", "/questions") => {
@@ -219,6 +235,7 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
         }
         ("POST", "/manifests") => post_manifest(&db, &auth, &trust_state, parsed_body, &now),
         ("POST", "/revocations") => steward_event(&db, &auth, &trust_state, parsed_body, "revocation", "revocation", &now),
+        ("GET", "/revocations") => revocations(&db, &auth),
         ("POST", "/rotations") => steward_event(&db, &auth, &trust_state, parsed_body, "rotation", "rotation", &now),
         ("POST", "/tokens") => issue_token(&db, &auth, parsed_body, &now),
         ("GET", "/steward-queue") => {
@@ -464,6 +481,8 @@ pub fn current_view(db: &CompanyDb, trust_state: &TrustState, as_of: &str) -> Re
         revocation_fresh: true,
         fact_valid_until: None,
         certificate_valid: true,
+        authority_owner_by_scope: trust_state.authority_owner_by_scope(),
+        steward_authority_id: trust_state.steward_authority_id(),
     };
     Ok(crate::reducer::reduce(&input))
 }
@@ -627,54 +646,23 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
         ));
     }
     let digest = crate::hash::sha256_bytes(&bytes);
-    // C14: an event_id reused with different bytes is DIGEST_MISMATCH.
-    if let Some(existing_cursor) = db.event_cursor(&event.event_id).map_err(|error| refuse(500, error))? {
-        let existing = db.all_events(existing_cursor - 1, 1).map_err(|error| refuse(500, error))?;
-        let existing_digest = existing
-            .first()
-            .and_then(|record| record.get("payload"))
-            .map(|payload| crate::json::digest(payload))
-            .unwrap_or_default();
-        if existing_digest != digest {
-            return Err(refuse(
-                409,
-                ContractError::integrity("DIGEST_MISMATCH", "event_id already admitted with different canonical bytes", "Use a fresh event_id derived from the content digest."),
-            ));
-        }
-        let mut receipt = receipt_for(&event, &digest, existing_cursor, "committed", "duplicate");
-        // R-10: an exact pre-revocation replay is not a new admission. Return
-        // the historical receipt, but recalculate its projection under the
-        // current authority cursor so a revoked sole support visibly withdraws.
-        let (revocation_observed, support_withdrawn) = replay_projection(db, trust_state, &event);
-        receipt["historical_receipt"] = Value::Bool(true);
-        receipt["readmitted"] = Value::Bool(false);
-        receipt["revocation_observed"] = Value::Bool(revocation_observed);
-        receipt["support_withdrawn"] = Value::Bool(support_withdrawn);
-        receipt["projection_state"] = Value::String(
-            if support_withdrawn { "support_withdrawn".to_owned() } else { "current".to_owned() },
-        );
-        return Ok((200, receipt));
-    }
-    // Idempotent retry through the destination-owned nonce record.
-    let nonce = approval
-        .as_ref()
-        .and_then(|token| crate::json::get_str(token, "nonce").map(str::to_owned))
-        .unwrap_or_else(|| digest.clone());
-    if let Some(record) = db.nonce_record("company", &nonce).map_err(|error| refuse(500, error))? {
-        let same_bytes = crate::json::get_str(&record, "payload_digest") == Some(digest.as_str());
-        let same_client = crate::json::get_str(&record, "client_key") == Some(auth.client_key.as_str());
-        if same_bytes && same_client {
-            db.bump("retry_receipt_returned").map_err(|error| refuse(500, error))?;
-            let mut receipt = record.get("receipt").cloned().unwrap_or(Value::Null);
-            receipt["retry"] = Value::Bool(true);
-            return Ok((200, receipt));
-        }
+    let verification = trust_state.verify_fact_signer(&event);
+    // A repository maintainer may request an exception, but only a Company
+    // steward may relax Company-owned architecture. Signature failures retain
+    // their integrity attribution.
+    if crate::model::action_of(&event) == Some("relaxation")
+        && verification == Verification::Verified
+        && !trust_state.is_steward(&event.signer)
+    {
         return Err(refuse(
-            409,
-            ContractError::refused("APPROVAL_REPLAY", "consumed nonce reused with nonmatching bytes, destination, or client", "Use the original receipt or create and review a new candidate."),
+            403,
+            ContractError::refused(
+                "AUTHORITY_WRONG_SCOPE",
+                "a relaxation is Company-owned; a repository maintainer may submit an exception_request but cannot mint it",
+                "Ask the Company steward to admit a relaxation scoped to this repository.",
+            ),
         ));
     }
-    let verification = trust_state.verify_fact_signer(&event);
     let (status_code, admission_status, verification_text) = match verification {
         Verification::Verified => (201, "committed", "verified"),
         Verification::SignatureInvalid => {
@@ -699,40 +687,144 @@ fn admit_fact(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_st
             }
         }
     };
-    let cursor = if admission_status == "committed" {
-        let transaction_cursor = db
-            .append_event(&event.event_id, "fact-event", "fact-event", &document, &event.signer, verification_text, Some(&auth.client_key))
-            .map_err(|error| refuse(500, error))?;
-        match transaction_cursor {
-            Some(cursor) => {
-                db.record_fact_version(&event.fact_id, &event.semantic_digest(), &event.event_id, cursor)
-                    .map_err(|error| refuse(500, error))?;
-                if crate::model::action_of(&event) == Some("relaxation") {
-                    db.insert_relaxation(&document, cursor).map_err(|error| refuse(500, error))?;
-                }
-                cursor
-            }
-            None => db.event_cursor(&event.event_id).map_err(|error| refuse(500, error))?.unwrap_or(0),
-        }
-    } else {
-        db.queue_for_steward(&event.event_id, &document, approval.as_ref().unwrap_or(&Value::Null), &auth.client_key)
-            .map_err(|error| refuse(500, error))?;
-        0
-    };
-    let receipt = receipt_for(&event, &digest, cursor, admission_status, "new");
+    // Destination admission is one idempotent SQLite transaction. The nonce is
+    // reserved first; event append, version/relaxation writes, receipt, audit,
+    // and metrics either all commit or all roll back.
+    let nonce = approval
+        .as_ref()
+        .and_then(|token| crate::json::get_str(token, "nonce").map(str::to_owned))
+        .unwrap_or_else(|| digest.clone());
     let expires_at = crate::time::plus_seconds(now, state.config.nonce_retention_seconds).unwrap_or_else(|_| now.to_owned());
-    db.connection
-        .execute(
-            "INSERT OR IGNORE INTO nonces(destination, nonce, payload_digest, client_key, authority_scope, receipt, consumed_at, expires_at) VALUES ('company', ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            rusqlite::params![nonce, digest, auth.client_key, event.authority_scope, crate::json::canonical_text(&receipt), now, expires_at],
-        )
-        .map_err(|error| refuse(500, ContractError::internal(format!("nonce record: {error}"))))?;
-    db.audit("fact-admission", &json!({"event_id": event.event_id, "digest": digest, "status": admission_status, "scope": event.authority_scope}))
-        .map_err(|error| refuse(500, error))?;
-    db.bump(if admission_status == "committed" { "facts_admitted" } else { "facts_queued" }).map_err(|error| refuse(500, error))?;
-    Ok((status_code, receipt))
-}
+    let reserved_receipt = json!({"schema": crate::model::RECEIPT_SCHEMA, "destination": "company", "status": "reserved"});
+    let transaction: Result<(u16, Value), (u16, ContractError)> = (|| {
+        db.connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(|error| refuse(500, ContractError::internal(format!("begin fact admission: {error}"))))?;
+        let inserted_nonce = db
+            .connection
+            .execute(
+                "INSERT OR IGNORE INTO nonces(destination, nonce, payload_digest, client_key, authority_scope, receipt, consumed_at, expires_at) VALUES ('company', ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![nonce, digest, auth.client_key, event.authority_scope, crate::json::canonical_text(&reserved_receipt), now, expires_at],
+            )
+            .map_err(|error| refuse(500, ContractError::internal(format!("reserve fact nonce: {error}"))))?;
+        if inserted_nonce == 0 {
+            let record = db
+                .nonce_record("company", &nonce)
+                .map_err(|error| refuse(500, error))?;
+            let same_bytes = record
+                .as_ref()
+                .and_then(|record| crate::json::get_str(record, "payload_digest"))
+                == Some(digest.as_str());
+            let same_client = record
+                .as_ref()
+                .and_then(|record| crate::json::get_str(record, "client_key"))
+                == Some(auth.client_key.as_str());
+            if same_bytes && same_client {
+                db.bump("retry_receipt_returned").map_err(|error| refuse(500, error))?;
+                let mut receipt = record
+                    .and_then(|record| record.get("receipt").cloned())
+                    .unwrap_or(Value::Null);
+                receipt["retry"] = Value::Bool(true);
+                return Ok((200, receipt));
+            }
+            return Err(refuse(
+                409,
+                ContractError::refused(
+                    "APPROVAL_REPLAY",
+                    "consumed nonce reused with nonmatching bytes, destination, or client",
+                    "Use the original receipt or create and review a new candidate.",
+                ),
+            ));
+        }
 
+        if let Some(existing_cursor) = db
+            .event_cursor(&event.event_id)
+            .map_err(|error| refuse(500, error))?
+        {
+            let existing = db
+                .all_events(existing_cursor - 1, 1)
+                .map_err(|error| refuse(500, error))?;
+            let existing_digest = existing
+                .first()
+                .and_then(|record| record.get("payload"))
+                .map(|payload| crate::json::digest(payload))
+                .unwrap_or_default();
+            if existing_digest != digest {
+                return Err(refuse(
+                    409,
+                    ContractError::integrity("DIGEST_MISMATCH", "event_id already admitted with different canonical bytes", "Use a fresh event_id derived from the content digest."),
+                ));
+            }
+            let mut receipt = receipt_for(&event, &digest, existing_cursor, "committed", "duplicate");
+            let (revocation_observed, support_withdrawn) = replay_projection(db, trust_state, &event);
+            receipt["historical_receipt"] = Value::Bool(true);
+            receipt["readmitted"] = Value::Bool(false);
+            receipt["revocation_observed"] = Value::Bool(revocation_observed);
+            receipt["support_withdrawn"] = Value::Bool(support_withdrawn);
+            receipt["projection_state"] = Value::String(if support_withdrawn { "support_withdrawn".to_owned() } else { "current".to_owned() });
+            db.connection
+                .execute(
+                    "UPDATE nonces SET receipt=?2 WHERE destination='company' AND nonce=?1",
+                    rusqlite::params![nonce, crate::json::canonical_text(&receipt)],
+                )
+                .map_err(|error| refuse(500, ContractError::internal(format!("store historical receipt: {error}"))))?;
+            return Ok((200, receipt));
+        }
+
+        let cursor = if admission_status == "committed" {
+            let transaction_cursor = db
+                .append_event(&event.event_id, "fact-event", "fact-event", &document, &event.signer, verification_text, Some(&auth.client_key))
+                .map_err(|error| refuse(500, error))?;
+            match transaction_cursor {
+                Some(cursor) => {
+                    db.record_fact_version(&event.fact_id, &event.semantic_digest(), &event.event_id, cursor)
+                        .map_err(|error| refuse(500, error))?;
+                    if crate::model::action_of(&event) == Some("relaxation") {
+                        db.insert_relaxation(&document, cursor).map_err(|error| refuse(500, error))?;
+                    }
+                    cursor
+                }
+                None => db
+                    .event_cursor(&event.event_id)
+                    .map_err(|error| refuse(500, error))?
+                    .unwrap_or(0),
+            }
+        } else {
+            db.queue_for_steward(&event.event_id, &document, approval.as_ref().unwrap_or(&Value::Null), &auth.client_key)
+                .map_err(|error| refuse(500, error))?;
+            0
+        };
+        if admission_status == "committed" {
+            db.resolve_steward_queue(&event.event_id).map_err(|error| refuse(500, error))?;
+        }
+        let receipt = receipt_for(&event, &digest, cursor, admission_status, "new");
+        db.connection
+            .execute(
+                "UPDATE nonces SET receipt=?2 WHERE destination='company' AND nonce=?1",
+                rusqlite::params![nonce, crate::json::canonical_text(&receipt)],
+            )
+            .map_err(|error| refuse(500, ContractError::internal(format!("store fact receipt: {error}"))))?;
+        db.audit("fact-admission", &json!({"event_id": event.event_id, "digest": digest, "status": admission_status, "scope": event.authority_scope}))
+            .map_err(|error| refuse(500, error))?;
+        db.bump(if admission_status == "committed" { "facts_admitted" } else { "facts_queued" })
+            .map_err(|error| refuse(500, error))?;
+        Ok((status_code, receipt))
+    })();
+    let result = match transaction {
+        Ok(result) => match db.connection.execute_batch("COMMIT") {
+            Ok(()) => Ok(result),
+            Err(error) => {
+                let _ = db.connection.execute_batch("ROLLBACK");
+                Err(refuse(500, ContractError::internal(format!("commit fact admission: {error}"))))
+            }
+        },
+        Err(error) => {
+            let _ = db.connection.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    };
+    result
+}
 fn replay_projection(db: &CompanyDb, trust_state: &TrustState, event: &FactEvent) -> (bool, bool) {
     let revocation_observed = trust_state.is_revoked(&event.signer);
     if !revocation_observed {
@@ -845,6 +937,48 @@ fn company_fact_document_to_event(document: &Value, state: &ServiceState, now: &
     state.root.sign_document("fact-event", &event)
 }
 
+fn authority_registry(db: &CompanyDb, auth: &AuthContext) -> Handled {
+    require_scope(auth, "facts:read")?;
+    let mut latest: Option<(i64, Value)> = None;
+    for (cursor, document, verification) in db.events_of_kind("registry").map_err(|error| refuse(500, error))? {
+        if verification == "verified" && latest.as_ref().is_none_or(|(existing, _)| cursor > *existing) {
+            latest = Some((cursor, document));
+        }
+    }
+    let (cursor, document) = latest.ok_or_else(|| {
+        refuse(
+            404,
+            ContractError::degraded(
+                "CACHE_EXPIRED",
+                "no signed authority registry document has been published",
+                "Ask the Company steward to publish the registry; authority is withheld rather than assumed absent.",
+            ),
+        )
+    })?;
+    let entries = document.get("entries").cloned().unwrap_or(Value::Array(Vec::new()));
+    Ok((200, json!({
+        "registry": document,
+        "entries": entries,
+        "cursor": cursor.to_string(),
+        "authority_cursor": crate::json::get_str(&document, "authority_cursor").map(str::to_owned).unwrap_or_else(|| cursor.to_string())
+    })))
+}
+
+fn revocations(db: &CompanyDb, auth: &AuthContext) -> Handled {
+    require_scope(auth, "facts:read")?;
+    let documents = db
+        .events_of_message_type("revocation")
+        .map_err(|error| refuse(500, error))?
+        .into_iter()
+        .filter(|(_, document, verification)| verification == "verified" && crate::json::get_str(document, "revoked_key").is_some())
+        .map(|(_, document, _)| document)
+        .collect::<Vec<_>>();
+    Ok((200, json!({
+        "revocations": documents,
+        "revocation_cursor": db.revocation_cursor().map_err(|error| refuse(500, error))?
+    })))
+}
+
 fn snapshot(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: &TrustState, request: &Request, now: &str) -> Handled {
     require_scope(auth, "facts:read")?;
     let client_nonce = request.query.get("nonce").cloned().unwrap_or_default();
@@ -935,33 +1069,35 @@ fn publish_registry(db: &CompanyDb, auth: &AuthContext, trust_state: &TrustState
     }
     let digest = crate::json::digest(&document);
     let event_id = format!("registry_{}", &digest[..40]);
-    let cursor = match db
-        .append_event(&event_id, "authority-registry-entry", "registry", &document, crate::json::get_str(&document, "signer").unwrap_or_default(), "verified", None)
-        .map_err(|error| refuse(500, error))?
-    {
-        Some(cursor) => cursor,
-        None => db.event_cursor(&event_id).map_err(|error| refuse(500, error))?.unwrap_or(0),
-    };
-    for entry in entries {
-        let mut entry = entry.clone();
-        if entry.get("status").is_none() {
-            entry["status"] = Value::String("active".to_owned());
+    with_immediate_transaction(db, || {
+        let cursor = match db
+            .append_event(&event_id, "authority-registry-entry", "registry", &document, crate::json::get_str(&document, "signer").unwrap_or_default(), "verified", None)
+            .map_err(|error| refuse(500, error))?
+        {
+            Some(cursor) => cursor,
+            None => db.event_cursor(&event_id).map_err(|error| refuse(500, error))?.unwrap_or(0),
+        };
+        for entry in entries {
+            let mut entry = entry.clone();
+            if entry.get("status").is_none() {
+                entry["status"] = Value::String("active".to_owned());
+            }
+            db.upsert_registry_entry(&entry, cursor).map_err(|error| refuse(500, error))?;
         }
-        db.upsert_registry_entry(&entry, cursor).map_err(|error| refuse(500, error))?;
-    }
-    db.audit("registry-published", &json!({"digest": digest, "entries": entries.len(), "cursor": cursor})).map_err(|error| refuse(500, error))?;
-    Ok((
-        201,
-        json!({
-            "schema": crate::model::RECEIPT_SCHEMA,
-            "status": "published",
-            "registry_digest": digest,
-            "entries": entries.len(),
-            "cursor": cursor.to_string(),
-            "authority_cursor": crate::json::get_str(&document, "authority_cursor").unwrap_or_default(),
-            "recorded_at": now
-        }),
-    ))
+        db.audit("registry-published", &json!({"digest": digest, "entries": entries.len(), "cursor": cursor})).map_err(|error| refuse(500, error))?;
+        Ok((
+            201,
+            json!({
+                "schema": crate::model::RECEIPT_SCHEMA,
+                "status": "published",
+                "registry_digest": digest,
+                "entries": entries.len(),
+                "cursor": cursor.to_string(),
+                "authority_cursor": crate::json::get_str(&document, "authority_cursor").unwrap_or_default(),
+                "recorded_at": now
+            }),
+        ))
+    })
 }
 
 fn directory_write(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
@@ -1052,26 +1188,28 @@ fn post_question(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust
         "expiry_policy": crate::model::normalize_policy(crate::json::get_str(&document, "expiry_policy").unwrap_or("block_dependent_decision"))
     });
     let delivery = json!({"channel": authority.get("channel").cloned().unwrap_or(Value::Null), "status": "queued", "queued_at": now});
-    let inserted = db.insert_question(&stored, &auth.client_key, &delivery).map_err(|error| refuse(500, error))?;
     let _ = state;
-    if !inserted {
-        let existing = db.question(&question_id).map_err(|error| refuse(500, error))?;
-        return Ok((200, json!({"status": "already-queued", "question": existing})));
-    }
-    db.append_event(&format!("question_event_{question_id}"), "question", "question", &stored, &auth.client_key, "verified", None)
-        .map_err(|error| refuse(500, error))?;
-    db.bump("questions").map_err(|error| refuse(500, error))?;
-    Ok((
-        201,
-        json!({
-            "status": "queued",
-            "question_id": question_id,
-            "authority_id": authority_id,
-            "authority_scope": stored["authority_scope"],
-            "channel": authority.get("channel").cloned().unwrap_or(Value::Null),
-            "response_due_at": stored["response_due_at"]
-        }),
-    ))
+    with_immediate_transaction(db, || {
+        let inserted = db.insert_question(&stored, &auth.client_key, &delivery).map_err(|error| refuse(500, error))?;
+        if !inserted {
+            let existing = db.question(&question_id).map_err(|error| refuse(500, error))?;
+            return Ok((200, json!({"status": "already-queued", "question": existing})));
+        }
+        db.append_event(&format!("question_event_{question_id}"), "question", "question", &stored, &auth.client_key, "verified", None)
+            .map_err(|error| refuse(500, error))?;
+        db.bump("questions").map_err(|error| refuse(500, error))?;
+        Ok((
+            201,
+            json!({
+                "status": "queued",
+                "question_id": question_id,
+                "authority_id": authority_id,
+                "authority_scope": stored["authority_scope"],
+                "channel": authority.get("channel").cloned().unwrap_or(Value::Null),
+                "response_due_at": stored["response_due_at"]
+            }),
+        ))
+    })
 }
 
 fn post_answer(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
@@ -1114,101 +1252,103 @@ fn post_answer(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_s
     if document.get("contains_code") == Some(&Value::Bool(true)) || looks_like_code(answer_text) {
         return Err(refuse(400, ContractError::refused("CONFIG_INVARIANT", "answers carry fact and rationale only, never code or a solution", "Remove code from the answer.")));
     }
-    let existing = db.answers_for_question(&question_id).map_err(|error| refuse(500, error))?;
-    let parents: Vec<String> = crate::json::get_array(&document, "parents")
-        .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_owned)).collect())
-        .unwrap_or_default();
-    let mut supersedes: Option<String> = None;
-    let mut conflict = false;
-    if !existing.is_empty() {
-        let prior_ids: Vec<String> = existing.iter().filter_map(|answer| crate::json::get_str(answer, "answer_id").map(str::to_owned)).collect();
-        if let Some(parent) = parents.iter().find(|parent| prior_ids.iter().any(|id| id == *parent || parent.ends_with(id.as_str()) || id.ends_with(parent.as_str()))) {
-            supersedes = Some(parent.clone());
-        } else if parents.iter().any(|parent| parent.contains('#')) {
-            // "<qid>#1" style parent references the first answer.
-            supersedes = prior_ids.first().cloned();
-        } else {
-            conflict = true;
+    with_immediate_transaction(db, || {
+        let existing = db.answers_for_question(&question_id).map_err(|error| refuse(500, error))?;
+        let parents: Vec<String> = crate::json::get_array(&document, "parents")
+            .map(|items| items.iter().filter_map(|item| item.as_str().map(str::to_owned)).collect())
+            .unwrap_or_default();
+        let mut supersedes: Option<String> = None;
+        let mut conflict = false;
+        if !existing.is_empty() {
+            let prior_ids: Vec<String> = existing.iter().filter_map(|answer| crate::json::get_str(answer, "answer_id").map(str::to_owned)).collect();
+            if let Some(parent) = parents.iter().find(|parent| prior_ids.iter().any(|id| id == *parent || parent.ends_with(id.as_str()) || id.ends_with(parent.as_str()))) {
+                supersedes = Some(parent.clone());
+            } else if parents.iter().any(|parent| parent.contains('#')) {
+                // "<qid>#1" style parent references the first answer.
+                supersedes = prior_ids.first().cloned();
+            } else {
+                conflict = true;
+            }
         }
-    }
-    let answer_id = crate::json::get_str(&document, "answer_id")
-        .map(str::to_owned)
-        .unwrap_or_else(|| format!("answer_{}", &crate::json::digest(&document)[..24]));
-    let mut stored = document.clone();
-    stored["answer_id"] = Value::String(answer_id.clone());
-    stored["authority_scope"] = Value::String(scope.clone());
-    stored["authority_id"] = Value::String(expected_id.to_owned());
-    if stored.get("answered_at").is_none() {
-        stored["answered_at"] = Value::String(now.to_owned());
-    }
-    let cursor = db
-        .append_event(&format!("answer_event_{answer_id}"), "answer", "answer", &stored, &key.to_hex(), "verified", None)
-        .map_err(|error| refuse(500, error))?
-        .unwrap_or(0);
-    db.insert_answer(&stored, cursor, supersedes.as_deref()).map_err(|error| refuse(500, error))?;
-    // The admitted answer is a Company observation and fact event closing the Unknown.
-    let rationale = crate::json::get_str(&document, "rationale").unwrap_or_default();
-    let mut fact = json!({
-        "schema": crate::model::EVENT_SCHEMA,
-        "event_id": format!("evt_answer_{}", &answer_id.trim_start_matches("answer_")[..24.min(answer_id.trim_start_matches("answer_").len())]),
-        "store_kind": "company",
-        "authority_id": expected_id,
-        "authority_scope": scope,
-        "fact_id": crate::model::fact_id("company", &scope, answer_text),
-        "logical_key": crate::json::get_str(&question, "logical_key").map(str::to_owned).unwrap_or_else(|| crate::model::logical_key("company", &scope, &question_id)),
-        "atom_kind": "decision",
-        "scope": scope,
-        "statement": answer_text,
-        "evidence_refs": [question_id.clone(), answer_id.clone()],
-        "asserted_at": now,
-        "effective_from": now,
-        "disposition": "accepted",
-        "distortion": {"trigger": crate::json::get_str(&question, "decision").unwrap_or("dependent decision"), "loss_if_absent": 9000, "rationale": rationale},
-        "parents": supersedes.iter().cloned().collect::<Vec<_>>(),
-        "supersedes": [],
-        "redundancy_with": [],
-        "complements": [],
-        "company_refs": [],
-        "authority_snapshot_cursor": cursor.to_string(),
-        "confidence": 9800,
-        "unresolved_uncertainty": null
-    });
-    if let Some(prior) = supersedes.as_ref().and_then(|id| existing.iter().find(|answer| crate::json::get_str(answer, "answer_id") == Some(id.as_str()) || id.contains('#'))) {
-        let prior_id = crate::json::get_str(prior, "answer_id").unwrap_or_default();
-        fact["supersedes"] = json!([format!("evt_answer_{}", &prior_id.trim_start_matches("answer_")[..24.min(prior_id.trim_start_matches("answer_").len())])]);
-    }
-    let signed_fact = state.root.sign_document("fact-event", &fact).map_err(|error| refuse(500, error))?;
-    let fact_event = FactEvent::from_value(&signed_fact).map_err(|error| refuse(500, ContractError::internal(error)))?;
-    let fact_cursor = db
-        .append_event(&fact_event.event_id, "fact-event", "fact-event", &signed_fact, &fact_event.signer, if conflict { "verified" } else { "verified" }, Some(&key.to_hex()))
-        .map_err(|error| refuse(500, error))?
-        .unwrap_or(cursor);
-    db.record_fact_version(&fact_event.fact_id, &fact_event.semantic_digest(), &fact_event.event_id, fact_cursor)
-        .map_err(|error| refuse(500, error))?;
-    let status = if conflict { "conflict" } else { "answered" };
-    db.set_question_status(&question_id, status).map_err(|error| refuse(500, error))?;
-    if let Some(unknown_id) = crate::json::get_str(&question, "unknown_id") {
-        if let Some(mut unknown) = db.unknown(unknown_id).map_err(|error| refuse(500, error))? {
-            unknown["status"] = Value::String(if conflict { "open".to_owned() } else { "closed".to_owned() });
-            unknown["closure_evidence"] = json!([answer_id.clone(), fact_event.event_id.clone()]);
-            db.upsert_unknown(&unknown, "answer").map_err(|error| refuse(500, error))?;
+        let answer_id = crate::json::get_str(&document, "answer_id")
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("answer_{}", &crate::json::digest(&document)[..24]));
+        let mut stored = document.clone();
+        stored["answer_id"] = Value::String(answer_id.clone());
+        stored["authority_scope"] = Value::String(scope.clone());
+        stored["authority_id"] = Value::String(expected_id.to_owned());
+        if stored.get("answered_at").is_none() {
+            stored["answered_at"] = Value::String(now.to_owned());
         }
-    }
-    db.bump("answers").map_err(|error| refuse(500, error))?;
-    Ok((
-        201,
-        json!({
-            "status": status,
-            "answer_id": answer_id,
-            "question_id": question_id,
+        let cursor = db
+            .append_event(&format!("answer_event_{answer_id}"), "answer", "answer", &stored, &key.to_hex(), "verified", None)
+            .map_err(|error| refuse(500, error))?
+            .unwrap_or(0);
+        db.insert_answer(&stored, cursor, supersedes.as_deref()).map_err(|error| refuse(500, error))?;
+        // The admitted answer is a Company observation and fact event closing the Unknown.
+        let rationale = crate::json::get_str(&document, "rationale").unwrap_or_default();
+        let mut fact = json!({
+            "schema": crate::model::EVENT_SCHEMA,
+            "event_id": format!("evt_answer_{}", &answer_id.trim_start_matches("answer_")[..24.min(answer_id.trim_start_matches("answer_").len())]),
+            "store_kind": "company",
             "authority_id": expected_id,
-            "fact_id": fact_event.fact_id,
-            "closure_event_id": fact_event.event_id,
-            "cursor": fact_cursor.to_string(),
-            "supersedes": supersedes,
-            "conflict": conflict
-        }),
-    ))
+            "authority_scope": scope,
+            "fact_id": crate::model::fact_id("company", &scope, answer_text),
+            "logical_key": crate::json::get_str(&question, "logical_key").map(str::to_owned).unwrap_or_else(|| crate::model::logical_key("company", &scope, &question_id)),
+            "atom_kind": "decision",
+            "scope": scope,
+            "statement": answer_text,
+            "evidence_refs": [question_id.clone(), answer_id.clone()],
+            "asserted_at": now,
+            "effective_from": now,
+            "disposition": "accepted",
+            "distortion": {"trigger": crate::json::get_str(&question, "decision").unwrap_or("dependent decision"), "loss_if_absent": 9000, "rationale": rationale},
+            "parents": supersedes.iter().cloned().collect::<Vec<_>>(),
+            "supersedes": [],
+            "redundancy_with": [],
+            "complements": [],
+            "company_refs": [],
+            "authority_snapshot_cursor": cursor.to_string(),
+            "confidence": 9800,
+            "unresolved_uncertainty": null
+        });
+        if let Some(prior) = supersedes.as_ref().and_then(|id| existing.iter().find(|answer| crate::json::get_str(answer, "answer_id") == Some(id.as_str()) || id.contains('#'))) {
+            let prior_id = crate::json::get_str(prior, "answer_id").unwrap_or_default();
+            fact["supersedes"] = json!([format!("evt_answer_{}", &prior_id.trim_start_matches("answer_")[..24.min(prior_id.trim_start_matches("answer_").len())])]);
+        }
+        let signed_fact = state.root.sign_document("fact-event", &fact).map_err(|error| refuse(500, error))?;
+        let fact_event = FactEvent::from_value(&signed_fact).map_err(|error| refuse(500, ContractError::internal(error)))?;
+        let fact_cursor = db
+            .append_event(&fact_event.event_id, "fact-event", "fact-event", &signed_fact, &fact_event.signer, if conflict { "verified" } else { "verified" }, Some(&key.to_hex()))
+            .map_err(|error| refuse(500, error))?
+            .unwrap_or(cursor);
+        db.record_fact_version(&fact_event.fact_id, &fact_event.semantic_digest(), &fact_event.event_id, fact_cursor)
+            .map_err(|error| refuse(500, error))?;
+        let status = if conflict { "conflict" } else { "answered" };
+        db.set_question_status(&question_id, status).map_err(|error| refuse(500, error))?;
+        if let Some(unknown_id) = crate::json::get_str(&question, "unknown_id") {
+            if let Some(mut unknown) = db.unknown(unknown_id).map_err(|error| refuse(500, error))? {
+                unknown["status"] = Value::String(if conflict { "open".to_owned() } else { "closed".to_owned() });
+                unknown["closure_evidence"] = json!([answer_id.clone(), fact_event.event_id.clone()]);
+                db.upsert_unknown(&unknown, "answer").map_err(|error| refuse(500, error))?;
+            }
+        }
+        db.bump("answers").map_err(|error| refuse(500, error))?;
+        Ok((
+            201,
+            json!({
+                "status": status,
+                "answer_id": answer_id,
+                "question_id": question_id,
+                "authority_id": expected_id,
+                "fact_id": fact_event.fact_id,
+                "closure_event_id": fact_event.event_id,
+                "cursor": fact_cursor.to_string(),
+                "supersedes": supersedes,
+                "conflict": conflict
+            }),
+        ))
+    })
 }
 
 fn looks_like_code(text: &str) -> bool {
@@ -1267,9 +1407,8 @@ fn issue_certificate(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, t
 }
 
 fn post_manifest(db: &CompanyDb, _auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, now: &str) -> Handled {
-    // Ruling C6: a manifest observation is authorized by its maintainer
-    // signature. Authentication above still requires a valid token and signed
-    // request, but no token scope is demanded for this route.
+    // Ruling C6: no token scope is demanded, but the manifest signer itself
+    // must be the active registered maintainer for codebase:<repository_uuid>.
     let document = body.ok_or_else(|| refuse(400, ContractError::invariant("a manifest document is required")))?;
     if crate::json::get_str(&document, "schema") != Some(crate::model::MANIFEST_SCHEMA) {
         return Err(refuse(400, ContractError::invariant("manifest schema must be guildhall-manifest/1")));
@@ -1278,79 +1417,124 @@ fn post_manifest(db: &CompanyDb, _auth: &AuthContext, trust_state: &TrustState, 
         refuse(400, ContractError::integrity("SIGNATURE_INVALID", "manifest signature failed", "Sign the manifest with the registered maintainer key."))
     })?;
     let repository_uuid = crate::json::get_str(&document, "repository_uuid").unwrap_or_default().to_owned();
-    if !trust_state.is_maintainer(&repository_uuid, &key.to_hex()) && !trust_state.is_steward(&key.to_hex()) {
-        return Err(refuse(403, ContractError::refused("AUTHORITY_WRONG_SCOPE", "manifest signer is not a registered maintainer for this repository", "Register the maintainer key with scope codebase:<uuid>.")));
+    let maintainer_scope = format!("codebase:{repository_uuid}");
+    let registered_maintainer = trust_state.registry.iter().any(|entry| {
+        crate::json::get_str(entry, "scope") == Some(maintainer_scope.as_str())
+            && crate::json::get_str(entry, "public_key") == Some(key.to_hex().as_str())
+            && crate::json::get_str(entry, "status") == Some("active")
+    });
+    if !registered_maintainer {
+        return Err(refuse(403, ContractError::refused("AUTHORITY_WRONG_SCOPE", "manifest signer is not the registered maintainer for this codebase", "Register the exact maintainer key with scope codebase:<uuid>.")));
     }
     let branch = crate::json::get_str(&document, "branch").unwrap_or("main").to_owned();
     let count = crate::json::get_u64(&document, "event_count").unwrap_or(0) as i64;
+    let revision = crate::json::get_str(&document, "observed_default_branch_revision").unwrap_or_default().to_owned();
     let rollback = document.get("rollback_event").is_some() || document.get("rewrite_event").is_some();
-    if let Some(latest) = db.latest_manifest_observation(&repository_uuid, &branch).map_err(|error| refuse(500, error))? {
-        let prior = latest.get("event_count").and_then(Value::as_i64).unwrap_or(0);
-        if count < prior && !rollback && crate::json::get_str(&latest, "status") == Some("current") {
-            return Err(refuse(
-                409,
-                ContractError::refused(
-                    "MANIFEST_HEAD_REGRESSION",
-                    format!("published reachable lineage lowers the event count from {prior} to {count} without a signed rewrite event"),
-                    "Supply a maintainer-signed rollback/rewrite event (atom_kind rollback_exception) or correct the publication.",
-                ),
-            ));
-        }
-    }
     let digest = crate::json::digest(&document);
-    let cursor = db
-        .append_event(&format!("manifest_{digest}"), "manifest", "manifest-observation", &document, &key.to_hex(), "verified", None)
-        .map_err(|error| refuse(500, error))?
-        .unwrap_or(trust_state.cursor);
-    let id = db.insert_manifest_observation(&document, cursor).map_err(|error| refuse(500, error))?;
-    Ok((201, json!({"status": "recorded", "observation_id": id, "manifest_digest": digest, "cursor": cursor.to_string(), "recorded_at": now})))
+    let transaction: Result<(u16, Value), (u16, ContractError)> = (|| {
+        db.connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(|error| refuse(500, ContractError::internal(format!("begin manifest admission: {error}"))))?;
+        let latest = db
+            .latest_manifest_observation(&repository_uuid, &branch)
+            .map_err(|error| refuse(500, error))?;
+        if let Some(latest) = &latest {
+            if latest.get("observed_default_branch_revision").and_then(Value::as_str) == Some(revision.as_str()) {
+                return Ok((
+                    200,
+                    json!({
+                        "status": "existing",
+                        "observation_id": latest.get("observation_id").cloned().unwrap_or(Value::Null),
+                        "manifest_digest": latest.get("manifest_digest").cloned().unwrap_or(Value::Null),
+                        "recorded_at": latest.get("observed_at").cloned().unwrap_or(Value::Null)
+                    }),
+                ));
+            }
+            let prior = latest.get("event_count").and_then(Value::as_i64).unwrap_or(0);
+            if count < prior && !rollback && crate::json::get_str(latest, "status") == Some("current") {
+                return Err(refuse(
+                    409,
+                    ContractError::refused(
+                        "MANIFEST_HEAD_REGRESSION",
+                        format!("published reachable lineage lowers the event count from {prior} to {count} without a signed rewrite event"),
+                        "Supply a maintainer-signed rollback/rewrite event (atom_kind rollback_exception) or correct the publication.",
+                    ),
+                ));
+            }
+        }
+        let cursor = db
+            .append_event(&format!("manifest_{digest}"), "manifest", "manifest-observation", &document, &key.to_hex(), "verified", None)
+            .map_err(|error| refuse(500, error))?
+            .unwrap_or(trust_state.cursor);
+        let id = db
+            .insert_manifest_observation(&document, cursor)
+            .map_err(|error| refuse(500, error))?;
+        db.audit("manifest-recorded", &json!({"digest": digest, "repository_uuid": repository_uuid, "branch": branch, "revision": revision}))
+            .map_err(|error| refuse(500, error))?;
+        Ok((201, json!({"status": "recorded", "observation_id": id, "manifest_digest": digest, "cursor": cursor.to_string(), "recorded_at": now})))
+    })();
+    let result = match transaction {
+        Ok(result) => match db.connection.execute_batch("COMMIT") {
+            Ok(()) => Ok(result),
+            Err(error) => {
+                let _ = db.connection.execute_batch("ROLLBACK");
+                Err(refuse(500, ContractError::internal(format!("commit manifest admission: {error}"))))
+            }
+        },
+        Err(error) => {
+            let _ = db.connection.execute_batch("ROLLBACK");
+            Err(error)
+        }
+    };
+    result
 }
-
 fn steward_event(db: &CompanyDb, auth: &AuthContext, trust_state: &TrustState, body: Option<Value>, message_type: &str, kind: &str, now: &str) -> Handled {
     require_scope(auth, "admin:issue")?;
     let document = body.ok_or_else(|| refuse(400, ContractError::invariant(format!("a {kind} document is required"))))?;
     trust::verify_steward_document(trust_state, message_type, &document).map_err(|error| refuse(403, error))?;
     let digest = crate::json::digest(&document);
     let event_id = format!("{kind}_{}", &digest[..40]);
-    let cursor = db
-        .append_event(&event_id, message_type, kind, &document, crate::json::get_str(&document, "signer").unwrap_or_default(), "verified", None)
-        .map_err(|error| refuse(500, error))?
-        .unwrap_or(trust_state.cursor);
-    if kind == "revocation" {
-        db.set_meta("revocation_cursor", &cursor.to_string()).map_err(|error| refuse(500, error))?;
-        // Compromise response: enumerate affected facts and emit destination-owned apology Unknowns.
-        let revoked = crate::json::get_str(&document, "revoked_key").unwrap_or_default();
-        let mut affected = 0usize;
-        for (_, payload, verification) in db.events_of_kind("fact-event").map_err(|error| refuse(500, error))? {
-            if verification == "verified" && crate::json::get_str(&payload, "signer") == Some(revoked) {
-                affected += 1;
-                let fact_id = crate::json::get_str(&payload, "fact_id").unwrap_or_default();
-                let unknown = json!({
-                    "unknown_id": format!("unknown_apology_{}", &crate::hash::sha256_text(&format!("{revoked}\0{fact_id}"))[..24]),
-                    "scope": crate::json::get_str(&payload, "authority_scope").unwrap_or_default(),
-                    "owner_identity": "company-steward",
-                    "owner_role": "company-steward",
-                    "status": "open",
-                    "question": format!("Fact {fact_id} was warranted by a key revoked at cursor {cursor}; does an independently admissible support still establish it?"),
-                    "response_due_at": crate::time::plus_seconds(now, 24 * 3600).unwrap_or_default(),
-                    "affected_fact_id": fact_id,
-                    "kind": "apology"
-                });
-                db.upsert_unknown(&unknown, "apology").map_err(|error| refuse(500, error))?;
+    with_immediate_transaction(db, || {
+        let cursor = db
+            .append_event(&event_id, message_type, kind, &document, crate::json::get_str(&document, "signer").unwrap_or_default(), "verified", None)
+            .map_err(|error| refuse(500, error))?
+            .unwrap_or(trust_state.cursor);
+        if kind == "revocation" {
+            db.set_meta("revocation_cursor", &cursor.to_string()).map_err(|error| refuse(500, error))?;
+            // Compromise response: enumerate affected facts and emit destination-owned apology Unknowns.
+            let revoked = crate::json::get_str(&document, "revoked_key").unwrap_or_default();
+            let mut affected = 0usize;
+            for (_, payload, verification) in db.events_of_kind("fact-event").map_err(|error| refuse(500, error))? {
+                if verification == "verified" && crate::json::get_str(&payload, "signer") == Some(revoked) {
+                    affected += 1;
+                    let fact_id = crate::json::get_str(&payload, "fact_id").unwrap_or_default();
+                    let unknown = json!({
+                        "unknown_id": format!("unknown_apology_{}", &crate::hash::sha256_text(&format!("{revoked}\0{fact_id}"))[..24]),
+                        "scope": crate::json::get_str(&payload, "authority_scope").unwrap_or_default(),
+                        "owner_identity": "company-steward",
+                        "owner_role": "company-steward",
+                        "status": "open",
+                        "question": format!("Fact {fact_id} was warranted by a key revoked at cursor {cursor}; does an independently admissible support still establish it?"),
+                        "response_due_at": crate::time::plus_seconds(now, 24 * 3600).unwrap_or_default(),
+                        "affected_fact_id": fact_id,
+                        "kind": "apology"
+                    });
+                    db.upsert_unknown(&unknown, "apology").map_err(|error| refuse(500, error))?;
+                }
             }
+            let residual = json!({
+                "schema": "guildhall-unreachable-clone-residual/1",
+                "revoked_key": revoked,
+                "cursor": cursor.to_string(),
+                "affected_fact_count": affected,
+                "max_offline_revocation_freshness_seconds": 900,
+                "statement": "unknown clones may keep projecting until they sync or their revocation freshness window expires"
+            });
+            db.append_event(&format!("residual_{}", &digest[..32]), "revocation", "unreachable_clone_residual", &residual, "company-service", "verified", None)
+                .map_err(|error| refuse(500, error))?;
         }
-        let residual = json!({
-            "schema": "guildhall-unreachable-clone-residual/1",
-            "revoked_key": revoked,
-            "cursor": cursor.to_string(),
-            "affected_fact_count": affected,
-            "max_offline_revocation_freshness_seconds": 900,
-            "statement": "unknown clones may keep projecting until they sync or their revocation freshness window expires"
-        });
-        db.append_event(&format!("residual_{}", &digest[..32]), "revocation", "unreachable_clone_residual", &residual, "company-service", "verified", None)
-            .map_err(|error| refuse(500, error))?;
-    }
-    Ok((201, json!({"status": "recorded", "kind": kind, "cursor": cursor.to_string(), "digest": digest})))
+        Ok((201, json!({"status": "recorded", "kind": kind, "cursor": cursor.to_string(), "digest": digest})))
+    })
 }
 
 fn issue_token(db: &CompanyDb, auth: &AuthContext, body: Option<Value>, now: &str) -> Handled {

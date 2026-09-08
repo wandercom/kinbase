@@ -80,6 +80,14 @@ pub struct ReducerInput {
     pub fact_valid_until: Option<String>,
     #[serde(default)]
     pub certificate_valid: bool,
+    /// Exact scope to stable registry authority identity. A missing key is an
+    /// unresolved registry owner, never a reducer-side default.
+    #[serde(default)]
+    pub authority_owner_by_scope: BTreeMap<String, String>,
+    /// Stable identity of the Company steward authority; used only for the
+    /// spec-mandated registry Unknown and unregistered environment fallback.
+    #[serde(default)]
+    pub steward_authority_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -244,6 +252,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
 
     let mut facts = Vec::new();
     let mut unknowns = Vec::new();
+    let mut registry_unknown_emitted: BTreeSet<String> = BTreeSet::new();
     let mut traces = Vec::new();
     let company_stale = input.store_kind != "personal" && !input.certificate_valid;
     let fact_expired = input
@@ -664,7 +673,6 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
         });
 
         // Step 8/9: derive one current fact or an owned Unknown.
-        let owner_role = if input.store_kind == "company" { "company-steward" } else { "repository-maintainer" };
         let decision_blocked = format!("use of logical key {logical_key}");
         if unregistered_environment {
             let scope = group
@@ -673,31 +681,43 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 .find(|scope| scope.starts_with("environment:"))
                 .unwrap_or("environment:unknown")
                 .to_owned();
-            let unknown = derive_unknown(
+            let steward_identity = input.steward_authority_id.as_deref().unwrap_or("company-steward");
+            let mut unknown = derive_unknown(
                 &logical_key,
                 &input.store_kind,
                 "environment-registry",
                 &scope,
                 &decision_blocked,
                 "company-steward",
+                Some(steward_identity),
                 &format!("Environment {scope} is not in the authority registry. Register its owner before this runtime observation can be trusted."),
                 9_000,
                 trace.rejected.iter().filter_map(|value| value.get("event_id")).filter_map(Value::as_str).map(str::to_owned).collect(),
                 input.as_of.as_str(),
             );
+            if input.steward_authority_id.is_none() {
+                unknown.status = "UNKNOWN_OWNER_UNRESOLVED".to_owned();
+            }
             trace.state = "unknown".to_owned();
             trace.free_form_owner_admitted = Some(false);
             trace.unknown_id = Some(unknown.unknown_id.clone());
             unknowns.push(unknown);
             bump(&mut counts, "unknown");
         } else if !conflict_ids.is_empty() {
+            let scope = heads
+                .first()
+                .map(|head| head.representative.event.scope.clone())
+                .unwrap_or_else(|| "unknown".to_owned());
+            let owner_role = owner_role_for_scope(input, &scope);
+            let owner_identity = authority_owner_for_scope(input, &scope, repository_scope(&group).as_deref());
             let unknown = derive_unknown(
                 &logical_key,
                 &input.store_kind,
                 "conflict",
-                heads.first().map(|head| head.representative.event.scope.as_str()).unwrap_or("unknown"),
+                &scope,
                 &decision_blocked,
                 owner_role,
+                owner_identity.as_deref(),
                 &format!(
                     "Which of the incompatible statements for logical key {logical_key} is current? Candidates: {}",
                     conflict_ids.join(", ")
@@ -709,7 +729,19 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             trace.state = "conflict".to_owned();
             trace.unknown_id = Some(unknown.unknown_id.clone());
             trace.counterfactual.push("a parent-bound supersession or retraction from the owning authority resolves the conflict".to_owned());
-            unknowns.push(unknown);
+            if owner_identity.is_some() {
+                unknowns.push(unknown);
+            } else {
+                mark_owner_unresolved_and_emit_registry_unknown(
+                    input,
+                    unknown,
+                    &scope,
+                    &logical_key,
+                    &mut registry_unknown_emitted,
+                    &mut unknowns,
+                    input.as_of.as_str(),
+                );
+            }
             bump(&mut counts, "conflict");
         } else if let Some(head) = current_head {
             let event = &head.representative.event;
@@ -772,13 +804,21 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             trace.current_fact_id = Some(fact.fact_id.clone());
             trace.state = status.to_owned();
             if trust != "trusted" {
+                let scope = event.authority_scope.clone();
+                let unknown_role = if stale_reasons.iter().any(|r| r == "REVOCATION_STALE") {
+                    "company-steward"
+                } else {
+                    owner_role_for_scope(input, &scope)
+                };
+                let owner_identity = authority_owner_for_scope(input, &scope, repository_scope(&group).as_deref());
                 let unknown = derive_unknown(
                     &logical_key,
                     &input.store_kind,
                     if head.withheld { "misextraction" } else { "stale" },
-                    &event.scope,
+                    &scope,
                     &decision_blocked,
-                    if head.withheld { owner_role } else if stale_reasons.iter().any(|r| r == "REVOCATION_STALE") { "company-steward" } else { "fact-owner" },
+                    unknown_role,
+                    owner_identity.as_deref(),
                     &format!(
                         "Fact {} is withheld ({}). Refresh the authority snapshot or supply corrected evidence before it is trusted.",
                         event.fact_id,
@@ -789,20 +829,36 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                     input.as_of.as_str(),
                 );
                 trace.unknown_id = Some(unknown.unknown_id.clone());
-                unknowns.push(unknown);
+                if owner_identity.is_some() {
+                    unknowns.push(unknown);
+                } else {
+                    mark_owner_unresolved_and_emit_registry_unknown(
+                        input,
+                        unknown,
+                        &scope,
+                        &logical_key,
+                        &mut registry_unknown_emitted,
+                        &mut unknowns,
+                        input.as_of.as_str(),
+                    );
+                }
                 bump(&mut counts, "withheld");
             } else {
                 bump(&mut counts, "current");
             }
             facts.push(fact);
             for lower in &contradicted_lower {
+                let scope = event.authority_scope.clone();
+                let unknown_role = if scope.starts_with("architecture:") { "chief-architect" } else { owner_role_for_scope(input, &scope) };
+                let owner_identity = authority_owner_for_scope(input, &scope, repository_scope(&group).as_deref());
                 let unknown = derive_unknown(
                     &logical_key,
                     &input.store_kind,
                     "contradiction",
-                    &event.scope,
+                    &scope,
                     &format!("drift between {} and the current rule {}", lower.representative.event.event_id, event.fact_id),
-                    if event.authority_scope.starts_with("architecture:") { "chief-architect" } else { owner_role },
+                    unknown_role,
+                    owner_identity.as_deref(),
                     &format!(
                         "Lower-authority evidence {} ({}) contradicts current {} {}. Is the current rule still the intended direction, or should it be superseded?",
                         lower.representative.event.event_id,
@@ -819,7 +875,19 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                     event.authority_id, lower.representative.event.event_id
                 ));
                 trace.conflict_event_ids.push(lower.representative.event.event_id.clone());
-                unknowns.push(unknown);
+                if owner_identity.is_some() {
+                    unknowns.push(unknown);
+                } else {
+                    mark_owner_unresolved_and_emit_registry_unknown(
+                        input,
+                        unknown,
+                        &scope,
+                        &logical_key,
+                        &mut registry_unknown_emitted,
+                        &mut unknowns,
+                        input.as_of.as_str(),
+                    );
+                }
                 bump(&mut counts, "contradiction");
             }
             if !negative.is_empty() {
@@ -841,26 +909,17 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                     .map(|admitted| admitted.event.scope.clone())
                     .or_else(|| negative.first().map(|admitted| admitted.event.scope.clone()))
                     .unwrap_or_else(|| "unknown".to_owned());
-                let (kind, owner) = if !support_retired_ids.is_empty() {
-                    ("withdrawn", owner_role.to_owned())
+                let kind = if !support_retired_ids.is_empty() {
+                    "withdrawn"
                 } else if !trace.expired_event_ids.is_empty() {
-                    let owner = eligible
-                        .iter()
-                        .find(|admitted| trace.expired_event_ids.contains(&admitted.event.event_id))
-                        .map(|admitted| {
-                            if admitted.event.authority_scope.starts_with("environment:") {
-                                admitted.event.authority_id.clone()
-                            } else {
-                                owner_role.to_owned()
-                            }
-                        })
-                        .unwrap_or_else(|| owner_role.to_owned());
-                    ("expired", owner)
+                    "expired"
                 } else if !trace.rejected.is_empty() && negative.is_empty() {
-                    ("unverified", owner_role.to_owned())
+                    "unverified"
                 } else {
-                    ("withdrawn", owner_role.to_owned())
+                    "withdrawn"
                 };
+                let owner_role = owner_role_for_scope(input, &representative_scope);
+                let owner_identity = authority_owner_for_scope(input, &representative_scope, repository_scope(&group).as_deref());
                 let question = match kind {
                     "expired" => format!("The only evidence for logical key {logical_key} expired. Is the workaround, incident value, or observation still in force?"),
                     "unverified" => format!("Evidence for logical key {logical_key} exists but none of it is verified by a resolvable certificate or registry entry."),
@@ -872,7 +931,8 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                     kind,
                     &representative_scope,
                     &decision_blocked,
-                    &owner,
+                    owner_role,
+                    owner_identity.as_deref(),
                     &question,
                     9_000,
                     trace.expired_event_ids.iter().chain(trace.negative_evidence_event_ids.iter()).cloned().collect(),
@@ -880,7 +940,19 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 );
                 trace.state = kind.to_owned();
                 trace.unknown_id = Some(unknown.unknown_id.clone());
-                unknowns.push(unknown);
+                if owner_identity.is_some() {
+                    unknowns.push(unknown);
+                } else {
+                    mark_owner_unresolved_and_emit_registry_unknown(
+                        input,
+                        unknown,
+                        &representative_scope,
+                        &logical_key,
+                        &mut registry_unknown_emitted,
+                        &mut unknowns,
+                        input.as_of.as_str(),
+                    );
+                }
                 bump(&mut counts, kind);
             }
         }
@@ -979,13 +1051,15 @@ fn derive_unknown(
     kind: &str,
     scope: &str,
     decision_blocked: &str,
-    owner: &str,
+    owner_role: &str,
+    owner_identity: Option<&str>,
     question: &str,
     loss: u16,
     evidence: Vec<String>,
     as_of: &str,
 ) -> DerivedUnknown {
     let _ = as_of;
+    let owner_identity = owner_identity.unwrap_or(owner_role);
     let unknown_id = format!(
         "unknown_{}",
         &crate::hash::sha256_text(&format!("{store_kind}\0{logical_key}\0{kind}\0{}", evidence.join(",")))[..40]
@@ -995,14 +1069,75 @@ fn derive_unknown(
         logical_key: logical_key.to_owned(),
         scope: scope.to_owned(),
         decision_blocked: decision_blocked.to_owned(),
-        owner_role: owner.to_owned(),
-        owner_identity: owner.to_owned(),
+        owner_role: owner_role.to_owned(),
+        owner_identity: owner_identity.to_owned(),
         question: question.to_owned(),
-        closure_evidence: vec![format!("a signed {} event from {} naming the discriminating evidence", if kind == "conflict" { "supersession or retraction" } else { "fact or answer" }, owner)],
+        closure_evidence: vec![format!("a signed {} event from {} naming the discriminating evidence", if kind == "conflict" { "supersession or retraction" } else { "fact or answer" }, owner_identity)],
         loss_if_absent: loss,
         discriminating_evidence: evidence,
         status: "open".to_owned(),
         kind: kind.to_owned(),
+    }
+}
+
+fn authority_owner_for_scope(input: &ReducerInput, scope: &str, fallback_scope: Option<&str>) -> Option<String> {
+    if let Some(identity) = input.authority_owner_by_scope.get(scope) {
+        return Some(identity.clone());
+    }
+    fallback_scope.and_then(|scope| input.authority_owner_by_scope.get(scope).cloned())
+}
+
+fn owner_role_for_scope(input: &ReducerInput, scope: &str) -> &'static str {
+    if input.store_kind == "company" {
+        "company-steward"
+    } else if scope.starts_with("environment:") {
+        "deploy-owner"
+    } else {
+        "repository-maintainer"
+    }
+}
+
+fn repository_scope(group: &[&AdmittedEvent]) -> Option<String> {
+    group
+        .iter()
+        .find_map(|admitted| admitted.event.repository_id.clone())
+        .map(|uuid| format!("codebase:{uuid}"))
+}
+
+fn registry_unknown(input: &ReducerInput, scope: &str, logical_key: &str, as_of: &str) -> DerivedUnknown {
+    let steward = input.steward_authority_id.as_deref().unwrap_or("company-steward");
+    let mut unknown = derive_unknown(
+        logical_key,
+        "company",
+        "registry",
+        scope,
+        &format!("use of authority scope {scope}"),
+        "company-steward",
+        Some(steward),
+        &format!("The authority registry cannot resolve exactly one owner for scope {scope}; register a stable authority identity for it."),
+        10_000,
+        Vec::new(),
+        as_of,
+    );
+    if input.steward_authority_id.is_none() {
+        unknown.status = "UNKNOWN_OWNER_UNRESOLVED".to_owned();
+    }
+    unknown
+}
+
+fn mark_owner_unresolved_and_emit_registry_unknown(
+    input: &ReducerInput,
+    mut unknown: DerivedUnknown,
+    scope: &str,
+    logical_key: &str,
+    emitted: &mut BTreeSet<String>,
+    unknowns: &mut Vec<DerivedUnknown>,
+    as_of: &str,
+) {
+    unknown.status = "UNKNOWN_OWNER_UNRESOLVED".to_owned();
+    unknowns.push(unknown);
+    if emitted.insert(scope.to_owned()) {
+        unknowns.push(registry_unknown(input, scope, logical_key, as_of));
     }
 }
 
@@ -1102,6 +1237,8 @@ mod packet10_tests {
             revocation_fresh: true,
             fact_valid_until: None,
             certificate_valid: true,
+            authority_owner_by_scope: BTreeMap::new(),
+            steward_authority_id: None,
         }
     }
 

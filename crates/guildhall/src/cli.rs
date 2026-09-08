@@ -161,6 +161,9 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            if crate::ingest::store_for_source(&source_kind) == crate::StoreKind::Codebase {
+                crate::repository::ensure_authority_snapshot(&launcher, None)?;
+            }
             crate::ingest::ingest(
                 &repo,
                 &source_kind,

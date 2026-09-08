@@ -6,7 +6,7 @@ use crate::launcher::Launcher;
 use crate::model::CurrentFact;
 use crate::reducer::{AdmittedEvent, ReducerInput, Revocation, Tombstone};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub(crate) struct StoreData {
@@ -16,6 +16,8 @@ pub(crate) struct StoreData {
     pub revocations: Vec<Revocation>,
     pub authority_cursor: String,
     pub certificate_valid: bool,
+    pub authority_owner_by_scope: BTreeMap<String, String>,
+    pub steward_authority_id: Option<String>,
 }
 
 pub fn rebuild(
@@ -116,6 +118,15 @@ pub fn explain(
     json: bool,
 ) -> Result<(), ContractError> {
     validate_logical_key(logical_key)?;
+    let cached_cursor = launcher
+        .company_cache()?
+        .and_then(|(cache, _)| cache.meta("authority_cursor"))
+        .unwrap_or_else(|| "0".to_owned());
+    let (authority_snapshot_cursor, authority_snapshot_source) =
+        crate::repository::ensure_authority_snapshot(
+            launcher,
+            authority_cursor.map(|cursor| cursor.to_string()).as_deref().or(Some(cached_cursor.as_str())),
+        )?;
     let mut codebase = load_store(launcher, repo, crate::StoreKind::Codebase)?;
     let mut company = load_store(launcher, repo, crate::StoreKind::Company)?;
     let has_codebase = codebase.events.iter().any(|event| event.event.logical_key == logical_key);
@@ -143,9 +154,29 @@ pub fn explain(
     };
     let store_name_value = if mixed { "mixed".to_owned() } else { store_name(store).to_owned() };
     let view = reduce(data, &store_name_value, as_of, None, authority_cursor.map(|cursor| cursor.to_string()))?;
-    let trace = view.traces.iter().find(|trace| trace.logical_key == logical_key);
-    let current = view.facts.first();
-    let unknown = view.unknowns.iter().find(|unknown| unknown.logical_key == logical_key);
+    let mut references = Vec::new();
+    let mut resolved_current: Option<crate::model::CurrentFact> = None;
+    let mut resolved_unknowns: Vec<crate::reducer::DerivedUnknown> = Vec::new();
+    let mut resolved_trace: Option<crate::reducer::KeyTrace> = None;
+    if has_codebase {
+        if let Ok(repository) = Repository::discover(repo) {
+            let _ = repository;
+            if let Ok(context) = crate::repository::RepoContext::load(crate::launcher::Launcher::load()?, repo, true) {
+                if let Ok((resolved_view, _counts, company_references)) = context.current_view(&as_of.as_of, authority_cursor.map(|cursor| cursor.to_string()).as_deref()) {
+                    resolved_current = resolved_view.facts.first().cloned();
+                    resolved_unknowns = resolved_view.unknowns.iter().filter(|unknown| unknown.logical_key == logical_key).cloned().collect();
+                    resolved_trace = resolved_view.traces.iter().find(|trace| trace.logical_key == logical_key).cloned();
+                    references = company_references;
+                }
+            }
+        }
+    }
+    let trace = resolved_trace.as_ref().or_else(|| view.traces.iter().find(|trace| trace.logical_key == logical_key));
+    let current = resolved_current.as_ref().or_else(|| view.facts.first());
+    let unknown = resolved_unknowns
+        .iter()
+        .find(|unknown| unknown.logical_key == logical_key)
+        .or_else(|| view.unknowns.iter().find(|unknown| unknown.logical_key == logical_key));
     let trace_state = trace.map(|trace| trace.state.as_str()).unwrap_or("missing");
     let state = if current.is_some_and(|fact| fact.status == "current") && trace_state == "current" {
         "current"
@@ -204,7 +235,8 @@ pub fn explain(
         "as_of_source": as_of.as_of_source,
         "ambient_clock_read": false,
         "reducer_version": view.reducer_version,
-        "authority_cursor": view.authority_cursor,
+        "authority_cursor": if authority_cursor.is_some() { authority_snapshot_cursor.clone() } else { view.authority_cursor.clone() },
+        "authority_snapshot_source": authority_snapshot_source,
         "store": store_name_value,
         "reducer_trace": trace,
         "trace": trace,
@@ -221,15 +253,29 @@ pub fn explain(
         "selected_by": "guildhall-reducer/2",
         "current_statement": current.map(|fact| fact.statement.clone()).unwrap_or_default(),
         "current": current,
+        "projection": current.map(|fact| fact.trust.clone()),
+        "projection_state": if current.is_some_and(|fact| fact.trust == "trusted") { "projected" } else { "withheld" },
+        "stale_reasons": current.map(|fact| fact.stale_reasons.clone()).unwrap_or_default(),
         "selection_trace": selection_trace,
         "independent_corroboration_count": current.map(|fact| fact.independent_support_count).unwrap_or(0),
-        "unknowns": view.unknowns,
+        "unknowns": view.unknowns.iter().chain(resolved_unknowns.iter()).cloned().collect::<Vec<_>>(),
         "trusted": current.is_some_and(|fact| fact.status == "current" && fact.trust == "trusted") && unknown.is_none(),
         "authority_scope": current.map(|fact| fact.authority_scope.clone()).or_else(|| unknown.map(|unknown| unknown.scope.clone())).unwrap_or_default(),
         "environment_owner": current.filter(|fact| fact.authority_scope.starts_with("environment:")).map(|fact| fact.authority_id.clone()),
-        "effective_criticality": current.map(|fact| fact.criticality.clone()).or_else(|| unknown.map(|unknown| if unknown.loss_if_absent >= 7_500 { "safety_critical".to_owned() } else { "advisory".to_owned() })),
-        "company_owner": current.filter(|fact| fact.store_kind == "company").map(|fact| fact.authority_id.clone()),
-        "local_owner": current.filter(|fact| fact.store_kind == "codebase").map(|fact| fact.authority_id.clone()),
+        "effective_criticality": current
+            .and_then(|fact| fact.effective_dependence_class.clone())
+            .or_else(|| current.map(|fact| fact.criticality.clone()))
+            .or_else(|| unknown.map(|unknown| if unknown.loss_if_absent >= 7_500 { "safety_critical".to_owned() } else { "advisory".to_owned() })),
+        "company_owner": current
+            .and_then(|fact| fact.company_refs.first().map(|reference| reference.authority.clone()))
+            .or_else(|| current.filter(|fact| fact.store_kind == "company").map(|fact| fact.authority_id.clone())),
+        "local_owner": current
+            .filter(|fact| fact.store_kind == "codebase" && fact.company_refs.is_empty())
+            .map(|fact| fact.authority_id.clone())
+            .or_else(|| references.first().and_then(|record| crate::json::get_str(record, "local_owner").map(str::to_owned))),
+        "company_references": references,
+        "max_rule": references.first().and_then(|record| crate::json::get_str(record, "max_rule").map(str::to_owned)),
+        "dominating_input": references.first().and_then(|record| crate::json::get_str(record, "dominating_input").map(str::to_owned)),
         "query_log": query_log
     });
     crate::output::emit(&result, json);
@@ -284,6 +330,8 @@ fn reduce(
         revocation_fresh: true,
         fact_valid_until: None,
         certificate_valid,
+        authority_owner_by_scope: data.authority_owner_by_scope,
+        steward_authority_id: data.steward_authority_id,
     };
     let mut view = crate::reducer::reduce(&input);
     view.reducer_version = reducer_version;
@@ -310,6 +358,8 @@ pub(crate) fn load_store(
                 revocations: Vec::new(),
                 authority_cursor: current_authority_cursor(),
                 certificate_valid: true,
+                authority_owner_by_scope: BTreeMap::new(),
+                steward_authority_id: None,
             })
         }
         crate::StoreKind::Company => {
@@ -348,6 +398,45 @@ pub(crate) fn load_store(
                     }
                 }
             }
+            let (authority_owner_by_scope, steward_authority_id) = launcher
+                .company_cache()
+                .ok()
+                .flatten()
+                .and_then(|(cache, _root)| cache.snapshot().ok().flatten())
+                .map(|snapshot| {
+                    let revoked: BTreeSet<String> = crate::json::get_array(&snapshot, "revocations")
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|record| crate::json::get_str(record, "revoked_key").map(str::to_owned))
+                        .collect();
+                    let mut active: BTreeMap<String, Option<String>> = BTreeMap::new();
+                    for entry in crate::json::get_array(&snapshot, "registry").into_iter().flatten() {
+                        if crate::json::get_str(entry, "status") != Some("active") {
+                            continue;
+                        }
+                        let Some(scope) = crate::json::get_str(entry, "scope") else { continue; };
+                        let revoked_key = crate::json::get_str(entry, "public_key").unwrap_or_default();
+                        if revoked.contains(revoked_key) {
+                            continue;
+                        }
+                        let identity = crate::json::get_str(entry, "authority_id").map(str::to_owned);
+                        active
+                            .entry(scope.to_owned())
+                            .and_modify(|existing| {
+                                if existing.is_none() || existing.as_deref() != identity.as_deref() {
+                                    *existing = None;
+                                }
+                            })
+                            .or_insert(identity);
+                    }
+                    let authority_owner_by_scope = active
+                        .into_iter()
+                        .filter_map(|(scope, owner)| Some((scope, owner?)))
+                        .collect::<BTreeMap<String, String>>();
+                    let steward_authority_id = authority_owner_by_scope.get("company:root").cloned();
+                    (authority_owner_by_scope, steward_authority_id)
+                })
+                .unwrap_or_default();
             Ok(StoreData {
                 events,
                 unknowns,
@@ -355,6 +444,8 @@ pub(crate) fn load_store(
                 revocations: Vec::new(),
                 authority_cursor: current_authority_cursor(),
                 certificate_valid: true,
+                authority_owner_by_scope,
+                steward_authority_id,
             })
         }
         crate::StoreKind::Codebase => {
@@ -367,6 +458,8 @@ pub(crate) fn load_store(
                 revocations,
                 authority_cursor: context.trust.authority_cursor.clone(),
                 certificate_valid: context.trust.certificate_valid,
+                authority_owner_by_scope: context.trust.authority_owner_by_scope(),
+                steward_authority_id: context.trust.steward_authority_id(),
             })
         }
     }
