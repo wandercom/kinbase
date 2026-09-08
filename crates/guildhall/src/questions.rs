@@ -122,7 +122,7 @@ pub(crate) fn active_authority_with_repo(
     scope: &str,
     question_kind: &str,
 ) -> Result<Value, ContractError> {
-    let entries: Vec<Value> = company_records_with_repo(repo, "authority-registry.jsonl")
+    let mut entries: Vec<Value> = company_records_with_repo(repo, "authority-registry.jsonl")
         .into_iter()
         .filter(|entry| {
             entry
@@ -143,6 +143,38 @@ pub(crate) fn active_authority_with_repo(
                         }))
         })
         .collect();
+    if entries.is_empty() {
+        if let Ok(launcher) = crate::launcher::Launcher::load() {
+            if let Ok(Some((cache, _root))) = launcher.company_cache() {
+                if let Ok(Some(snapshot)) = cache.snapshot() {
+                    entries = crate::json::get_array(&snapshot, "registry")
+                        .cloned()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|entry| {
+                            entry
+                                .get("status")
+                                .and_then(Value::as_str)
+                                .unwrap_or("active")
+                                == "active"
+                                && entry.get("scope").and_then(Value::as_str) == Some(scope)
+                                && (entry.get("question_kind").and_then(Value::as_str)
+                                    == Some(question_kind)
+                                    || entry
+                                        .get("capabilities")
+                                        .and_then(Value::as_array)
+                                        .is_some_and(|capabilities| {
+                                            capabilities.iter().any(|capability| {
+                                                capability.as_str() == Some(question_kind)
+                                                    || capability.as_str() == Some("answer")
+                                            })
+                                        }))
+                        })
+                        .collect();
+                }
+            }
+        }
+    }
     let mut distinct_owners = BTreeSet::new();
     for entry in &entries {
         distinct_owners.insert((

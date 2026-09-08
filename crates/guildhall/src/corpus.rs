@@ -288,16 +288,31 @@ pub fn explain(
             }
         }
     }
-    let trace = resolved_trace.as_ref().or_else(|| {
+    let mixed_conflict = mixed
+        && view
+            .traces
+            .iter()
+            .any(|trace| trace.logical_key == logical_key && trace.state == "conflict");
+    let trace = if mixed_conflict {
         view.traces
             .iter()
             .find(|trace| trace.logical_key == logical_key)
-    });
-    let current = resolved_current.as_ref().or_else(|| {
-        view.facts
-            .iter()
-            .find(|fact| fact.logical_key == logical_key)
-    });
+    } else {
+        resolved_trace.as_ref().or_else(|| {
+            view.traces
+                .iter()
+                .find(|trace| trace.logical_key == logical_key)
+        })
+    };
+    let current = if mixed_conflict {
+        None
+    } else {
+        resolved_current.as_ref().or_else(|| {
+            view.facts
+                .iter()
+                .find(|fact| fact.logical_key == logical_key)
+        })
+    };
     if let Some(current) = current {
         references.retain(|record| {
             crate::json::get_str(record, "fact_id") == Some(current.fact_id.as_str())
@@ -447,7 +462,20 @@ pub fn explain(
         "stale_reasons": current.map(|fact| fact.stale_reasons.clone()).unwrap_or_default(),
         "selection_trace": selection_trace,
         "independent_corroboration_count": current.map(|fact| fact.independent_support_count).unwrap_or(0),
-        "unknowns": view.unknowns.iter().chain(resolved_unknowns.iter()).cloned().collect::<Vec<_>>(),
+        "unknowns": view
+            .unknowns
+            .iter()
+            .chain(resolved_unknowns.iter())
+            .filter(|unknown| unknown.logical_key == logical_key)
+            .fold(Vec::new(), |mut unknowns: Vec<crate::reducer::DerivedUnknown>, unknown| {
+                if !unknowns
+                    .iter()
+                    .any(|existing| existing.unknown_id == unknown.unknown_id)
+                {
+                    unknowns.push(unknown.clone());
+                }
+                unknowns
+            }),
         "trusted": current.is_some_and(|fact| fact.status == "current" && fact.trust == "trusted") && unknown.is_none(),
         "authority_scope": current.map(|fact| fact.authority_scope.clone()).or_else(|| unknown.map(|unknown| unknown.scope.clone())).unwrap_or_default(),
         "environment_owner": current.filter(|fact| fact.authority_scope.starts_with("environment:")).map(|fact| fact.authority_id.clone()),

@@ -171,10 +171,11 @@ pub fn authority_rank(event: &FactEvent, origin_trust: Option<&str>) -> u8 {
             if scope.starts_with("environment:") {
                 3
             } else if origin_trust.is_some_and(|trust| trust != "merged-default")
-                && !event
-                    .evidence_refs
-                    .iter()
-                    .any(|reference| reference.starts_with("authorization:"))
+                && !(origin_trust == Some("approved-pr")
+                    && event
+                        .evidence_refs
+                        .iter()
+                        .any(|reference| reference.starts_with("authorization:")))
             {
                 0
             } else if event.disposition == "approved"
@@ -1282,7 +1283,9 @@ fn authority_owner_for_scope(
 }
 
 fn owner_role_for_scope(input: &ReducerInput, scope: &str) -> &'static str {
-    if input.store_kind == "company" {
+    if scope.starts_with("architecture:") {
+        "chief-architect"
+    } else if input.store_kind == "company" {
         "company-steward"
     } else if scope.starts_with("environment:") {
         "deploy-owner"
