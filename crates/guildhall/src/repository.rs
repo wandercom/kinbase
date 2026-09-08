@@ -30,6 +30,15 @@ pub struct TrustContext {
     pub revocations: Vec<Revocation>,
     pub relaxations: Vec<Value>,
     pub company_facts: Vec<Value>,
+    /// Open Unknowns the Company view derived (snapshot `unknowns`).
+    pub company_unknowns: Vec<Value>,
+    /// Lifecycle admissions and refusals the Company recorded
+    /// (misextraction notices, never_true withdrawals).
+    pub company_lifecycle: Vec<Value>,
+    /// Parent bindings of current Company facts, resolved to logical keys.
+    pub company_fact_parents: BTreeMap<String, Vec<Value>>,
+    /// Per-key reduction traces of the Company view (state, admitted ids).
+    pub company_traces: Vec<Value>,
     pub fact_versions: BTreeMap<String, Vec<Value>>,
     pub authority_cursor: String,
     pub freshness: Option<Freshness>,
@@ -1133,6 +1142,10 @@ pub fn build_trust(
         revocations: Vec::new(),
         relaxations: Vec::new(),
         company_facts: Vec::new(),
+        company_unknowns: Vec::new(),
+        company_lifecycle: Vec::new(),
+        company_fact_parents: BTreeMap::new(),
+        company_traces: Vec::new(),
         fact_versions: BTreeMap::new(),
         authority_cursor: "0".to_owned(),
         freshness: None,
@@ -1207,6 +1220,23 @@ pub fn build_trust(
         trust.company_facts = crate::json::get_array(&snapshot, "facts")
             .cloned()
             .unwrap_or_default();
+        trust.company_unknowns = crate::json::get_array(&snapshot, "unknowns")
+            .cloned()
+            .unwrap_or_default();
+        trust.company_lifecycle = crate::json::get_array(&snapshot, "lifecycle_admissions")
+            .cloned()
+            .unwrap_or_default();
+        trust.company_traces = crate::json::get_array(&snapshot, "traces")
+            .cloned()
+            .unwrap_or_default();
+        if let Some(Value::Object(parents)) = snapshot.get("fact_parents") {
+            for (fact_id, items) in parents {
+                trust.company_fact_parents.insert(
+                    fact_id.clone(),
+                    items.as_array().cloned().unwrap_or_default(),
+                );
+            }
+        }
         if let Some(Value::Object(versions)) = snapshot.get("fact_versions") {
             for (fact_id, items) in versions {
                 trust.fact_versions.insert(
@@ -2085,6 +2115,63 @@ pub fn status(
     let private = context.launcher.private_store()?;
     let status_changed_dispositions = changed_dispositions(&private)?;
     let mut trusted = 0usize;
+    // The Company view is an input from its own authority (Helland: data on
+    // the outside). It is reported alongside the repository view; a logical
+    // key supported by both stores with one statement is one multiply
+    // supported fact whose provenance is the union of both supports.
+    let company_facts_by_key: BTreeMap<String, Vec<&Value>> = context
+        .trust
+        .company_facts
+        .iter()
+        .filter_map(|fact| {
+            crate::json::get_str(fact, "logical_key").map(|key| (key.to_owned(), fact))
+        })
+        .fold(BTreeMap::new(), |mut map, (key, fact)| {
+            map.entry(key).or_default().push(fact);
+            map
+        });
+    let company_trace_by_key: BTreeMap<String, &Value> = context
+        .trust
+        .company_traces
+        .iter()
+        .filter_map(|trace| {
+            crate::json::get_str(trace, "logical_key").map(|key| (key.to_owned(), trace))
+        })
+        .collect();
+    let company_admitted_ids = |key: &str| -> Vec<String> {
+        company_trace_by_key
+            .get(key)
+            .and_then(|trace| crate::json::get_array(trace, "admitted_event_ids"))
+            .map(|ids| {
+                ids.iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let company_fact_row = |fact: &Value, state: &str| -> Value {
+        json!({
+            "fact_id": fact.get("fact_id").cloned().unwrap_or(Value::Null),
+            "event_id": fact.get("event_id").cloned().unwrap_or(Value::Null),
+            "logical_key": fact.get("logical_key").cloned().unwrap_or(Value::Null),
+            "state": state,
+            "current_fact_state": fact.get("status").cloned().unwrap_or(Value::Null),
+            "statement": fact.get("statement").cloned().unwrap_or(Value::Null),
+            "evidence_refs": fact.get("evidence_refs").cloned().unwrap_or_else(|| json!([])),
+            "trust": fact.get("trust").cloned().unwrap_or(Value::Null),
+            "authority_scope": fact.get("authority_scope").cloned().unwrap_or(Value::Null),
+            "authority_id": fact.get("authority_id").cloned().unwrap_or(Value::Null),
+            "store_kind": "company",
+            "stores": ["company"],
+            "provenance_recomputed": false,
+            "support_event_ids": fact.get("support_event_ids").cloned().unwrap_or_else(|| json!([])),
+            "independent_support_count": fact.get("independent_support_count").cloned().unwrap_or(json!(0)),
+            "stale_reasons": fact.get("stale_reasons").cloned().unwrap_or_else(|| json!([])),
+            "effective_criticality": fact.get("criticality").cloned().unwrap_or(Value::Null)
+        })
+    };
+    let mut merged_company_keys: BTreeSet<String> = BTreeSet::new();
     let facts: Vec<Value> = view
         .facts
         .iter()
@@ -2092,8 +2179,60 @@ pub fn status(
             if fact.trust == "trusted" && fact.status == "current" {
                 trusted += 1;
             }
+            let trace = view
+                .traces
+                .iter()
+                .find(|trace| trace.logical_key == fact.logical_key);
+            let mut support: Vec<String> = fact.support_event_ids.clone();
+            let mut admitted: Vec<String> = trace
+                .map(|trace| trace.admitted_event_ids.clone())
+                .unwrap_or_default();
+            let mut independent = fact.independent_support_count;
+            let mut stores = vec!["codebase".to_owned()];
+            let mut company_fact_id = Value::Null;
+            let same_statement = company_facts_by_key
+                .get(&fact.logical_key)
+                .into_iter()
+                .flatten()
+                .find(|company| {
+                    crate::json::get_str(company, "status") == Some("current")
+                        && crate::json::get_str(company, "statement").is_some_and(|statement| {
+                            crate::scanner::squeeze(statement)
+                                == crate::scanner::squeeze(&fact.statement)
+                        })
+                })
+                .copied();
+            if let Some(company) = same_statement {
+                merged_company_keys.insert(fact.logical_key.clone());
+                stores.push("company".to_owned());
+                company_fact_id = company.get("fact_id").cloned().unwrap_or(Value::Null);
+                for id in crate::json::get_array(company, "support_event_ids")
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                {
+                    if !support.iter().any(|existing| existing == id) {
+                        support.push(id.to_owned());
+                    }
+                }
+                independent += company
+                    .get("independent_support_count")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0) as usize;
+            }
+            for id in company_admitted_ids(&fact.logical_key) {
+                if !admitted.contains(&id) {
+                    admitted.push(id);
+                }
+            }
+            // Provenance is recomputed when an admitted support of this key
+            // (in either store) no longer supports it: a retired support
+            // changed the derivation without changing the statement.
+            let provenance_recomputed = admitted.iter().any(|id| !support.contains(id))
+                || !status_changed_dispositions.is_empty();
             json!({
                 "fact_id": fact.fact_id,
+                "event_id": fact.event_id,
                 "logical_key": fact.logical_key,
                 "state": if fact.status == "current" { "current" } else { "withheld" },
                 "current_fact_state": fact.status.clone(),
@@ -2101,28 +2240,92 @@ pub fn status(
                 "evidence_refs": fact.evidence_refs,
                 "trust": fact.trust,
                 "authority_scope": fact.authority_scope,
-                "provenance_recomputed": view
-                    .traces
-                    .iter()
-                    .find(|trace| trace.logical_key == fact.logical_key)
-                    .is_some_and(|trace| trace.admitted_event_ids.len() != fact.support_event_ids.len())
-                    || !status_changed_dispositions.is_empty(),
-                "support_event_ids": fact.support_event_ids,
-                "independent_support_count": fact.independent_support_count,
+                "authority_id": fact.authority_id,
+                "store_kind": "codebase",
+                "stores": stores,
+                "company_fact_id": company_fact_id,
+                "provenance_recomputed": provenance_recomputed,
+                "support_event_ids": support,
+                "admitted_event_ids": admitted,
+                "independent_support_count": independent,
                 "effective_criticality": fact.effective_dependence_class.clone().unwrap_or_else(|| fact.criticality.clone())
             })
         })
         .collect();
     let mut all_facts = facts.clone();
+    // Company facts that no repository fact shares: current or withheld rows
+    // exactly as the Company reduced them.
+    for fact in &context.trust.company_facts {
+        let Some(key) = crate::json::get_str(fact, "logical_key") else {
+            continue;
+        };
+        if merged_company_keys.contains(key) {
+            continue;
+        }
+        let status_text = crate::json::get_str(fact, "status").unwrap_or("withheld");
+        let state = if status_text == "current" {
+            "current"
+        } else {
+            "withheld"
+        };
+        let mut row = company_fact_row(fact, state);
+        let support: Vec<String> = crate::json::get_array(fact, "support_event_ids")
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        let admitted = company_admitted_ids(key);
+        row["admitted_event_ids"] = json!(admitted);
+        row["provenance_recomputed"] = Value::Bool(admitted.iter().any(|id| !support.contains(id)));
+        all_facts.push(row);
+    }
+    let has_current_row = |rows: &[Value], key: &str| {
+        rows.iter().any(|row| {
+            crate::json::get_str(row, "logical_key") == Some(key)
+                && crate::json::get_str(row, "state") == Some("current")
+        })
+    };
     for trace in &view.traces {
-        if trace.current_fact_id.is_none() {
+        if trace.current_fact_id.is_none() && !has_current_row(&all_facts, &trace.logical_key) {
             all_facts.push(json!({
                 "logical_key": trace.logical_key,
                 "state": match trace.state.as_str() { "conflict" => "conflict", "withdrawn" | "expired" => "withdrawn", _ => "unknown" },
                 "statement": Value::Null,
-                "trust": "withheld"
+                "trust": "withheld",
+                "store_kind": "codebase",
+                "evidence_refs": trace.admitted_event_ids,
+                "admitted_event_ids": trace.admitted_event_ids,
+                "support_event_ids": []
             }));
         }
+    }
+    for trace in &context.trust.company_traces {
+        let Some(key) = crate::json::get_str(trace, "logical_key") else {
+            continue;
+        };
+        if crate::json::get_str(trace, "current_fact_id").is_some()
+            || all_facts
+                .iter()
+                .any(|row| crate::json::get_str(row, "logical_key") == Some(key))
+        {
+            continue;
+        }
+        let state = match crate::json::get_str(trace, "state").unwrap_or("missing") {
+            "conflict" => "conflict",
+            "withdrawn" | "expired" | "missing" => "withdrawn",
+            _ => "unknown",
+        };
+        all_facts.push(json!({
+            "logical_key": key,
+            "state": state,
+            "statement": Value::Null,
+            "trust": "withheld",
+            "store_kind": "company",
+            "evidence_refs": trace.get("admitted_event_ids").cloned().unwrap_or_else(|| json!([])),
+            "admitted_event_ids": trace.get("admitted_event_ids").cloned().unwrap_or_else(|| json!([])),
+            "support_event_ids": []
+        }));
     }
     let mut unknowns: Vec<Value> = context.trust.unknowns.clone();
     for unknown in &view.unknowns {
@@ -2132,10 +2335,98 @@ pub fn status(
             "logical_key": unknown.logical_key,
             "owner_role": unknown.owner_role,
             "owner_identity": unknown.owner_identity,
+            "owner": unknown.owner_identity,
             "response_due_at": crate::time::plus_seconds(&as_of.as_of, 24 * 3600).unwrap_or_default(),
             "question": unknown.question,
             "status": unknown.status,
-            "unknown_state": unknown.status.clone()
+            "unknown_state": unknown.status.clone(),
+            "store_kind": "codebase"
+        }));
+    }
+    for unknown in &context.trust.company_unknowns {
+        let status_text = crate::json::get_str(unknown, "status").unwrap_or("open");
+        unknowns.push(json!({
+            "kind": unknown.get("kind").cloned().unwrap_or(Value::Null),
+            "unknown_id": unknown.get("unknown_id").cloned().unwrap_or(Value::Null),
+            "logical_key": unknown.get("logical_key").cloned().unwrap_or(Value::Null),
+            "owner_role": unknown.get("owner_role").cloned().unwrap_or(Value::Null),
+            "owner_identity": unknown.get("owner_identity").cloned().unwrap_or(Value::Null),
+            "owner": unknown.get("owner_identity").cloned().unwrap_or(Value::Null),
+            "response_due_at": unknown.get("response_due_at").cloned().unwrap_or_else(|| Value::String(crate::time::plus_seconds(&as_of.as_of, 24 * 3600).unwrap_or_default())),
+            "question": unknown.get("question").cloned().unwrap_or(Value::Null),
+            "decision_blocked": unknown.get("decision_blocked").cloned().unwrap_or(Value::Null),
+            "status": status_text,
+            "unknown_state": status_text,
+            "store_kind": "company"
+        }));
+    }
+    // A decision whose parent fact lost its last support in any store
+    // reopens under its own principal: the dependent row is withheld and an
+    // owned Unknown names the withdrawn premise (V-1 support retirement).
+    let mut dependent_reopened: Vec<Value> = Vec::new();
+    for fact in &context.trust.company_facts {
+        let Some(fact_id) = crate::json::get_str(fact, "fact_id") else {
+            continue;
+        };
+        if crate::json::get_str(fact, "status") != Some("current") {
+            continue;
+        }
+        let Some(parents) = context.trust.company_fact_parents.get(fact_id) else {
+            continue;
+        };
+        let withdrawn_parents: Vec<&Value> = parents
+            .iter()
+            .filter(|parent| {
+                crate::json::get_str(parent, "logical_key")
+                    .is_some_and(|key| !key.is_empty() && !has_current_row(&all_facts, key))
+            })
+            .collect();
+        if withdrawn_parents.is_empty() {
+            continue;
+        }
+        let logical_key = crate::json::get_str(fact, "logical_key")
+            .unwrap_or_default()
+            .to_owned();
+        let owner = crate::json::get_str(fact, "authority_id")
+            .unwrap_or_default()
+            .to_owned();
+        let premises: Vec<String> = withdrawn_parents
+            .iter()
+            .filter_map(|parent| crate::json::get_str(parent, "logical_key").map(str::to_owned))
+            .collect();
+        for row in all_facts.iter_mut() {
+            if crate::json::get_str(row, "logical_key") == Some(logical_key.as_str()) {
+                row["state"] = Value::String("withheld".to_owned());
+                row["reopened"] = Value::Bool(true);
+                row["withdrawn_premises"] = json!(premises);
+            }
+        }
+        let unknown_id = format!(
+            "unknown_reopened_{}",
+            &crate::hash::sha256_text(&format!("{logical_key}\0{}", premises.join(",")))[..24]
+        );
+        let decision_blocked = format!("use of logical key {logical_key}");
+        unknowns.push(json!({
+            "kind": "reopened",
+            "unknown_id": unknown_id,
+            "logical_key": logical_key,
+            "affected_logical_keys": premises,
+            "owner_role": "decision-principal",
+            "owner_identity": owner,
+            "owner": owner,
+            "response_due_at": crate::time::plus_seconds(&as_of.as_of, 24 * 3600).unwrap_or_default(),
+            "question": format!("The premise {} of decision {logical_key} lost its last admissible support. Does the decision still hold?", premises.join(", ")),
+            "decision_blocked": decision_blocked,
+            "status": "reopened",
+            "unknown_state": "reopened",
+            "store_kind": "company"
+        }));
+        dependent_reopened.push(json!({
+            "logical_key": logical_key,
+            "decision_blocked": decision_blocked,
+            "kind": "dependent-support-withdrawn",
+            "withdrawn_premises": premises,
+            "owner_identity": owner
         }));
     }
     let (events, _) = if context.repo.config.is_some() {
@@ -2282,6 +2573,36 @@ pub fn status(
             }
         }
     }
+    // Lifecycle admissions the Company recorded (C7: Company facts are
+    // admitted through the service, so their notices and withdrawals are
+    // reported from the Company's own admission record, accepted or refused).
+    for record in &context.trust.company_lifecycle {
+        let action = crate::json::get_str(record, "action").unwrap_or_default();
+        let accepted = record.get("accepted") == Some(&Value::Bool(true));
+        let logical_key = record.get("logical_key").cloned().unwrap_or(Value::Null);
+        match action {
+            "misextraction" => misextraction_notices.push(json!({
+                "logical_key": logical_key,
+                "admitted": accepted,
+                "notice_admitted": accepted,
+                "asserted_claim": "evidence_byte_mismatch",
+                "semantic_withdrawal": false,
+                "authority_id": record.get("authority_id").cloned().unwrap_or(Value::Null),
+                "event_id": record.get("event_id").cloned().unwrap_or(Value::Null),
+                "store_kind": "company"
+            })),
+            "never_true" => never_true.push(json!({
+                "authority_id": record.get("authority_id").cloned().unwrap_or(Value::Null),
+                "accepted": accepted,
+                "approver_minted_accepted": accepted,
+                "refusal_code": if accepted { Value::Null } else { record.get("refusal_code").cloned().unwrap_or_else(|| Value::String("AUTHORITY_WRONG_SCOPE".to_owned())) },
+                "logical_key": logical_key,
+                "event_id": record.get("event_id").cloned().unwrap_or(Value::Null),
+                "store_kind": "company"
+            })),
+            _ => {}
+        }
+    }
     // Company-side events visible through the cache (orphan_abandoned,
     // observation_expired) are reported from the snapshot facts.
     for fact in &context.trust.company_facts {
@@ -2393,6 +2714,19 @@ pub fn status(
             |unknown| json!({"logical_key": unknown.logical_key, "owner_role": unknown.owner_role}),
         )
         .collect();
+    let mut reopened_all = reopened_decisions(&view);
+    for unknown in &context.trust.company_unknowns {
+        let kind = crate::json::get_str(unknown, "kind").unwrap_or_default();
+        if matches!(kind, "withdrawn" | "expired" | "misextraction" | "stale") {
+            reopened_all.push(json!({
+                "logical_key": unknown.get("logical_key").cloned().unwrap_or(Value::Null),
+                "decision_blocked": unknown.get("decision_blocked").cloned().unwrap_or(Value::Null),
+                "kind": kind,
+                "store_kind": "company"
+            }));
+        }
+    }
+    reopened_all.extend(dependent_reopened.iter().cloned());
     let mut result = json!({
         "status": if context.trust.certificate_valid { "certified" } else { "unverified" },
         "mode": context.launcher.mode,
@@ -2412,7 +2746,7 @@ pub fn status(
         "observations": observations,
         "changed_dispositions": status_changed_dispositions,
         "history_retained": true,
-        "reopened_decisions": reopened_decisions(&view),
+        "reopened_decisions": reopened_all,
         "cursor_skew": skew.0,
         "skew_dispositions": skew.1,
         "misextraction_notices": misextraction_notices,
