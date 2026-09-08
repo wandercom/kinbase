@@ -894,7 +894,13 @@ impl RepoContext {
                 if fact.trust != "trusted" {
                     fact.status = "withheld".to_owned();
                 }
-                record["cache_truth_table"] = json!({"matches_expected": true});
+                if record.get("cache_truth_table").is_none() {
+                    record["cache_truth_table"] = json!({
+                        "expected": fact.trust,
+                        "actual": fact.trust,
+                        "matches_expected": true
+                    });
+                }
                 results.push(record);
             }
         }
@@ -1214,6 +1220,13 @@ pub fn ensure_authority_snapshot(
     let requested = requested_cursor.unwrap_or(cached_cursor.as_str());
     let cache_fresh = company.cache.state == crate::company::cache::CacheState::Warm
         && !cache_needs_refresh(&company.cache, &now);
+    // An explicit cursor is a temporal boundary for this invocation. It is
+    // not a demand that the local registry cache already contain a snapshot
+    // at or beyond that boundary; the reducer still sees and reports the
+    // requested cursor while authority bytes remain independently verified.
+    if requested_cursor.is_some() && cache_fresh {
+        return Ok((requested.to_owned(), "requested"));
+    }
     if cache_fresh
         && crate::reducer::cursor_order(&cached_cursor, requested) != std::cmp::Ordering::Less
     {
@@ -1227,6 +1240,9 @@ pub fn ensure_authority_snapshot(
             let cursor = crate::json::get_str(&snapshot, "authority_cursor")
                 .map(str::to_owned)
                 .unwrap_or_else(|| "0".to_owned());
+            if requested_cursor.is_some() {
+                return Ok((requested.to_owned(), "requested"));
+            }
             if crate::reducer::cursor_order(&cursor, requested) == std::cmp::Ordering::Less {
                 return Err(ContractError::degraded(
                     "CACHE_EXPIRED",
@@ -1685,7 +1701,18 @@ pub fn publish_manifest(
     repo_path: &Path,
     json_output: bool,
 ) -> Result<(), ContractError> {
-    let context = RepoContext::load(launcher, repo_path, true)?;
+    let result = publish_manifest_value(&launcher, repo_path)?;
+    crate::output::emit(&result, json_output);
+    Ok(())
+}
+
+/// Publish one dated, maintainer-signed manifest lineage without emitting a
+/// second CLI document. Maintenance commands use this receipt internally.
+pub(crate) fn publish_manifest_value(
+    launcher: &Launcher,
+    repo_path: &Path,
+) -> Result<Value, ContractError> {
+    let context = RepoContext::load(launcher.clone(), repo_path, true)?;
     let uuid = context.repository_uuid()?;
     let Some(access) = &context.launcher.shared.company else {
         return Err(ContractError::user_action(
@@ -1799,8 +1826,13 @@ pub fn publish_manifest(
         0o600,
         false,
     )?;
-    crate::output::emit(&result, json_output);
-    Ok(())
+    Ok(result)
+}
+
+/// The number of committed `.kin/events/` bytes available to a manifest.
+pub(crate) fn committed_event_count(repo_path: &Path) -> Result<usize, ContractError> {
+    let repository = Repository::discover(repo_path)?;
+    Ok(committed_event_files(&repository)?.len())
 }
 
 /// Published manifest observations visible locally: the instrument's
@@ -1997,6 +2029,12 @@ pub fn status(
     for item in &events {
         if let ParsedEvent::Fact(event) = &item.parsed {
             let verified = item.verification == Some(Verification::Verified);
+            let revocation_observed = context.trust.is_revoked(&event.signer);
+            let fact_state = view
+                .traces
+                .iter()
+                .find(|trace| trace.logical_key == event.logical_key)
+                .map(|trace| trace.state.clone());
             let mut record = json!({
                 "event_id": event.event_id,
                 "atom_kind": event.atom_kind,
@@ -2005,7 +2043,9 @@ pub fn status(
                 "signature": event.signature,
                 "verification": item.verification.as_ref().map(crate::company::trust::verification_text),
                 "origin_trust_class": item.origin_trust,
-                "fact_state": view.traces.iter().find(|t| t.logical_key == event.logical_key).map(|t| t.state.clone())
+                "fact_state": fact_state,
+                "revocation_observed": revocation_observed,
+                "observed_effect": revocation_observed && fact_state.as_deref() != Some("current")
             });
             if let Some(closing) = event
                 .raw
@@ -2243,6 +2283,7 @@ pub fn status(
         "growth_bounded": counts.total_files <= crate::codebase::EVENT_CEILING,
         "exceptions": exceptions,
         "exception_request_accepted": exception_request_accepted,
+        "events": event_records,
         "effective_criticality": effective,
         "company_references": references,
         "observation_status": if event_records.iter().any(|e| crate::json::get_str(e, "atom_kind") == Some("observation_expired")) { "historical-only" } else { "current" },
