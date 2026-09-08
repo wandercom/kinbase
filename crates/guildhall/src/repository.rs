@@ -155,7 +155,7 @@ pub fn publish_manifest(repo: &Path, json: bool) -> Result<(), ContractError> {
     Ok(())
 }
 
-pub fn status(repo: &Path, json: bool) -> Result<(), ContractError> {
+pub fn status(repo: &Path, as_of: &crate::time::AsOf, json: bool) -> Result<(), ContractError> {
     let config_path = repo.join(".kin").join("config");
     let result = if config_path.exists() {
         let repository_id = repository_id(repo)?;
@@ -166,7 +166,9 @@ pub fn status(repo: &Path, json: bool) -> Result<(), ContractError> {
             "status": "initialized",
             "repository_uuid": repository_id,
             "event_count": count,
-            "personal_mounted": false
+            "personal_mounted": false,
+            "as_of": as_of.as_of,
+            "as_of_source": as_of.as_of_source
         })
     } else {
         json!({
@@ -174,6 +176,8 @@ pub fn status(repo: &Path, json: bool) -> Result<(), ContractError> {
             "repository_uuid": Value::Null,
             "event_count": 0,
             "personal_mounted": false,
+            "as_of": as_of.as_of,
+            "as_of_source": as_of.as_of_source,
             "remediation": "Run guildhall repo issue and repo init with an out-of-tree certificate."
         })
     };
@@ -215,10 +219,15 @@ pub fn doctor(repo: &Path, host: Option<crate::HostKind>, json: bool) -> Result<
     Ok(())
 }
 
-pub fn fsck(repo: &Path, full: bool, json: bool) -> Result<(), ContractError> {
+pub fn fsck(
+    repo: &Path,
+    full: bool,
+    as_of: &crate::time::AsOf,
+    json: bool,
+) -> Result<(), ContractError> {
     let kin = repo.join(".kin");
     if !kin.join("config").exists() {
-        let result = json!({"status":"unverified", "event_count":0, "full":full, "reason":"repo-uninitialized"});
+        let result = json!({"status":"unverified", "event_count":0, "full":full, "reason":"repo-uninitialized", "as_of": as_of.as_of, "as_of_source": as_of.as_of_source});
         print_value(&result, json);
         return Ok(());
     }
@@ -354,7 +363,7 @@ pub fn fsck(repo: &Path, full: bool, json: bool) -> Result<(), ContractError> {
             ));
         }
     }
-    let result = json!({"status":"ok", "event_count":event_count, "manifest_count":manifests.len(), "full":full});
+    let result = json!({"status":"ok", "event_count":event_count, "manifest_count":manifests.len(), "full":full, "as_of": as_of.as_of, "as_of_source": as_of.as_of_source});
     print_value(&result, json);
     Ok(())
 }

@@ -10,6 +10,8 @@ pub enum Command {
     Status {
         #[arg(long)]
         repo: Option<PathBuf>,
+        #[arg(long = "as-of", help = "Explicit RFC 3339 UTC millisecond reducer instant; defaults to the recorded proof clock")]
+        as_of: Option<String>,
     },
     Doctor {
         #[arg(long, value_enum)]
@@ -32,6 +34,8 @@ pub enum Command {
         repo: Option<PathBuf>,
         #[arg(long)]
         full: bool,
+        #[arg(long = "as-of")]
+        as_of: Option<String>,
     },
     Explain {
         logical_key: String,
@@ -39,6 +43,8 @@ pub enum Command {
         repo: Option<PathBuf>,
         #[arg(long)]
         decision: String,
+        #[arg(long = "as-of")]
+        as_of: Option<String>,
     },
     Project {
         #[arg(long)]
@@ -49,6 +55,8 @@ pub enum Command {
         decision: String,
         #[arg(long = "working-set", value_delimiter = ',')]
         working_set: Vec<String>,
+        #[arg(long = "as-of")]
+        as_of: Option<String>,
     },
     #[command(subcommand)]
     Session(SessionCommand),
@@ -101,6 +109,8 @@ pub enum CorpusCommand {
         store: Store,
         #[arg(long)]
         repo: Option<PathBuf>,
+        #[arg(long = "as-of")]
+        as_of: Option<String>,
     },
 }
 

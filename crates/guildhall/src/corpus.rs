@@ -6,9 +6,15 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Path;
 
-pub fn rebuild(repo: &Path, store: crate::StoreKind, json: bool) -> Result<(), ContractError> {
+pub fn rebuild(
+    repo: &Path,
+    store: crate::StoreKind,
+    as_of: &crate::time::AsOf,
+    json: bool,
+) -> Result<(), ContractError> {
     let root = crate::store::ensure_store_root(store, repo).map_err(io_error)?;
-    let as_of = now_rfc3339_millis();
+    let as_of_source = as_of.as_of_source.clone();
+    let as_of = as_of.as_of.clone();
     let facts = if store == crate::StoreKind::Personal {
         personal_facts(repo)
     } else {
@@ -48,6 +54,7 @@ pub fn rebuild(repo: &Path, store: crate::StoreKind, json: bool) -> Result<(), C
         "schema": "guildhall-current-view/1",
         "store": store_name(store),
         "as_of": as_of,
+        "as_of_source": as_of_source,
         "reducer_version": crate::reducer::REDUCER_VERSION,
         "facts": facts,
         "unknown_ids": unknowns
@@ -62,7 +69,8 @@ pub fn rebuild(repo: &Path, store: crate::StoreKind, json: bool) -> Result<(), C
         "store": store_name(store),
         "fact_count": facts.len(),
         "unknown_count": unknowns.len(),
-        "as_of": as_of
+        "as_of": as_of,
+        "as_of_source": as_of_source
     });
     print_value(&result, json);
     Ok(())
@@ -159,6 +167,7 @@ pub fn explain(
     repo: &Path,
     logical_key: &str,
     decision: &str,
+    as_of: &crate::time::AsOf,
     json: bool,
 ) -> Result<(), ContractError> {
     let mut events = Vec::new();
@@ -171,11 +180,13 @@ pub fn explain(
         .filter(|event| event.logical_key == logical_key)
         .cloned()
         .collect();
-    let trace = crate::reducer::reduce_with_trace(&matching, &now_rfc3339_millis());
+    let trace = crate::reducer::reduce_with_trace(&matching, &as_of.as_of);
     let current = trace.facts.first();
     let result = json!({
         "logical_key": logical_key,
         "decision": decision,
+        "as_of": as_of.as_of,
+        "as_of_source": as_of.as_of_source,
         "status": current.map(|fact| fact.status.as_str()).unwrap_or(if matching.is_empty() { "missing" } else { "withdrawn" }),
         "reducer_version": crate::reducer::REDUCER_VERSION,
         "events": matching.iter().map(|event| json!({

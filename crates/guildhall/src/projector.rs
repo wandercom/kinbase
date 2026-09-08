@@ -136,6 +136,7 @@ pub fn run(
     task: &str,
     decision: &str,
     working_set: &[String],
+    as_of: &crate::time::AsOf,
     json: bool,
 ) -> crate::error::Result<()> {
     let mut facts = Vec::new();
@@ -160,6 +161,8 @@ pub fn run(
     let trace = project(&facts, working_set, task, decision, &unknown_ids);
     let result = serde_json::json!({
         "decision": decision,
+        "as_of": as_of.as_of,
+        "as_of_source": as_of.as_of_source,
         "selected_count": trace.selected.len(),
         "omitted_count": trace.omitted_count,
         "stopping_reason": trace.stopping_reason,

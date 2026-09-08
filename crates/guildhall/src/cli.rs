@@ -37,10 +37,11 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         Command::Repo(RepoCommand::PublishManifest { repo }) => {
             crate::repository::publish_manifest(&repo, json).map_err(internal)?;
         }
-        Command::Status { repo } => {
+        Command::Status { repo, as_of } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            crate::repository::status(&repo, json).map_err(internal)?;
+            let as_of = resolve_as_of(as_of.as_deref())?;
+            crate::repository::status(&repo, &as_of, json).map_err(internal)?;
         }
         Command::Doctor { host, repo } => {
             let repo = repo
@@ -69,34 +70,41 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             crate::ingest::ingest(&repo, &source_kind, &source, checkpoint.as_deref(), json)
                 .map_err(internal)?;
         }
-        Command::Corpus(CorpusCommand::Rebuild { store, repo }) => {
+        Command::Corpus(CorpusCommand::Rebuild { store, repo, as_of }) => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            crate::corpus::rebuild(&repo, store_to_kind(store), json).map_err(internal)?;
+            let as_of = resolve_as_of(as_of.as_deref())?;
+            crate::corpus::rebuild(&repo, store_to_kind(store), &as_of, json).map_err(internal)?;
         }
-        Command::Fsck { repo, full } => {
+        Command::Fsck { repo, full, as_of } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            crate::repository::fsck(&repo, full, json).map_err(internal)?;
+            let as_of = resolve_as_of(as_of.as_deref())?;
+            crate::repository::fsck(&repo, full, &as_of, json).map_err(internal)?;
         }
         Command::Explain {
             logical_key,
             repo,
             decision,
+            as_of,
         } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            crate::corpus::explain(&repo, &logical_key, &decision, json).map_err(internal)?;
+            let as_of = resolve_as_of(as_of.as_deref())?;
+            crate::corpus::explain(&repo, &logical_key, &decision, &as_of, json).map_err(internal)?;
         }
         Command::Project {
             repo,
             task,
             decision,
             working_set,
+            as_of,
         } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            crate::projector::run(&repo, &task, &decision, &working_set, json).map_err(internal)?;
+            let as_of = resolve_as_of(as_of.as_deref())?;
+            crate::projector::run(&repo, &task, &decision, &working_set, &as_of, json)
+                .map_err(internal)?;
         }
         Command::Session(SessionCommand::Start { host, repo }) => {
             let repo = repo
@@ -130,6 +138,18 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
 
 fn internal(error: crate::error::ContractError) -> ContractError {
     error
+}
+
+fn resolve_as_of(explicit: Option<&str>) -> Result<crate::time::AsOf, ContractError> {
+    crate::time::resolve_as_of(explicit).map_err(|message| {
+        ContractError::new(
+            "CONFIG_INVARIANT",
+            message,
+            "Pass --as-of as RFC 3339 UTC with millisecond precision, e.g. 2026-09-07T12:00:00.000Z.",
+            false,
+            crate::error::ExitCode::Refused,
+        )
+    })
 }
 
 fn store_to_kind(store: Store) -> crate::StoreKind {
