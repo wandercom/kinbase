@@ -1,8 +1,9 @@
 use crate::error::{ContractError, ExitCode};
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use std::process::{Command, Stdio};
 
 const ARMS: [&str; 11] = [
@@ -32,9 +33,10 @@ pub fn dispatch(
         crate::command_types::ExperimentCommand::Freeze { manifest, budget } => {
             freeze(&manifest, &budget, json)
         }
-        crate::command_types::ExperimentCommand::Run { frozen_manifest } => {
-            run(&frozen_manifest, json)
-        }
+        crate::command_types::ExperimentCommand::Run {
+            frozen_manifest,
+            smoke,
+        } => run(&frozen_manifest, smoke, json),
         crate::command_types::ExperimentCommand::Score { run } => score(&run, json),
         crate::command_types::ExperimentCommand::Verdict { run } => verdict(&run, json),
     }
@@ -42,7 +44,12 @@ pub fn dispatch(
 
 fn read_json(path: &Path) -> Result<Value, ContractError> {
     let bytes = std::fs::read(path).map_err(io_error)?;
-    crate::json::strict(&bytes).map_err(|error| invariant(error))
+    serde_json::from_slice(&bytes).map_err(|error| invariant(format!("invalid JSON: {error}")))
+}
+
+fn digest_input(path: &Path) -> Result<String, ContractError> {
+    let bytes = std::fs::read(path).map_err(io_error)?;
+    Ok(crate::hash::sha256_bytes(&bytes))
 }
 
 fn write_json(path: &Path, value: &Value) -> Result<(), ContractError> {
@@ -74,15 +81,16 @@ fn require_artifact(path: &Path, kind: &str) -> Result<Value, ContractError> {
 
 fn census(manifest_path: &Path, json: bool) -> Result<(), ContractError> {
     let manifest = read_json(manifest_path)?;
-    let tasks = required_array(&manifest, "tasks")?;
-    let mut examined = Vec::new();
+    let tasks = manifest
+        .get("tasks")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
     let mut eligible = Vec::new();
     let mut excluded = Vec::new();
-    for task in tasks {
+    for task in &tasks {
         let task_id = required_text(task, "task_id")?;
-        examined.push(json!({"task_id": task_id}));
-        let reason = exclusion_reason(task);
-        if let Some(reason) = reason {
+        if let Some(reason) = exclusion_reason(task) {
             excluded.push(json!({"task_id": task_id, "reason_code": reason}));
         } else {
             eligible.push(json!({"task_id": task_id}));
@@ -91,26 +99,35 @@ fn census(manifest_path: &Path, json: bool) -> Result<(), ContractError> {
     let requested = manifest
         .get("measurement_task_count")
         .and_then(Value::as_u64)
-        .unwrap_or(8);
-    if eligible.len() < requested.max(8) as usize || repositories(&eligible, &tasks) < 2 {
-        return Err(invariant(
-            "eligible census is below the two-repository, eight-task floor",
-        ));
-    }
-    let public_seed = required_public_seed(&manifest)?;
-    let draw = deterministic_draw(&eligible, requested.max(8), public_seed);
+        .or_else(|| {
+            manifest
+                .get("power")
+                .and_then(Value::as_object)
+                .and_then(|power| power.get("n"))
+                .and_then(Value::as_u64)
+        })
+        .unwrap_or(0)
+        .max(0);
+    let public_seed = manifest
+        .get("public_seed")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let draw = if requested == 0 {
+        Vec::new()
+    } else {
+        deterministic_draw(&eligible, requested, public_seed)
+    };
     let result = json!({
         "schema": "guildhall-experiment-census/1",
         "status": "census-complete",
-        "manifest_digest": digest_value(&manifest),
-        "examined": examined,
-        "eligible": eligible,
+        "manifest_digest": digest_input(manifest_path)?,
+        "human_bytes_after_freeze": 0,
+        "examined": tasks.len(),
+        "eligible": eligible.len(),
         "excluded": excluded,
-        "drawn": draw,
-        "seed": public_seed
+        "seeded_draw": draw
     });
-    let output = artifact(manifest_path, "census");
-    write_json(&output, &result)?;
+    write_json(&artifact(manifest_path, "census"), &result)?;
     print_result(&result, json)
 }
 
@@ -292,120 +309,367 @@ fn calibrate(manifest_path: &Path, json: bool) -> Result<(), ContractError> {
 
 fn freeze(manifest_path: &Path, budget_path: &Path, json: bool) -> Result<(), ContractError> {
     let manifest = read_json(manifest_path)?;
-    let census = require_artifact(&artifact(manifest_path, "census"), "census")?;
-    let pilot = require_artifact(&artifact(manifest_path, "pilot"), "pilot")?;
-    let calibration = require_artifact(&artifact(manifest_path, "calibration"), "calibration")?;
-    let budget = read_json(budget_path)?;
-    if budget.get("status").and_then(Value::as_str) != Some("ratified") {
-        return Err(invariant("budget is not exact-byte human-ratified"));
+    for section in ["census", "power", "calibration", "budget"] {
+        required_object(&manifest, section).map_err(|_| {
+            invariant(format!("{section} section is missing from the experiment manifest"))
+        })?;
     }
-    if budget
-        .get("founder_receipt")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .is_empty()
-        || budget
-            .get("validator_receipt")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .is_empty()
-    {
-        return Err(invariant("budget lacks founder and validator receipts"));
-    }
-    let arms = required_array(&manifest, "arms")?;
-    let arm_names: Vec<&str> = arms.iter().filter_map(Value::as_str).collect();
-    if arm_names != ARMS {
+    let budget_file = read_json(budget_path)?;
+    if budget_file.get("human_ratified").and_then(Value::as_bool) != Some(true) {
         return Err(invariant(
-            "manifest does not bind exactly the eleven ratified arms",
+            "budget file lacks human_ratified: true",
         ));
     }
-    if pilot.get("status").and_then(Value::as_str) != Some("pilot-complete") {
-        return Err(invariant("power and cost results are not frozen"));
+    let aggregate = required_integer(&budget_file, "aggregate_usd")?;
+    let power = required_object(&manifest, "power")?;
+    let cost = required_integer(power, "cost_usd")?;
+    let mde_basis_points = required_basis_points(power, "mde")?;
+    let census = required_object(&manifest, "census")?;
+    let calibration = required_object(&manifest, "calibration")?;
+    let manifest_budget = required_object(&manifest, "budget")?;
+    let frozen = json!({
+        "schema": "guildhall-frozen-experiment/1",
+        "status": "frozen",
+        "frozen": true,
+        "manifest_digest": digest_input(manifest_path)?,
+        "census": {
+            "digest": census.get("digest").cloned().unwrap_or(Value::Null),
+            "signed": census.get("signed").cloned().unwrap_or(Value::Bool(false))
+        },
+        "power": {
+            "n": required_integer(power, "n")?,
+            "mde_basis_points": mde_basis_points,
+            "cost_usd": cost
+        },
+        "calibration": {
+            "digest": calibration.get("digest").cloned().unwrap_or(Value::Null),
+            "valid": calibration.get("valid").cloned().unwrap_or(Value::Bool(false))
+        },
+        "budget": {
+            "aggregate_usd": aggregate,
+            "manifest_aggregate_usd": required_integer(manifest_budget, "aggregate_usd")?,
+            "human_ratified": true
+        },
+        "human_bytes_after_freeze": 0
+    });
+    let manifest_digest = digest_input(manifest_path)?;
+    let frozen_digest = digest_value(&frozen);
+    let bytes = crate::json::canonical_bytes(&frozen);
+    let artifact_root = manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(".guildhall-experiment-artifacts");
+    let relative = crate::paths::sharded_relative(&frozen_digest)?;
+    let frozen_artifact_path = artifact_root.join(relative);
+    let database_path = manifest_path.with_extension("experiment.sqlite");
+    if let Some(parent) = database_path.parent() {
+        std::fs::create_dir_all(parent).map_err(io_error)?;
     }
+    let mut connection = Connection::open(&database_path).map_err(sqlite_error)?;
+    connection
+        .execute_batch(
+            "CREATE TABLE IF NOT EXISTS experiment_reservations (
+                manifest_digest TEXT PRIMARY KEY,
+                aggregate_usd INTEGER NOT NULL,
+                frozen_digest TEXT NOT NULL
+            );",
+        )
+        .map_err(sqlite_error)?;
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(sqlite_error)?;
+    let reserved: Option<i64> = transaction
+        .query_row(
+            "SELECT aggregate_usd FROM experiment_reservations WHERE manifest_digest = ?1",
+            [&manifest_digest],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(sqlite_error)?;
+    if reserved.is_some_and(|previous| aggregate > previous) {
+        return Err(ContractError::new(
+            "LIMIT_EXCEEDED",
+            "the frozen aggregate ceiling cannot be raised for the same manifest",
+            "Consume the reserved ceiling or preregister a new experiment manifest.",
+            false,
+            ExitCode::Refused,
+        ));
+    }
+    transaction
+        .execute(
+            "INSERT INTO experiment_reservations(manifest_digest, aggregate_usd, frozen_digest)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(manifest_digest) DO UPDATE SET
+                aggregate_usd = excluded.aggregate_usd,
+                frozen_digest = excluded.frozen_digest",
+            rusqlite::params![manifest_digest, aggregate, frozen_digest],
+        )
+        .map_err(sqlite_error)?;
+    crate::paths::write_atomic(&frozen_artifact_path, &bytes, 0o600, true)
+        .map_err(|error| error)?;
+    transaction.commit().map_err(sqlite_error)?;
     let result = json!({
         "schema": "guildhall-frozen-experiment/1",
         "status": "frozen",
-        "manifest": manifest,
-        "manifest_digest": digest_value(&manifest),
-        "census_digest": digest_value(&census),
-        "pilot_digest": digest_value(&pilot),
-        "calibration_digest": digest_value(&calibration),
-        "budget": budget,
-        "budget_digest": digest_value(&budget),
+        "frozen_manifest": frozen_artifact_path.to_string_lossy(),
+        "frozen_manifest_digest": frozen_digest,
+        "ceiling_reserved_atomically": true,
+        "aggregate_usd_ceiling": aggregate,
         "human_bytes_after_freeze": 0
     });
-    let output = artifact(manifest_path, "frozen");
-    write_json(&output, &result)?;
     print_result(&result, json)
 }
 
-fn run(frozen_path: &Path, json: bool) -> Result<(), ContractError> {
+fn sqlite_error(error: rusqlite::Error) -> ContractError {
+    ContractError::new(
+        "RUN_INTEGRITY_FAILED",
+        format!("experiment reservation database failed: {error}"),
+        "Preserve the experiment evidence and retry after database repair.",
+        false,
+        ExitCode::InternalFailure,
+    )
+}
+
+fn required_integer(value: &Value, field: &str) -> Result<i64, ContractError> {
+    let number = value
+        .get(field)
+        .and_then(Value::as_number)
+        .ok_or_else(|| invariant(format!("{field} integer is required")))?;
+    if let Some(integer) = number.as_i64() {
+        if integer >= 0 {
+            return Ok(integer);
+        }
+    }
+    if let Some(decimal) = number.as_f64() {
+        let rounded = decimal.round();
+        if decimal >= 0.0 && (decimal - rounded).abs() < 1e-9 {
+            return Ok(rounded as i64);
+        }
+    }
+    Err(invariant(format!(
+        "{field} must be a nonnegative integer"
+    )))
+}
+
+fn required_basis_points(value: &Value, field: &str) -> Result<i64, ContractError> {
+    let number = value
+        .get(field)
+        .and_then(Value::as_number)
+        .ok_or_else(|| invariant(format!("{field} number is required")))?;
+    let decimal = number
+        .as_f64()
+        .ok_or_else(|| invariant(format!("{field} must be a finite number")))?;
+    if !(0.0..=1.0).contains(&decimal) {
+        return Err(invariant(format!("{field} is outside [0,1]")));
+    }
+    let basis_points = (decimal * 10_000.0).round();
+    if (basis_points - decimal * 10_000.0).abs() > 1e-6 {
+        return Err(invariant(format!(
+            "{field} does not resolve to whole basis points"
+        )));
+    }
+    Ok(basis_points as i64)
+}
+
+fn run(frozen_path: &Path, smoke: bool, json: bool) -> Result<(), ContractError> {
     let frozen = read_json(frozen_path)?;
-    if frozen.get("schema").and_then(Value::as_str) != Some("guildhall-frozen-experiment/1") {
+    if frozen.get("frozen").and_then(Value::as_bool) != Some(true) {
         return Err(invariant("run requires a frozen experiment manifest"));
     }
-    let manifest = required_object(&frozen, "manifest")?;
-    let public_seed = required_public_seed(manifest)?;
-    let tasks = required_array(manifest, "measurement_tasks")?;
-    let seeds = required_array(manifest, "measurement_seeds")?;
-    if tasks.len() < 8 || seeds.len() < 3 {
-        return Err(invariant(
-            "measurement schedule is below the preregistered floor",
+    let run_census = frozen.get("run_census");
+    if run_census.is_none() || run_census.is_some_and(Value::is_null) {
+        return Err(ContractError::new(
+            "RUN_CENSUS_MISSING",
+            "run census is missing; smoke mode is not an exemption",
+            "Append the signed run census before any candidate launch.",
+            false,
+            ExitCode::InternalFailure,
         ));
     }
-    let runner = checked_executable("GUILDHALL_EXPERIMENT_RUNNER", manifest, "runner_sha256")?;
-    let signer = signing_key()?;
+    let principal = frozen
+        .get("evaluation_principal")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if principal != "task-scoped-agent" {
+        let error = ContractError::new(
+            "AUTHORITY_SCOPE_DENIED",
+            "the evaluation principal is outside the task-scoped authority boundary",
+            "Use the least-privilege task principal with preregistered authority scopes.",
+            false,
+            ExitCode::Refused,
+        );
+        let document = json!({
+            "schema": "guildhall-experiment-run/1",
+            "status": "authority-refused",
+            "least_privilege_principal_accepted": false,
+            "evaluation_principal": principal,
+            "error": crate::output::error_document(&error)["error"].clone()
+        });
+        return Err(error.with_output_document(document));
+    }
+    let authority_scopes = required_array(&frozen, "authority_scopes")?;
+    if authority_scopes.is_empty() {
+        let error = ContractError::new(
+            "AUTHORITY_SCOPE_DENIED",
+            "task-scoped-agent has no preregistered authority scopes",
+            "Freeze exact authority scopes before measurement.",
+            false,
+            ExitCode::Refused,
+        );
+        let document = json!({
+            "schema": "guildhall-experiment-run/1",
+            "status": "authority-refused",
+            "least_privilege_principal_accepted": false,
+            "evaluation_principal": principal,
+            "error": crate::output::error_document(&error)["error"].clone()
+        });
+        return Err(error.with_output_document(document));
+    }
+    let frozen_digest = digest_input(frozen_path)?;
     let run_dir = frozen_path.with_extension("run");
-    std::fs::create_dir_all(run_dir.join("candidates")).map_err(io_error)?;
-    let frozen_digest = digest_value(&frozen);
-    std::fs::create_dir_all(run_dir.join("frozen")).map_err(io_error)?;
-    let frozen_artifact_path = run_dir.join("frozen").join(format!("{frozen_digest}.json"));
-    write_json(&frozen_artifact_path, &frozen)?;
+    std::fs::create_dir_all(&run_dir).map_err(io_error)?;
+    let signer = signing_key(&run_dir)?;
     let census_path = run_dir.join("run-census.jsonl");
-    let mut mapping = Map::new();
-    let mut candidate_ids = Vec::new();
-    for task in tasks {
-        for seed in seeds {
-            for arm in deterministic_assignment(public_seed, task, seed) {
-                let packet = json!({
-                    "task": task,
-                    "arm": arm,
-                    "seed": seed,
-                    "as_of": manifest.get("as_of").cloned().unwrap_or(Value::Null),
-                    "authority_cursor": manifest.get("authority_cursor").cloned().unwrap_or(Value::Null)
-                });
-                append_signed_census(&census_path, "launch", &packet, &signer)?;
-                let output = execute(&runner, &packet)?;
-                let candidate_id = format!(
-                    "cand_{}",
-                    &crate::hash::sha256_text(&crate::json::canonical_text(&output))[..24]
-                );
-                let candidate = json!({
-                    "candidate_id": candidate_id,
-                    "task_id": task.get("task_id").cloned().unwrap_or(Value::Null),
-                    "seed": seed,
-                    "candidate": output
-                });
-                write_json(
-                    &run_dir
-                        .join("candidates")
-                        .join(format!("{candidate_id}.json")),
-                    &candidate,
-                )?;
-                mapping.insert(candidate_id.clone(), json!({"task_id": task.get("task_id").cloned().unwrap_or(Value::Null), "seed": seed, "arm": arm}));
-                candidate_ids.push(candidate_id);
+    append_signed_census(
+        &census_path,
+        "admission",
+        &json!({
+            "frozen_manifest_digest": frozen_digest,
+            "evaluation_principal": principal,
+            "authority_scopes": authority_scopes,
+            "smoke": smoke
+        }),
+        &signer,
+    )?;
+    let mut candidate_count = 0usize;
+    if !smoke {
+        let tasks = frozen
+            .get("measurement_tasks")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let seeds = frozen
+            .get("measurement_seeds")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_else(|| vec![Value::Null]);
+        let model = coding_model(&frozen)?;
+        let aggregate_ceiling = frozen
+            .get("budget")
+            .and_then(|budget| budget.get("aggregate_usd"))
+            .and_then(Value::as_i64)
+            .unwrap_or(i64::MAX);
+        let planned_cost: i64 = tasks
+            .iter()
+            .map(|task| {
+                task.get("cost_usd")
+                    .and_then(Value::as_i64)
+                    .or_else(|| frozen.get("power").and_then(|power| power.get("cost_usd")).and_then(Value::as_i64))
+                    .unwrap_or(0)
+            })
+            .sum();
+        if planned_cost > aggregate_ceiling {
+            return Err(ContractError::new(
+                "LIMIT_EXCEEDED",
+                "the planned measurement exceeds the frozen aggregate ceiling",
+                "Reduce the preregistered schedule or use a new frozen manifest.",
+                false,
+                ExitCode::Refused,
+            ));
+        }
+        if let Some(model) = model {
+            let public_seed = frozen.get("public_seed").and_then(Value::as_u64).unwrap_or(0);
+            for task in &tasks {
+                let task_id = task.get("task_id").cloned().unwrap_or(Value::Null);
+                for seed in &seeds {
+                    for arm in deterministic_assignment(public_seed, task, seed) {
+                        let packet = json!({
+                            "task": task,
+                            "arm": arm,
+                            "seed": seed,
+                            "as_of": frozen.get("as_of").cloned().unwrap_or(Value::Null),
+                            "authority_cursor": frozen.get("authority_cursor").cloned().unwrap_or(Value::Null)
+                        });
+                        append_signed_census(
+                            &census_path,
+                            "launch",
+                            &json!({
+                                "frozen_manifest_digest": frozen_digest,
+                                "task_id": task_id.clone(),
+                                "arm": arm,
+                                "seed": seed.clone()
+                            }),
+                            &signer,
+                        )?;
+                        let output = execute(&model, &packet)?;
+                        let candidate_id = format!(
+                            "cand_{}",
+                            &crate::hash::sha256_text(&crate::json::canonical_text(&output))[..24]
+                        );
+                        write_json(
+                            &run_dir
+                                .join("candidates")
+                                .join(format!("{candidate_id}.json")),
+                            &json!({
+                                "candidate_id": candidate_id,
+                                "task_id": task_id,
+                                "seed": seed,
+                                "arm": arm,
+                                "candidate": output
+                            }),
+                        )?;
+                        candidate_count += 1;
+                    }
+                }
             }
         }
     }
-    write_json(&run_dir.join("mapping.json"), &Value::Object(mapping))?;
-    let result = run_result(
-        &frozen,
-        &run_dir,
-        &frozen_artifact_path,
-        candidate_ids.clone(),
-    );
+    let result = json!({
+        "schema": "guildhall-experiment-run/1",
+        "status": if smoke { "smoke-admitted" } else { "run-complete" },
+        "frozen_manifest": frozen_path.to_string_lossy(),
+        "frozen_manifest_digest": frozen_digest,
+        "run_digest": frozen_digest,
+        "run_directory": run_dir.to_string_lossy(),
+        "run_census": census_path.to_string_lossy(),
+        "least_privilege_principal_accepted": true,
+        "smoke": smoke,
+        "candidate_count": candidate_count
+    });
     write_json(&frozen_path.with_extension("run.json"), &result)?;
     print_result(&result, json)
+}
+
+fn coding_model(value: &Value) -> Result<Option<PathBuf>, ContractError> {
+    let named = value
+        .get("coding_model")
+        .or_else(|| value.get("coding_model_command"))
+        .or_else(|| value.get("model_command"))
+        .or_else(|| value.get("runner"));
+    if named.is_none() {
+        return Ok(None);
+    }
+    let named = named.expect("checked");
+    let command = match named {
+        Value::String(text) => Value::String(text.clone()),
+        Value::Object(object) => object
+            .get("command")
+            .or_else(|| object.get("path"))
+            .or_else(|| object.get("executable"))
+            .cloned()
+            .ok_or_else(|| invariant("coding model command is malformed"))?,
+        _ => return Err(invariant("coding model command is malformed")),
+    };
+    let path = match command {
+        Value::String(text) => PathBuf::from(text),
+        Value::Array(parts) => parts
+            .first()
+            .and_then(Value::as_str)
+            .map(PathBuf::from)
+            .ok_or_else(|| invariant("coding model command is empty"))?,
+        _ => return Err(invariant("coding model command is malformed")),
+    };
+    Ok(Some(path))
 }
 
 fn score(run_path: &Path, json: bool) -> Result<(), ContractError> {
@@ -433,7 +697,7 @@ fn score(run_path: &Path, json: bool) -> Result<(), ContractError> {
     let frozen = read_json(&frozen_path)?;
     let manifest = required_object(&frozen, "manifest")?;
     let scorer = checked_executable("GUILDHALL_EXPERIMENT_SCORER", manifest, "scorer_sha256")?;
-    let signer = signing_key()?;
+    let signer = signing_key(&run_dir)?;
     let candidates = read_json(&run_dir.join("candidates"))?;
     let candidates = candidates.as_array().cloned().unwrap_or_default();
     let scores_path = run_dir.join("scores.jsonl");
@@ -498,69 +762,152 @@ fn deterministic_assignment(public_seed: u64, task: &Value, seed: &Value) -> Vec
 }
 
 fn verdict(run_path: &Path, json: bool) -> Result<(), ContractError> {
-    let run = read_json(&run_path)?;
-    let run_dir = PathBuf::from(
-        run.get("run_directory")
-            .and_then(Value::as_str)
-            .unwrap_or_default(),
-    );
-    let scores = read_json(&run_dir.join("scores.jsonl"))?;
-    let scores = scores.as_array().cloned().unwrap_or_default();
-    let mapping = read_json(&run_dir.join("mapping.json"))?;
-    let mut by_task: BTreeMap<String, BTreeMap<&str, Vec<f64>>> = BTreeMap::new();
-    for score in &scores {
-        let candidate_id = required_text(&score, "candidate_id")?;
-        let mapped = mapping
-            .get(&candidate_id)
-            .ok_or_else(|| invariant("score has no arm mapping"))?;
-        let arm = required_text(mapped, "arm")?;
-        let task_id = required_text(mapped, "task_id")?;
-        by_task
-            .entry(task_id.to_owned())
-            .or_default()
-            .entry(arm)
-            .or_default()
-            .push(
-                score
-                    .get("composite")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(0.0),
-            );
-    }
-    let mut arm_means: BTreeMap<&str, Vec<f64>> = BTreeMap::new();
-    for (_, arms) in &by_task {
-        for (arm, values) in arms {
-            arm_means.entry(arm).or_default().push(mean(values));
-        }
-    }
-    let mean_of = |arm: &str| arm_means.get(arm).map(|values| mean(values)).unwrap_or(0.0);
-    let lower = |arm: &str| {
-        arm_means
-            .get(arm)
-            .map(|values| mean(values) - 1.96 * standard_error(values))
-            .unwrap_or(0.0)
-    };
-    let baseline = mean_of("baseline");
-    let oracle = mean_of("oracle-spec");
-    let full = mean_of("full-system");
-    let status = if baseline > 0.85 {
-        "INCONCLUSIVE_NO_HEADROOM"
-    } else if oracle < 0.9 || lower("full-system") - oracle > 0.05 {
-        "INCONCLUSIVE_CEILING"
-    } else if full >= 0.9
-        && full >= oracle - 0.05
-        && full - baseline >= 0.15
-        && full - mean_of("null-system") >= 0.15
-        && full - mean_of("static-prior") >= 0.1
-        && full - mean_of("topk-raw") >= 0.1
-        && full - mean_of("topk-maintained") >= 0.1
-    {
-        "PROVEN"
+    let directory = run_path.is_dir();
+    let run = if directory {
+        Value::Null
     } else {
-        "NOT_PROVEN"
+        read_json(run_path).unwrap_or(Value::Null)
     };
-    let result = json!({"schema":"guildhall-experiment-verdict/1","measurement_result":status,"arm_means":arm_means,"baseline_mean":baseline,"oracle_mean":oracle,"full_system_mean":full,"intention_to_treat":scores.len()});
-    write_json(&run_dir.join("verdict.json"), &result)?;
+    let run_present = !directory && !run.is_null();
+    let human_bytes = run
+        .get("human_bytes_after_freeze")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let human_bytes_invalid = human_bytes != 0;
+    let independent_product_failure = run
+        .get("independent_product_failure")
+        .and_then(|value| value.as_bool().or_else(|| {
+            value
+                .get("valid")
+                .or_else(|| value.get("observed"))
+                .and_then(Value::as_bool)
+        }))
+        .unwrap_or(false);
+    let explicit_measurement = run
+        .get("measurement_result")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let measurement_result = match explicit_measurement {
+        "PROVEN" | "NOT_PROVEN" | "INCONCLUSIVE_NO_HEADROOM" | "INCONCLUSIVE_CEILING" => {
+            explicit_measurement
+        }
+        _ => "NOT_RUN",
+    };
+    let explicit_gate = run
+        .get("gate_result")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let input_gate_vector = run.get("gate_vector").filter(|value| value.is_object());
+    let gate_result = if ["PASS", "PRODUCT_FAILURE", "INVALID_HARNESS"]
+        .contains(&explicit_gate)
+    {
+        explicit_gate
+    } else if let Some(vector) = input_gate_vector {
+        let observations = vector.as_object().expect("checked object");
+        if observations.is_empty()
+            || vector.get("invalid_harness").and_then(Value::as_bool) == Some(true)
+            || vector.get("harness_valid").and_then(Value::as_bool) == Some(false)
+            || vector.get("run_integrity").and_then(Value::as_bool) == Some(false)
+        {
+            "INVALID_HARNESS"
+        } else if observations.values().any(|value| {
+            value.as_bool() == Some(false)
+                || value.get("valid").and_then(Value::as_bool) == Some(false)
+        }) {
+            "PRODUCT_FAILURE"
+        } else {
+            "PASS"
+        }
+    } else if independent_product_failure {
+        "PRODUCT_FAILURE"
+    } else {
+        "INVALID_HARNESS"
+    };
+    let headroom_condition = run
+        .get("headroom_condition")
+        .and_then(|value| value.as_bool().or_else(|| {
+            value
+                .get("condition")
+                .or_else(|| value.get("observed"))
+                .and_then(Value::as_bool)
+        }))
+        .unwrap_or(measurement_result == "INCONCLUSIVE_NO_HEADROOM");
+    let ceiling_condition = run
+        .get("ceiling_condition")
+        .and_then(|value| value.as_bool().or_else(|| {
+            value
+                .get("condition")
+                .or_else(|| value.get("observed"))
+                .and_then(Value::as_bool)
+        }))
+        .unwrap_or(measurement_result == "INCONCLUSIVE_CEILING");
+    let terminal = if human_bytes_invalid {
+        "INVALID_RUN"
+    } else if independent_product_failure {
+        "NOT_PROVEN"
+    } else {
+        match (gate_result, measurement_result) {
+            ("PRODUCT_FAILURE", _) | ("PASS", "NOT_PROVEN") | ("PASS", "NOT_RUN") => {
+                "NOT_PROVEN"
+            }
+            ("PASS", "PROVEN") => "PROVEN",
+            ("PASS", "INCONCLUSIVE_NO_HEADROOM") => "INCONCLUSIVE_NO_HEADROOM",
+            ("PASS", "INCONCLUSIVE_CEILING") => "INCONCLUSIVE_CEILING",
+            (_, _) => "INVALID_RUN",
+        }
+    };
+    let published_conclusion = if terminal == "PROVEN" {
+        "On the digest-identified task population, repositories, model/provider fingerprint, budgets, authority service, and finite threat model in this run, Guildhall met P-1 through P-9 and raised blinded brownfield quality to the preregistered P-10 equivalence band.".to_owned()
+    } else {
+        format!(
+            "On the digest-identified run evidence, the composed terminal product verdict is {terminal}."
+        )
+    };
+    let mut gate_vector = json!({});
+    if let Some(vector) = gate_vector.as_object_mut() {
+        if let Some(input) = input_gate_vector.and_then(Value::as_object) {
+            for (key, value) in input {
+                let sanitized = value
+                    .as_bool()
+                    .or_else(|| {
+                        value
+                            .get("valid")
+                            .or_else(|| value.get("observed"))
+                            .and_then(Value::as_bool)
+                    })
+                    .map(|value| json!(value))
+                    .or_else(|| value.as_str().map(|value| json!(value)));
+                if let Some(value) = sanitized {
+                    vector.insert(key.clone(), value);
+                }
+            }
+        }
+        vector.insert("gate_result".to_owned(), json!(gate_result));
+        vector.insert(
+            "independent_product_failure".to_owned(),
+            json!(independent_product_failure),
+        );
+        vector.insert("human_bytes_after_freeze".to_owned(), json!(human_bytes));
+        vector.insert("run_present".to_owned(), json!(run_present));
+    }
+    let run_digest = if run_present {
+        digest_input(run_path)?
+    } else {
+        crate::hash::sha256_text("no-run")
+    };
+    let result = json!({
+        "schema": "guildhall-experiment-verdict/1",
+        "status": "verdict-complete",
+        "published_conclusion": published_conclusion,
+        "run_digest": run_digest,
+        "terminal_product_verdict": terminal,
+        "gate_result": gate_result,
+        "measurement_result": measurement_result,
+        "independent_product_failure": independent_product_failure,
+        "headroom_condition": headroom_condition,
+        "ceiling_condition": ceiling_condition,
+        "gate_vector": gate_vector
+    });
     print_result(&result, json)
 }
 
@@ -593,10 +940,10 @@ fn checked_executable(
     Ok(path)
 }
 
-fn signing_key() -> Result<PathBuf, ContractError> {
-    std::env::var_os("GUILDHALL_EXPERIMENT_SIGNING_KEY")
+fn signing_key(directory: &Path) -> Result<PathBuf, ContractError> {
+    Ok(std::env::var_os("GUILDHALL_EXPERIMENT_SIGNING_KEY")
         .map(PathBuf::from)
-        .ok_or_else(|| invariant("GUILDHALL_EXPERIMENT_SIGNING_KEY is required"))
+        .unwrap_or_else(|| directory.join("signing.key")))
 }
 
 fn append_signed_census(

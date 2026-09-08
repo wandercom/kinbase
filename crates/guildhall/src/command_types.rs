@@ -229,6 +229,8 @@ pub enum ExperimentCommand {
     },
     Run {
         frozen_manifest: PathBuf,
+        #[arg(long, help = "Validate admission and append the run census without launching candidates")]
+        smoke: bool,
     },
     Score {
         run: PathBuf,
