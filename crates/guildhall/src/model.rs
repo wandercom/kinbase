@@ -146,7 +146,7 @@ pub fn action_of(event: &FactEvent) -> Option<&str> {
     None
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Observation {
     pub observation_id: String,
     pub source_kind: String,
@@ -177,9 +177,45 @@ pub struct Observation {
     pub environment_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_id: Option<String>,
-    /// Source-adapter lifecycle: `observed`, `superseded`, `retracted`.
+    /// Source-adapter lifecycle: `observed`, `superseded`, `renamed`,
+    /// `retracted`, `absent`, `rewritten`.
     #[serde(default = "default_lifecycle")]
     pub lifecycle: String,
+    /// Native unit the record came from (file, session, commit, snapshot).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
+    /// Derived statement for shared-store observations; never stored for
+    /// Personal transcripts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub statement: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logical_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub atom_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signer: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parents: Option<Vec<String>>,
+    /// Adapter-specific structured attributes (counts, ids, states); never
+    /// raw bodies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attributes: Option<Value>,
+    /// The raw private body is withheld past the retention bound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_withheld: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub renamed_from: Option<String>,
+    /// Receipt-time claim carried by the native record (R-14).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_observed_at: Option<String>,
+    /// The record is a signed `.kin/events` FactEvent the reducer owns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reducer_owned: Option<bool>,
+    /// Ledger admission cursor (opaque, monotonic); never part of the record.
+    #[serde(default, skip)]
+    pub cursor: Option<u64>,
 }
 
 fn default_lifecycle() -> String {

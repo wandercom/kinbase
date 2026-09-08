@@ -328,12 +328,15 @@ fn resolve_as_of(
     if let Ok(text) = std::fs::read_to_string(&local) {
         return crate::time::AsOf::recorded(text.trim()).map_err(as_of_error);
     }
+    let store = launcher.private_store()?;
     if let Some(uuid) = repo.uuid_hint() {
-        let store = launcher.private_store()?;
         let key = format!("proof-clock:{uuid}");
         if let Some(value) = store.meta(&key)? {
             return crate::time::AsOf::recorded(value.trim()).map_err(as_of_error);
         }
+    }
+    if let Some(value) = store.meta("proof-clock:default")? {
+        return crate::time::AsOf::recorded(value.trim()).map_err(as_of_error);
     }
     Err(as_of_error(
         "no recorded proof clock is available; --as-of is required".to_owned(),

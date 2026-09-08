@@ -1163,6 +1163,25 @@ impl CompanyDb {
             .map_err(sqlite_error("audit"))
     }
 
+    /// Audit records of one kind, oldest first.
+    pub fn audit_records(&self, kind: &str) -> Result<Vec<Value>, ContractError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT record FROM audit WHERE kind=?1 ORDER BY id")
+            .map_err(sqlite_error("prepare"))?;
+        let rows = statement
+            .query_map(params![kind], |row| row.get::<_, String>(0))
+            .map_err(sqlite_error("query"))?;
+        let mut output = Vec::new();
+        for row in rows {
+            let text = row.map_err(sqlite_error("row"))?;
+            if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                output.push(value);
+            }
+        }
+        Ok(output)
+    }
+
     pub fn bump(&self, name: &str) -> Result<(), ContractError> {
         self.connection
             .execute(

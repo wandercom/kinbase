@@ -95,13 +95,43 @@ pub fn rebuild(
     } else {
         Vec::new()
     };
-    let digests = view
+    // Adapter-derived facts (architecture §4 reconcile): the build manifest
+    // binds every observation digest and every derivation the ledger yields
+    // for this store, beside the reducer's signed-event facts.
+    let ledger = launcher.private_store()?.all_observations()?;
+    let trust_facts = crate::repository::trust_facts(
+        launcher,
+        crate::repository::RepoContext::load(launcher.clone(), repo, false, Some(&as_of.as_of))
+            .ok()
+            .map(|context| context.trust)
+            .as_ref(),
+    );
+    let derived = crate::lifecycle::derive(&ledger, &trust_facts, &as_of.as_of);
+    let store_label = store_name(store);
+    let derived_facts: Vec<Value> = derived
+        .facts
+        .iter()
+        .filter(|fact| fact.store_kind == store_label)
+        .map(|fact| crate::model::value_of(fact))
+        .collect();
+    let mut digests = view
         .facts
         .iter()
         .map(|fact| fact.event_id.clone())
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
+        .collect::<BTreeSet<_>>();
+    for observation in &ledger {
+        if crate::lifecycle::store_for(&observation.source_kind) == store_label {
+            digests.insert(observation.content_digest.clone());
+        }
+    }
+    for fact in &derived_facts {
+        if let Some(id) = crate::json::get_str(fact, "fact_id") {
+            digests.insert(id.to_owned());
+        }
+    }
+    let digests = digests.into_iter().collect::<Vec<_>>();
+    let mut fact_derivations: Vec<Value> = view.facts.iter().map(crate::model::value_of).collect();
+    fact_derivations.extend(derived_facts);
     let current_view_digest = crate::hash::sha256_bytes(
         crate::json::canonical_bytes(&crate::reducer::view_value(&view, &as_of.as_of_source))
             .as_slice(),
@@ -155,7 +185,7 @@ pub fn rebuild(
             "source_revisions": source_revisions,
             "digests": digests,
             "checkpoints": [{"as_of": view.as_of, "authority_cursor": view.authority_cursor}],
-            "fact_derivations": view.facts,
+            "fact_derivations": fact_derivations,
             "adapter_receipts": adapter_receipts,
             "reducer_digest": current_view_digest
         },
@@ -165,7 +195,11 @@ pub fn rebuild(
         "inputs_digest": inputs_digest,
         "duplicate_observations": view.counts.get("duplicates").copied().unwrap_or(0),
         "duplicate_facts": view.counts.get("duplicate_facts").copied().unwrap_or(0),
-        "observation_count": view.counts.get("events").copied().unwrap_or(0),
+        "observation_count": view.counts.get("events").copied().unwrap_or(0)
+            + ledger
+                .iter()
+                .filter(|observation| crate::lifecycle::store_for(&observation.source_kind) == store_label)
+                .count(),
         "inputs": {
             "as_of": view.as_of,
             "as_of_source": as_of.as_of_source,

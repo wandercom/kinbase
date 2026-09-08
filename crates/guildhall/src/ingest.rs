@@ -1,12 +1,9 @@
-use crate::classify::{EXTRACTION_VERSION, atomize, source_kind_is_supported};
+use crate::classify::{EXTRACTION_VERSION, source_kind_is_supported};
 use crate::error::{ContractError, ExitCode};
 use crate::hash::sha256_bytes;
 use crate::launcher::Launcher;
-use crate::model::{Atom, CompanyReference, Distortion, FactEvent, Observation, UnknownEvent};
-use crate::scanner::hard_blocked;
-use crate::time::parse_rfc3339_millis;
-use rusqlite::Connection;
-use serde_json::{Map, Value, json};
+use crate::model::{FactEvent, Observation, UnknownEvent};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -39,7 +36,7 @@ pub fn ingest(
     source_kind: &str,
     source: &Path,
     checkpoint: Option<&str>,
-    classifier: Option<&crate::config::SharedClassifier>,
+    _classifier: Option<&crate::config::SharedClassifier>,
     json: bool,
 ) -> Result<(), ContractError> {
     if !source_kind_is_supported(source_kind) {
@@ -130,271 +127,184 @@ pub fn ingest(
         .with_detail(serde_json::json!({"omitted_count": 1})));
     }
 
-    let parsed: Result<(Vec<u8>, Vec<NativeRecord>), ContractError> = if source_available {
-        read_source(source_kind, source).and_then(|bytes| {
-            let parsed = if source_kind == "kindex" {
-                parse_kindex_source(source, &bytes)
-            } else {
-                parse_native(source_kind, &bytes).map_err(|message| {
-                    ContractError::new(
-                        "CONFIG_INVARIANT",
-                        message,
-                        "Use a valid native source envelope.",
-                        false,
-                        ExitCode::Refused,
-                    )
-                })
-            };
-            parsed.map(|records| (bytes, records))
-        })
-    } else {
-        Err(ContractError::refused(
-            "CONFIG_INVARIANT",
-            "source is unavailable or escapes the repository (not found)",
-            "Pass a source contained by the repository.",
-        )
-        .with_detail(serde_json::json!({"omitted_count": 1})))
-    };
-    let (bytes, mut records) = match parsed {
-        Ok((bytes, records))
-            if !records.is_empty() || (source_kind == "kindex" && source_available) =>
-        {
-            (bytes, records)
+    // Scan the native source. A `.kin/` tree is the signed-event intake the
+    // reducer owns; every other source is an adapter scan into native units.
+    let kin_events_intake = source_kind == "kindex"
+        && source_available
+        && !crate::lifecycle::is_kindex_sqlite_source(source)
+        && (source.join("events").is_dir() || source.is_file());
+    let mut quarantine_records: Vec<NativeRecord> = Vec::new();
+    let scan = if !source_available {
+        if prior_observations.is_empty() {
+            return Err(ContractError::refused(
+                "CONFIG_INVARIANT",
+                "source is unavailable or escapes the repository (not found)",
+                "Pass a source contained by the repository.",
+            )
+            .with_detail(serde_json::json!({"omitted_count": 1})));
         }
-        other => {
-            if prior_observations.is_empty() {
-                return match other {
-                    Err(error) => Err(error),
-                    Ok(_) => Err(ContractError::invariant(format!(
-                        "{source_kind} source contains no native records"
-                    ))),
-                };
+        crate::lifecycle::SourceScan::default()
+    } else if kin_events_intake {
+        let bytes = read_source(source_kind, source)?;
+        let records = parse_kindex_events(&bytes)?;
+        let mut scan = crate::lifecycle::SourceScan::default();
+        scan.source_digest = sha256_bytes(&bytes);
+        scan.bytes_read = bytes.len();
+        for record in records {
+            if matches!(
+                record.disposition.as_str(),
+                "MALFORMED_KINDEX_EVENT" | "INVALID_KINDEX_SIGNATURE" | "OVERSIZED_KINDEX_EVENT"
+            ) {
+                quarantine_records.push(record);
+                continue;
             }
-            let bytes = other.ok().map(|(bytes, _)| bytes).unwrap_or_default();
-            let lifecycle = if source_available {
-                "retracted_observation"
-            } else {
-                "absent_source_recorded"
-            };
-            let mut lifecycle_native_ids = std::collections::BTreeSet::new();
-            let records = prior_observations
-                .iter()
-                .filter(|prior| lifecycle_native_ids.insert(prior.native_id.clone()))
-                .map(|prior| {
-                    native_record(
-                        prior.native_id.clone(),
-                        format!("[{lifecycle}]"),
-                        "repository",
-                        4_000,
-                        lifecycle,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                })
-                .collect::<Vec<_>>();
-            (bytes, records)
+            let mut unit = crate::lifecycle::SourceRecord::new(&record.native_id, ".kin/events");
+            unit.logical_key = record
+                .logical_key
+                .clone()
+                .unwrap_or_else(|| format!("kindex:{}", record.native_id));
+            unit.statement = record.statement.clone();
+            unit.atom_kind = "claim".to_owned();
+            unit.disposition = record.disposition.clone();
+            unit.content = record.statement.as_bytes().to_vec();
+            unit.scope = record.scope.clone();
+            unit.confidence = record.confidence;
+            unit.asserted_at = record.asserted_at.clone();
+            unit.effective_from = record.effective_from.clone();
+            unit.effective_until = record.effective_until.clone();
+            unit.owner_id = record.owner_id.clone();
+            unit.signer = record.signer.clone();
+            unit.origin = "merged-default".to_owned();
+            unit.reducer_owned = true;
+            scan.unit_ids.insert(".kin/events".to_owned());
+            scan.records.push(unit);
         }
+        scan
+    } else {
+        crate::lifecycle::scan(source_kind, source, &discovered_repository, &now)?
     };
-    if records.len() > MAX_ITEMS {
+    if scan.records.len() + quarantine_records.len() > MAX_ITEMS {
+        let observed = scan.records.len() + quarantine_records.len();
         return Err(ContractError::new(
             "LIMIT_EXCEEDED",
             "observation batch exceeds 10,000 items",
             "Use an explicit checkpoint and smaller batches.",
             false,
             ExitCode::Refused,
-        ));
+        )
+        .with_detail(json!({
+            "omitted_count": observed,
+            "ceiling": MAX_ITEMS,
+            "observed_count": observed
+        })));
     }
     let store = store_for_source(source_kind);
-    crate::store::write_private_body(&journal_root, &bytes)?;
     let repository_id = (store == crate::StoreKind::Codebase)
         .then(|| crate::repository::repository_id(repo))
         .transpose()?;
-    let revision = (store == crate::StoreKind::Codebase)
-        .then(|| crate::repository::git_revision(repo).ok())
-        .flatten();
-    let branch = (store == crate::StoreKind::Codebase)
-        .then(|| crate::repository::git_branch(repo).ok())
-        .flatten();
-    let trust_class = match store {
-        crate::StoreKind::Personal => "personal-host",
-        crate::StoreKind::Company => "company-authority",
-        crate::StoreKind::Codebase => repository_trust_class(repo, source, source_kind, &bytes),
-    };
-    // An expired native record is retained as an explicit lifecycle
-    // observation, while its raw body remains withheld from projection.
-    if let Ok(proof_now) = parse_rfc3339_millis(&now) {
-        for record in &mut records {
-            if let Some(effective_until) = record.effective_until.as_deref() {
-                if parse_rfc3339_millis(effective_until)
-                    .map(|effective_until| effective_until < proof_now)
-                    .unwrap_or(false)
-                {
-                    record.statement = "[expired_raw_withheld]".to_owned();
-                    record.disposition = "expired_raw_withheld".to_owned();
-                }
-            }
-        }
-    }
+    let default_revision = discovered_repository.revision().ok();
+    let default_branch = discovered_repository.branch().ok();
+    let trust = crate::repository::RepoContext::load(launcher.clone(), repo, false, Some(&now))
+        .ok()
+        .map(|context| context.trust);
 
-    // Kindex quarantine records are parser receipts, not observations. Split
-    // them before observation ids are derived so no malformed line can be
-    // represented as admitted or current.
-    let quarantine_records: Vec<NativeRecord> = records
-        .iter()
-        .filter(|record| {
-            matches!(
-                record.disposition.as_str(),
-                "MALFORMED_KINDEX_EVENT" | "INVALID_KINDEX_SIGNATURE"
-            )
-        })
-        .cloned()
-        .collect();
-    records.retain(|record| {
-        !matches!(
-            record.disposition.as_str(),
-            "MALFORMED_KINDEX_EVENT" | "INVALID_KINDEX_SIGNATURE"
-        )
-    });
-    let present_native_ids = records
-        .iter()
-        .map(|record| record.native_id.clone())
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut missing_native_ids = std::collections::BTreeSet::new();
-    for prior in &prior_observations {
-        if !present_native_ids.contains(&prior.native_id)
-            && missing_native_ids.insert(prior.native_id.clone())
-        {
-            records.push(native_record(
-                prior.native_id.clone(),
-                "[retracted_observation]",
-                "repository",
-                4_000,
-                "retracted_observation",
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ));
-        }
-    }
-    let prepared = records
-        .into_iter()
-        .map(|record| {
-            let digest = sha256_bytes(record.statement.as_bytes());
-            let observation_id = format!(
-                "obs_{:x}",
-                Sha256::digest(
-                    format!("{source_identity}\0{}\0{digest}", record.native_id).as_bytes()
-                )
-            );
-            (record, observation_id, digest)
-        })
-        .collect::<Vec<_>>();
-    let mut classified_atoms =
-        external_classifier_atoms(classifier, source_kind, &source_identity, &now, &prepared)?;
-    let mut observation_count = 0;
-    let mut reported_observations = Vec::new();
-    let mut derived_facts = Vec::new();
-    let mut atom_count = 0;
-    let mut fact_count = 0;
-    let mut skipped = 0;
-    let mut quarantined_count = 0;
+    // -- ceiling stops and parser quarantines -------------------------------
+    let mut quarantined_count = 0usize;
     let mut quarantined_observations = Vec::new();
-    let mut skew_dispositions = Vec::new();
-    let mut changed_dispositions = Vec::new();
-    let mut historical_receipts = Vec::new();
-    let mut revocation_observed_count = 0;
-    let trust = if source_kind == "kindex" {
-        crate::repository::RepoContext::load(launcher.clone(), repo, false, Some(&now))
-            .ok()
-            .map(|context| context.trust)
-    } else {
-        None
-    };
-    let prepared_manifest = prepared.clone();
+    let mut omitted_count = 0usize;
     for record in quarantine_records {
-        let code = if record.disposition == "MALFORMED_KINDEX_EVENT" {
-            "DIGEST_MISMATCH"
-        } else {
-            "SIGNATURE_INVALID"
+        let code = match record.disposition.as_str() {
+            "MALFORMED_KINDEX_EVENT" => "DIGEST_MISMATCH",
+            "OVERSIZED_KINDEX_EVENT" => "LIMIT_EXCEEDED",
+            _ => "SIGNATURE_INVALID",
         };
+        if code == "LIMIT_EXCEEDED" {
+            omitted_count += 1;
+        }
         let record_value = json!({
             "source_kind": source_kind,
             "source_identity": source_identity,
             "native_id": record.native_id,
             "reason": record.disposition,
             "disposition": record.disposition,
-            "remediation": "Quarantine the non-conforming event; valid events in the same source are admitted.",
+            "code": code,
+            "remediation": if code == "LIMIT_EXCEEDED" {
+                "The event exceeds the 64 KiB shared-event ceiling; split or summarize it. Valid events in the same source are admitted."
+            } else {
+                "Quarantine the non-conforming event; valid events in the same source are admitted."
+            },
             "proof_clock": now
         });
         private.quarantine(code, &record_value)?;
         quarantined_observations.push(record_value);
         quarantined_count += 1;
     }
-    for (record, observation_id, digest) in prepared {
-        if let Some((field, direction, seconds)) = receipt_clock_skew(&record, &now) {
-            let disposition = "CLOCK_SKEW".to_owned();
-            let record_value = json!({
-                "observation_id": observation_id,
-                "source_kind": source_kind,
-                "source_identity": source_identity,
-                "native_id": record.native_id,
-                "content_digest": digest,
-                "field": field,
-                "direction": direction,
-                "skew_seconds": seconds,
-                "proof_clock": now,
-                "disposition": disposition,
-                "remediation": "owner must supply corrected receipt evidence"
-            });
-            let private = crate::private::PrivateStore::open_personal(&journal_root)?;
-            private.quarantine("CLOCK_SKEW", &record_value)?;
-            quarantined_observations.push(record_value);
-            if !skew_dispositions.contains(&disposition) {
-                skew_dispositions.push(disposition);
+
+    // -- reconcile the scan with the observation ledger -----------------------
+    let mut skew_dispositions = Vec::new();
+    let mut changed_dispositions: Vec<Value> = Vec::new();
+    let mut historical_receipts = Vec::new();
+    let mut revocation_observed_count = 0;
+    let mut reported: Vec<Observation> = Vec::new();
+    let mut observation_count = 0usize;
+    let mut skipped = 0usize;
+    let mut present_native_ids: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    let mut renamed_old_ids: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let prior_by_id: BTreeMap<String, Observation> = prior_observations
+        .iter()
+        .map(|observation| (observation.observation_id.clone(), observation.clone()))
+        .collect();
+    let mut prior_by_native: BTreeMap<String, Vec<Observation>> = BTreeMap::new();
+    for observation in &prior_observations {
+        prior_by_native
+            .entry(observation.native_id.clone())
+            .or_default()
+            .push(observation.clone());
+    }
+    let mut present_digests: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for record in &scan.records {
+        present_native_ids.insert(record.native_id.clone());
+        present_digests.insert(record.content_digest());
+    }
+    for record in &scan.records {
+        let digest = record.content_digest();
+        let observation_id = format!(
+            "obs_{:x}",
+            Sha256::digest(format!("{source_identity}\0{}\0{digest}", record.native_id).as_bytes())
+        );
+        // R-14: receipt-time claims outside the skew bound are quarantined
+        // before any ledger write; historical validity dates are never bounded.
+        if let Some(claim) = record.receipt_observed_at.as_deref() {
+            if let Some((direction, seconds)) = crate::time::receipt_clock_skew(claim, &now) {
+                let disposition = "CLOCK_SKEW".to_owned();
+                let record_value = json!({
+                    "observation_id": observation_id,
+                    "source_kind": source_kind,
+                    "source_identity": source_identity,
+                    "native_id": record.native_id,
+                    "content_digest": digest,
+                    "field": "observed_at",
+                    "direction": direction,
+                    "skew_seconds": seconds,
+                    "proof_clock": now,
+                    "disposition": disposition,
+                    "remediation": "owner must supply corrected receipt evidence"
+                });
+                private.quarantine("CLOCK_SKEW", &record_value)?;
+                quarantined_observations.push(record_value);
+                if !skew_dispositions.contains(&disposition) {
+                    skew_dispositions.push(disposition);
+                }
+                quarantined_count += 1;
+                continue;
             }
-            quarantined_count += 1;
-            continue;
         }
-        let prior_same_native = prior_observations
-            .iter()
-            .filter(|prior| prior.native_id == record.native_id)
-            .max_by(|left, right| left.observed_at.cmp(&right.observed_at));
-        let lifecycle = record_lifecycle(&record, prior_same_native, &digest);
-        let observation = Observation {
-            observation_id: observation_id.clone(),
-            source_kind: source_kind.to_owned(),
-            source_identity: source_identity.clone(),
-            native_id: record.native_id.clone(),
-            content_digest: digest.clone(),
-            repository_id: repository_id.clone(),
-            revision: revision.clone(),
-            branch: branch.clone(),
-            disposition: record.disposition.clone(),
-            observed_at: now.clone(),
-            asserted_at: record.asserted_at.clone(),
-            effective_from: record.effective_from.clone(),
-            effective_until: record.effective_until.clone(),
-            body_ref: format!("sha256:{digest}"),
-            extraction_version: EXTRACTION_VERSION.to_owned(),
-            origin_trust: Some(trust_class.to_owned()),
-            environment_id: record.environment_id.clone(),
-            owner_id: record.owner_id.clone(),
-            lifecycle: lifecycle.clone(),
-        };
         let revocation_observed = record
             .signer
             .as_deref()
             .is_some_and(|signer| trust.as_ref().is_some_and(|trust| trust.is_revoked(signer)));
-        if revocation_observed {
+        if revocation_observed && record.reducer_owned {
             historical_receipts.push(json!({
                 "event_id": record.native_id,
                 "observation_id": observation_id,
@@ -412,28 +322,147 @@ pub fn ingest(
             revocation_observed_count += 1;
             continue;
         }
-        if let Some(existing) = prior_observations
-            .iter()
-            .find(|prior| prior.observation_id == observation_id)
-        {
-            skipped += 1;
-            reported_observations.push(observation_result(existing));
+        let personal = store == crate::StoreKind::Personal;
+        let attributes = if record.attributes.is_empty() {
+            None
+        } else {
+            Some(Value::Object(record.attributes.clone()))
+        };
+        let fresh = Observation {
+            observation_id: observation_id.clone(),
+            source_kind: source_kind.to_owned(),
+            source_identity: source_identity.clone(),
+            native_id: record.native_id.clone(),
+            content_digest: digest.clone(),
+            repository_id: repository_id.clone(),
+            revision: record.revision.clone().or_else(|| default_revision.clone()),
+            branch: record.branch.clone().or_else(|| default_branch.clone()),
+            disposition: record.disposition.clone(),
+            observed_at: now.clone(),
+            asserted_at: record.asserted_at.clone(),
+            effective_from: record.effective_from.clone(),
+            effective_until: record.effective_until.clone(),
+            body_ref: format!("sha256:{digest}"),
+            extraction_version: EXTRACTION_VERSION.to_owned(),
+            origin_trust: Some(record.origin.clone()),
+            environment_id: record.environment_id.clone(),
+            owner_id: record.owner_id.clone(),
+            lifecycle: "observed".to_owned(),
+            unit: Some(record.unit_id.clone()),
+            statement: (!personal).then(|| record.statement.clone()),
+            logical_key: Some(record.logical_key.clone()),
+            atom_kind: Some(record.atom_kind.clone()),
+            scope: Some(record.scope.clone()),
+            signer: record.signer.clone(),
+            parents: (!record.parents.is_empty()).then(|| record.parents.clone()),
+            attributes,
+            raw_withheld: record.raw_expired.then_some(true),
+            renamed_from: None,
+            receipt_observed_at: record.receipt_observed_at.clone(),
+            reducer_owned: record.reducer_owned.then_some(true),
+            cursor: None,
+        };
+        if let Some(existing) = prior_by_id.get(&observation_id) {
+            // Re-observed: identity and content are unchanged; provenance
+            // (revision, attributes, retention, lifecycle) may have moved.
+            let mut merged = existing.clone();
+            if fresh.revision != existing.revision {
+                merged.revision = fresh.revision.clone();
+                merged.branch = fresh.branch.clone();
+            }
+            merged.attributes = fresh.attributes.clone();
+            merged.raw_withheld = fresh.raw_withheld;
+            merged.origin_trust = fresh.origin_trust.clone();
+            merged.effective_until = fresh.effective_until.clone();
+            merged.disposition = fresh.disposition.clone();
+            merged.parents = fresh.parents.clone();
+            if !record.present && merged.lifecycle == "observed" {
+                merged.lifecycle = "absent".to_owned();
+            } else if record.present
+                && matches!(
+                    merged.lifecycle.as_str(),
+                    "retracted" | "absent" | "rewritten"
+                )
+            {
+                merged.lifecycle = "observed".to_owned();
+                merged.observed_at = now.clone();
+            }
+            if merged != *existing {
+                private.update_observation(&merged)?;
+                if merged.lifecycle != existing.lifecycle {
+                    let change = json!({
+                        "observation_id": merged.observation_id,
+                        "new_observation_id": merged.observation_id,
+                        "from_disposition": existing.lifecycle,
+                        "to_disposition": merged.lifecycle,
+                        "observed_at": now
+                    });
+                    private.audit("disposition-change", &change)?;
+                    changed_dispositions.push(change);
+                } else {
+                    private.audit(
+                        "provenance-updated",
+                        &json!({"observation_id": merged.observation_id, "revision": merged.revision, "observed_at": now}),
+                    )?;
+                }
+            } else {
+                skipped += 1;
+            }
+            reported.push(merged);
             continue;
         }
-        if let Some(prior) = prior_same_native {
-            private.supersede_observation(
-                &prior.observation_id,
-                &prior.disposition,
-                &lifecycle,
-                &observation_id,
-                &now,
-            )?;
-            if lifecycle != "observed" && !changed_dispositions.contains(&lifecycle) {
-                changed_dispositions.push(lifecycle.clone());
-            }
+        let mut fresh = fresh;
+        if !record.present {
+            fresh.lifecycle = "absent".to_owned();
         }
-        private.insert_observation(&observation)?;
-        let observation_value = serde_json::to_value(&observation)
+        let same_native: Vec<&Observation> = prior_by_native
+            .get(&record.native_id)
+            .map(|rows| rows.iter().collect())
+            .unwrap_or_default();
+        if !same_native.is_empty() {
+            // Amended: the native record changed content; the previous
+            // version becomes history and the transition is explicit.
+            for old in same_native.iter().filter(|old| old.lifecycle == "observed") {
+                let mut retired = (*old).clone();
+                retired.lifecycle = "superseded".to_owned();
+                private.update_observation(&retired)?;
+                let change = json!({
+                    "observation_id": old.observation_id,
+                    "new_observation_id": observation_id,
+                    "from_disposition": old.disposition,
+                    "to_disposition": "amended_new_observation",
+                    "observed_at": now
+                });
+                private.audit("disposition-change", &change)?;
+                changed_dispositions.push(change);
+            }
+        } else if let Some(old) = prior_observations.iter().find(|old| {
+            old.lifecycle == "observed"
+                && old.content_digest == digest
+                && !present_native_ids.contains(&old.native_id)
+                && !renamed_old_ids.contains(&old.observation_id)
+        }) {
+            // Rename: the same bytes reappear under a new native identity
+            // while the old identity vanished; provenance moves, nothing is
+            // withdrawn.
+            let mut retired = old.clone();
+            retired.lifecycle = "renamed".to_owned();
+            private.update_observation(&retired)?;
+            renamed_old_ids.insert(old.observation_id.clone());
+            fresh.renamed_from = Some(old.native_id.clone());
+            let change = json!({
+                "observation_id": old.observation_id,
+                "new_observation_id": observation_id,
+                "from_disposition": old.disposition,
+                "to_disposition": "renamed",
+                "observed_at": now
+            });
+            private.audit("disposition-change", &change)?;
+            changed_dispositions.push(change);
+        }
+        private.insert_observation(&fresh)?;
+        observation_count += 1;
+        let observation_value = serde_json::to_value(&fresh)
             .map_err(|error| ContractError::internal(error.to_string()))?;
         crate::store::append_record(
             journal_store,
@@ -441,87 +470,110 @@ pub fn ingest(
             "observations.jsonl",
             &observation_value,
         )?;
-        observation_count += 1;
-        reported_observations.push(observation_result(&observation));
-        let external_atoms = classified_atoms.remove(&observation_id).unwrap_or_default();
-        let mut atoms = Vec::new();
-        if external_atoms.is_empty() {
-            let atom = atomize(
-                source_kind,
-                &record.native_id,
-                &record.statement,
-                &record.scope,
-                record.confidence,
-                &observation_id,
-                &digest,
-                repository_id.as_deref(),
-            );
-            if !(hard_blocked(&record.statement) && store != crate::StoreKind::Personal) {
-                atoms.push(atom);
-            } else {
-                skipped += 1;
-            }
-        } else {
-            for external in external_atoms {
-                let text = external
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if hard_blocked(text) && store != crate::StoreKind::Personal {
-                    skipped += 1;
-                    continue;
-                }
-                let mut atom = atomize(
-                    source_kind,
-                    &record.native_id,
-                    text,
-                    &record.scope,
-                    record.confidence,
-                    &observation_id,
-                    &digest,
-                    repository_id.as_deref(),
-                );
-                apply_classifier_atom(&mut atom, &external, repository_id.as_deref());
-                atoms.push(atom);
-            }
+        reported.push(fresh);
+    }
+    // Native identities that vanished: retracted while their unit remains,
+    // absent when the unit itself is gone. History stays addressable.
+    for (native_id, rows) in &prior_by_native {
+        if present_native_ids.contains(native_id) {
+            continue;
         }
-        for atom in atoms {
-            let atom_value = serde_json::to_value(&atom)
-                .map_err(|error| ContractError::internal(error.to_string()))?;
-            crate::store::append_record(journal_store, repo, "atoms.jsonl", &atom_value)?;
-            atom_count += 1;
-            let eligible = store != crate::StoreKind::Personal
-                && trust_class == "merged-default"
-                && record.disposition == "current";
-            if eligible {
-                let fact = write_source_fact_event(
-                    store,
-                    repo,
-                    &atom,
-                    &observation,
-                    &record,
-                    repository_id.as_deref(),
-                )?;
-                if let Some(fact) = fact {
-                    derived_facts.push(fact);
+        for old in rows {
+            if old.lifecycle != "observed" {
+                continue;
+            }
+            if renamed_old_ids.contains(&old.observation_id) {
+                continue;
+            }
+            let unit_present = old
+                .unit
+                .as_deref()
+                .is_some_and(|unit| scan.unit_ids.contains(unit))
+                && source_available;
+            let mut retired = old.clone();
+            retired.lifecycle = if unit_present || !source_available {
+                if source_available {
+                    "retracted"
+                } else {
+                    "absent"
                 }
-                fact_count += 1;
             } else {
-                let fact_id = format!(
-                    "fact_{:x}",
-                    Sha256::digest(format!("{}\0{}", atom.scope, atom.statement).as_bytes())
-                );
+                "absent"
+            }
+            .to_owned();
+            private.update_observation(&retired)?;
+            let change = json!({
+                "observation_id": old.observation_id,
+                "new_observation_id": old.observation_id,
+                "from_disposition": old.disposition,
+                "to_disposition": if retired.lifecycle == "absent" { "absent_source_recorded" } else { "retracted_observation" },
+                "observed_at": now
+            });
+            private.audit("disposition-change", &change)?;
+            changed_dispositions.push(change);
+            reported.push(retired);
+        }
+    }
+    if let Some(reason) = &scan.narrowed_view {
+        private.audit(
+            "narrowed-view",
+            &json!({"source_identity": source_identity, "source_kind": source_kind, "reason": reason, "observed_at": now}),
+        )?;
+    }
+
+    // -- derive facts from the whole ledger ------------------------------------
+    let trust_facts = crate::repository::trust_facts(launcher, trust.as_ref());
+    let ledger = private.all_observations()?;
+    let derived = crate::lifecycle::derive(&ledger, &trust_facts, &now);
+    let reported_ids: std::collections::BTreeSet<String> = reported
+        .iter()
+        .map(|observation| observation.observation_id.clone())
+        .collect();
+    let reported_observations: Vec<Value> = reported
+        .iter()
+        .map(|observation| observation_result(observation, &derived))
+        .collect();
+    let mut derived_facts: Vec<Value> = derived
+        .facts
+        .iter()
+        .filter(|fact| {
+            fact.evidence_refs
+                .iter()
+                .any(|id| reported_ids.contains(id))
+        })
+        .map(|fact| {
+            json!({
+                "fact_id": fact.fact_id,
+                "logical_key": fact.logical_key,
+                "logical_scope": fact.store_kind,
+                "atom_kind": fact.atom_kind,
+                "disposition": fact.disposition,
+                "state": fact.state,
+                "evidence_refs": fact.evidence_refs,
+                "admitted": fact.state == "current",
+                "derived": true
+            })
+        })
+        .collect();
+    if derived_facts.is_empty() {
+        // Reducer-owned events (`.kin/events`) derive through the reducer;
+        // report their fact bindings from the event itself.
+        for observation in &reported {
+            if observation.reducer_owned == Some(true) {
                 derived_facts.push(json!({
-                    "fact_id": fact_id,
-                    "logical_scope": atom.scope,
-                    "atom_kind": atom.atom_kind,
-                    "disposition": record.disposition,
-                    "admitted": false
+                    "fact_id": format!("fact_{:x}", Sha256::digest(format!("{}\0{}", observation.scope.clone().unwrap_or_default(), observation.statement.clone().unwrap_or_default()).as_bytes())),
+                    "logical_key": observation.logical_key,
+                    "logical_scope": observation.scope,
+                    "atom_kind": "claim",
+                    "disposition": observation.disposition,
+                    "admitted": observation.lifecycle == "observed",
+                    "reducer_owned": true
                 }));
             }
         }
     }
-    let manifest_publication = if source_kind == "kindex"
+    let fact_count = derived_facts.len();
+    let manifest_publication = if kin_events_intake
         && observation_count > 0
         && crate::repository::committed_event_count(repo)? > 0
     {
@@ -530,17 +582,19 @@ pub fn ingest(
         None
     };
     let manifest_lineages = if source_kind == "kindex" {
-        crate::codebase::Repository::discover(repo)?
-            .manifest_heads()?
-            .len()
+        discovered_repository.manifest_heads()?.len()
     } else {
         0
     };
-    let result = json!({
+    let adapter_receipt_count = ledger
+        .iter()
+        .filter(|observation| observation.source_kind == source_kind)
+        .count();
+    let mut result = json!({
         "status": "ingested",
         "adapter": source_kind,
-        "state_changed": observation_count > 0,
-        "observed_effect": observation_count > 0,
+        "state_changed": observation_count > 0 || !changed_dispositions.is_empty(),
+        "observed_effect": observation_count > 0 || !changed_dispositions.is_empty(),
         "historical_receipt": !historical_receipts.is_empty(),
         "historical_receipts": historical_receipts,
         "readmitted": false,
@@ -553,41 +607,48 @@ pub fn ingest(
         "observations": reported_observations,
         "derived_facts": derived_facts,
         "observation_count": observation_count,
-        "atom_count": atom_count,
+        "atom_count": fact_count,
         "fact_count": fact_count,
         "idempotent_count": skipped,
         "quarantined_count": quarantined_count,
         "quarantined_observations": quarantined_observations,
         "skew_dispositions": skew_dispositions,
         "changed_dispositions": changed_dispositions,
-        "origin_trust_class": trust_class,
-        "current_view_byte_identical": observation_count == 0 && skipped > 0,
-        "observation_ids": reported_observations
-            .iter()
-            .filter_map(|value| value.get("observation_id").and_then(Value::as_str).map(str::to_owned))
-            .collect::<Vec<_>>(),
-        "adapter_receipts": {source_kind: observation_count},
+        "narrowed_view": scan.narrowed_view,
+        "origin_trust_class": reported.first().and_then(|o| o.origin_trust.clone()).unwrap_or_else(|| "merged-default".to_owned()),
+        "current_view_byte_identical": observation_count == 0 && changed_dispositions.is_empty(),
+        "observation_ids": reported.iter().map(|o| o.observation_id.clone()).collect::<Vec<_>>(),
+        "adapter_receipts": {source_kind: adapter_receipt_count},
         "build_manifest": {
-            "observation_ids": prepared_manifest.iter().map(|(_, id, _)| id.clone()).collect::<Vec<_>>(),
-            "adapter_receipts": {source_kind: observation_count},
+            "observation_ids": reported.iter().map(|o| o.observation_id.clone()).collect::<Vec<_>>(),
+            "adapter_receipts": {source_kind: adapter_receipt_count},
             "reducer_digest": sha256_bytes(&crate::json::canonical_bytes(&json!({
-                "observations": prepared_manifest
-                    .iter()
-                    .map(|(_, id, digest)| json!({"observation_id": id, "content_digest": digest}))
-                    .collect::<Vec<_>>()
+                "observations": reported.iter().map(|o| json!({"observation_id": o.observation_id, "content_digest": o.content_digest})).collect::<Vec<_>>()
             })))
         },
         "checkpoint": checkpoint,
-        "source_digest": sha256_bytes(&bytes),
-        "store": store_name(store)
+        "source_digest": scan.source_digest,
+        "store": store_name(store),
+        "omitted_count": omitted_count
     });
+    if omitted_count > 0 {
+        // A per-event ceiling stop is reported in the receipt (verification
+        // "Operational limits": every ceiling stop reports its omitted count).
+        // The admissible remainder of the batch was admitted, so the command
+        // succeeds while the stop stays typed.
+        let stop = ContractError::limit(
+            format!("{omitted_count} shared event(s) exceeded the 64 KiB ceiling and were omitted"),
+            json!({"omitted_count": omitted_count, "ceiling_bytes": crate::model::MAX_EVENT_BYTES}),
+        );
+        result["error"] = crate::output::error_document(&stop)["error"].clone();
+        result["ceiling_stops"] = json!([{"ceiling": "shared_event", "omitted_count": omitted_count, "ceiling_bytes": crate::model::MAX_EVENT_BYTES}]);
+    }
     if json {
         println!("{}", serde_json::to_string(&result).unwrap_or_default());
     } else {
         println!("status: ingested");
         println!("adapter: {source_kind}");
         println!("observation_count: {observation_count}");
-        println!("atom_count: {atom_count}");
         println!("fact_count: {fact_count}");
         println!("idempotent_count: {skipped}");
         println!("store: {}", store_name(store));
@@ -629,9 +690,6 @@ fn read_source(source_kind: &str, source: &Path) -> Result<Vec<u8>, ContractErro
             "Pass a regular file or directory.",
         )
         .with_detail(json!({"omitted_count": 1})));
-    }
-    if source_kind == "git_history" && source.join(".git").exists() {
-        return git_history_bytes(source);
     }
     let mut root = source.to_path_buf();
     if source_kind == "kindex" && source.join("events").is_dir() {
@@ -734,364 +792,9 @@ fn read_bounded_file(path: &Path, limit: usize) -> Result<Vec<u8>, ContractError
     std::fs::read(path).map_err(io_error)
 }
 
-fn git_history_bytes(source: &Path) -> Result<Vec<u8>, ContractError> {
-    let output = std::process::Command::new("git")
-        .args([
-            "log",
-            "--all",
-            "--pretty=format:%H%x00%s%x00%b%x00%aI%x00%P",
-        ])
-        .current_dir(source)
-        .output()
-        .map_err(|error| {
-            ContractError::new(
-                "RUN_INTEGRITY_FAILED",
-                format!("git history source is unreadable: {error}"),
-                "Check the repository and git installation.",
-                false,
-                ExitCode::InternalFailure,
-            )
-        })?;
-    if !output.status.success() {
-        return Err(ContractError::new(
-            "RUN_INTEGRITY_FAILED",
-            format!("git log exited with {}", output.status),
-            "Check the repository and retry.",
-            false,
-            ExitCode::InternalFailure,
-        ));
-    }
-    let text = String::from_utf8_lossy(&output.stdout).into_owned();
-    let mut bytes = Vec::new();
-    for commit in text.split('\n') {
-        let fields: Vec<&str> = commit.split('\0').collect();
-        if fields.len() != 5 {
-            continue;
-        }
-        let parents = fields[4].split_whitespace().count();
-        let reverted = fields[1].to_ascii_lowercase().starts_with("revert")
-            || fields[2].to_ascii_lowercase().starts_with("revert");
-        let record = json!({
-            "id": fields[0],
-            "message": fields[1],
-            "body": fields[2],
-            "created_at": fields[3],
-            "parents": fields[4],
-            "state": if reverted {
-                "reverted"
-            } else if parents > 1 {
-                "merged"
-            } else {
-                "current"
-            }
-        });
-        bytes.extend_from_slice(crate::json::canonical_bytes(&record).as_slice());
-        bytes.push(b'\n');
-    }
-    let refs = git_output(
-        source,
-        &["for-each-ref", "--format=%(refname)%00%(objectname)"],
-    )
-    .unwrap_or_default();
-    for line in refs.lines() {
-        let fields: Vec<&str> = line.split('\0').collect();
-        if fields.len() != 2 || fields[0].is_empty() {
-            continue;
-        }
-        let record = json!({
-            "id": format!("ref:{}", fields[0]),
-            "message": format!("git ref {} points to {}", fields[0], fields[1]),
-            "state": "current"
-        });
-        bytes.extend_from_slice(crate::json::canonical_bytes(&record).as_slice());
-        bytes.push(b'\n');
-    }
-    let branches = git_output(
-        source,
-        &["for-each-ref", "refs/heads", "--format=%(refname)"],
-    )
-    .unwrap_or_default()
-    .lines()
-    .filter(|line| !line.trim().is_empty())
-    .map(str::to_owned)
-    .take(32)
-    .collect::<Vec<_>>();
-    let mut merge_bases = 0usize;
-    for (left_index, left) in branches.iter().enumerate() {
-        for right in branches.iter().skip(left_index + 1) {
-            if merge_bases >= 64 {
-                break;
-            }
-            let Some(base) = git_output(source, &["merge-base", left, right]) else {
-                continue;
-            };
-            let base = base.trim();
-            if base.is_empty() {
-                continue;
-            }
-            let record = json!({
-                "id": format!("merge-base:{left}:{right}"),
-                "message": format!("merge-base of {left} and {right} is {base}"),
-                "state": "current"
-            });
-            bytes.extend_from_slice(crate::json::canonical_bytes(&record).as_slice());
-            bytes.push(b'\n');
-            merge_bases += 1;
-        }
-    }
-    Ok(bytes)
-}
-
-fn external_classifier_atoms(
-    classifier: Option<&crate::config::SharedClassifier>,
-    source_kind: &str,
-    source_identity: &str,
-    now: &str,
-    prepared: &[(NativeRecord, String, String)],
-) -> Result<BTreeMap<String, Vec<Value>>, ContractError> {
-    let Some(classifier) = classifier else {
-        return Ok(BTreeMap::new());
-    };
-    let observations = prepared
-        .iter()
-        .map(|(record, observation_id, digest)| {
-            json!({
-                "observation_id": observation_id,
-                "source_kind": source_kind,
-                "source_identity": source_identity,
-                "content_digest": digest,
-                "observed_at": now,
-                "disposition": record.disposition,
-                "extraction_version": EXTRACTION_VERSION,
-                "body": crate::classifier::request_body(&record.statement),
-                "scope": record.scope,
-                "confidence": record.confidence
-            })
-        })
-        .collect::<Vec<_>>();
-    let mut result = BTreeMap::new();
-    for input in crate::classifier::request_batches(observations)? {
-        let bytes = crate::sandbox::run_verified_executable(
-            &classifier.executable,
-            &classifier.executable_sha256,
-            &classifier.args,
-            &crate::json::canonical_bytes(&input),
-            std::time::Duration::from_secs(classifier.timeout_seconds),
-        )?;
-        let output = crate::json::parse_strict_value(&bytes).map_err(|error| {
-            ContractError::integrity(
-                "PROCESSOR_UNAUTHORIZED",
-                format!("classifier output is not strict JSON: {error}"),
-                "Repair the pinned classifier; no output was promoted.",
-            )
-        })?;
-        crate::classifier::validate_output(&output)?;
-        if let Some(atoms) = output.get("atoms").and_then(Value::as_array) {
-            for atom in atoms {
-                let observation_id = atom
-                    .get("observation_id")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        ContractError::integrity(
-                            "PROCESSOR_UNAUTHORIZED",
-                            "classifier atom has no observation_id",
-                            "Repair the pinned classifier; no output was promoted.",
-                        )
-                    })?
-                    .to_owned();
-                result
-                    .entry(observation_id)
-                    .or_insert_with(Vec::new)
-                    .push(atom.clone());
-            }
-        }
-    }
-    Ok(result)
-}
-
-fn apply_classifier_atom(atom: &mut Atom, external: &Value, repository_id: Option<&str>) {
-    if let Some(value) = external.get("atom_id").and_then(Value::as_str) {
-        atom.atom_id = value.to_owned();
-    }
-    if let Some(value) = external.get("atom_kind").and_then(Value::as_str) {
-        atom.atom_kind = value.to_owned();
-    }
-    if let Some(value) = external.get("confidence").and_then(Value::as_str) {
-        atom.confidence = match value {
-            "high" => 8_000,
-            "medium" => 6_000,
-            _ => 3_000,
-        };
-    }
-    if let Some(values) = external
-        .get("proposed_destinations")
-        .and_then(Value::as_array)
-    {
-        let destinations = values
-            .iter()
-            .filter_map(|value| value.as_str())
-            .map(|value| match value {
-                "codebase" => repository_id
-                    .map(|id| format!("codebase:{id}"))
-                    .unwrap_or_else(|| "codebase".to_owned()),
-                other => other.to_owned(),
-            })
-            .collect::<Vec<_>>();
-        atom.proposed_destinations = destinations.clone();
-        atom.eligible_destinations = destinations;
-    }
-    if let Some(values) = external.get("taint").and_then(Value::as_array) {
-        atom.taints = values
-            .iter()
-            .filter_map(|value| value.as_str())
-            .map(str::to_owned)
-            .collect();
-    }
-    if let Some(value) = external
-        .get("unresolved_uncertainty")
-        .and_then(Value::as_str)
-    {
-        atom.unresolved_uncertainty = (!value.is_empty()).then(|| value.to_owned());
-    }
-}
-
 /// Validate `.kin/events/` as signed FactEvents. Malformed data-model bytes
 /// and invalid signatures are counted typed integrity failures; neither can
 /// reach the canonical renderer or panic.
-fn parse_kindex_source(source: &Path, bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError> {
-    if let Some(path) = sqlite_export_path(source) {
-        return parse_kindex_sqlite(&path).map_err(|message| {
-            ContractError::refused(
-                "CONFIG_INVARIANT",
-                message,
-                "Use a valid Kindex 0.36 SQLite export or signed `.kin/events` tree.",
-            )
-        });
-    }
-    parse_kindex_events(bytes)
-}
-
-fn sqlite_export_path(source: &Path) -> Option<std::path::PathBuf> {
-    let metadata = std::fs::metadata(source).ok()?;
-    if metadata.is_file() {
-        let is_sqlite = source
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .is_some_and(|extension| matches!(extension, "sqlite" | "sqlite3" | "db"));
-        return is_sqlite.then(|| source.to_path_buf());
-    }
-    if !metadata.is_dir() {
-        return None;
-    }
-    let mut stack = vec![source.to_path_buf()];
-    while let Some(directory) = stack.pop() {
-        let Ok(children) = std::fs::read_dir(directory) else {
-            continue;
-        };
-        for child in children.flatten() {
-            let path = child.path();
-            let Ok(metadata) = std::fs::symlink_metadata(&path) else {
-                continue;
-            };
-            if metadata.file_type().is_symlink() {
-                continue;
-            }
-            if metadata.is_dir() {
-                stack.push(path);
-            } else if path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .is_some_and(|extension| matches!(extension, "sqlite" | "sqlite3" | "db"))
-            {
-                return Some(path);
-            }
-        }
-    }
-    None
-}
-
-fn parse_kindex_sqlite(path: &Path) -> Result<Vec<NativeRecord>, String> {
-    let connection =
-        Connection::open(path).map_err(|error| format!("Kindex export is unreadable: {error}"))?;
-    let mut statement = connection
-        .prepare("SELECT id, node_type, title, content, payload, created_at FROM nodes")
-        .map_err(|error| format!("Kindex nodes table is unavailable: {error}"))?;
-    let mut rows = statement
-        .query([])
-        .map_err(|error| format!("Kindex nodes cannot be read: {error}"))?;
-    let mut records = Vec::new();
-    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
-        let id: String = row.get(0).map_err(|error| error.to_string())?;
-        let node_type: Option<String> = row.get(1).map_err(|error| error.to_string())?;
-        let title: Option<String> = row.get(2).map_err(|error| error.to_string())?;
-        let content: Option<String> = row.get(3).map_err(|error| error.to_string())?;
-        let payload: Option<Vec<u8>> = row.get(4).map_err(|error| error.to_string())?;
-        let created_at: Option<String> = row.get(5).map_err(|error| error.to_string())?;
-        let payload_text = payload
-            .map(|bytes: Vec<u8>| String::from_utf8_lossy(&bytes).trim().to_owned())
-            .unwrap_or_default();
-        let statement_text = content
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| title.filter(|value| !value.trim().is_empty()))
-            .unwrap_or_else(|| {
-                if payload_text.is_empty() {
-                    format!("Kindex node {id}")
-                } else {
-                    payload_text
-                }
-            });
-        records.push(native_record(
-            id,
-            statement_text,
-            format!("kindex:{}", node_type.unwrap_or_else(|| "node".to_owned())),
-            8_000,
-            "current",
-            time_string(created_at.as_deref()),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ));
-    }
-    let mut edge_statement = connection
-        .prepare("SELECT src, dst, relationship, reason FROM edges")
-        .map_err(|error| format!("Kindex edges table is unavailable: {error}"))?;
-    let mut rows = edge_statement
-        .query([])
-        .map_err(|error| format!("Kindex edges cannot be read: {error}"))?;
-    while let Some(row) = rows.next().map_err(|error| error.to_string())? {
-        let source: String = row.get(0).map_err(|error| error.to_string())?;
-        let destination: String = row.get(1).map_err(|error| error.to_string())?;
-        let relationship: Option<String> = row.get(2).map_err(|error| error.to_string())?;
-        let reason: Option<String> = row.get(3).map_err(|error| error.to_string())?;
-        records.push(native_record(
-            format!("edge:{source}:{destination}"),
-            format!(
-                "{} {} {} ({})",
-                source,
-                relationship.unwrap_or_else(|| "relates-to".to_owned()),
-                destination,
-                reason.unwrap_or_else(|| "no reason supplied".to_owned())
-            ),
-            "kindex:edge",
-            8_000,
-            "current",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ));
-    }
-    if records.is_empty() {
-        return Err("Kindex export contains no nodes or edges".to_owned());
-    }
-    Ok(records)
-}
 
 fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError> {
     let text = std::str::from_utf8(bytes).map_err(|error| {
@@ -1110,6 +813,27 @@ fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError>
     let mut invalid_signatures = Vec::new();
     for (index, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
+            continue;
+        }
+        if line.len() > crate::model::MAX_EVENT_BYTES {
+            // Shared-event ceiling (verification "Operational limits"): the
+            // event is a ceiling stop, refused and counted, never truncated.
+            records.push(NativeRecord {
+                native_id: format!("oversized-kindex-event-line-{}", index + 1),
+                statement: String::new(),
+                scope: "repository".to_owned(),
+                confidence: 0,
+                disposition: "OVERSIZED_KINDEX_EVENT".to_owned(),
+                asserted_at: None,
+                effective_from: None,
+                effective_until: None,
+                receipt_observed_at: None,
+                receipt_expires_at: None,
+                environment_id: None,
+                owner_id: None,
+                logical_key: None,
+                signer: None,
+            });
             continue;
         }
         if let Ok(unknown) = UnknownEvent::parse(line.as_bytes()) {
@@ -1204,927 +928,22 @@ fn parse_kindex_events(bytes: &[u8]) -> Result<Vec<NativeRecord>, ContractError>
     Ok(records)
 }
 
-fn parse_native(source_kind: &str, bytes: &[u8]) -> Result<Vec<NativeRecord>, String> {
-    let text = std::str::from_utf8(bytes).map_err(|error| error.to_string())?;
-    match source_kind {
-        "codex_jsonl" | "claude_jsonl" => parse_host_jsonl(source_kind, text),
-        "github_export" => parse_github_export(text),
-        "docs_adr" => parse_docs_adr(text),
-        "repo_code" => parse_code_text(text),
-        "repo_tests" => parse_repo_tests(text),
-        _ => parse_json_records(source_kind, text),
-    }
-}
-
-fn native_record(
-    native_id: impl Into<String>,
-    statement: impl Into<String>,
-    scope: impl Into<String>,
-    confidence: u16,
-    disposition: impl Into<String>,
-    asserted_at: Option<String>,
-    effective_from: Option<String>,
-    effective_until: Option<String>,
-    receipt_observed_at: Option<String>,
-    receipt_expires_at: Option<String>,
-    environment_id: Option<String>,
-    owner_id: Option<String>,
-) -> NativeRecord {
-    NativeRecord {
-        native_id: native_id.into(),
-        statement: statement.into(),
-        scope: scope.into(),
-        confidence,
-        disposition: disposition.into(),
-        asserted_at,
-        effective_from,
-        effective_until,
-        receipt_observed_at,
-        receipt_expires_at,
-        environment_id,
-        owner_id,
-        logical_key: None,
-        signer: None,
-    }
-}
-
-fn time_string(value: Option<&str>) -> Option<String> {
-    value
-        .filter(|value| parse_rfc3339_millis(value).is_ok())
-        .map(str::to_owned)
-}
-
-fn content_text(map: &Map<String, Value>) -> Option<String> {
-    if let Some(Value::String(text)) = map.get("text") {
-        return Some(text.clone());
-    }
-    if let Some(Value::Array(parts)) = map.get("content") {
-        let text = parts
-            .iter()
-            .filter_map(|part| part.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join(" ");
-        if !text.trim().is_empty() {
-            return Some(text);
-        }
-    }
-    None
-}
-
-fn parse_host_jsonl(source_kind: &str, text: &str) -> Result<Vec<NativeRecord>, String> {
-    let mut records = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let value: Value = serde_json::from_str(line)
-            .map_err(|error| format!("native JSONL line {}: {error}", index + 1))?;
-        let Some(map) = value.as_object() else {
-            continue;
-        };
-        let kind = map.get("type").and_then(Value::as_str).unwrap_or_default();
-        let statement = if kind == "response_item" {
-            map.get("payload")
-                .and_then(Value::as_object)
-                .and_then(|payload| content_text(payload))
-        } else if kind == "stop" || kind == "session_end" {
-            None
-        } else {
-            map.get("message")
-                .and_then(Value::as_object)
-                .and_then(content_text)
-                .or_else(|| content_text(map))
-        };
-        let Some(statement) = statement.filter(|statement| !statement.trim().is_empty()) else {
-            continue;
-        };
-        let native_id = map
-            .get("id")
-            .or_else(|| map.get("uuid"))
-            .or_else(|| map.get("session_id"))
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .unwrap_or_else(|| format!("line:{}", index + 1));
-        let asserted_at = time_string(
-            map.get("timestamp")
-                .or_else(|| map.get("ts"))
-                .and_then(Value::as_str),
-        );
-        records.push(native_record(
-            native_id,
-            statement,
-            "host-session",
-            6_000,
-            "current",
-            asserted_at,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ));
-    }
-    if records.is_empty() {
-        return Err(format!(
-            "{source_kind} source contains no native message records"
-        ));
-    }
-    Ok(records)
-}
-
-fn parse_github_export(text: &str) -> Result<Vec<NativeRecord>, String> {
-    // A directory adapter reads a concatenation of pretty-printed native
-    // export files. Parse a strict JSON stream so every bounded document
-    // contributes observations without inventing a foreign envelope.
-    let mut records = Vec::new();
-    let mut document_count = 0usize;
-    let stream = serde_json::Deserializer::from_str(text).into_iter::<Value>();
-    for value in stream {
-        let value = value.map_err(|error| error.to_string())?;
-        document_count += 1;
-        let map = value
-            .as_object()
-            .ok_or_else(|| "GitHub export must be one JSON object".to_owned())?;
-        parse_github_export_object(map, &mut records)?;
-    }
-    if document_count == 0 {
-        return Err("GitHub export contains no JSON object".to_owned());
-    }
-    if records.is_empty() {
-        return Err("GitHub export contains no issues, pull requests, or reviews".to_owned());
-    }
-    Ok(records)
-}
-
-fn parse_github_export_object(
-    map: &Map<String, Value>,
-    records: &mut Vec<NativeRecord>,
-) -> Result<(), String> {
-    for (key, prefix) in [("issues", "issue"), ("pullRequests", "pull-request")] {
-        let Some(items) = map.get(key).and_then(Value::as_array) else {
-            continue;
-        };
-        for item in items {
-            let Some(item) = item.as_object() else {
-                continue;
-            };
-            let number = item.get("number").and_then(Value::as_i64).unwrap_or(0);
-            let title = item
-                .get("title")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let body = item.get("body").and_then(Value::as_str).unwrap_or_default();
-            let statement = format!("{title}\n{body}").trim().to_owned();
-            if statement.is_empty() {
-                continue;
-            }
-            let state = item.get("state").and_then(Value::as_str).unwrap_or("open");
-            records.push(native_record(
-                format!("{prefix}:{number}"),
-                statement,
-                "repository",
-                if state == "closed" || state == "merged" {
-                    8_000
-                } else {
-                    6_000
-                },
-                source_disposition(item),
-                time_string(item.get("updatedAt").and_then(Value::as_str)),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            ));
-            if let Some(reviews) = item.get("reviews").and_then(Value::as_array) {
-                for (review_index, review) in reviews.iter().enumerate() {
-                    let Some(review) = review.as_object() else {
-                        continue;
-                    };
-                    let state = review
-                        .get("state")
-                        .and_then(Value::as_str)
-                        .unwrap_or("current");
-                    let author = review
-                        .get("author")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown");
-                    records.push(native_record(
-                        format!("review:{number}:{review_index}"),
-                        format!("review by {author}: {state}"),
-                        "repository",
-                        8_000,
-                        if state == "APPROVED" {
-                            "approved"
-                        } else {
-                            "current"
-                        },
-                        time_string(review.get("updatedAt").and_then(Value::as_str)),
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                        None,
-                    ));
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn parse_docs_adr(text: &str) -> Result<Vec<NativeRecord>, String> {
-    // Native fixtures may carry a UTF-8 BOM and macOS may check out CRLF;
-    // normalize line endings before parsing the declared front matter. A
-    // directory source is a concatenation of complete ADR documents, so parse
-    // every front-matter block rather than silently treating later files as
-    // prose in the first ADR.
-    let normalized = text
-        .trim_start_matches('\u{feff}')
-        .replace("\r\n", "\n")
-        .replace('\r', "\n");
-    let mut rest = normalized.trim_start();
-    let mut records = Vec::new();
-    while let Some(after_front) = rest.strip_prefix("---\n") {
-        let Some(end) = after_front.find("\n---") else {
-            return Err("ADR Markdown front matter is not closed".to_owned());
-        };
-        let front = &after_front[..end];
-        let body_start = end + 4;
-        let mut body = after_front[body_start..].trim_start();
-        let next = next_adr_document(body).unwrap_or(body.len());
-        let document_body = &body[..next];
-        records.push(parse_adr_document(front, document_body)?);
-        body = &body[next..];
-        if body.is_empty() {
-            break;
-        }
-        rest = body.trim_start();
-    }
-    if records.is_empty() {
-        return Err("ADR Markdown must begin with YAML front matter".to_owned());
-    }
-    Ok(records)
-}
-
-fn next_adr_document(body: &str) -> Option<usize> {
-    let mut offset = 0usize;
-    while let Some(found) = body[offset..].find("\n---\n") {
-        let index = offset + found;
-        let after = &body[index + 5..];
-        if let Some(close) = after.find("\n---") {
-            if after[..close]
-                .lines()
-                .any(|line| line.trim_start().starts_with("adr:"))
-            {
-                return Some(index + 1);
-            }
-        }
-        offset = index + 5;
-    }
-    None
-}
-
-fn parse_adr_document(front: &str, body: &str) -> Result<NativeRecord, String> {
-    let mut adr = None;
-    let mut title = String::new();
-    let mut status = "current".to_owned();
-    let mut supersedes = None;
-    for line in front.lines() {
-        if let Some((key, value)) = line.split_once(':') {
-            let value = value.trim();
-            match key.trim() {
-                "adr" => adr = Some(value.to_owned()),
-                "title" => title = value.to_owned(),
-                "status" => status = value.to_lowercase(),
-                "supersedes" => supersedes = Some(value.to_owned()),
-                _ => {}
-            }
-        }
-    }
-    let adr = adr.ok_or_else(|| "ADR front matter must name adr".to_owned())?;
-    if title.is_empty() {
-        return Err("ADR front matter must name title".to_owned());
-    }
-    let body = body.trim();
-    let mut statement = format!("# {title}\n{body}");
-    if let Some(supersedes) = supersedes {
-        statement = format!("{statement}\nSupersedes ADR {supersedes}.");
-    }
-    let disposition = match status.as_str() {
-        "accepted" => "current",
-        "proposed" => "proposed",
-        "rejected" => "rejected",
-        "superseded" => "superseded",
-        other => other,
-    };
-    Ok(native_record(
-        format!("adr:{adr}"),
-        statement,
-        "repository",
-        7_000,
-        disposition,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    ))
-}
-
-fn parse_code_text(text: &str) -> Result<Vec<NativeRecord>, String> {
-    let mut records = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        let trimmed = line.trim_start();
-        let is_python = trimmed.starts_with("def ") || trimmed.starts_with("class ");
-        let is_typescript = [
-            "export function ",
-            "function ",
-            "const ",
-            "interface ",
-            "type ",
-            "export type ",
-            "export interface ",
-            "it(",
-            "test(",
-        ]
-        .iter()
-        .any(|prefix| trimmed.starts_with(prefix));
-        if !is_python && !is_typescript {
-            continue;
-        }
-        records.push(native_record(
-            format!("declaration:{}", index + 1),
-            trimmed,
-            "repository",
-            7_000,
-            "current",
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-        ));
-    }
-    if records.is_empty() {
-        return Err("source contains no Python or TypeScript declaration".to_owned());
-    }
-    Ok(records)
-}
-
-fn parse_repo_tests(text: &str) -> Result<Vec<NativeRecord>, String> {
-    // The repo-test source class reads strict command-result JSON documents.
-    // Concatenated directory files are parsed as a JSON stream so pretty-printed
-    // envelopes contribute without introducing a foreign envelope.
-    let mut records = Vec::new();
-    let mut document_count = 0usize;
-    let stream = serde_json::Deserializer::from_str(text).into_iter::<Value>();
-    for value in stream {
-        let value = value.map_err(|error| error.to_string())?;
-        document_count += 1;
-        collect_json_value("repo_tests", &value, &mut records)?;
-    }
-    if document_count == 0 {
-        return Err("repo_tests source contains no command-result envelope".to_owned());
-    }
-    if records.is_empty() {
-        return Err("repo_tests source contains no command-result envelope".to_owned());
-    }
-    Ok(records)
-}
-
-fn parse_json_records(source_kind: &str, text: &str) -> Result<Vec<NativeRecord>, String> {
-    let mut records = Vec::new();
-    if let Ok(value) = serde_json::from_str::<Value>(text) {
-        if source_kind == "github_export" {
-            return parse_github_export(text);
-        }
-        collect_json_value(source_kind, &value, &mut records)?;
-        return Ok(records);
-    }
-    for (index, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        let value: Value = serde_json::from_str(line)
-            .map_err(|error| format!("native JSONL line {}: {error}", index + 1))?;
-        if source_kind == "github_export" {
-            return parse_github_export(line);
-        }
-        collect_json_value(source_kind, &value, &mut records)?;
-    }
-    Ok(records)
-}
-
-fn collect_json_value(
-    source_kind: &str,
-    value: &Value,
-    records: &mut Vec<NativeRecord>,
-) -> Result<(), String> {
-    match value {
-        Value::Array(values) => {
-            for value in values {
-                collect_json_value(source_kind, value, records)?;
-            }
-            Ok(())
-        }
-        Value::Object(map) => {
-            if is_record_container(map) {
-                let native_id = map
-                    .get("id")
-                    .or_else(|| map.get("number"))
-                    .or_else(|| map.get("event_id"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .unwrap_or_else(|| format!("record:{}", records.len() + 1));
-                let statement = extract_statement(map).unwrap_or_else(|| canonical_summary(map));
-                let disposition = source_disposition(map);
-                let command = map
-                    .get("command")
-                    .and_then(Value::as_array)
-                    .map(|command| {
-                        command
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    })
-                    .unwrap_or_default();
-                let statement = if !command.is_empty() {
-                    format!("command: {command}\n{statement}")
-                } else {
-                    statement
-                };
-                records.push(native_record(
-                    native_id,
-                    statement,
-                    extract_scope(map).unwrap_or_else(|| default_scope(source_kind)),
-                    source_confidence(source_kind, &disposition),
-                    disposition,
-                    time_field(
-                        map,
-                        &["asserted_at", "created_at", "timestamp", "closed_at"],
-                    ),
-                    time_field(map, &["effective_from", "started_at"]),
-                    time_field(map, &["effective_until", "expires_at", "fresh_until"]),
-                    time_field(map, &["observed_at"]),
-                    time_field(map, &["expires_at"]),
-                    map.get("environment_id")
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                    map.get("environment_owner")
-                        .or_else(|| map.get("owner_id"))
-                        .and_then(Value::as_str)
-                        .map(str::to_owned),
-                ));
-                return Ok(());
-            }
-            for key in [
-                "payload", "message", "content", "data", "items", "events", "facts", "nodes",
-                "edges",
-            ] {
-                if let Some(child) = map.get(key) {
-                    collect_json_value(source_kind, child, records)?;
-                }
-            }
-            Ok(())
-        }
-        Value::String(value) => {
-            records.push(text_record(source_kind, records.len(), value));
-            Ok(())
-        }
-        _ => Ok(()),
-    }
-}
-
-fn is_record_container(map: &Map<String, Value>) -> bool {
-    [
-        "message",
-        "text",
-        "body",
-        "statement",
-        "summary",
-        "title",
-        "answer",
-        "prompt",
-        "output",
-        "stdout",
-    ]
-    .iter()
-    .any(|key| map.get(*key).is_some_and(Value::is_string))
-        || map.get("command").is_some_and(Value::is_array)
-        || map.contains_key("state")
-        || map.contains_key("schema") && map.get("stdout").is_some()
-}
-
-fn extract_statement(map: &Map<String, Value>) -> Option<String> {
-    for key in [
-        "statement",
-        "message",
-        "text",
-        "body",
-        "summary",
-        "title",
-        "answer",
-        "prompt",
-        "output",
-        "stdout",
-    ] {
-        if let Some(Value::String(value)) = map.get(key) {
-            return Some(value.clone());
-        }
-    }
-    if let Some(Value::Array(parts)) = map.get("content") {
-        let text = parts
-            .iter()
-            .filter_map(|part| part.get("text").and_then(Value::as_str))
-            .collect::<Vec<_>>()
-            .join(" ");
-        if !text.trim().is_empty() {
-            return Some(text);
-        }
-    }
-    None
-}
-
-fn canonical_summary(map: &Map<String, Value>) -> String {
-    let value = Value::Object(map.clone());
-    crate::json::canonical_text(&value)
-}
-
-fn source_disposition(map: &Map<String, Value>) -> String {
-    let state = map
-        .get("state")
-        .or_else(|| map.get("status"))
-        .or_else(|| map.get("disposition"))
-        .and_then(Value::as_str)
-        .unwrap_or("current")
-        .to_lowercase();
-    match state.as_str() {
-        "rejected" | "closed" | "reverted" | "failed" | "retracted" | "superseded" | "reopened" => {
-            state
-        }
-        "merged" | "approved" | "deployed" | "passed" | "accepted" => "current".to_owned(),
-        "draft" | "proposed" | "open" | "experiment" | "incident" => state,
-        _ => "current".to_owned(),
-    }
-}
-
-fn parse_text_lines(source_kind: &str, text: &str) -> Result<Vec<NativeRecord>, String> {
-    let mut records = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        records.push(text_record(source_kind, index, line));
-    }
-    Ok(records)
-}
-
-fn text_record(source_kind: &str, index: usize, statement: &str) -> NativeRecord {
-    let disposition =
-        if statement.contains("STATUS: rejected") || statement.contains("STATUS: reverted") {
-            "rejected".to_owned()
-        } else if statement.contains("STATUS: draft") || statement.contains("STATUS: proposed") {
-            "draft".to_owned()
-        } else {
-            "current".to_owned()
-        };
-    native_record(
-        format!("line:{}", index + 1),
-        statement.trim(),
-        default_scope(source_kind),
-        source_confidence(source_kind, &disposition),
-        disposition,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-    )
-}
-
-fn default_scope(source_kind: &str) -> String {
-    match source_kind {
-        "repo_code" | "repo_tests" | "git_history" | "docs_adr" | "github_export"
-        | "runtime_evidence" | "kindex" => "repository".to_owned(),
-        "authority_answer" => "architecture:company".to_owned(),
-        _ => "host-session".to_owned(),
-    }
-}
-
-fn extract_scope(map: &Map<String, Value>) -> Option<String> {
-    map.get("scope")
-        .or_else(|| map.get("authority_scope"))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-}
-
-fn source_confidence(source_kind: &str, disposition: &str) -> u16 {
-    if disposition == "current" {
-        match source_kind {
-            "authority_answer" => 9_800,
-            "github_export" | "git_history" | "runtime_evidence" | "kindex" => 8_000,
-            "repo_code" | "repo_tests" | "docs_adr" => 7_000,
-            _ => 6_000,
-        }
-    } else {
-        4_000
-    }
-}
-
-fn time_field(map: &Map<String, Value>, keys: &[&str]) -> Option<String> {
-    for key in keys {
-        if let Some(Value::String(value)) = map.get(*key) {
-            if parse_rfc3339_millis(value).is_ok() {
-                return Some(value.clone());
-            }
-        }
-    }
-    None
-}
-
-fn mark_changed_source(
-    store: crate::StoreKind,
-    repo: &Path,
-    source_identity: &str,
-    native_id: &str,
-    digest: &str,
-    now: &str,
-) -> Result<(), ContractError> {
-    let prior = crate::store::read_records(store, repo, "observations.jsonl")
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|value| {
-            value.get("source_identity").and_then(Value::as_str) == Some(source_identity)
-                && value.get("native_id").and_then(Value::as_str) == Some(native_id)
-        })
-        .max_by(|left, right| {
-            left.get("observed_at")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .cmp(
-                    right
-                        .get("observed_at")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default(),
-                )
-        });
-    if let Some(prior) = prior {
-        let prior_digest = prior
-            .get("content_digest")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if prior_digest != digest {
-            let record = json!({
-                "schema": "guildhall-source-lifecycle/1",
-                "source_identity": source_identity,
-                "native_id": native_id,
-                "transition": "superseded",
-                "old_content_digest": prior_digest,
-                "new_content_digest": digest,
-                "observed_at": now
-            });
-            crate::store::append_record(store, repo, "source-lifecycle.jsonl", &record)?;
-        }
-    }
-    Ok(())
-}
-
-fn write_source_fact_event(
-    store: crate::StoreKind,
-    repo: &Path,
-    atom: &Atom,
+/// Public observation record with the projected lifecycle state (C15).
+pub fn observation_result(
     observation: &Observation,
-    record: &NativeRecord,
-    repository_id: Option<&str>,
-) -> Result<Option<Value>, ContractError> {
-    let logical_key = format!(
-        "logical_{:x}",
-        Sha256::digest(
-            format!(
-                "{}\0{}\0{}",
-                atom.provenance, observation.source_identity, observation.native_id
-            )
-            .as_bytes()
-        )
-    );
-    let old_event = crate::store::read_events(&crate::store::store_root(store, repo))
-        .unwrap_or_default()
-        .into_iter()
-        .find(|event| event.logical_key == logical_key);
-    let fact_id = format!(
-        "fact_{:x}",
-        Sha256::digest(format!("{}\0{}", atom.scope, atom.statement).as_bytes())
-    );
-    let event_id = format!(
-        "event_{:x}",
-        Sha256::digest(
-            format!(
-                "{logical_key}\0{}\0{}",
-                atom.statement, observation.content_digest
-            )
-            .as_bytes()
-        )
-    );
-    let authority_id = if store == crate::StoreKind::Company {
-        "company-steward"
-    } else {
-        "repository-maintainer"
-    };
-    let signer = authority_id.to_owned();
-    let mut event = FactEvent {
-        schema: crate::model::EVENT_SCHEMA.to_owned(),
-        event_id,
-        store_kind: store_name(store).to_owned(),
-        authority_id: authority_id.to_owned(),
-        authority_scope: atom.scope.clone(),
-        repository_id: repository_id.map(str::to_owned),
-        fact_id,
-        logical_key,
-        atom_kind: atom.atom_kind.clone(),
-        scope: atom.scope.clone(),
-        statement: atom.statement.clone(),
-        evidence_refs: vec![observation.observation_id.clone()],
-        asserted_at: observation.observed_at.clone(),
-        effective_from: observation
-            .effective_from
-            .clone()
-            .unwrap_or_else(|| observation.observed_at.clone()),
-        effective_until: observation.effective_until.clone(),
-        disposition: record.disposition.clone(),
-        distortion: distortion_for(&atom.atom_kind),
-        parents: old_event
-            .as_ref()
-            .map(|old| old.fact_id.clone())
-            .into_iter()
-            .collect(),
-        supersedes: old_event
-            .as_ref()
-            .map(|old| old.event_id.clone())
-            .into_iter()
-            .collect(),
-        redundancy_with: Vec::new(),
-        complements: Vec::new(),
-        company_refs: Vec::<CompanyReference>::new(),
-        authority_snapshot_cursor: "0".to_owned(),
-        confidence: crate::model::Bp(atom.confidence),
-        unresolved_uncertainty: atom.unresolved_uncertainty.clone(),
-        signer,
-        signature: String::new(),
-        raw: None,
-    };
-    let (private_key, _) = crate::crypto::ensure_keypair(store, repo)?;
-    let unsigned = crate::store::event_canonical_text(&event);
-    event.signature = crate::crypto::sign_message("fact-event", unsigned.as_bytes(), &private_key)?;
-    let root = crate::store::ensure_store_root(store, repo)?;
-    crate::store::write_content_addressed_event(&root, &event)?;
-    let fact = json!({
-        "fact_id": event.fact_id,
-        "logical_scope": event.scope,
-        "atom_kind": event.atom_kind,
-        "disposition": event.disposition,
-        "admitted": true
-    });
-    Ok(Some(fact))
-}
-
-fn distortion_for(atom_kind: &str) -> Distortion {
-    let loss = match atom_kind {
-        "constraint" => 9_000,
-        "decision" => 7_000,
-        "question" => 5_000,
-        "rationale" => 4_000,
-        _ => 3_000,
-    };
-    Distortion {
-        trigger: "dependent decision".to_owned(),
-        loss_if_absent: loss,
-        rationale: "loss is tied to the dependent decision and atom kind".to_owned(),
-    }
-}
-
-fn git_output(repo: &Path, args: &[&str]) -> Option<String> {
-    std::process::Command::new("git")
-        .args(args)
-        .current_dir(repo)
-        .output()
-        .ok()
-        .filter(|output| output.status.success())
-        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
-}
-
-fn repository_trust_class(
-    repo: &Path,
-    source: &Path,
-    source_kind: &str,
-    source_bytes: &[u8],
-) -> &'static str {
-    let tracked = std::process::Command::new("git")
-        .args(["ls-files", "--error-unmatch"])
-        .arg(source)
-        .current_dir(repo)
-        .output()
-        .is_ok_and(|output| output.status.success());
-    if !tracked {
-        return "uncommitted-worktree";
-    }
-    let dirty = std::process::Command::new("git")
-        .args(["status", "--porcelain"])
-        .arg(source)
-        .current_dir(repo)
-        .output()
-        .is_ok_and(|output| !output.stdout.is_empty());
-    if dirty {
-        return "uncommitted-worktree";
-    }
-    let branch = crate::repository::git_branch(repo).unwrap_or_default();
-    let default_branch = crate::codebase::Repository::discover(repo)
-        .map(|repository| repository.default_branch())
-        .unwrap_or_else(|_| "main".to_owned());
-    if branch == default_branch {
-        return "merged-default";
-    }
-    let ancestor = std::process::Command::new("git")
-        .args([
-            "merge-base",
-            "--is-ancestor",
-            "HEAD",
-            &format!("refs/heads/{default_branch}"),
-        ])
-        .current_dir(repo)
-        .output()
-        .is_ok_and(|output| output.status.success());
-    if !ancestor {
-        return "unreviewed-branch";
-    }
-    let review_message = git_output(repo, &["log", "-1", "--format=%B", "HEAD"])
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    let reviewed = [
-        "reviewed-by:",
-        "approved-by:",
-        "review evidence",
-        "pull request #",
-    ]
-    .iter()
-    .any(|marker| review_message.contains(marker));
-    let github_review = source_kind == "github_export"
-        && (source_bytes
-            .windows(b"reviews".len())
-            .any(|window| window == b"reviews")
-            || source_bytes
-                .windows(b"reviewed_at".len())
-                .any(|window| window == b"reviewed_at"));
-    if reviewed || github_review {
-        return "approved-pr";
-    }
-    "merged-default"
-}
-
-fn receipt_clock_skew(
-    record: &NativeRecord,
-    proof_clock: &str,
-) -> Option<(&'static str, &'static str, i64)> {
-    for (field, value) in [
-        ("observed_at", &record.receipt_observed_at),
-        ("expires_at", &record.receipt_expires_at),
-    ] {
-        if let Some(claim) = value {
-            if let Some((direction, seconds)) = crate::time::receipt_clock_skew(claim, proof_clock)
-            {
-                return Some((field, direction, seconds));
-            }
-        }
-    }
-    None
-}
-
-fn record_lifecycle(record: &NativeRecord, prior: Option<&Observation>, digest: &str) -> String {
-    match record.disposition.as_str() {
-        "retracted_observation" | "absent_source_recorded" | "expired_raw_withheld" => {
-            return record.disposition.clone();
-        }
-        _ => {}
-    }
-    if prior.is_some_and(|prior| prior.content_digest != digest) {
-        "amended_new_observation".to_owned()
-    } else {
-        "observed".to_owned()
-    }
-}
-
-fn observation_result(observation: &Observation) -> Value {
+    derived: &crate::lifecycle::DerivedView,
+) -> Value {
     let lifecycle = observation.lifecycle.as_str();
+    let (state, disposition) = derived
+        .observation_states
+        .get(&observation.observation_id)
+        .cloned()
+        .unwrap_or_else(|| match lifecycle {
+            "retracted" => ("retracted".to_owned(), "retracted_observation".to_owned()),
+            "absent" => ("retracted".to_owned(), "absent_source_recorded".to_owned()),
+            "superseded" | "renamed" | "rewritten" => ("stale".to_owned(), "superseded".to_owned()),
+            _ => ("current".to_owned(), observation.disposition.clone()),
+        });
     let changed_disposition = if lifecycle == "observed" {
         Value::Null
     } else {
@@ -2135,6 +954,8 @@ fn observation_result(observation: &Observation) -> Value {
         "source_kind": observation.source_kind,
         "source_identity": observation.source_identity,
         "native_id": observation.native_id,
+        "unit": observation.unit,
+        "logical_key": observation.logical_key,
         "content_digest": observation.content_digest,
         "observed_at": observation.observed_at,
         "asserted_at": observation.asserted_at,
@@ -2143,10 +964,15 @@ fn observation_result(observation: &Observation) -> Value {
         "repository_id": observation.repository_id,
         "revision": observation.revision,
         "branch": observation.branch,
-        "disposition": observation.disposition,
+        "disposition": disposition,
+        "state": state,
+        "observation_state": state,
+        "source_disposition": observation.disposition,
         "origin_trust_class": observation.origin_trust,
         "extraction_version": observation.extraction_version,
         "lifecycle": lifecycle,
+        "raw_withheld": observation.raw_withheld,
+        "renamed_from": observation.renamed_from,
         "changed_disposition": changed_disposition
     })
 }
@@ -2182,85 +1008,4 @@ fn io_error(error: std::io::Error) -> ContractError {
         false,
         ExitCode::InternalFailure,
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn native_adapters_parse_one_fixture_each() {
-        let codex = r#"{"type":"response_item","id":"codex-1","payload":{"content":[{"type":"text","text":"Codex observed the failing build"}]}}"#;
-        let claude = r#"{"type":"message","uuid":"claude-1","message":{"content":[{"type":"text","text":"Claude observed the regression"}]}}"#;
-        let repo_code = "def parse_native():\n    pass\ninterface Adapter {}\n";
-        let repo_tests = r#"{"schema":"guildhall-command-result/1","id":"command-1","command":["cargo","test"],"stdout":"test passed","exit_status":0,"observed_at":"2026-09-08T10:00:00.000Z"}"#;
-        let git_history = r#"{"id":"commit-1","message":"Merge reviewed change","state":"merged","created_at":"2026-09-08T10:00:00.000Z"}"#;
-        let docs_adr = "---\nadr: 7\ntitle: Use SQLite exports\nstatus: accepted\nsupersedes: 4\n---\n# Use SQLite exports\nStore exports as SQLite.\n";
-        let github_export = r#"{"issues":[{"number":1,"title":"Fix scheduler","body":"The scheduler drops jobs","state":"closed","updatedAt":"2026-09-08T10:00:00.000Z","reviews":[{"author":"alice","state":"APPROVED","updatedAt":"2026-09-08T10:05:00.000Z"}]}]}"#;
-        let runtime_evidence = r#"{"id":"run-1","environment_id":"env-1","environment_owner":"alice","message":"scheduler restarted","state":"deployed","effective_from":"2026-09-08T10:00:00.000Z","effective_until":"2026-09-09T10:00:00.000Z"}"#;
-        let authority_answer = r#"{"id":"answer-1","answer":"Use PostgreSQL 16 for the company ledger","state":"current","asserted_at":"2026-09-08T10:00:00.000Z"}"#;
-
-        let fixtures = [
-            ("codex_jsonl", codex),
-            ("claude_jsonl", claude),
-            ("repo_code", repo_code),
-            ("repo_tests", repo_tests),
-            ("git_history", git_history),
-            ("docs_adr", docs_adr),
-            ("github_export", github_export),
-            ("runtime_evidence", runtime_evidence),
-            ("authority_answer", authority_answer),
-        ];
-        let mut parsed = BTreeMap::new();
-        for (source_kind, fixture) in fixtures {
-            let records = parse_native(source_kind, fixture.as_bytes())
-                .unwrap_or_else(|error| panic!("{source_kind} fixture failed: {error}"));
-            assert!(!records.is_empty(), "{source_kind} produced no records");
-            parsed.insert(source_kind.to_owned(), records);
-        }
-        assert_eq!(parsed["codex_jsonl"][0].native_id, "codex-1");
-        assert_eq!(parsed["claude_jsonl"][0].native_id, "claude-1");
-        assert_eq!(parsed["repo_code"].len(), 2);
-        assert_eq!(parsed["repo_tests"][0].native_id, "command-1");
-        assert_eq!(parsed["git_history"][0].native_id, "commit-1");
-        assert_eq!(parsed["docs_adr"][0].native_id, "adr:7");
-        assert_eq!(parsed["github_export"][0].native_id, "issue:1");
-        assert_eq!(parsed["github_export"][1].native_id, "review:1:0");
-        assert_eq!(
-            parsed["runtime_evidence"][0].environment_id.as_deref(),
-            Some("env-1")
-        );
-        assert_eq!(
-            parsed["runtime_evidence"][0].effective_until.as_deref(),
-            Some("2026-09-09T10:00:00.000Z")
-        );
-        assert_eq!(parsed["authority_answer"][0].native_id, "answer-1");
-    }
-
-    #[test]
-    fn kindex_sqlite_export_parses_nodes_and_edges() {
-        let directory = tempfile::tempdir().expect("temp directory");
-        let path = directory.path().join("kindex.sqlite");
-        let connection = Connection::open(&path).expect("sqlite export");
-        connection
-            .execute_batch(
-                r#"
-                CREATE TABLE nodes(id TEXT PRIMARY KEY, node_type TEXT, title TEXT, content TEXT, payload BLOB, created_at TEXT);
-                CREATE TABLE edges(src TEXT, dst TEXT, relationship TEXT, reason TEXT);
-                INSERT INTO nodes VALUES('node-1', 'concept', 'Adapter', 'Native adapters produce observations', x'7b7d', '2026-09-08T10:00:00.000Z');
-                INSERT INTO edges VALUES('node-1', 'node-2', 'supports', 'fixture evidence');
-                "#,
-            )
-            .expect("kindex fixture schema");
-        let records = parse_kindex_sqlite(&path).expect("kindex sqlite records");
-        assert_eq!(records.len(), 2);
-        assert_eq!(records[0].native_id, "node-1");
-        assert_eq!(records[0].statement, "Native adapters produce observations");
-        assert_eq!(
-            records[0].asserted_at.as_deref(),
-            Some("2026-09-08T10:00:00.000Z")
-        );
-        assert_eq!(records[1].native_id, "edge:node-1:node-2");
-        assert!(records[1].statement.contains("supports"));
-    }
 }

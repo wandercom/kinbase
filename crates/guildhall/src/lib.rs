@@ -27,6 +27,7 @@ pub mod http;
 pub mod ingest;
 pub mod json;
 pub mod launcher;
+pub mod lifecycle;
 pub mod model;
 pub mod output;
 pub mod paths;

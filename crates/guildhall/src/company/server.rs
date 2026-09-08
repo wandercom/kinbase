@@ -12,7 +12,7 @@ use crate::http::{self, Request};
 use crate::model::FactEvent;
 use crate::reducer::{AdmittedEvent, ReducerInput, Verification};
 use serde_json::{Value, json};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use std::time::Duration;
@@ -522,9 +522,39 @@ fn authenticate(
         return Err(fail(db));
     };
     let now_dt = crate::time::parse_rfc3339_millis(now).unwrap_or_else(|_| crate::time::now_utc());
-    if expires <= now_dt
-        || expires.signed_duration_since(now_dt).num_seconds() > REQUEST_EXPIRY_MAX_SECONDS
-    {
+    // R-14: the request expiry is a receipt-time claim. More than the
+    // configured skew bound ahead of or behind the proof clock is quarantined
+    // as CLOCK_SKEW; an expiry within the bound but already past is an
+    // ordinary expired request.
+    let skew_seconds = expires.signed_duration_since(now_dt).num_seconds();
+    let skew_bound = state.config.clock_skew_seconds.max(0);
+    if skew_seconds.abs() > skew_bound {
+        let _ = db.record_auth_failure(minute);
+        let direction = if skew_seconds > 0 { "ahead" } else { "behind" };
+        let _ = db.audit(
+            "request-clock-skew",
+            &json!({"client_key": client_key, "direction": direction, "skew_seconds": skew_seconds, "bound_seconds": skew_bound, "expires_at": expires_at, "proof_clock": now}),
+        );
+        return Err((
+            401,
+            ContractError::refused(
+                "AUTHORITY_SCOPE_DENIED",
+                format!(
+                    "request expiry claim is {} seconds {direction} of the proof clock; quarantined as CLOCK_SKEW until the owner supplies a corrected receipt time",
+                    skew_seconds.abs()
+                ),
+                "Correct the client clock or the request expiry; receipt-time claims must lie within the five-minute skew bound.",
+            )
+            .with_detail(json!({
+                "disposition": "CLOCK_SKEW",
+                "direction": direction,
+                "skew_seconds": skew_seconds,
+                "bound_seconds": skew_bound,
+                "field": "expires_at"
+            })),
+        ));
+    }
+    if expires <= now_dt || skew_seconds > REQUEST_EXPIRY_MAX_SECONDS {
         return Err(fail(db));
     }
     let Ok(key) = PublicKey::from_hex(&client_key) else {
@@ -643,11 +673,13 @@ pub fn current_view(
         };
         if let Some(action) = crate::model::action_of(&event) {
             if matches!(action, "misextraction" | "never_true" | "support_withdrawn") {
+                let targets = lifecycle_targets(db, &event);
+                let (authorized, _) = lifecycle_authorized(trust_state, &event, action, &targets);
                 for target in event.parents.iter().chain(event.supersedes.iter()) {
                     tombstones.push(crate::reducer::Tombstone {
                         kind: action.to_owned(),
                         target_event_id: target.clone(),
-                        signer_authorized: verification == Verification::Verified,
+                        signer_authorized: verification == Verification::Verified && authorized,
                         reason_code: event.statement.clone(),
                         tombstone_id: event.event_id.clone(),
                     });
@@ -687,6 +719,153 @@ pub fn current_view(
         steward_authority_id: trust_state.steward_authority_id(),
     };
     Ok(crate::reducer::reduce(&input))
+}
+
+/// Resolve the events a lifecycle action names (parents and supersedes) to
+/// `(event_id, logical_key, authority_scope)` from the admitted log.
+fn lifecycle_targets(db: &CompanyDb, event: &FactEvent) -> Vec<(String, String, String)> {
+    let named: Vec<&String> = event
+        .parents
+        .iter()
+        .chain(event.supersedes.iter())
+        .collect();
+    if named.is_empty() {
+        return Vec::new();
+    }
+    let mut targets = Vec::new();
+    for (_, payload, _) in db.events_of_kind("fact-event").unwrap_or_default() {
+        let event_id = crate::json::get_str(&payload, "event_id").unwrap_or_default();
+        let fact_id = crate::json::get_str(&payload, "fact_id").unwrap_or_default();
+        if named
+            .iter()
+            .any(|id| id.as_str() == event_id || id.as_str() == fact_id)
+        {
+            targets.push((
+                event_id.to_owned(),
+                crate::json::get_str(&payload, "logical_key")
+                    .unwrap_or_default()
+                    .to_owned(),
+                crate::json::get_str(&payload, "authority_scope")
+                    .unwrap_or_default()
+                    .to_owned(),
+            ));
+        }
+    }
+    targets
+}
+
+/// Whether the signer of a lifecycle action holds the authority the action
+/// requires. `misextraction` is an approver-owned claim about bytes versus
+/// evidence, so any verified signer may issue it; `never_true` and
+/// `support_withdrawn` are semantic withdrawals reserved for the Company
+/// steward or the registered owner of the withdrawn fact's exact scope.
+fn lifecycle_authorized(
+    trust_state: &TrustState,
+    event: &FactEvent,
+    action: &str,
+    targets: &[(String, String, String)],
+) -> (bool, Option<String>) {
+    let target_scope = targets.first().map(|(_, _, scope)| scope.clone());
+    if action == "misextraction" {
+        return (true, target_scope);
+    }
+    if trust_state.is_steward(&event.signer) {
+        return (true, target_scope);
+    }
+    let Some(scope) = target_scope.clone() else {
+        return (false, None);
+    };
+    let owns_scope = trust_state
+        .entries_for_key(&event.signer)
+        .iter()
+        .any(|entry| crate::json::get_str(entry, "scope") == Some(scope.as_str()));
+    (owns_scope, target_scope)
+}
+
+/// Lifecycle admissions and refusals as the Company records them: admitted
+/// withdrawal events (with the authority outcome the reducer applied) plus
+/// audited refusals, so a client can report who was allowed to withdraw what.
+fn lifecycle_admissions(db: &CompanyDb, trust_state: &TrustState) -> Vec<Value> {
+    let mut rows = Vec::new();
+    for (cursor, payload, verification) in db.events_of_kind("fact-event").unwrap_or_default() {
+        let Ok(event) = FactEvent::from_value(&payload) else {
+            continue;
+        };
+        let Some(action) = crate::model::action_of(&event) else {
+            continue;
+        };
+        if !matches!(action, "misextraction" | "never_true" | "support_withdrawn") {
+            continue;
+        }
+        let targets = lifecycle_targets(db, &event);
+        let (authorized, target_scope) =
+            lifecycle_authorized(trust_state, &event, action, &targets);
+        let accepted = verification == "verified" && authorized;
+        rows.push(json!({
+            "action": action,
+            "event_id": event.event_id,
+            "cursor": cursor.to_string(),
+            "authority_id": event.authority_id,
+            "authority_scope": event.authority_scope,
+            "logical_key": targets.first().map(|(_, key, _)| key.clone()).unwrap_or_else(|| event.logical_key.clone()),
+            "target_event_ids": targets.iter().map(|(id, _, _)| id.clone()).collect::<Vec<_>>(),
+            "target_scope": target_scope,
+            "accepted": accepted,
+            "refusal_code": if accepted { Value::Null } else { Value::String("AUTHORITY_WRONG_SCOPE".to_owned()) },
+            "asserted_at": event.asserted_at,
+            "reason_code": event.statement
+        }));
+    }
+    for record in db.audit_records("lifecycle-refusal").unwrap_or_default() {
+        let mut row = record.clone();
+        row["accepted"] = Value::Bool(false);
+        if row.get("refusal_code").is_none() {
+            row["refusal_code"] = Value::String("AUTHORITY_WRONG_SCOPE".to_owned());
+        }
+        rows.push(row);
+    }
+    rows
+}
+
+/// Parent bindings of every current fact, resolved to the parent's logical
+/// key, so a client holding other stores can reopen dependent decisions when
+/// a parent fact loses its last support anywhere.
+fn fact_parents(db: &CompanyDb, view: &crate::reducer::CurrentView) -> Value {
+    let mut by_event: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
+    for (_, payload, _) in db.events_of_kind("fact-event").unwrap_or_default() {
+        let event_id = crate::json::get_str(&payload, "event_id").unwrap_or_default();
+        let logical_key = crate::json::get_str(&payload, "logical_key").unwrap_or_default();
+        let parents = crate::json::get_array(&payload, "parents")
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        by_event.insert(event_id.to_owned(), (logical_key.to_owned(), parents));
+    }
+    let mut map = serde_json::Map::new();
+    for fact in &view.facts {
+        let Some((_, parents)) = by_event.get(&fact.event_id) else {
+            continue;
+        };
+        if parents.is_empty() {
+            continue;
+        }
+        let resolved: Vec<Value> = parents
+            .iter()
+            .map(|parent| {
+                json!({
+                    "event_id": parent,
+                    "logical_key": by_event.get(parent).map(|(key, _)| key.clone()).unwrap_or_default()
+                })
+            })
+            .collect();
+        map.insert(fact.fact_id.clone(), Value::Array(resolved));
+    }
+    Value::Object(map)
 }
 
 fn status(
@@ -1004,6 +1183,46 @@ fn admit_fact(
         }
     }
     let verification = trust_state.verify_fact_signer(&event);
+    // Lifecycle withdrawals (architecture "SessionCandidate ... misextraction"):
+    // an approver may only assert the evidence/byte mismatch; the semantic
+    // `never_true` withdrawal is admissible only from the subject-matter
+    // authority of the withdrawn fact. The refusal is a recorded admission
+    // outcome, never a silent drop.
+    if verification == Verification::Verified {
+        if let Some(action) = crate::model::action_of(&event) {
+            let targets = lifecycle_targets(db, &event);
+            let (authorized, target_scope) =
+                lifecycle_authorized(trust_state, &event, action, &targets);
+            if !authorized {
+                let refusal = ContractError::refused(
+                    "AUTHORITY_WRONG_SCOPE",
+                    format!(
+                        "a {action} withdrawal must be signed by the subject-matter authority of the withdrawn fact ({}); {} owns only {}",
+                        target_scope.as_deref().unwrap_or("unresolved scope"),
+                        event.authority_id,
+                        event.authority_scope
+                    ),
+                    "Ask the registered authority for the fact's exact scope (or the Company steward) to sign the withdrawal; an approver may only issue a misextraction notice.",
+                );
+                let _ = db.audit(
+                    "lifecycle-refusal",
+                    &json!({
+                        "action": action,
+                        "event_id": event.event_id,
+                        "authority_id": event.authority_id,
+                        "authority_scope": event.authority_scope,
+                        "logical_key": targets.first().map(|(_, key, _)| key.clone()).unwrap_or_else(|| event.logical_key.clone()),
+                        "target_event_ids": targets.iter().map(|(id, _, _)| id.clone()).collect::<Vec<_>>(),
+                        "target_scope": target_scope,
+                        "refusal_code": "AUTHORITY_WRONG_SCOPE",
+                        "asserted_at": event.asserted_at,
+                        "recorded_at": now
+                    }),
+                );
+                return Err(refuse(403, refusal));
+            }
+        }
+    }
     // A repository maintainer may request an exception, but only a Company
     // steward may relax Company-owned architecture. Signature failures retain
     // their integrity attribution.
@@ -1033,6 +1252,49 @@ fn admit_fact(
             ));
         }
         Verification::Revoked => {
+            // Architecture §2: a pre-revocation committed retry may return
+            // its historical receipt to its original scoped client, but is
+            // never re-admitted and its projection is recalculated under the
+            // current revocation state.
+            if let Some(existing_cursor) = db
+                .event_cursor(&event.event_id)
+                .map_err(|error| refuse(500, error))?
+            {
+                let existing_digest = db
+                    .all_events(existing_cursor - 1, 1)
+                    .map_err(|error| refuse(500, error))?
+                    .first()
+                    .and_then(|record| record.get("payload"))
+                    .map(|payload| crate::json::digest(payload))
+                    .unwrap_or_default();
+                let same_client = db
+                    .nonce_record("company", &digest)
+                    .map_err(|error| refuse(500, error))?
+                    .as_ref()
+                    .and_then(|record| crate::json::get_str(record, "client_key"))
+                    == Some(auth.client_key.as_str());
+                if existing_digest == digest && same_client {
+                    let mut receipt =
+                        receipt_for(&event, &digest, existing_cursor, "committed", "historical");
+                    let (revocation_observed, support_withdrawn) =
+                        replay_projection(db, trust_state, &event);
+                    receipt["historical_receipt"] = Value::Bool(true);
+                    receipt["readmitted"] = Value::Bool(false);
+                    receipt["revocation_observed"] = Value::Bool(revocation_observed);
+                    receipt["support_withdrawn"] = Value::Bool(support_withdrawn);
+                    receipt["receipt_scope_restricted"] = Value::Bool(true);
+                    receipt["projection_state"] = Value::String(if support_withdrawn {
+                        "support_withdrawn".to_owned()
+                    } else {
+                        "current".to_owned()
+                    });
+                    let _ = db.audit(
+                        "historical-receipt",
+                        &json!({"event_id": event.event_id, "digest": digest, "revoked_key": event.signer}),
+                    );
+                    return Ok((200, receipt));
+                }
+            }
             return Err(refuse(
                 403,
                 ContractError::refused(
@@ -1536,7 +1798,16 @@ fn snapshot(
         "revocations": trust_state.revocations,
         "relaxations": db.relaxations().map_err(|error| refuse(500, error))?,
         "certificates": db.all_certificates().map_err(|error| refuse(500, error))?,
-        "fact_versions": fact_versions_index(db, &view).map_err(|error| refuse(500, error))?
+        "fact_versions": fact_versions_index(db, &view).map_err(|error| refuse(500, error))?,
+        "lifecycle_admissions": lifecycle_admissions(db, trust_state),
+        "fact_parents": fact_parents(db, &view),
+        "traces": view.traces.iter().map(|trace| json!({
+            "logical_key": trace.logical_key,
+            "state": trace.state,
+            "admitted_event_ids": trace.admitted_event_ids,
+            "current_fact_id": trace.current_fact_id,
+            "unknown_id": trace.unknown_id
+        })).collect::<Vec<_>>()
     });
     let signed = state
         .root
@@ -1714,6 +1985,74 @@ fn publish_registry(
                 .map_err(|error| refuse(500, error))?
                 .unwrap_or(0),
         };
+        // R-10: republication at a strictly newer cursor without an entry is
+        // that entry's revocation. The vanished key is recorded as a signed
+        // revocation event with its own cursor and effective time, so every
+        // client observing this cursor runs the architecture §3 cascade.
+        let published: BTreeSet<(String, String)> = entries
+            .iter()
+            .map(|entry| {
+                (
+                    crate::json::get_str(entry, "authority_id")
+                        .unwrap_or_default()
+                        .to_owned(),
+                    crate::json::get_str(entry, "scope")
+                        .unwrap_or_default()
+                        .to_owned(),
+                )
+            })
+            .collect();
+        let mut revoked_count = 0usize;
+        for existing in db.registry_entries().map_err(|error| refuse(500, error))? {
+            if crate::json::get_str(&existing, "status") != Some("active") {
+                continue;
+            }
+            let identity = (
+                crate::json::get_str(&existing, "authority_id")
+                    .unwrap_or_default()
+                    .to_owned(),
+                crate::json::get_str(&existing, "scope")
+                    .unwrap_or_default()
+                    .to_owned(),
+            );
+            if published.contains(&identity) {
+                continue;
+            }
+            let public_key = crate::json::get_str(&existing, "public_key")
+                .unwrap_or_default()
+                .to_owned();
+            let revocation = json!({
+                "schema": "guildhall-revocation/1",
+                "revoked_key": public_key,
+                "revoked_authority_id": identity.0,
+                "scope": identity.1,
+                "cursor": cursor.to_string(),
+                "authority_cursor": crate::json::get_str(&document, "authority_cursor").unwrap_or_default(),
+                "effective_at": now,
+                "reason": "registry republication omitted the entry (R-10)",
+                "signer": crate::json::get_str(&document, "signer").unwrap_or_default()
+            });
+            let revocation_id = format!("revocation_{}", &crate::json::digest(&revocation)[..40]);
+            db.append_event(
+                &revocation_id,
+                "revocation",
+                "revocation",
+                &revocation,
+                crate::json::get_str(&document, "signer").unwrap_or_default(),
+                "verified",
+                None,
+            )
+            .map_err(|error| refuse(500, error))?;
+            let mut retired = existing.clone();
+            retired["status"] = Value::String("revoked".to_owned());
+            db.upsert_registry_entry(&retired, cursor)
+                .map_err(|error| refuse(500, error))?;
+            revoked_count += 1;
+        }
+        if revoked_count > 0 {
+            db.set_meta("revocation_cursor", &cursor.to_string())
+                .map_err(|error| refuse(500, error))?;
+        }
         for entry in entries {
             let mut entry = entry.clone();
             if entry.get("status").is_none() {
@@ -1796,7 +2135,7 @@ fn publish_registry(
         }
         db.audit(
             "registry-published",
-            &json!({"digest": digest, "entries": entries.len(), "cursor": cursor, "revoked_keys": revoked_keys.len()}),
+            &json!({"digest": digest, "entries": entries.len(), "cursor": cursor, "revoked": revoked_count, "revoked_keys": revoked_keys.len()}),
         )
         .map_err(|error| refuse(500, error))?;
         Ok((
