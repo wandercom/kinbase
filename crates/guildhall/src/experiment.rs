@@ -324,16 +324,39 @@ fn freeze(manifest_path: &Path, budget_path: &Path, json: bool) -> Result<(), Co
     let power = required_object(&manifest, "power")?;
     let cost = required_integer(power, "cost_usd")?;
     let mde_basis_points = required_basis_points(power, "mde")?;
-    let census = match manifest.get("census") {
-        Some(census) if census.is_object() => census.clone(),
-        _ => json!({
-            "digest": digest_value(&manifest),
-            "signed": false,
-            "derived_from_manifest": true
-        }),
-    };
+    if !manifest.get("census").is_some_and(Value::is_object) {
+        return Err(ContractError::new(
+            "RUN_CENSUS_MISSING",
+            "experiment manifest census is missing; a manifest digest is not a signed run census",
+            "Append the signed run census before reserving the experiment budget.",
+            false,
+            ExitCode::InternalFailure,
+        ));
+    }
+    let census = manifest.get("census").cloned().unwrap_or(Value::Null);
     let calibration = required_object(&manifest, "calibration")?;
     let manifest_budget = required_object(&manifest, "budget")?;
+    let manifest_aggregate = required_integer(manifest_budget, "aggregate_usd")?;
+    if manifest_aggregate != aggregate {
+        return Err(ContractError::new(
+            "CONFIG_INVARIANT",
+            format!(
+                "the external budget aggregate ({aggregate}) differs from the manifest aggregate ({manifest_aggregate})"
+            ),
+            "Use the exact human-ratified budget recorded in the preregistered manifest.",
+            false,
+            ExitCode::Refused,
+        ));
+    }
+    if calibration.get("valid").and_then(Value::as_bool) != Some(true) {
+        return Err(ContractError::new(
+            "SCORER_UNCALIBRATED",
+            "the manifest calibration is not valid; experiment freeze is refused",
+            "Recalibrate the scorer before freezing the experiment.",
+            false,
+            ExitCode::InternalFailure,
+        ));
+    }
     let frozen = json!({
         "schema": "guildhall-frozen-experiment/1",
         "status": "frozen",
@@ -354,7 +377,7 @@ fn freeze(manifest_path: &Path, budget_path: &Path, json: bool) -> Result<(), Co
         },
         "budget": {
             "aggregate_usd": aggregate,
-            "manifest_aggregate_usd": required_integer(manifest_budget, "aggregate_usd")?,
+            "manifest_aggregate_usd": manifest_aggregate,
             "human_ratified": true
         },
         "human_bytes_after_freeze": 0

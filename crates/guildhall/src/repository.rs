@@ -470,10 +470,12 @@ impl RepoContext {
         ContractError,
     > {
         let (loaded, _) = self.load_events()?;
-        let mut fact_by_id: BTreeMap<&str, &FactEvent> = BTreeMap::new();
+        let mut fact_by_event_id: BTreeMap<&str, &FactEvent> = BTreeMap::new();
+        let mut fact_by_fact_id: BTreeMap<&str, &FactEvent> = BTreeMap::new();
         for item in &loaded {
             if let ParsedEvent::Fact(event) = &item.parsed {
-                fact_by_id.insert(event.event_id.as_str(), event);
+                fact_by_event_id.insert(event.event_id.as_str(), event);
+                fact_by_fact_id.insert(event.fact_id.as_str(), event);
             }
         }
         let mut admitted = Vec::new();
@@ -494,9 +496,15 @@ impl RepoContext {
                                 .chain(event.supersedes.iter())
                                 .next()
                                 .cloned();
-                            let target = target_id
-                                .as_deref()
-                                .and_then(|id| fact_by_id.get(id).copied());
+                            let target = target_id.as_deref().and_then(|id| {
+                                fact_by_event_id
+                                    .get(id)
+                                    .or_else(|| fact_by_fact_id.get(id))
+                                    .copied()
+                            });
+                            let resolved_target_id = target
+                                .map(|target| target.event_id.clone())
+                                .or_else(|| target_id.clone());
                             let authorized = match action {
                                 "misextraction" => {
                                     verification == Verification::Verified
@@ -520,25 +528,23 @@ impl RepoContext {
                                 }
                                 _ => verification == Verification::Verified,
                             };
-                            if !authorized {
-                                if action == "never_true" || action == "misextraction" {
-                                    admitted.push(AdmittedEvent {
-                                        event: event.clone(),
-                                        verification: Verification::WrongScope,
-                                        store_cursor: format!("{index:09}"),
-                                        origin_trust: Some(item.origin_trust.clone()),
-                                        reachable: item.reachable,
-                                        source_identity: Some(event.signer.clone()),
-                                        environment_registered: None,
-                                    });
-                                }
-                                continue;
+                            if !authorized && (action == "never_true" || action == "misextraction")
+                            {
+                                admitted.push(AdmittedEvent {
+                                    event: event.clone(),
+                                    verification: Verification::WrongScope,
+                                    store_cursor: format!("{index:09}"),
+                                    origin_trust: Some(item.origin_trust.clone()),
+                                    reachable: item.reachable,
+                                    source_identity: Some(event.signer.clone()),
+                                    environment_registered: None,
+                                });
                             }
-                            if let Some(target_id) = target_id {
+                            if let Some(target_id) = resolved_target_id {
                                 tombstones.push(Tombstone {
                                     kind: action.to_owned(),
                                     target_event_id: target_id,
-                                    signer_authorized: true,
+                                    signer_authorized: authorized,
                                     reason_code: event.statement.clone(),
                                     tombstone_id: event.event_id.clone(),
                                 });
@@ -2052,6 +2058,7 @@ pub fn status(
                 "state": if fact.status == "current" { "current" } else { "withheld" },
                 "current_fact_state": fact.status.clone(),
                 "statement": fact.statement,
+                "evidence_refs": fact.evidence_refs,
                 "trust": fact.trust,
                 "authority_scope": fact.authority_scope,
                 "provenance_recomputed": view
@@ -2107,6 +2114,14 @@ pub fn status(
         manifest_expired_publication,
         manifest_comparisons,
     ) = manifest_observation_report(&context.repo, &local_digests, &as_of.as_of)?;
+    let mut fact_by_event_id: BTreeMap<&str, &crate::model::FactEvent> = BTreeMap::new();
+    let mut fact_by_fact_id: BTreeMap<&str, &crate::model::FactEvent> = BTreeMap::new();
+    for item in &events {
+        if let ParsedEvent::Fact(event) = &item.parsed {
+            fact_by_event_id.insert(event.event_id.as_str(), event);
+            fact_by_fact_id.insert(event.fact_id.as_str(), event);
+        }
+    }
     let mut event_records = Vec::new();
     let mut exceptions = Vec::new();
     let mut exception_request_accepted = false;
@@ -2173,12 +2188,23 @@ pub fn status(
                     }));
                 }
                 "misextraction" => {
+                    let target_logical_key = event
+                        .parents
+                        .iter()
+                        .chain(event.supersedes.iter())
+                        .find_map(|id| {
+                            fact_by_event_id
+                                .get(id.as_str())
+                                .or_else(|| fact_by_fact_id.get(id.as_str()))
+                                .map(|fact| fact.logical_key.clone())
+                        })
+                        .unwrap_or_else(|| event.logical_key.clone());
                     let trace = view
                         .traces
                         .iter()
-                        .find(|trace| trace.logical_key == event.logical_key);
+                        .find(|trace| trace.logical_key == target_logical_key);
                     misextraction_notices.push(json!({
-                        "logical_key": event.logical_key,
+                        "logical_key": target_logical_key,
                         "admitted": trace.is_some_and(|trace| trace.notice_admitted),
                         "notice_admitted": trace.is_some_and(|trace| trace.notice_admitted),
                         "asserted_claim": "evidence_byte_mismatch",
@@ -2186,10 +2212,21 @@ pub fn status(
                     }));
                 }
                 "never_true" => {
+                    let target_logical_key = event
+                        .parents
+                        .iter()
+                        .chain(event.supersedes.iter())
+                        .find_map(|id| {
+                            fact_by_event_id
+                                .get(id.as_str())
+                                .or_else(|| fact_by_fact_id.get(id.as_str()))
+                                .map(|fact| fact.logical_key.clone())
+                        })
+                        .unwrap_or_else(|| event.logical_key.clone());
                     let trace = view
                         .traces
                         .iter()
-                        .find(|trace| trace.logical_key == event.logical_key);
+                        .find(|trace| trace.logical_key == target_logical_key);
                     let approver_minted_accepted = trace
                         .and_then(|trace| trace.approver_minted_accepted)
                         .unwrap_or(true);
@@ -2828,6 +2865,7 @@ fn private_observations(
                 "superseded" => "stale",
                 "quarantined" => "quarantined",
                 "foreign" => "foreign",
+                "observed" => "appended",
                 _ => "current",
             };
             let state = if disposition == "CLOCK_SKEW" { "CLOCK_SKEW".to_owned() } else { state.to_owned() };

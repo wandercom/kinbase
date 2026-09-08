@@ -158,6 +158,18 @@ impl Launcher {
         json!({
             "processes": [
                 {
+                    "role": "shared-writer",
+                    "granted_capabilities": shared_names,
+                    "holds_personal_capability": false,
+                    "personal_root_in_serialized_config": serialized_shared_config_mentions_personal(&self.shared, self.personal_root().as_deref())
+                },
+                {
+                    "role": "shared-projector",
+                    "granted_capabilities": shared_names,
+                    "holds_personal_capability": false,
+                    "personal_root_in_serialized_config": serialized_shared_config_mentions_personal(&self.shared, self.personal_root().as_deref())
+                },
+                {
                     "role": "launcher",
                     "granted_capabilities": ["config:read", "personal:open", "shared-config:derive", "sandbox:launch"],
                     "holds_personal_capability": self.user.is_some(),
@@ -168,18 +180,6 @@ impl Launcher {
                     "granted_capabilities": ["personal:read", "personal:write", "extract", "route", "scan"],
                     "holds_personal_capability": self.user.is_some(),
                     "personal_root_in_serialized_config": false
-                },
-                {
-                    "role": "shared-projector",
-                    "granted_capabilities": shared_names,
-                    "holds_personal_capability": false,
-                    "personal_root_in_serialized_config": serialized_shared_config_mentions_personal(&self.shared, self.personal_root().as_deref())
-                },
-                {
-                    "role": "shared-writer",
-                    "granted_capabilities": shared_names,
-                    "holds_personal_capability": false,
-                    "personal_root_in_serialized_config": serialized_shared_config_mentions_personal(&self.shared, self.personal_root().as_deref())
                 }
             ],
             "mode": self.mode,

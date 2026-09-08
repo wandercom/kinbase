@@ -9,6 +9,7 @@ use crate::error::{ContractError, ExitCode};
 use crate::scanner::{ScanResult, scanner};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
@@ -184,7 +185,7 @@ pub(crate) fn deterministic(document: &Value) -> Result<Value, ContractError> {
                     hedged
                 }
             };
-            atoms.push(atom_from_observation(map, &sentence, confidence));
+            atoms.push(atom_from_observation(map, &sentence, confidence, None));
         }
     }
     Ok(json!({
@@ -196,7 +197,7 @@ pub(crate) fn deterministic(document: &Value) -> Result<Value, ContractError> {
 
 fn ollama(model: &str, document: &Value) -> Result<Value, ContractError> {
     observations(document)?;
-    let instruction = "Return exactly one JSON object with keys classifier_version, provider, atoms. atoms items have exactly atom_id, observation_id, text, atom_kind, scope, confidence, proposed_destinations, taint, provenance, unresolved_uncertainty. No markdown or extra keys.";
+    let instruction = r#"Classify each observation into minimal atoms. Return exactly one JSON object with keys classifier_version, provider, atoms. atoms items have exactly atom_id, observation_id, text, atom_kind, scope, confidence, proposed_destinations, taint, provenance, unresolved_uncertainty. One atom is exactly one claim, question, decision, constraint, rationale, or observation. Split mixed-scope messages into separate atoms. Destinations: personal means the principal's private conversational memory; company means organization-wide direction owned by a steward or named authority; codebase means repository-scoped knowledge; none means ambiguous non-facts, temporary suggestions, questions, or hedges. Use confidence low for ambiguity and never guess a shared destination. No markdown or extra keys."#;
     let request = json!({
         "model": model,
         "stream": false,
@@ -222,7 +223,106 @@ fn ollama(model: &str, document: &Value) -> Result<Value, ContractError> {
             .map_err(|error| unauthorized(format!("Ollama message is not JSON: {error}")))?
     };
     validate_output(&candidate)?;
-    Ok(candidate)
+    Ok(normalize_ollama_output(&candidate, document))
+}
+
+fn normalize_ollama_output(candidate: &Value, document: &Value) -> Value {
+    let mut model_atoms_by_observation: BTreeMap<String, Vec<&Value>> = BTreeMap::new();
+    if let Some(atoms) = candidate.get("atoms").and_then(Value::as_array) {
+        for atom in atoms {
+            if let Some(observation_id) = atom.get("observation_id").and_then(Value::as_str) {
+                model_atoms_by_observation
+                    .entry(observation_id.to_owned())
+                    .or_default()
+                    .push(atom);
+            }
+        }
+    }
+
+    let mut atoms = Vec::new();
+    let Ok(observations) = observations(document) else {
+        return candidate.clone();
+    };
+    for observation in observations {
+        let Some(map) = observation.as_object() else {
+            continue;
+        };
+        let observation_id = map
+            .get("observation_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let mut emitted: BTreeSet<String> = BTreeSet::new();
+        let model_atoms = model_atoms_by_observation.get(&observation_id);
+        let source_atoms: Vec<(String, &str, Vec<String>)> = model_atoms
+            .map(|model_atoms| {
+                model_atoms
+                    .iter()
+                    .filter_map(|atom| {
+                        let text = atom.get("text").and_then(Value::as_str)?;
+                        let confidence = atom
+                            .get("confidence")
+                            .and_then(Value::as_str)
+                            .unwrap_or("medium");
+                        let destinations = atom
+                            .get("proposed_destinations")
+                            .and_then(Value::as_array)
+                            .map(|values| {
+                                values
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .filter(|destination| {
+                                        ALLOWED_DESTINATIONS.contains(destination)
+                                    })
+                                    .map(str::to_owned)
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        Some((text.to_owned(), confidence, destinations))
+                    })
+                    .collect()
+            })
+            .unwrap_or_else(|| {
+                map.get("body")
+                    .and_then(Value::as_str)
+                    .map(|body| {
+                        sentences(body)
+                            .into_iter()
+                            .map(|text| (text, "medium", Vec::new()))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            });
+        for (source_text, model_confidence, model_destinations) in source_atoms {
+            for sentence in sentences(&source_text) {
+                if !emitted.insert(sentence.clone()) {
+                    continue;
+                }
+                let sentence_confidence = sentence_confidence(&sentence);
+                let confidence = if model_confidence == "low" || is_nonfact_statement(&sentence) {
+                    "low"
+                } else if model_confidence == "high" {
+                    "high"
+                } else {
+                    sentence_confidence
+                };
+                let model_destinations: Vec<&str> =
+                    model_destinations.iter().map(String::as_str).collect();
+                atoms.push(atom_from_observation(
+                    map,
+                    &sentence,
+                    confidence,
+                    Some(&model_destinations),
+                ));
+            }
+        }
+    }
+
+    json!({
+        "classifier_version": candidate.get("classifier_version").cloned().unwrap_or_else(|| json!(CLASSIFIER_VERSION)),
+        "provider": "ollama",
+        "atoms": atoms
+    })
 }
 
 fn post_ollama(request: &Value) -> Result<Vec<u8>, ContractError> {
@@ -371,6 +471,9 @@ fn base_confidence(map: &Map<String, Value>) -> &'static str {
 }
 
 fn sentence_confidence(text: &str) -> &'static str {
+    if is_nonfact_statement(text) {
+        return "low";
+    }
     let lower = text.to_lowercase();
     const HEDGES: [&str; 16] = [
         "maybe",
@@ -399,9 +502,33 @@ fn sentence_confidence(text: &str) -> &'static str {
     }
 }
 
+fn is_nonfact_statement(text: &str) -> bool {
+    let trimmed = text.trim();
+    let lower = trimmed.to_lowercase();
+    trimmed.ends_with('?')
+        || lower.starts_with("what ")
+        || lower.starts_with("why ")
+        || lower.starts_with("how ")
+        || lower.starts_with("should ")
+        || lower.contains("maybe")
+        || lower.contains("perhaps")
+        || lower.contains("possibly")
+        || lower.contains("not sure")
+        || lower.contains("unclear")
+        || lower.contains("uncertain")
+        || lower.contains("i think")
+        || lower.contains("we think")
+        || lower.contains("i suggest")
+        || lower.contains("we should")
+        || lower.contains("temporary")
+        || lower.contains("for now")
+}
+
 fn is_company_statement(lower: &str) -> bool {
     [
-        "architecture",
+        "architecture decision",
+        "architecture direction",
+        "chief architect",
         "company policy",
         "organization",
         "company-wide",
@@ -413,6 +540,8 @@ fn is_company_statement(lower: &str) -> bool {
         "company decision",
         "all teams",
         "every team",
+        "named authority",
+        "steward",
     ]
     .iter()
     .any(|token| lower.contains(token))
@@ -477,7 +606,29 @@ fn push_sentence(output: &mut Vec<String>, sentence: &str) {
     }
 }
 
-fn atom_from_observation(map: &Map<String, Value>, text: &str, confidence: &str) -> Value {
+fn atom_from_observation(
+    map: &Map<String, Value>,
+    text: &str,
+    confidence: &str,
+    model_destinations: Option<&[&str]>,
+) -> Value {
+    let mut atom = atom_from_observation_base(map, text, confidence);
+    if confidence == "low" {
+        atom["proposed_destinations"] = json!(["none"]);
+    } else if let Some(destinations) = model_destinations {
+        let destinations: Vec<String> = destinations
+            .iter()
+            .filter(|destination| ALLOWED_DESTINATIONS.contains(destination))
+            .map(|destination| (*destination).to_owned())
+            .collect();
+        if !destinations.is_empty() {
+            atom["proposed_destinations"] = json!(destinations);
+        }
+    }
+    atom
+}
+
+fn atom_from_observation_base(map: &Map<String, Value>, text: &str, confidence: &str) -> Value {
     let observation_id = map
         .get("observation_id")
         .and_then(Value::as_str)
@@ -517,13 +668,13 @@ fn atom_from_observation(map: &Map<String, Value>, text: &str, confidence: &str)
     // the raw classifier itself emitted the boundary label.
     let mut destinations: Vec<String> = Vec::new();
     let lower = text.to_lowercase();
-    if !hard_block && confidence != "low" {
-        if is_personal_statement(&lower) {
-            destinations = vec!["personal".to_owned()];
-        } else if is_company_statement(&lower) || scope.contains("company") {
-            push_unique(&mut destinations, "company");
+    if !hard_block && confidence != "low" && !is_nonfact_statement(text) {
+        if is_company_statement(&lower) || scope.contains("company") {
+            destinations = vec!["company".to_owned()];
         } else if is_codebase_statement(&lower) || scope.contains("repository") {
-            push_unique(&mut destinations, "codebase");
+            destinations = vec!["codebase".to_owned()];
+        } else if is_personal_statement(&lower) {
+            destinations = vec!["personal".to_owned()];
         }
     }
     if hard_block || confidence == "low" {

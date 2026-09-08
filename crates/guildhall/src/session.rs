@@ -110,15 +110,15 @@ pub fn observe(
 ) -> Result<(), ContractError> {
     ensure_session_record(session)?;
     let bytes = std::fs::read(event).map_err(io_error)?;
-    let records = parse_session_corpus(&bytes)?;
-    if records.len() > SESSION_OBSERVATION_LIMIT {
+    let parsed_records = parse_session_corpus(&bytes)?;
+    if parsed_records.len() > SESSION_OBSERVATION_LIMIT {
         return Err(ContractError::limit(
             format!(
                 "session observation batch exceeds the {}-line bound",
                 SESSION_OBSERVATION_LIMIT
             ),
             json!({
-                "omitted_count": records.len(),
+                "omitted_count": parsed_records.len(),
                 "line_limit": SESSION_OBSERVATION_LIMIT
             }),
         ));
@@ -126,6 +126,19 @@ pub fn observe(
 
     let repo = std::env::current_dir().map_err(io_error)?;
     let repository_id = crate::repository::repository_id(&repo).ok();
+    let proof_clock = now_rfc3339_millis();
+    let mut records = Vec::new();
+    let mut quarantined_observations = Vec::new();
+    for record in records_into_quarantine_or_admitted(parsed_records, &proof_clock)? {
+        match record {
+            QuarantineDecision::Admitted(record) => records.push(record),
+            QuarantineDecision::ClockSkew(record) => {
+                let private = crate::private::PrivateStore::open_core()?;
+                private.quarantine("CLOCK_SKEW", &record)?;
+                quarantined_observations.push(record);
+            }
+        }
+    }
     {
         // Prompt-budget resets are authorized by these host-instance events.
         // `INSERT OR IGNORE` keeps repeated observations idempotent.
@@ -306,12 +319,18 @@ pub fn observe(
         append_personal("candidates.jsonl", candidate)?;
     }
 
+    let quarantine_count = quarantined_observations.len();
     let result = json!({
         "session_id": session,
-        "status": "observed",
+        "status": if quarantine_count == 0 { "observed" } else { "quarantined" },
+        "code": if quarantine_count == 0 { Value::Null } else { Value::String("CLOCK_SKEW".to_owned()) },
+        "disposition": if quarantine_count == 0 { "current" } else { "CLOCK_SKEW" },
+        "state": if quarantine_count == 0 { "observed" } else { "CLOCK_SKEW" },
         "observation_count": observations.len(),
         "atom_count": atom_records.len(),
         "candidate_count": candidate_records.len(),
+        "quarantine_count": quarantine_count,
+        "quarantined_observations": quarantined_observations,
         "classifier": {"fingerprint": classifier_fingerprint(classifier)}
     });
     print_value(&result, json);
@@ -656,6 +675,62 @@ fn classifier_fingerprint(classifier: Option<&crate::config::SharedClassifier>) 
             format!("sha256:{digest}:deterministic")
         }
     }
+}
+
+enum QuarantineDecision {
+    Admitted(Map<String, Value>),
+    ClockSkew(Value),
+}
+
+fn records_into_quarantine_or_admitted(
+    records: Vec<Map<String, Value>>,
+    proof_clock: &str,
+) -> Result<Vec<QuarantineDecision>, ContractError> {
+    let mut output = Vec::new();
+    for record in records {
+        let event_id = record
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let text = record
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let observed_at = record
+            .get("observed_at")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
+        let digest = sha256_bytes(text.as_bytes());
+        if let Some((direction, seconds)) =
+            crate::time::receipt_clock_skew(&observed_at, proof_clock)
+        {
+            output.push(QuarantineDecision::ClockSkew(json!({
+                "observation_id": format!(
+                    "obs_{:x}",
+                    Sha256::digest(format!("session\0{event_id}\0{digest}").as_bytes())
+                ),
+                "source_kind": "codex_jsonl",
+                "source_identity": "host-session",
+                "native_id": event_id,
+                "content_digest": digest,
+                "field": "observed_at",
+                "direction": direction,
+                "skew_seconds": seconds,
+                "proof_clock": proof_clock,
+                "observed_at": observed_at,
+                "code": "CLOCK_SKEW",
+                "disposition": "CLOCK_SKEW",
+                "state": "CLOCK_SKEW",
+                "remediation": "owner must supply corrected receipt evidence"
+            })));
+            continue;
+        }
+        output.push(QuarantineDecision::Admitted(record));
+    }
+    Ok(output)
 }
 
 fn host_error(message: impl Into<String>) -> ContractError {
