@@ -1426,9 +1426,16 @@ fn snapshot(
         .map(|fact| json!({"fact_id": fact.fact_id, "authority_scope": fact.authority_scope, "bytes": fact.statement.len()}))
         .collect();
     let unknowns: Vec<Value> = view.unknowns.iter().map(crate::model::value_of).collect();
+    // The admitted event set behind the view, so a client reducer can reduce
+    // Company and Codebase evidence for one logical key from immutable
+    // signed events (architecture §6: the reducer is a pure function of the
+    // admitted event set). Company remains the authority for its own current
+    // view; the events are the inputs it reduced, not a second opinion.
+    let events = snapshot_events(db, &readable).map_err(|error| refuse(500, error))?;
     let bytes: usize = facts
         .iter()
-        .map(|fact| crate::json::canonical_bytes(fact).len())
+        .chain(events.iter())
+        .map(|item| crate::json::canonical_bytes(item).len())
         .sum();
     charge_read(db, state, auth, facts.len().max(1), bytes)?;
     let snapshot = json!({
@@ -1443,6 +1450,7 @@ fn snapshot(
         "revocation_valid_until": crate::time::plus_seconds(now, state.config.revocation_freshness_seconds).unwrap_or_default(),
         "fact_valid_until": crate::time::plus_seconds(now, state.config.default_fact_freshness_seconds).unwrap_or_default(),
         "facts": facts,
+        "events": events,
         "denied": denied,
         "unknowns": unknowns,
         "registry": trust_state.public_registry(),
@@ -1457,6 +1465,32 @@ fn snapshot(
         .map_err(|error| refuse(500, error))?;
     db.bump("snapshots").map_err(|error| refuse(500, error))?;
     Ok((200, signed))
+}
+
+/// The immutable admitted `fact-event` documents whose authority scope the
+/// token may read, each with the store cursor and the verification recorded
+/// at admission. Unknown events ride along so a client sees the same Unknown
+/// queue Company reduced.
+fn snapshot_events(
+    db: &CompanyDb,
+    readable: &BTreeSet<String>,
+) -> Result<Vec<Value>, ContractError> {
+    let mut events = Vec::new();
+    for kind in ["fact-event", "unknown-event"] {
+        for (cursor, payload, verification) in db.events_of_kind(kind)? {
+            let scope = crate::json::get_str(&payload, "authority_scope").unwrap_or_default();
+            if !readable.contains(scope) {
+                continue;
+            }
+            events.push(json!({
+                "cursor": cursor.to_string(),
+                "kind": kind,
+                "verification": verification,
+                "document": payload
+            }));
+        }
+    }
+    Ok(events)
 }
 
 fn fact_versions_index(

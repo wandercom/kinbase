@@ -29,6 +29,14 @@ pub fn rebuild(
     authority_cursor: Option<u64>,
     json: bool,
 ) -> Result<(), ContractError> {
+    if store == crate::StoreKind::Company {
+        // A Company rebuild reduces the published event set at the current
+        // cursor; refresh the snapshot when Company is reachable and keep the
+        // cached one otherwise.
+        if let Ok(launcher) = crate::launcher::Launcher::load() {
+            let _ = crate::repository::RepoContext::load(launcher, repo, true, Some(&as_of.as_of));
+        }
+    }
     let data = load_store(launcher, repo, store)?;
     let private_observations = launcher.private_store()?.values(
         "SELECT record FROM observations ORDER BY observed_at, observation_id",
@@ -197,6 +205,14 @@ pub fn explain(
                 .or(Some(cached_cursor.as_str())),
             &as_of.as_of,
         )?;
+    // One online read of the published Company state before either store is
+    // reduced: a still-fresh old cache is not an authority boundary, and an
+    // unreachable Company leaves the cached snapshot in place (truth table).
+    let online_context = Repository::discover(repo).ok().and_then(|_| {
+        crate::launcher::Launcher::load().ok().and_then(|launcher| {
+            crate::repository::RepoContext::load(launcher, repo, true, Some(&as_of.as_of)).ok()
+        })
+    });
     let service_cursor = launcher
         .company_cache()?
         .and_then(|(cache, _)| cache.meta("cursor"))
@@ -248,6 +264,10 @@ pub fn explain(
     } else {
         store_name(store).to_owned()
     };
+    // One reduction over the union of Company and Codebase evidence for this
+    // exact key. The trace, the rejected set, the counterfactuals and the
+    // current/conflict/Unknown state all come from this single pure function
+    // of (admitted events, reducer version, as_of, authority cursor).
     let view = reduce(
         data,
         &store_name_value,
@@ -255,81 +275,58 @@ pub fn explain(
         None,
         Some(authority_snapshot_cursor.clone()),
     )?;
+    // The repository's own resolved view contributes only what the unified
+    // reduction cannot know: Company reference resolution (P-8), the cache
+    // truth table applied to referenced Company facts, and the effective
+    // dependence class. It never overrides the unified state.
     let mut references = Vec::new();
     let mut resolved_current: Option<crate::model::CurrentFact> = None;
-    let mut resolved_unknowns: Vec<crate::reducer::DerivedUnknown> = Vec::new();
-    let mut resolved_trace: Option<crate::reducer::KeyTrace> = None;
     if has_codebase {
-        if let Ok(repository) = Repository::discover(repo) {
-            let _ = repository;
-            if let Ok(context) = crate::repository::RepoContext::load(
-                crate::launcher::Launcher::load()?,
-                repo,
-                true,
-                Some(&as_of.as_of),
-            ) {
-                if let Ok((resolved_view, _counts, company_references)) =
-                    context.current_view(&as_of.as_of, Some(authority_snapshot_cursor.as_str()))
-                {
-                    resolved_current = resolved_view
-                        .facts
-                        .iter()
-                        .find(|fact| fact.logical_key == logical_key)
-                        .cloned();
-                    resolved_unknowns = resolved_view
-                        .unknowns
-                        .iter()
-                        .filter(|unknown| unknown.logical_key == logical_key)
-                        .cloned()
-                        .collect();
-                    resolved_trace = resolved_view
-                        .traces
-                        .iter()
-                        .find(|trace| trace.logical_key == logical_key)
-                        .cloned();
-                    references = company_references;
-                }
+        if let Some(context) = online_context.as_ref() {
+            if let Ok((resolved_view, _counts, company_references)) =
+                context.current_view(&as_of.as_of, Some(authority_snapshot_cursor.as_str()))
+            {
+                resolved_current = resolved_view
+                    .facts
+                    .iter()
+                    .find(|fact| fact.logical_key == logical_key)
+                    .cloned();
+                references = company_references;
             }
         }
     }
-    let mixed_conflict = mixed
-        && view
-            .traces
-            .iter()
-            .any(|trace| trace.logical_key == logical_key && trace.state == "conflict");
-    let trace = if mixed_conflict {
-        view.traces
-            .iter()
-            .find(|trace| trace.logical_key == logical_key)
-    } else {
-        resolved_trace.as_ref().or_else(|| {
-            view.traces
-                .iter()
-                .find(|trace| trace.logical_key == logical_key)
-        })
-    };
-    let current = if mixed_conflict {
-        None
-    } else {
-        resolved_current.as_ref().or_else(|| {
-            view.facts
-                .iter()
-                .find(|fact| fact.logical_key == logical_key)
-        })
-    };
+    let trace = view
+        .traces
+        .iter()
+        .find(|trace| trace.logical_key == logical_key);
+    let mut current = view
+        .facts
+        .iter()
+        .find(|fact| fact.logical_key == logical_key)
+        .cloned();
+    if let (Some(current), Some(resolved)) = (current.as_mut(), resolved_current.as_ref()) {
+        if current.event_id == resolved.event_id {
+            current.effective_dependence_class = resolved.effective_dependence_class.clone();
+            if resolved.trust != "trusted" {
+                current.trust = resolved.trust.clone();
+                current.status = resolved.status.clone();
+                current.stale_reasons = resolved.stale_reasons.clone();
+            }
+        }
+    }
+    let current = current.as_ref();
     if let Some(current) = current {
         references.retain(|record| {
             crate::json::get_str(record, "fact_id") == Some(current.fact_id.as_str())
         });
     }
-    let unknown = resolved_unknowns
+    let unknowns: Vec<crate::reducer::DerivedUnknown> = view
+        .unknowns
         .iter()
-        .find(|unknown| unknown.logical_key == logical_key)
-        .or_else(|| {
-            view.unknowns
-                .iter()
-                .find(|unknown| unknown.logical_key == logical_key)
-        });
+        .filter(|unknown| unknown.logical_key == logical_key)
+        .cloned()
+        .collect();
+    let unknown = unknowns.first();
     let trace_state = trace.map(|trace| trace.state.as_str()).unwrap_or("missing");
     let state = if current.is_some_and(|fact| fact.status == "current") && trace_state == "current"
     {
@@ -339,6 +336,9 @@ pub fn explain(
     } else {
         "unknown"
     };
+    let rejected_events: Vec<Value> = trace
+        .map(|trace| trace.rejected.clone())
+        .unwrap_or_default();
     let discriminating = trace
         .map(|trace| {
             if !trace.conflict_event_ids.is_empty() {
@@ -361,17 +361,15 @@ pub fn explain(
             }
         })
         .unwrap_or_else(|| "no admitted evidence for this exact key".to_owned());
-    let operational_statement = key_events
-        .iter()
-        .rev()
-        .find(|event| {
-            event.authority_scope.starts_with("environment:")
+    let operational_statement = current
+        .filter(|fact| {
+            fact.authority_scope.starts_with("environment:")
                 && matches!(
-                    event.atom_kind.as_str(),
+                    fact.atom_kind.as_str(),
                     "observation" | "runtime_trace" | "test_runtime_evidence"
                 )
         })
-        .map(|event| event.statement.clone());
+        .map(|fact| fact.statement.clone());
     let operational_value = operational_statement
         .map(|statement| last_numeric_token(&statement).unwrap_or(statement))
         .or_else(|| current.map(|fact| fact.statement.clone()))
@@ -415,9 +413,7 @@ pub fn explain(
             })]
         })
         .unwrap_or_default();
-    let query_log = launcher.private_store()?.query_log(None)?;
-    let unknown_owner_roles: Vec<Value> = view
-        .unknowns
+    let unknown_owner_roles: Vec<Value> = unknowns
         .iter()
         .map(
             |unknown| json!({"logical_key": unknown.logical_key, "owner_role": unknown.owner_role}),
@@ -446,18 +442,20 @@ pub fn explain(
         "service_cursor": service_cursor,
         "authority_snapshot_source": authority_snapshot_source,
         "store": store_name_value,
-        "reducer_trace": trace,
+        "reducer_trace": trace.map(|trace| trace.steps.clone()).unwrap_or_default(),
         "trace": trace,
         "evidence_that_would_change_the_result": trace.map(|trace| trace.counterfactual.clone()).unwrap_or_default(),
         "counterfactual": trace.map(|trace| trace.counterfactual.clone()).unwrap_or_default(),
         "uncertainty_state": unknown.map(|unknown| unknown.status.clone()).unwrap_or_else(|| "none".to_owned()),
-        "rejected_events": view.rejected,
+        "rejected_events": rejected_events,
         "negative_evidence": trace.map(|trace| trace.negative_evidence_event_ids.clone()).unwrap_or_default(),
+        "expired_events": trace.map(|trace| trace.expired_event_ids.clone()).unwrap_or_default(),
+        "conflict_events": trace.map(|trace| trace.conflict_event_ids.clone()).unwrap_or_default(),
         "notice_admitted": notice_admitted,
         "approver_minted_accepted": approver_minted_accepted,
         "free_form_owner_admitted": free_form_owner_admitted,
         "unknown_owner_roles": unknown_owner_roles,
-        "selection_reason": format!("exact logical-key reduction with authority, supersession, temporal, and conflict rules; discriminating evidence: {discriminating}"),
+        "selection_reason": format!("exact logical-key reduction by authority, scope, lifecycle disposition, declared validity, parent-bound supersession and conflict rules; recency was used only inside an authority-equivalent set; discriminating evidence: {discriminating}"),
         "selected_by": "guildhall-reducer/2",
         "current_statement": current.map(|fact| fact.statement.clone()).unwrap_or_default(),
         "current": current,
@@ -466,20 +464,7 @@ pub fn explain(
         "stale_reasons": current.map(|fact| fact.stale_reasons.clone()).unwrap_or_default(),
         "selection_trace": selection_trace,
         "independent_corroboration_count": current.map(|fact| fact.independent_support_count).unwrap_or(0),
-        "unknowns": view
-            .unknowns
-            .iter()
-            .chain(resolved_unknowns.iter())
-            .filter(|unknown| unknown.logical_key == logical_key)
-            .fold(Vec::new(), |mut unknowns: Vec<crate::reducer::DerivedUnknown>, unknown| {
-                if !unknowns
-                    .iter()
-                    .any(|existing| existing.unknown_id == unknown.unknown_id)
-                {
-                    unknowns.push(unknown.clone());
-                }
-                unknowns
-            }),
+        "unknowns": unknowns,
         "trusted": current.is_some_and(|fact| fact.status == "current" && fact.trust == "trusted") && unknown.is_none(),
         "authority_scope": current.map(|fact| fact.authority_scope.clone()).or_else(|| unknown.map(|unknown| unknown.scope.clone())).unwrap_or_default(),
         "environment_owner": current.filter(|fact| fact.authority_scope.starts_with("environment:")).map(|fact| fact.authority_id.clone()),
@@ -498,8 +483,7 @@ pub fn explain(
             .unwrap_or_default(),
         "company_references": references,
         "max_rule": references.first().and_then(|record| crate::json::get_str(record, "max_rule").map(str::to_owned)),
-        "dominating_input": references.first().and_then(|record| crate::json::get_str(record, "dominating_input").map(str::to_owned)),
-        "query_log": query_log
+        "dominating_input": references.first().and_then(|record| crate::json::get_str(record, "dominating_input").map(str::to_owned))
     });
     crate::output::emit(&result, json);
     Ok(())
@@ -599,19 +583,12 @@ pub(crate) fn load_store(
         }
         crate::StoreKind::Company => {
             let mut events = Vec::new();
+            let mut unknowns = Vec::new();
             if let Ok(Some((cache, _root))) = launcher.company_cache() {
                 if let Ok(Some(snapshot)) = cache.snapshot() {
-                    let facts = snapshot
-                        .get("facts")
-                        .and_then(Value::as_array)
-                        .cloned()
-                        .unwrap_or_default();
-                    events.extend(
-                        facts
-                            .iter()
-                            .filter_map(proxy_event)
-                            .collect::<Result<Vec<_>, ContractError>>()?,
-                    );
+                    let (snapshot_events, snapshot_unknowns) = snapshot_company_events(&snapshot);
+                    events.extend(snapshot_events);
+                    unknowns.extend(snapshot_unknowns);
                 }
             }
             // Local signed Company events include authority answers written by
@@ -634,7 +611,6 @@ pub(crate) fn load_store(
             for admitted in &mut events {
                 admitted.event.store_kind = "company".to_owned();
             }
-            let mut unknowns = Vec::new();
             if let Ok(records) =
                 crate::store::read_records(crate::StoreKind::Company, repo, "unknowns.jsonl")
             {
@@ -731,6 +707,115 @@ pub(crate) fn load_store(
             })
         }
     }
+}
+
+/// Company evidence as the client reducer consumes it.
+///
+/// A snapshot carries the immutable admitted `fact-event`/`unknown-event`
+/// documents under `events` (with Company's store cursor and the verification
+/// it recorded at admission). A snapshot written before that field existed
+/// carries only Company's derived current facts; each of those is then
+/// carried as the one admitted event Company reduced it to, so an older cache
+/// still yields a view rather than a refusal.
+fn snapshot_company_events(
+    snapshot: &Value,
+) -> (Vec<AdmittedEvent>, Vec<crate::model::UnknownEvent>) {
+    let mut events = Vec::new();
+    let mut unknowns = Vec::new();
+    if let Some(records) = snapshot.get("events").and_then(Value::as_array) {
+        for record in records {
+            let Some(document) = record.get("document") else {
+                continue;
+            };
+            let cursor = crate::json::get_str(record, "cursor")
+                .unwrap_or_default()
+                .to_owned();
+            match crate::json::get_str(record, "kind") {
+                Some("unknown-event") => {
+                    if let Ok(unknown) = crate::model::UnknownEvent::from_value(document) {
+                        unknowns.push(unknown);
+                    }
+                }
+                _ => {
+                    let Ok(event) = crate::model::FactEvent::from_value(document) else {
+                        continue;
+                    };
+                    let verification = match crate::json::get_str(record, "verification") {
+                        Some("verified") => crate::reducer::Verification::Verified,
+                        Some("wrong-scope") => crate::reducer::Verification::WrongScope,
+                        Some("revoked") => crate::reducer::Verification::Revoked,
+                        Some("signature-invalid") => crate::reducer::Verification::SignatureInvalid,
+                        _ => crate::reducer::Verification::Unverified,
+                    };
+                    let signer = event.signer.clone();
+                    events.push(AdmittedEvent {
+                        event,
+                        verification,
+                        store_cursor: cursor,
+                        origin_trust: None,
+                        reachable: None,
+                        source_identity: Some(signer),
+                        environment_registered: None,
+                    });
+                }
+            }
+        }
+        return (events, unknowns);
+    }
+    for fact in crate::json::get_array(snapshot, "facts")
+        .into_iter()
+        .flatten()
+    {
+        if let Some(admitted) = derived_fact_as_event(fact) {
+            events.push(admitted);
+        }
+    }
+    (events, unknowns)
+}
+
+/// One of Company's derived current facts, carried as the single admitted
+/// event Company reduced it to (used only for snapshots without `events`).
+fn derived_fact_as_event(fact: &Value) -> Option<AdmittedEvent> {
+    let current: CurrentFact = serde_json::from_value(fact.clone()).ok()?;
+    let event = crate::model::FactEvent {
+        schema: crate::model::EVENT_SCHEMA.to_owned(),
+        event_id: current.event_id.clone(),
+        store_kind: "company".to_owned(),
+        authority_id: current.authority_id.clone(),
+        authority_scope: current.authority_scope.clone(),
+        repository_id: None,
+        fact_id: current.fact_id.clone(),
+        logical_key: current.logical_key.clone(),
+        atom_kind: current.atom_kind.clone(),
+        scope: current.scope.clone(),
+        statement: current.statement.clone(),
+        evidence_refs: current.evidence_refs.clone(),
+        asserted_at: current.effective_from.clone(),
+        effective_from: current.effective_from.clone(),
+        effective_until: current.effective_until.clone(),
+        disposition: current.disposition.clone(),
+        distortion: current.distortion.clone(),
+        parents: Vec::new(),
+        supersedes: Vec::new(),
+        redundancy_with: current.redundancy_with.clone(),
+        complements: current.complements.clone(),
+        company_refs: current.company_refs.clone(),
+        authority_snapshot_cursor: current.authority_snapshot_cursor.clone(),
+        confidence: crate::model::Bp(current.confidence),
+        unresolved_uncertainty: None,
+        signer: String::new(),
+        signature: String::new(),
+        raw: None,
+    };
+    Some(AdmittedEvent {
+        event,
+        verification: crate::reducer::Verification::Verified,
+        store_cursor: crate::hash::sha256_bytes(crate::json::canonical_bytes(fact).as_slice()),
+        origin_trust: None,
+        reachable: None,
+        source_identity: Some(current.authority_id),
+        environment_registered: None,
+    })
 }
 
 fn proxy_event(record: &Value) -> Option<Result<AdmittedEvent, ContractError>> {
