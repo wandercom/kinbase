@@ -808,8 +808,8 @@ impl CompanyDb {
             .map_err(sqlite_error("version"))?;
         self.connection
             .execute(
-                "INSERT INTO fact_versions(fact_id, version, semantic_digest, digest_alg_version, event_id, cursor) VALUES (?1, ?2, ?3, 'sha256-jcs/1', ?4, ?5)",
-                params![fact_id, next, semantic_digest, event_id, cursor],
+                "INSERT INTO fact_versions(fact_id, version, semantic_digest, digest_alg_version, event_id, cursor) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![fact_id, next, semantic_digest, crate::model::DIGEST_ALG_VERSION, event_id, cursor],
             )
             .map_err(sqlite_error("fact version"))?;
         Ok(next)

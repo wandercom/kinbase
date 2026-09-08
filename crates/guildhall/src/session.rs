@@ -158,7 +158,7 @@ pub fn observe(session: &str, event: &Path, json: bool) -> Result<(), ContractEr
         if suppressed {
             candidate_id = Value::String(String::new());
         } else {
-            candidate_id = Value::String(create_candidate(session, destination, &atom)?);
+            candidate_id = Value::String(create_candidate(session, destination, &atom, &event_id)?);
         }
     }
     let result = json!({
@@ -178,6 +178,7 @@ fn create_candidate(
     session: &str,
     destination: &str,
     atom: &crate::model::Atom,
+    message_id: &str,
 ) -> Result<String, ContractError> {
     crate::proposals::destination_store(destination)?;
     let payload = json!({
@@ -192,6 +193,7 @@ fn create_candidate(
     let mut record = json!({
         "candidate_id": candidate_id,
         "session_id": session,
+        "message_id": message_id,
         "destination": destination,
         "canonical": canonical,
         "payload_digest": payload_digest,

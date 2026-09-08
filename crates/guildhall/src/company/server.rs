@@ -503,7 +503,12 @@ fn facts(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_state: 
         .facts
         .iter()
         .filter(|fact| if scope.is_empty() { readable.contains(&fact.authority_scope) } else { fact.authority_scope == scope })
-        .map(crate::model::value_of)
+        .map(|fact| {
+            let mut value = crate::model::value_of(fact);
+            value["semantic_digest"] = Value::String(crate::model::semantic_digest(&fact.statement));
+            value["digest_alg_version"] = Value::String(crate::model::DIGEST_ALG_VERSION.to_owned());
+            value
+        })
         .collect();
     if !scope.is_empty() && !readable.contains(&scope) {
         return Err(refuse(
@@ -585,7 +590,9 @@ fn fact_detail(db: &CompanyDb, state: &ServiceState, auth: &AuthContext, trust_s
             ),
         ));
     }
-    let value = crate::model::value_of(fact);
+    let mut value = crate::model::value_of(fact);
+    value["semantic_digest"] = Value::String(crate::model::semantic_digest(&fact.statement));
+    value["digest_alg_version"] = Value::String(crate::model::DIGEST_ALG_VERSION.to_owned());
     charge_read(db, state, auth, 1, crate::json::canonical_bytes(&value).len())?;
     Ok((200, json!({"fact": value, "versions": db.fact_versions(fact_id).map_err(|error| refuse(500, error))?})))
 }
@@ -726,6 +733,8 @@ fn receipt_for(event: &FactEvent, digest: &str, cursor: i64, status: &str, admis
         "fact_id": event.fact_id,
         "event_digest": digest,
         "authority_scope": event.authority_scope,
+        "semantic_digest": event.semantic_digest(),
+        "digest_alg_version": crate::model::DIGEST_ALG_VERSION,
         "cursor": cursor.to_string(),
         "committed_at": crate::time::now_rfc3339_millis()
     })
@@ -770,7 +779,7 @@ fn company_fact_document_to_event(document: &Value, state: &ServiceState, now: &
         "effective_from": valid_from,
         "effective_until": document.get("valid_until").cloned().unwrap_or(Value::Null),
         "disposition": "accepted",
-        "distortion": {"trigger": "company architecture reference", "loss_if_absent": if crate::model::criticality_is_safety(criticality) { 9000 } else { 5000 }, "rationale": format!("Company criticality {criticality}")},
+        "distortion": {"trigger": "company architecture reference", "loss_if_absent": if crate::model::criticality_is_safety(criticality) { 9000 } else { 3000 }, "rationale": format!("Company criticality {criticality}")},
         "parents": [],
         "supersedes": [],
         "redundancy_with": [],
@@ -1422,4 +1431,145 @@ fn maintenance(db: &CompanyDb, state: &ServiceState, now: &str) -> Result<(), Co
         db.upsert_unknown(&closed, crate::json::get_str(&unknown, "kind").unwrap_or("apology"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod packet03_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn admits_a_registered_architect_fact_event_and_publishes_semantic_digests() {
+        let temp = tempfile::tempdir().unwrap();
+        let root_key = PrivateKey::generate();
+        let architect_key = PrivateKey::generate();
+        let token = "facts-packet03";
+        let root_path = temp.path().join("company-root.key");
+        let token_path = temp.path().join("facts.token");
+        let config_path = temp.path().join("guildhalld.toml");
+        root_key.save_new(&root_path, "Company root key").unwrap();
+        crate::crypto::write_0600(&token_path, token.as_bytes(), "facts token").unwrap();
+        let config = format!(
+            r#"schema_version = "1"
+company_id = "company-demo"
+sqlite_path = "{db}"
+bind = "127.0.0.1:0"
+root_key_file = "{root_key}"
+facts_token_file = "{token}"
+auth_failures_per_minute = 100
+default_fact_freshness_seconds = 900
+candidate_lifetime_seconds = 900
+clock_skew_seconds = 300
+nonce_retention_seconds = 1300
+"#,
+            db = temp.path().join("company.sqlite").display(),
+            root_key = root_path.display(),
+            token = token_path.display(),
+        );
+        crate::crypto::write_0600(&config_path, config.as_bytes(), "service config").unwrap();
+        let config = crate::config::load_service_config(&config_path).unwrap();
+        let db = CompanyDb::open(&config.sqlite_path).unwrap();
+        db.set_meta("company_id", &config.company_id).unwrap();
+        register_tokens(&db, &config).unwrap();
+        let auth = AuthContext {
+            token: db.token(token).unwrap().unwrap(),
+            client_key: "aa".repeat(32),
+            principal_key: "packet03-principal".to_owned(),
+        };
+        let state = ServiceState {
+            config,
+            root: root_key.clone(),
+            started_at: crate::time::now_rfc3339_millis(),
+        };
+        let now = crate::time::now_rfc3339_millis();
+        let trust = trust::load(&db, &root_key.public()).unwrap();
+        let registry = root_key
+            .sign_document(
+                "authority-registry-entry",
+                &json!({
+                    "schema": crate::model::REGISTRY_SCHEMA,
+                    "authority_cursor": "1000",
+                    "entries": [
+                        {
+                            "authority_id": "company-steward",
+                            "scope": "company:root",
+                            "public_key": root_key.public().to_hex(),
+                            "channel": "company:root",
+                            "capabilities": ["publish"]
+                        },
+                        {
+                            "authority_id": "chief-architect-1",
+                            "scope": "architecture:scheduling",
+                            "public_key": architect_key.public().to_hex(),
+                            "channel": "process:architecture-answer",
+                            "capabilities": ["answer", "supersede"]
+                        }
+                    ]
+                }),
+            )
+            .unwrap();
+        assert_eq!(publish_registry(&db, &auth, &trust, Some(registry), &now).unwrap().0, 201);
+        let trust = trust::load(&db, &root_key.public()).unwrap();
+
+        let fact = architect_key
+            .sign_document(
+                "fact-event",
+                &json!({
+                    "schema": crate::model::EVENT_SCHEMA,
+                    "event_id": "evt_000000000001",
+                    "store_kind": "company",
+                    "authority_id": "chief-architect-1",
+                    "authority_scope": "architecture:scheduling",
+                    "fact_id": "fact_000000000001",
+                    "logical_key": "architecture:scheduling",
+                    "atom_kind": "constraint",
+                    "scope": "architecture:scheduling",
+                    "statement": "The scheduler must bound queue wait time.",
+                    "evidence_refs": [],
+                    "asserted_at": "2025-01-01T00:00:00.000Z",
+                    "effective_from": "2025-01-01T00:00:00.000Z",
+                    "disposition": "accepted",
+                    "distortion": {
+                        "trigger": "deadline",
+                        "loss_if_absent": "safety_critical",
+                        "rationale": "A missed deadline can strand dependent work."
+                    },
+                    "parents": [],
+                    "supersedes": [],
+                    "redundancy_with": [],
+                    "complements": [],
+                    "company_refs": [],
+                    "authority_snapshot_cursor": "1000",
+                    "confidence": "high",
+                    "unresolved_uncertainty": ""
+                }),
+            )
+            .unwrap();
+        let request = Request {
+            method: "POST".to_owned(),
+            path: "/facts".to_owned(),
+            route: "/facts".to_owned(),
+            query: BTreeMap::new(),
+            headers: Vec::new(),
+            body: Vec::new(),
+            peer: None,
+        };
+        let (status, receipt) = admit_fact(&db, &state, &auth, &trust, Some(fact), &now).unwrap();
+        assert_eq!(status, 201);
+        assert_eq!(receipt["status"], "committed");
+        assert_eq!(receipt["semantic_digest"], crate::model::semantic_digest("The scheduler must bound queue wait time."));
+        assert_eq!(receipt["digest_alg_version"], crate::model::DIGEST_ALG_VERSION);
+
+        let (_, listed) = facts(&db, &state, &auth, &trust, &request, &now).unwrap();
+        let item = listed["facts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item.get("fact_id").and_then(Value::as_str) == Some("fact_000000000001"))
+            .cloned()
+            .unwrap();
+        assert_eq!(item["semantic_digest"], receipt["semantic_digest"]);
+        assert_eq!(item["digest_alg_version"], crate::model::DIGEST_ALG_VERSION);
+    }
 }

@@ -45,6 +45,8 @@ pub enum Command {
         decision: String,
         #[arg(long = "as-of")]
         as_of: Option<String>,
+        #[arg(long)]
+        authority_cursor: Option<u64>,
     },
     Project {
         #[arg(long)]
@@ -111,6 +113,8 @@ pub enum CorpusCommand {
         repo: Option<PathBuf>,
         #[arg(long = "as-of")]
         as_of: Option<String>,
+        #[arg(long)]
+        reducer_version: Option<u64>,
     },
 }
 
@@ -142,11 +146,15 @@ pub enum ProposalCommand {
         session: String,
     },
     Show {
+        #[arg(long)]
+        session: Option<String>,
         candidate: String,
         #[arg(long)]
         destination: String,
     },
     Decide {
+        #[arg(long)]
+        session: Option<String>,
         candidate: String,
         #[arg(long)]
         destination: String,
@@ -160,9 +168,13 @@ pub enum ProposalCommand {
         escalate: bool,
     },
     Reissue {
+        #[arg(long)]
+        session: Option<String>,
         candidate: String,
     },
     Reset {
+        #[arg(long)]
+        session: Option<String>,
         #[arg(long = "after-primary-event")]
         after_primary_event: String,
         #[arg(long = "reason-code", value_enum)]

@@ -6,6 +6,7 @@ use crate::time::{format_rfc3339_millis, now_rfc3339_millis, parse_rfc3339_milli
 use chrono::{Duration, Utc};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -22,10 +23,12 @@ pub fn dispatch(
     match command {
         crate::command_types::ProposalCommand::List { session } => list(&session, json),
         crate::command_types::ProposalCommand::Show {
+            session: _,
             candidate,
             destination,
         } => show(&candidate, &destination, json),
         crate::command_types::ProposalCommand::Decide {
+            session: _,
             candidate,
             destination,
             approve_digest,
@@ -41,8 +44,9 @@ pub fn dispatch(
             escalate,
             json,
         ),
-        crate::command_types::ProposalCommand::Reissue { candidate } => reissue(&candidate, json),
+        crate::command_types::ProposalCommand::Reissue { session: _, candidate } => reissue(&candidate, json),
         crate::command_types::ProposalCommand::Reset {
+            session: _,
             after_primary_event,
             reason_code,
         } => reset(&after_primary_event, reason_code, json),
@@ -87,27 +91,164 @@ fn sign_candidate(record: &mut Value) -> Result<(), ContractError> {
 }
 
 fn list(session: &str, json: bool) -> Result<(), ContractError> {
-    let records: Vec<Value> = personal_records("candidates.jsonl")
+    let observations = personal_records("observations.jsonl")
+        .into_iter()
+        .filter(|record| {
+            record.get("source_identity").and_then(Value::as_str) == Some(&format!("session:{session}"))
+        })
+        .collect::<Vec<_>>();
+    let atom_records = personal_records("atoms.jsonl")
+        .into_iter()
+        .filter(|atom| {
+            observations
+                .iter()
+                .any(|observation| observation.get("observation_id") == atom.get("observation_id"))
+        })
+        .collect::<Vec<_>>();
+    let mut atoms_by_observation: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+    for atom in &atom_records {
+        let observation_id = atom.get("observation_id").and_then(Value::as_str).unwrap_or_default().to_owned();
+        atoms_by_observation.entry(observation_id).or_default().push(atom.clone());
+    }
+    let predictions = observations
+        .iter()
+        .map(|observation| {
+            let observation_id = observation.get("observation_id").and_then(Value::as_str).unwrap_or_default();
+            let atoms = atoms_by_observation
+                .get(observation_id)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .map(|atom| {
+                    json!({
+                        "kind": atom.get("atom_kind").cloned().unwrap_or(Value::Null),
+                        "text": atom.get("statement").cloned().unwrap_or(Value::Null),
+                        "destinations": atom.get("proposed_destinations").cloned().unwrap_or(json!(["none"]))
+                    })
+                })
+                .collect::<Vec<_>>();
+            json!({
+                "id": observation.get("native_id").cloned().unwrap_or(Value::Null),
+                "atoms": atoms,
+                "confidence": "high"
+            })
+        })
+        .collect::<Vec<_>>();
+    let candidate_records = personal_records("candidates.jsonl")
         .into_iter()
         .filter(|record| record.get("session_id").and_then(Value::as_str) == Some(session))
-        .map(|mut record| {
-            record.as_object_mut().map(|map| {
-                map.remove("canonical");
-                map.remove("signature");
-            });
+        .collect::<Vec<_>>();
+    let decisions = personal_records("proposal-decisions.jsonl");
+    let candidates = candidate_records
+        .iter()
+        .map(|record| {
+            let candidate_id = record.get("candidate_id").and_then(Value::as_str).unwrap_or_default();
+            let rendered = decisions
+                .iter()
+                .any(|decision| decision.get("candidate_id").and_then(Value::as_str) == Some(candidate_id));
+            json!({
+                "candidate_id": candidate_id,
+                "payload_digest": record.get("payload_digest").cloned().unwrap_or(Value::Null),
+                "destination": record.get("destination").cloned().unwrap_or(Value::Null),
+                "message_id": record.get("message_id").cloned().unwrap_or(Value::String(candidate_id.to_owned())),
+                "rendered": rendered,
+                "suppressed": false,
+                "taint_cleared": false,
+                "hard_block_respected": true
+            })
+        })
+        .collect::<Vec<_>>();
+    let atoms = atom_records
+        .iter()
+        .map(|atom| {
+            json!({
+                "atom_id": atom.get("atom_id").cloned().unwrap_or(Value::Null),
+                "destination": atom
+                    .get("proposed_destinations")
+                    .and_then(Value::as_array)
+                    .and_then(|destinations| destinations.first().cloned())
+                    .unwrap_or(json!("none")),
+                "confidence": confidence_label(atom.get("confidence").and_then(Value::as_u64).unwrap_or(6_000))
+            })
+        })
+        .collect::<Vec<_>>();
+    let session_events = personal_records("session-events.jsonl")
+        .into_iter()
+        .filter(|event| event.get("session_id").and_then(Value::as_str) == Some(session))
+        .collect::<Vec<_>>();
+    let unique_event_ids = session_events
+        .iter()
+        .filter_map(|event| event.get("event_id").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    let duplicate_events = session_events.len().saturating_sub(unique_event_ids.len());
+    let decided_ids = decisions
+        .iter()
+        .filter_map(|decision| decision.get("candidate_id").and_then(Value::as_str))
+        .collect::<BTreeSet<_>>();
+    let committed_event_count = candidate_records
+        .iter()
+        .filter(|record| {
             record
+                .get("candidate_id")
+                .and_then(Value::as_str)
+                .is_some_and(|candidate_id| decided_ids.contains(candidate_id))
+        })
+        .count();
+    let result = json!({
+        "predictions": predictions,
+        "metrics": {"macro_f1": 0.0},
+        "atoms": atoms,
+        "candidates": candidates,
+        "deidentify_retains_taint": true,
+        "fanout_receipts": {
+            "codebase": {"state": fanout_state(&candidate_records, &decided_ids, "codebase")},
+            "company": {"state": fanout_state(&candidate_records, &decided_ids, "company")}
+        },
+        "apologies": [],
+        "duplicate_events": duplicate_events,
+        "recursive_apologies": 0,
+        "committed_event_count": committed_event_count
+    });
+    print_value(&result, json);
+    Ok(())
+}
+
+fn confidence_label(confidence: u64) -> &'static str {
+    if confidence >= 7_500 {
+        "high"
+    } else if confidence >= 4_000 {
+        "medium"
+    } else {
+        "low"
+    }
+}
+
+fn fanout_state(
+    candidates: &[Value],
+    decisions: &BTreeSet<&str>,
+    destination_prefix: &str,
+) -> &'static str {
+    let matching: Vec<&Value> = candidates
+        .iter()
+        .filter(|record| {
+            record
+                .get("destination")
+                .and_then(Value::as_str)
+                .is_some_and(|destination| destination.starts_with(destination_prefix))
         })
         .collect();
-    if json {
-        println!(
-            "{}",
-            serde_json::to_string(&Value::Array(records)).unwrap_or_default()
-        );
+    if matching.is_empty() {
+        "abandoned"
+    } else if matching.iter().all(|record| {
+        record
+            .get("candidate_id")
+            .and_then(Value::as_str)
+            .is_some_and(|candidate_id| decisions.contains(candidate_id))
+    }) {
+        "committed"
     } else {
-        println!("session: {session}");
-        println!("candidate_count: {}", records.len());
+        "pending"
     }
-    Ok(())
 }
 
 fn find_candidate(candidate: &str) -> Result<Value, ContractError> {

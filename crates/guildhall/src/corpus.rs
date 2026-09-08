@@ -14,10 +14,11 @@ pub fn rebuild(
     repo: &Path,
     store: crate::StoreKind,
     as_of: &crate::time::AsOf,
+    reducer_version: Option<u64>,
     json: bool,
 ) -> Result<(), ContractError> {
     let (events, unknowns) = load_store(launcher, repo, store)?;
-    let view = reduce(events, unknowns, store, as_of)?;
+    let view = reduce(events, unknowns, store, as_of, reducer_version, None)?;
     let observation_ids: Vec<_> = view
         .facts
         .iter()
@@ -45,6 +46,9 @@ pub fn rebuild(
     })).as_slice());
     let result = json!({
         "status": "rebuilt",
+        "as_of": view.as_of,
+        "reducer_version": view.reducer_version,
+        "authority_cursor": view.authority_cursor,
         "store": store_name(store),
         "build_manifest": {
             "observation_ids": observation_ids,
@@ -79,6 +83,7 @@ pub fn explain(
     logical_key: &str,
     decision: &str,
     as_of: &crate::time::AsOf,
+    authority_cursor: Option<u64>,
     json: bool,
 ) -> Result<(), ContractError> {
     let mut all_events = Vec::new();
@@ -97,7 +102,7 @@ pub fn explain(
         .filter(|unknown| unknown.logical_key == logical_key)
         .collect();
     let store = matching_events.first().map(|event| event.event.store_kind.clone()).unwrap_or_else(|| "codebase".to_owned());
-    let view = reduce(matching_events, matching_unknowns, store_kind(&store), as_of)?;
+    let view = reduce(matching_events, matching_unknowns, store_kind(&store), as_of, None, authority_cursor)?;
     let trace = view.traces.iter().find(|trace| trace.logical_key == logical_key);
     let current = view.facts.first();
     let unknown = view.unknowns.iter().find(|unknown| unknown.logical_key == logical_key);
@@ -132,7 +137,15 @@ fn reduce(
     unknowns: Vec<crate::model::UnknownEvent>,
     store: crate::StoreKind,
     as_of: &crate::time::AsOf,
+    reducer_version: Option<u64>,
+    authority_cursor: Option<u64>,
 ) -> Result<crate::reducer::CurrentView, ContractError> {
+    let authority_cursor = authority_cursor
+        .map(|cursor| cursor.to_string())
+        .unwrap_or_else(current_authority_cursor);
+    let reducer_version = reducer_version
+        .map(|version| version.to_string())
+        .unwrap_or_else(|| crate::reducer::REDUCER_VERSION.to_owned());
     let input = ReducerInput {
         store_kind: store_name(store).to_owned(),
         events,
@@ -140,12 +153,14 @@ fn reduce(
         tombstones: Vec::new(),
         revocations: Vec::new(),
         as_of: as_of.as_of.clone(),
-        authority_cursor: current_authority_cursor(),
+        authority_cursor,
         revocation_fresh: true,
         fact_valid_until: None,
         certificate_valid: true,
     };
-    Ok(crate::reducer::reduce(&input))
+    let mut view = crate::reducer::reduce(&input);
+    view.reducer_version = reducer_version;
+    Ok(view)
 }
 
 fn load_store(

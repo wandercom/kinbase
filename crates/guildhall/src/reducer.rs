@@ -600,12 +600,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             let event = &head.representative.event;
             let mut stale_reasons = Vec::new();
             let mut trust = "trusted".to_owned();
-            let criticality = if event
-                .company_refs
-                .iter()
-                .any(|r| crate::model::criticality_is_safety(&r.company_criticality))
-                || (event.atom_kind == "constraint" && event.authority_scope.starts_with("architecture:"))
-            {
+            let criticality = if event.distortion.loss_if_absent >= 7_500 {
                 "safety_critical".to_owned()
             } else {
                 "advisory".to_owned()
@@ -616,11 +611,11 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             }
             if input.store_kind == "company" && !input.revocation_fresh {
                 stale_reasons.push("REVOCATION_STALE".to_owned());
-                trust = if criticality == "safety" { "withheld".to_owned() } else { "excluded".to_owned() };
+                trust = if crate::model::criticality_is_safety(&criticality) { "withheld".to_owned() } else { "excluded".to_owned() };
             }
             if input.store_kind == "company" && fact_expired {
                 stale_reasons.push("CACHE_EXPIRED".to_owned());
-                if criticality == "safety" {
+                if crate::model::criticality_is_safety(&criticality) {
                     trust = "withheld".to_owned();
                 } else if trust == "trusted" {
                     trust = "excluded".to_owned();
