@@ -2369,6 +2369,28 @@ pub fn status(
         manifest_expired_publication,
         manifest_comparisons,
     ) = manifest_observation_report(&context.repo, &local_digests, &as_of.as_of)?;
+    // A lapsed publication is Company's own event (architecture §6, Codebase):
+    // the retired observation opens a Company-steward publication Unknown that
+    // does not wait for a maintainer or clone to notice.
+    let uuid = context.trust.repository_uuid.clone().unwrap_or_default();
+    let company_expired = context.trust.company_facts.iter().any(|fact| {
+        crate::json::get_str(fact, "disposition") == Some("manifest_observation_expired")
+            && crate::json::get_str(fact, "logical_key")
+                .is_some_and(|key| key.ends_with(uuid.as_str()))
+    });
+    if manifest_expired_publication || company_expired {
+        unknowns.push(json!({
+            "kind": "publication",
+            "unknown_id": format!("unknown_publication_{}", &crate::hash::sha256_text(&uuid)[..24]),
+            "logical_key": format!("manifest-observation:{uuid}"),
+            "owner_role": "company-steward",
+            "owner_identity": context.trust.steward_authority_id().unwrap_or_else(|| "company-steward".to_owned()),
+            "response_due_at": crate::time::plus_seconds(&as_of.as_of, 24 * 3600).unwrap_or_default(),
+            "question": format!("The maintainer-published manifest observation for repository {uuid} lapsed without replacement and is historical-only; republish or retire the repository."),
+            "status": "open",
+            "unknown_state": "open"
+        }));
+    }
     let mut fact_by_event_id: BTreeMap<&str, &crate::model::FactEvent> = BTreeMap::new();
     let mut fact_by_fact_id: BTreeMap<&str, &crate::model::FactEvent> = BTreeMap::new();
     for item in &events {
@@ -2534,8 +2556,14 @@ pub fn status(
             || crate::json::get_str(fact, "disposition")
                 .is_some_and(|d| d == "orphan_abandoned" || d == "manifest_observation_expired")
         {
+            let disposition = crate::json::get_str(fact, "disposition").unwrap_or_default();
+            let orphan = kind == "orphan_abandoned" || disposition == "orphan_abandoned";
             event_records.push(json!({
-                "atom_kind": if kind == "orphan_abandoned" || crate::json::get_str(fact, "disposition") == Some("orphan_abandoned") { "orphan_abandoned" } else { "observation_expired" },
+                "event_id": fact.get("event_id").cloned().unwrap_or(Value::Null),
+                "logical_key": fact.get("logical_key").cloned().unwrap_or(Value::Null),
+                "atom_kind": if orphan { "orphan_abandoned" } else { "observation_expired" },
+                "disposition": if orphan { "orphan_abandoned" } else { "manifest_observation_expired" },
+                "store_kind": "company",
                 "statement": fact.get("statement").cloned().unwrap_or(Value::Null),
                 "fact_state": fact.get("status").cloned().unwrap_or(Value::Null),
                 "unresponsive_closing_authority": fact.get("unresponsive_closing_authority").cloned().unwrap_or(Value::Null),
