@@ -27,6 +27,7 @@ pub enum Command {
         #[arg(long)]
         checkpoint: Option<String>,
     },
+    Classifier {},
     #[command(subcommand)]
     Corpus(CorpusCommand),
     Fsck {

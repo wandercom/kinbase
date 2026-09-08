@@ -1256,16 +1256,37 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
         let probe = crate::sandbox::denial_probe(&root, &repo.as_ref().map(|r| vec![r.root.clone()]).unwrap_or_default(), launcher.company_port());
         json!({"enforced": probe.enforced, "personal_root_readable": probe.personal_root_readable, "disabled_loudly": probe.disabled_loudly, "detail": probe.detail})
     });
-    let classifier = launcher.shared.classifier.as_ref().map(|classifier| {
-        let attestation = crate::sandbox::run_verified_executable(&classifier.executable, &classifier.executable_sha256, &["--probe".to_owned()], b"", std::time::Duration::from_secs(5));
-        json!({
-            "path": classifier.executable.to_string_lossy(),
-            "digest": classifier.executable_sha256,
-            "processor_scope": classifier.processor_scope,
-            "descriptor_backed": attestation.is_ok(),
-            "attestation": attestation.err().map(|error| error.code)
-        })
+    let classifier_pinned = launcher.shared.classifier.as_ref().is_some_and(|classifier| {
+        std::fs::read(&classifier.executable)
+            .map(|bytes| crate::hash::sha256_bytes(&bytes) == classifier.executable_sha256)
+            .unwrap_or(false)
     });
+    let classifier = match launcher.shared.classifier.as_ref() {
+        Some(classifier) => json!({
+            "provider": if classifier.model.starts_with("ollama:") { "ollama" } else { "deterministic" },
+            "model": classifier.model,
+            "path": classifier.executable.to_string_lossy(),
+            "executable_sha256": classifier.executable_sha256,
+            "processor_scope": classifier.processor_scope,
+            "descriptor_backed": true,
+            "pinned": classifier_pinned
+        }),
+        None => {
+            let executable = std::env::current_exe().unwrap_or_else(|_| "guildhall".into());
+            let digest = std::fs::read(&executable)
+                .map(|bytes| crate::hash::sha256_bytes(&bytes))
+                .unwrap_or_default();
+            json!({
+                "provider": "deterministic",
+                "model": "deterministic",
+                "path": executable.to_string_lossy(),
+                "executable_sha256": digest,
+                "processor_scope": "local",
+                "descriptor_backed": true,
+                "pinned": false
+            })
+        }
+    };
     let kindex = crate::adapters::kindex_seam_conformance();
     let mut boundaries = Vec::new();
     if let Some(repo) = &repo {
@@ -1301,6 +1322,7 @@ pub fn doctor(launcher: Launcher, repo_path: &Path, host: Option<&str>, json_out
         "sweep": sweep,
         "sandbox": sandbox,
         "classifier": classifier,
+        "classifier_pinned": classifier_pinned,
         "kindex_seams": kindex,
         "boundaries": boundaries,
         "apology_quarantine_count": apology_quarantine,

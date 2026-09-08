@@ -11,6 +11,7 @@
 //! surface is not yet wired to this foundation (see the Coder report).
 pub mod adapters;
 pub mod classify;
+pub mod classifier;
 pub mod cli;
 pub mod codebase;
 pub mod command_types;

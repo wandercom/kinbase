@@ -152,8 +152,24 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-            crate::ingest::ingest(&repo, &source_kind, &source, checkpoint.as_deref(), json)
-                .map_err(internal)?;
+            crate::ingest::ingest(
+                &repo,
+                &source_kind,
+                &source,
+                checkpoint.as_deref(),
+                launcher.shared.classifier.as_ref(),
+                json,
+            )
+            .map_err(internal)?;
+        }
+        Command::Classifier {} => {
+            let model = launcher
+                .shared
+                .classifier
+                .as_ref()
+                .map(|classifier| classifier.model.clone())
+                .unwrap_or_else(|| "deterministic".to_owned());
+            crate::classifier::run(&model, json)?;
         }
         Command::Corpus(CorpusCommand::Rebuild { store, repo, as_of, reducer_version }) => {
             let repo = repo

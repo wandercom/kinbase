@@ -6,9 +6,11 @@ use crate::scanner::hard_blocked;
 use crate::time::{now_rfc3339_millis, parse_rfc3339_millis};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::path::Path;
 
-const MAX_SOURCE_BYTES: usize = 1024 * 1024;
+const MAX_FILE_BYTES: usize = 1024 * 1024;
+const MAX_DIRECTORY_BYTES: usize = 128 * 1024 * 1024;
 const MAX_ITEMS: usize = 10_000;
 
 #[derive(Debug)]
@@ -28,6 +30,7 @@ pub fn ingest(
     source_kind: &str,
     source: &Path,
     checkpoint: Option<&str>,
+    classifier: Option<&crate::config::SharedClassifier>,
     json: bool,
 ) -> Result<(), ContractError> {
     if !source_kind_is_supported(source_kind) {
@@ -39,16 +42,20 @@ pub fn ingest(
             ExitCode::Refused,
         ));
     }
-    let bytes = std::fs::read(source).map_err(io_error)?;
-    if bytes.len() > MAX_SOURCE_BYTES {
-        return Err(ContractError::new(
-            "LIMIT_EXCEEDED",
-            "source body exceeds 1 MiB",
-            "Split the source into bounded adapter batches.",
-            false,
-            ExitCode::Refused,
+    let repo_canonical = repo.canonicalize().map_err(io_error)?;
+    let source_canonical = source.canonicalize().map_err(|error| ContractError::refused(
+        "CONFIG_INVARIANT",
+        format!("source is unavailable or escapes the repository ({})", error.kind()),
+        "Pass a source contained by the repository.",
+    ))?;
+    if !source_canonical.starts_with(&repo_canonical) {
+        return Err(ContractError::refused(
+            "CONFIG_INVARIANT",
+            "source escapes the repository root",
+            "Pass a source contained by the repository.",
         ));
     }
+    let bytes = read_source(source_kind, source)?;
     let records = parse_native(source_kind, &bytes).map_err(|message| {
         ContractError::new(
             "CONFIG_INVARIANT",
@@ -86,17 +93,33 @@ pub fn ingest(
     let trust_class = (store == crate::StoreKind::Codebase)
         .then(|| repository_trust_class(repo, source))
         .unwrap_or("approved-source");
+    let prepared = records
+        .into_iter()
+        .map(|record| {
+            let digest = sha256_bytes(record.statement.as_bytes());
+            let observation_id = format!(
+                "obs_{:x}",
+                Sha256::digest(
+                    format!("{source_identity}\0{}\0{digest}", record.native_id).as_bytes()
+                )
+            );
+            (record, observation_id, digest)
+        })
+        .collect::<Vec<_>>();
+    let mut classified_atoms = external_classifier_atoms(
+        classifier,
+        source_kind,
+        &source_identity,
+        &now,
+        &prepared,
+    )?;
     let mut observation_count = 0;
+    let mut reported_observations = Vec::new();
+    let mut derived_facts = Vec::new();
     let mut atom_count = 0;
     let mut fact_count = 0;
     let mut skipped = 0;
-    for record in records {
-        let record_bytes = record.statement.as_bytes();
-        let digest = sha256_bytes(record_bytes);
-        let observation_id = format!(
-            "obs_{:x}",
-            Sha256::digest(format!("{source_identity}\0{}\0{digest}", record.native_id).as_bytes())
-        );
+    for (record, observation_id, digest) in prepared {
         let observation = Observation {
             observation_id: observation_id.clone(),
             source_kind: source_kind.to_owned(),
@@ -140,42 +163,95 @@ pub fn ingest(
         )?;
         crate::store::append_record(store, repo, "observations.jsonl", &observation_value)?;
         observation_count += 1;
-        if hard_blocked(&record.statement) && store != crate::StoreKind::Personal {
-            skipped += 1;
-            continue;
-        }
-        let atom = atomize(
-            source_kind,
-            &record.native_id,
-            &record.statement,
-            &record.scope,
-            record.confidence,
-            &observation_id,
-            &digest,
-            repository_id.as_deref(),
-        );
-        let atom_value = serde_json::to_value(&atom)
-            .map_err(|error| ContractError::internal(error.to_string()))?;
-        crate::store::append_record(store, repo, "atoms.jsonl", &atom_value)?;
-        atom_count += 1;
-        let eligible = store != crate::StoreKind::Personal
-            && trust_class == "merged-default"
-            && record.disposition == "current";
-        if eligible {
-            write_source_fact_event(
-                store,
-                repo,
-                &atom,
-                &observation,
-                &record,
+        reported_observations.push(json!({
+            "source_kind": source_kind,
+            "source_identity": source_identity,
+            "content_digest": digest,
+            "observed_at": now,
+            "disposition": record.disposition,
+            "extraction_version": EXTRACTION_VERSION
+        }));
+        let external_atoms = classified_atoms.remove(&observation_id).unwrap_or_default();
+        let mut atoms = Vec::new();
+        if external_atoms.is_empty() {
+            let atom = atomize(
+                source_kind,
+                &record.native_id,
+                &record.statement,
+                &record.scope,
+                record.confidence,
+                &observation_id,
+                &digest,
                 repository_id.as_deref(),
-            )?;
-            fact_count += 1;
+            );
+            if !(hard_blocked(&record.statement) && store != crate::StoreKind::Personal) {
+                atoms.push(atom);
+            } else {
+                skipped += 1;
+            }
+        } else {
+            for external in external_atoms {
+                let text = external.get("text").and_then(Value::as_str).unwrap_or_default();
+                if hard_blocked(text) && store != crate::StoreKind::Personal {
+                    skipped += 1;
+                    continue;
+                }
+                let mut atom = atomize(
+                    source_kind,
+                    &record.native_id,
+                    text,
+                    &record.scope,
+                    record.confidence,
+                    &observation_id,
+                    &digest,
+                    repository_id.as_deref(),
+                );
+                apply_classifier_atom(&mut atom, &external, repository_id.as_deref());
+                atoms.push(atom);
+            }
+        }
+        for atom in atoms {
+            let atom_value = serde_json::to_value(&atom)
+                .map_err(|error| ContractError::internal(error.to_string()))?;
+            crate::store::append_record(store, repo, "atoms.jsonl", &atom_value)?;
+            atom_count += 1;
+            let eligible = store != crate::StoreKind::Personal
+                && trust_class == "merged-default"
+                && record.disposition == "current";
+            if eligible {
+                let fact = write_source_fact_event(
+                    store,
+                    repo,
+                    &atom,
+                    &observation,
+                    &record,
+                    repository_id.as_deref(),
+                )?;
+                if let Some(fact) = fact {
+                    derived_facts.push(fact);
+                }
+                fact_count += 1;
+            } else {
+                let fact_id = format!(
+                    "fact_{:x}",
+                    Sha256::digest(format!("{}\0{}", atom.scope, atom.statement).as_bytes())
+                );
+                derived_facts.push(json!({
+                    "fact_id": fact_id,
+                    "logical_scope": atom.scope,
+                    "atom_kind": atom.atom_kind,
+                    "disposition": record.disposition,
+                    "admitted": false
+                }));
+            }
         }
     }
     let result = json!({
         "status": "ingested",
         "adapter": source_kind,
+        "source_identity": source_identity,
+        "observations": reported_observations,
+        "derived_facts": derived_facts,
         "observation_count": observation_count,
         "atom_count": atom_count,
         "fact_count": fact_count,
@@ -196,6 +272,254 @@ pub fn ingest(
         println!("store: {}", store_name(store));
     }
     Ok(())
+}
+
+fn read_source(source_kind: &str, source: &Path) -> Result<Vec<u8>, ContractError> {
+    let metadata = std::fs::symlink_metadata(source).map_err(io_error)?;
+    if metadata.file_type().is_symlink() {
+        let target = source.canonicalize().map_err(io_error)?;
+        let parent = source.parent().and_then(|parent| parent.canonicalize().ok());
+        let inside = parent.is_some_and(|parent| target.starts_with(parent));
+        if !inside {
+            return Err(ContractError::refused(
+                "CONFIG_INVARIANT",
+                "source symlink escapes the source root",
+                "Pass a regular file or a directory contained by the source root.",
+            ));
+        }
+        return Err(ContractError::refused(
+            "CONFIG_INVARIANT",
+            "source symlink traversal is refused",
+            "Pass the regular file or directory target directly.",
+        ));
+    }
+    if metadata.is_file() {
+        let bytes = read_bounded_file(source, MAX_FILE_BYTES)?;
+        return Ok(bytes);
+    }
+    if !metadata.is_dir() {
+        return Err(ContractError::refused(
+            "CONFIG_INVARIANT",
+            "source is neither a regular file nor a directory",
+            "Pass a regular file or directory.",
+        ));
+    }
+    if source_kind == "git_history" && source.join(".git").exists() {
+        return git_history_bytes(source);
+    }
+    let mut root = source.to_path_buf();
+    if source_kind == "kindex" && source.join("events").is_dir() {
+        root = source.join("events");
+    }
+    let root_canonical = root.canonicalize().map_err(io_error)?;
+    let mut paths = Vec::new();
+    collect_regular_files(&root, &root_canonical, &mut paths)?;
+    paths.sort();
+    let mut bytes = Vec::new();
+    for path in paths {
+        let file_bytes = read_bounded_file(&path, MAX_FILE_BYTES)?;
+        if bytes.len() + file_bytes.len() > MAX_DIRECTORY_BYTES {
+            return Err(ContractError::new(
+                "LIMIT_EXCEEDED",
+                "directory source exceeds the 128 MiB bound",
+                "Split the source into bounded adapter batches.",
+                false,
+                ExitCode::Refused,
+            ).with_detail(json!({"omitted_count": 1})));
+        }
+        if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+            bytes.push(b'\n');
+        }
+        bytes.extend_from_slice(&file_bytes);
+    }
+    Ok(bytes)
+}
+
+fn collect_regular_files(
+    directory: &Path,
+    root: &Path,
+    output: &mut Vec<std::path::PathBuf>,
+) -> Result<(), ContractError> {
+    let mut children = std::fs::read_dir(directory)
+        .map_err(io_error)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(io_error)?;
+    children.sort();
+    for child in children {
+        let metadata = std::fs::symlink_metadata(&child).map_err(io_error)?;
+        if metadata.file_type().is_symlink() {
+            let target = child.canonicalize().map_err(io_error)?;
+            if !target.starts_with(root) {
+                return Err(ContractError::refused(
+                    "CONFIG_INVARIANT",
+                    "directory source contains a symlink that escapes the source root",
+                    "Remove the escaping symlink or pass only contained regular files.",
+                ));
+            }
+            continue;
+        }
+        if metadata.is_dir() {
+            if child.file_name().and_then(|name| name.to_str()) == Some(".git") {
+                continue;
+            }
+            collect_regular_files(&child, root, output)?;
+        } else if metadata.is_file() {
+            output.push(child);
+        }
+    }
+    Ok(())
+}
+
+fn read_bounded_file(path: &Path, limit: usize) -> Result<Vec<u8>, ContractError> {
+    let metadata = std::fs::metadata(path).map_err(io_error)?;
+    if metadata.len() as usize > limit {
+        return Err(ContractError::new(
+            "LIMIT_EXCEEDED",
+            format!("source file exceeds the {}-byte bound", limit),
+            "Split the source into bounded adapter batches.",
+            false,
+            ExitCode::Refused,
+        ).with_detail(json!({"omitted_count": 1})));
+    }
+    std::fs::read(path).map_err(io_error)
+}
+
+fn git_history_bytes(source: &Path) -> Result<Vec<u8>, ContractError> {
+    let output = std::process::Command::new("git")
+        .args(["log", "--all", "--pretty=format:%H%x00%s%x00%b%x00%aI"])
+        .current_dir(source)
+        .output()
+        .map_err(|error| ContractError::new(
+            "RUN_INTEGRITY_FAILED",
+            format!("git history source is unreadable: {error}"),
+            "Check the repository and git installation.",
+            false,
+            ExitCode::InternalFailure,
+        ))?;
+    if !output.status.success() {
+        return Err(ContractError::new(
+            "RUN_INTEGRITY_FAILED",
+            format!("git log exited with {}", output.status),
+            "Check the repository and retry.",
+            false,
+            ExitCode::InternalFailure,
+        ));
+    }
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    let mut bytes = Vec::new();
+    for commit in text.split('\n') {
+        let fields: Vec<&str> = commit.split('\0').collect();
+        if fields.len() != 4 {
+            continue;
+        }
+        let record = json!({
+            "id": fields[0],
+            "message": fields[1],
+            "body": fields[2],
+            "created_at": fields[3],
+            "state": "current"
+        });
+        bytes.extend_from_slice(crate::json::canonical_bytes(&record).as_slice());
+        bytes.push(b'\n');
+    }
+    Ok(bytes)
+}
+
+fn external_classifier_atoms(
+    classifier: Option<&crate::config::SharedClassifier>,
+    source_kind: &str,
+    source_identity: &str,
+    now: &str,
+    prepared: &[(NativeRecord, String, String)],
+) -> Result<BTreeMap<String, Vec<Value>>, ContractError> {
+    let Some(classifier) = classifier else {
+        return Ok(BTreeMap::new());
+    };
+    let observations = prepared
+        .iter()
+        .map(|(record, observation_id, digest)| {
+            json!({
+                "observation_id": observation_id,
+                "source_kind": source_kind,
+                "source_identity": source_identity,
+                "content_digest": digest,
+                "observed_at": now,
+                "disposition": record.disposition,
+                "extraction_version": EXTRACTION_VERSION,
+                "body": record.statement,
+                "scope": record.scope,
+                "confidence": record.confidence
+            })
+        })
+        .collect::<Vec<_>>();
+    let input = json!({"observations": observations});
+    let bytes = crate::sandbox::run_verified_executable(
+        &classifier.executable,
+        &classifier.executable_sha256,
+        &classifier.args,
+        &crate::json::canonical_bytes(&input),
+        std::time::Duration::from_secs(classifier.timeout_seconds),
+    )?;
+    let output = crate::json::parse_strict_value(&bytes)
+        .map_err(|error| ContractError::integrity("PROCESSOR_UNAUTHORIZED", format!("classifier output is not strict JSON: {error}"), "Repair the pinned classifier; no output was promoted."))?;
+    crate::classifier::validate_output(&output)?;
+    let mut result = BTreeMap::new();
+    if let Some(atoms) = output.get("atoms").and_then(Value::as_array) {
+        for atom in atoms {
+            let observation_id = atom
+                .get("observation_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| ContractError::integrity("PROCESSOR_UNAUTHORIZED", "classifier atom has no observation_id", "Repair the pinned classifier; no output was promoted."))?
+                .to_owned();
+            result.entry(observation_id).or_insert_with(Vec::new).push(atom.clone());
+        }
+    }
+    Ok(result)
+}
+
+fn apply_classifier_atom(
+    atom: &mut Atom,
+    external: &Value,
+    repository_id: Option<&str>,
+) {
+    if let Some(value) = external.get("atom_id").and_then(Value::as_str) {
+        atom.atom_id = value.to_owned();
+    }
+    if let Some(value) = external.get("atom_kind").and_then(Value::as_str) {
+        atom.atom_kind = value.to_owned();
+    }
+    if let Some(value) = external.get("confidence").and_then(Value::as_str) {
+        atom.confidence = match value {
+            "high" => 8_000,
+            "medium" => 6_000,
+            _ => 3_000,
+        };
+    }
+    if let Some(values) = external.get("proposed_destinations").and_then(Value::as_array) {
+        let destinations = values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .map(|value| match value {
+                "codebase" => repository_id
+                    .map(|id| format!("codebase:{id}"))
+                    .unwrap_or_else(|| "codebase".to_owned()),
+                other => other.to_owned(),
+            })
+            .collect::<Vec<_>>();
+        atom.proposed_destinations = destinations.clone();
+        atom.eligible_destinations = destinations;
+    }
+    if let Some(values) = external.get("taint").and_then(Value::as_array) {
+        atom.taints = values
+            .iter()
+            .filter_map(|value| value.as_str())
+            .map(str::to_owned)
+            .collect();
+    }
+    if let Some(value) = external.get("unresolved_uncertainty").and_then(Value::as_str) {
+        atom.unresolved_uncertainty = (!value.is_empty()).then(|| value.to_owned());
+    }
 }
 
 fn parse_native(source_kind: &str, bytes: &[u8]) -> Result<Vec<NativeRecord>, String> {
@@ -476,7 +800,7 @@ fn write_source_fact_event(
     observation: &Observation,
     record: &NativeRecord,
     repository_id: Option<&str>,
-) -> Result<(), ContractError> {
+) -> Result<Option<Value>, ContractError> {
     let logical_key = format!(
         "logical_{:x}",
         Sha256::digest(
@@ -557,7 +881,14 @@ fn write_source_fact_event(
     event.signature = crate::crypto::sign_message("fact-event", unsigned.as_bytes(), &private_key)?;
     let root = crate::store::ensure_store_root(store, repo)?;
     crate::store::write_content_addressed_event(&root, &event)?;
-    Ok(())
+    let fact = json!({
+        "fact_id": event.fact_id,
+        "logical_scope": event.scope,
+        "atom_kind": event.atom_kind,
+        "disposition": event.disposition,
+        "admitted": true
+    });
+    Ok(Some(fact))
 }
 
 fn distortion_for(atom_kind: &str) -> Distortion {

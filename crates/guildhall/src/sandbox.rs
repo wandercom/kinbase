@@ -359,16 +359,43 @@ pub fn run_verified_executable(
     }
     let fd = file.as_raw_fd();
     clear_cloexec(fd)?;
-    let mut child = Command::new(format!("/dev/fd/{fd}"))
+    let program = format!("/dev/fd/{fd}");
+    let spawn = Command::new(&program)
         .args(args)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", "/nonexistent")
+        .env("GUILDHALL_SHARED_CONFIG_FD", fd.to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| ContractError::integrity("PROCESSOR_UNAUTHORIZED", format!("descriptor-backed execution failed ({})", error.kind()), "A platform without verified descriptor-backed execution disables the external classifier."))?;
+        .spawn();
+    let mut child = match spawn {
+        Ok(child) => child,
+        Err(error) if matches!(error.kind(), std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::NotFound) => {
+            // Darwin does not permit executing a regular file through /dev/fd.
+            // The descriptor above still performed ownership/mode/digest pinning;
+            // refuse to fall back unless the pathname still names the same inode.
+            let fallback = std::fs::File::open(executable)
+                .map_err(|error| ContractError::io("reopen classifier", error))?;
+            let fallback_metadata = fallback.metadata().map_err(|error| ContractError::io("fstat classifier", error))?;
+            if fallback_metadata.dev() != metadata.dev() || fallback_metadata.ino() != metadata.ino() {
+                return Err(ContractError::integrity("PROCESSOR_UNAUTHORIZED", "classifier pathname changed after descriptor verification", "Repin the classifier digest; the changed executable was not run."));
+            }
+            Command::new(executable)
+                .args(args)
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("HOME", "/nonexistent")
+                .env("GUILDHALL_SHARED_CONFIG_FD", fd.to_string())
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|error| ContractError::integrity("PROCESSOR_UNAUTHORIZED", format!("descriptor-backed execution failed ({})", error.kind()), "A platform without verified descriptor-backed execution disables the external classifier."))?
+        }
+        Err(error) => return Err(ContractError::integrity("PROCESSOR_UNAUTHORIZED", format!("descriptor-backed execution failed ({})", error.kind()), "A platform without verified descriptor-backed execution disables the external classifier.")),
+    };
     if let Some(mut stdin) = child.stdin.take() {
         let _ = std::io::Write::write_all(&mut stdin, input);
     }

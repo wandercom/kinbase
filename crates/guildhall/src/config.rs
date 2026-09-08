@@ -38,6 +38,7 @@ pub struct CompanyConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassifierConfig {
+    pub model: String,
     pub executable: PathBuf,
     pub executable_sha256: String,
     pub args: Vec<String>,
@@ -130,6 +131,7 @@ pub struct SharedCompanyAccess {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedClassifier {
+    pub model: String,
     pub executable: PathBuf,
     pub executable_sha256: String,
     pub args: Vec<String>,
@@ -303,9 +305,17 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                 .ok_or_else(|| config_error("[classifier] must be a table"))?;
             closed_keys(
                 section,
-                &["executable", "executable_sha256", "args", "timeout_seconds", "processor_scope"],
+                &["model", "executable", "executable_sha256", "args", "timeout_seconds", "processor_scope"],
                 "[classifier]",
             )?;
+            let model = section
+                .get("model")
+                .and_then(toml::Value::as_str)
+                .unwrap_or("deterministic")
+                .to_owned();
+            if !model.starts_with("deterministic") && !model.starts_with("ollama:") {
+                return Err(config_error("classifier.model must be \"deterministic\" or \"ollama:<name>\""));
+            }
             let executable = absolute(required_str(section, "executable", "classifier")?, "classifier.executable")?;
             let digest = required_str(section, "executable_sha256", "classifier")?.to_owned();
             if !crate::hash::is_sha256(&digest) {
@@ -340,6 +350,7 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                 .unwrap_or("local")
                 .to_owned();
             Some(ClassifierConfig {
+                model,
                 executable,
                 executable_sha256: digest,
                 args,
@@ -520,6 +531,7 @@ impl UserConfig {
             host_instance_id: self.host_instance_id.clone(),
             company,
             classifier: self.classifier.as_ref().map(|classifier| SharedClassifier {
+                model: classifier.model.clone(),
                 executable: classifier.executable.clone(),
                 executable_sha256: classifier.executable_sha256.clone(),
                 args: classifier.args.clone(),
