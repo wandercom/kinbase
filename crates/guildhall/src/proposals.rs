@@ -2192,14 +2192,25 @@ mod tests {
             json!({"candidate_id": "c-code", "destination": "codebase:1234"}),
         ];
         let decisions = vec![
-            json!({"candidate_id": "c-company", "state": "refused"}),
-            json!({"candidate_id": "c-code", "state": "committed"}),
+            json!({"candidate_id": "c-company", "decision": "approve", "state": "refused"}),
+            json!({"candidate_id": "c-code", "decision": "approve", "state": "committed"}),
         ];
         assert_eq!(fanout_state(&candidates, &decisions, "company:"), "refused");
         assert_eq!(
             fanout_state(&candidates, &decisions, "codebase:"),
             "committed"
         );
+        // An undecided sibling candidate is not a transaction and does not
+        // demote a committed destination to pending.
+        let with_undecided = vec![
+            json!({"candidate_id": "c-code", "destination": "codebase:1234"}),
+            json!({"candidate_id": "c-code-2", "destination": "codebase:1234"}),
+        ];
+        assert_eq!(
+            fanout_state(&with_undecided, &decisions, "codebase:"),
+            "committed"
+        );
+        assert_eq!(fanout_state(&with_undecided, &[], "codebase:"), "pending");
         assert_eq!(decision_state(&json!({"state": "pending"})), "pending");
         assert_eq!(
             decision_state(&json!({"candidate_id": "missing", "state": "other"})),
