@@ -977,6 +977,90 @@ fn facts(
         .iter()
         .filter(|fact| !readable.contains(&fact.authority_scope))
         .count();
+    // Every admitted event carries the Company's evaluation at this cursor,
+    // not only the keys that reduce to a current fact: a superseded, retracted,
+    // expired, conflicting or lower-authority head is published with that
+    // status, so a reader sees why a key has no current statement and every
+    // admission visibly changes the published view (Helland: the transaction
+    // record is immutable; the evaluation is recomputed, never rewritten).
+    let mut selected = selected;
+    let current_event_ids: BTreeSet<String> = view
+        .facts
+        .iter()
+        .map(|fact| fact.event_id.clone())
+        .collect();
+    let mut payloads: BTreeMap<String, Value> = BTreeMap::new();
+    for (_, payload, _) in db.events_of_kind("fact-event").unwrap_or_default() {
+        if let Some(event_id) = crate::json::get_str(&payload, "event_id") {
+            payloads.insert(event_id.to_owned(), payload);
+        }
+    }
+    for trace in &view.traces {
+        let mut evaluated: Vec<(String, &str, String)> = Vec::new();
+        for event_id in &trace.admitted_event_ids {
+            if current_event_ids.contains(event_id) {
+                continue;
+            }
+            let disposition = payloads
+                .get(event_id)
+                .and_then(|payload| crate::json::get_str(payload, "disposition"))
+                .unwrap_or_default();
+            let status = if trace.conflict_event_ids.contains(event_id) {
+                "conflict"
+            } else if trace.expired_event_ids.contains(event_id) {
+                "expired"
+            } else if trace.negative_evidence_event_ids.contains(event_id) {
+                "negative"
+            } else if matches!(disposition, "retracted" | "withdrawn") {
+                "retracted"
+            } else if trace.steps.iter().any(|step| step.step == 2 && step.event_ids.contains(event_id)) {
+                "superseded"
+            } else {
+                "withheld"
+            };
+            evaluated.push((event_id.clone(), status, String::new()));
+        }
+        for rejected in &trace.rejected {
+            if let Some(event_id) = crate::json::get_str(rejected, "event_id") {
+                let reason = crate::json::get_str(rejected, "reason").unwrap_or_default().to_owned();
+                evaluated.push((event_id.to_owned(), "rejected", reason));
+            }
+        }
+        for (event_id, status, reason) in evaluated {
+            let Some(payload) = payloads.get(&event_id) else {
+                continue;
+            };
+            let authority_scope = crate::json::get_str(payload, "authority_scope").unwrap_or_default();
+            if scope.is_empty() {
+                if !readable.contains(authority_scope) {
+                    continue;
+                }
+            } else if authority_scope != scope {
+                continue;
+            }
+            let statement = crate::json::get_str(payload, "statement").unwrap_or_default();
+            selected.push(json!({
+                "fact_id": payload.get("fact_id").cloned().unwrap_or(Value::Null),
+                "event_id": event_id,
+                "logical_key": trace.logical_key,
+                "statement": statement,
+                "status": status,
+                "state": trace.state,
+                "disposition": payload.get("disposition").cloned().unwrap_or(Value::Null),
+                "atom_kind": payload.get("atom_kind").cloned().unwrap_or(Value::Null),
+                "authority_id": payload.get("authority_id").cloned().unwrap_or(Value::Null),
+                "authority_scope": authority_scope,
+                "store_kind": "company",
+                "asserted_at": payload.get("asserted_at").cloned().unwrap_or(Value::Null),
+                "effective_until": payload.get("effective_until").cloned().unwrap_or(Value::Null),
+                "semantic_digest": crate::model::semantic_digest(statement),
+                "digest_alg_version": crate::model::DIGEST_ALG_VERSION,
+                "unknown_id": trace.unknown_id,
+                "reason": reason,
+                "trust": "withheld"
+            }));
+        }
+    }
     let bytes: usize = selected
         .iter()
         .map(|fact| crate::json::canonical_bytes(fact).len())
@@ -1828,6 +1912,27 @@ fn snapshot(
         "certificates": db.all_certificates().map_err(|error| refuse(500, error))?,
         "fact_versions": fact_versions_index(db, &view).map_err(|error| refuse(500, error))?,
         "lifecycle_admissions": lifecycle_admissions(db, trust_state),
+        // Every revocation ever recorded, including keys the steward later
+        // republished: a later epoch authorizes new events, but facts asserted
+        // before the revocation remain historical (architecture §3).
+        "revocation_history": db
+            .events_of_kind("revocation")
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(_, _, verification)| verification == "verified")
+            .filter_map(|(cursor, payload, _)| {
+                let key = crate::json::get_str(&payload, "revoked_key")?.to_owned();
+                Some(json!({
+                    "revoked_key": key,
+                    "cursor": crate::json::get_str(&payload, "authority_cursor")
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| cursor.to_string()),
+                    "effective_at": crate::json::get_str(&payload, "effective_at").unwrap_or_default(),
+                    "governing": trust_state.revocations.iter().any(|r| r.revoked_key == crate::json::get_str(&payload, "revoked_key").unwrap_or_default())
+                }))
+            })
+            .collect::<Vec<_>>(),
         "fact_parents": fact_parents(db, &view),
         "traces": view.traces.iter().map(|trace| json!({
             "logical_key": trace.logical_key,
