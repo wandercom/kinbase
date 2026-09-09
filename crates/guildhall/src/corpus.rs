@@ -631,6 +631,20 @@ pub(crate) fn load_store(
                             .filter_map(|record| serde_json::from_value(record.clone()).ok()),
                     );
                 }
+                // The signed snapshot also publishes Company's derived current
+                // view; proxy each fact into reducer input unless the admitted
+                // event already carries it (ruling: no duplicate authority).
+                if let Ok(facts) = cache.snapshot_fact_documents() {
+                    for proxied in facts.iter().filter_map(proxy_event) {
+                        let proxied = proxied?;
+                        if !events
+                            .iter()
+                            .any(|event| event.event.event_id == proxied.event.event_id)
+                        {
+                            events.push(proxied);
+                        }
+                    }
+                }
             }
             // Local signed Company events include authority answers written by
             // the offline question loop. They are private cache bytes, never

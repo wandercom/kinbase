@@ -286,6 +286,31 @@ pub struct Response {
     pub raw: Vec<u8>,
 }
 
+/// The host-start probe gives up 50 ms before the connection budget so that
+/// the measured attempt, and the response carrying it, land inside 250 ms.
+pub const PROBE_BUDGET: Duration = Duration::from_millis(200);
+
+/// Probe only the connection budget: does the endpoint accept a TCP
+/// connection within the probe budget? Nothing is sent; the socket closes
+/// at once.
+pub fn probe_connect(host: &str, port: u16) -> Result<(), ContractError> {
+    let address = (host, port)
+        .to_socket_addrs()
+        .map_err(|error| {
+            ContractError::unreachable(format!("Company endpoint does not resolve ({error})"))
+        })?
+        .next()
+        .ok_or_else(|| ContractError::unreachable("Company endpoint does not resolve"))?;
+    TcpStream::connect_timeout(&address, PROBE_BUDGET)
+        .map(|_stream| ())
+        .map_err(|error| {
+            ContractError::unreachable(format!(
+                "Company endpoint did not accept a connection within the 250 ms budget ({})",
+                error.kind()
+            ))
+        })
+}
+
 /// One client request with the 250 ms connection budget and bounded
 /// read/write timeouts. Any failure to connect or answer within budget is
 /// `COMPANY_UNREACHABLE`.

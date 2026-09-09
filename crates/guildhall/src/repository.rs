@@ -282,6 +282,8 @@ fn git_text(repo: &Path, args: &[&str]) -> String {
     std::process::Command::new("git")
         .args(args)
         .current_dir(repo)
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_OPTIONAL_LOCKS", "0")
         .output()
         .ok()
         .filter(|output| output.status.success())
@@ -754,7 +756,7 @@ impl RepoContext {
                     record["reference_resolved"] = Value::Bool(false);
                     fact.trust = "withheld".to_owned();
                     fact.stale_reasons.push(resolution.to_owned());
-                    view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, owner, "DIGEST_ALGORITHM_UNSUPPORTED: upgrade the client adapter; the steward changed nothing"));
+                    view.unknowns.push(client_unknown(&self.trust, &fact.logical_key, &reference.fact_id, owner, "DIGEST_ALGORITHM_UNSUPPORTED: upgrade the client adapter; the steward changed nothing"));
                     results.push(record);
                     continue;
                 }
@@ -809,21 +811,33 @@ impl RepoContext {
                     .unwrap_or(reference.company_criticality.as_str());
                 record["company_criticality"] = Value::String(live_company_class.to_owned());
                 record["published_digest_alg_version"] = Value::String(live_digest_alg.to_owned());
+                let company_event_id = company_fact
+                    .as_ref()
+                    .and_then(|value| crate::json::get_str(value, "event_id"))
+                    .map(str::to_owned);
                 let effective_company_class = self.effective_company_class(
                     &repository_uuid,
                     reference,
+                    company_event_id.as_deref(),
+                    exception_requests,
                     live_company_class,
                     as_of,
                 );
-                if let Some(relaxation) = self.active_relaxation(&repository_uuid, reference, as_of)
-                {
+                if let Some(relaxation) = self.active_relaxation(
+                    &repository_uuid,
+                    reference,
+                    company_event_id.as_deref(),
+                    exception_requests,
+                    as_of,
+                ) {
                     record["relaxation"] = json!({
                         "owner": crate::json::get_str(relaxation, "authority_id").unwrap_or("company-steward"),
+                        "event_id": crate::json::get_str(relaxation, "event_id"),
                         "scope": format!("codebase:{repository_uuid}"),
                         "fact_id": reference.fact_id,
                         "fact_version": crate::json::get_str(relaxation, "relaxed_fact_version").unwrap_or("current"),
-                        "relaxed_class": crate::json::get_str(relaxation, "relaxed_class").unwrap_or("advisory"),
-                        "expires_at": crate::json::get_str(relaxation, "expires_at").or_else(|| crate::json::get_str(relaxation, "effective_until")),
+                        "relaxed_class": Self::relaxed_class(relaxation),
+                        "expires_at": crate::json::get_str(relaxation, "expires_at").filter(|value| !value.is_empty()).or_else(|| crate::json::get_str(relaxation, "effective_until")),
                         "changes_effective_class": true
                     });
                 }
@@ -857,7 +871,7 @@ impl RepoContext {
                 record["max_rule"] = Value::String("stricter of Company criticality (as relaxed for this repository) and maintainer-owned local dependence".to_owned());
                 fact.effective_dependence_class = Some(stricter.to_owned());
                 if local.is_none() {
-                    view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, "repository-maintainer", "no maintainer-owned local dependence class records what losing this Company reference costs this repository"));
+                    view.unknowns.push(client_unknown(&self.trust, &fact.logical_key, &reference.fact_id, "repository-maintainer", "no maintainer-owned local dependence class records what losing this Company reference costs this repository"));
                 }
                 match (company_fact.as_ref(), live_digest.as_deref()) {
                     (None, _) => {
@@ -876,53 +890,116 @@ impl RepoContext {
                             fact.trust = "withheld".to_owned();
                             fact.stale_reasons
                                 .push("company-reference-unresolved".to_owned());
-                            view.unknowns.push(client_unknown(&fact.logical_key, &reference.fact_id, "company-steward", "the referenced Company fact is no longer in the authorized current view; update or retire the reference"));
+                            view.unknowns.push(client_unknown(&self.trust, &fact.logical_key, &reference.fact_id, "company-steward", "the referenced Company fact is no longer in the authorized current view; update or retire the reference"));
                         }
                     }
-                    (Some(_), Some(digest)) if digest == reference.semantic_digest => {
+                    (Some(company_value), Some(digest)) if digest == reference.semantic_digest => {
                         record["resolution"] = Value::String("resolved".to_owned());
                         record["company_statement"] =
                             Value::String(company_statement.clone().unwrap_or_default());
                         record["digest_attribution"] =
                             json!({"owner_role": "none", "owner_matches_expected": true});
                         record["reference_resolved"] = Value::Bool(true);
-                        let expected_projection = freshness
-                            .map(|freshness| {
-                                freshness
-                                    .projection(
-                                        stricter == "safety_critical",
-                                        self.trust.certificate_valid,
-                                    )
-                                    .0
-                            })
-                            .unwrap_or("trusted");
-                        if let Some(freshness) = freshness {
-                            let (projection, reasons) = freshness.projection(
-                                stricter == "safety_critical",
-                                self.trust.certificate_valid,
-                            );
-                            if projection != "trusted" {
-                                fact.trust = projection.to_owned();
-                                fact.stale_reasons
-                                    .extend(reasons.iter().map(|r| (*r).to_owned()));
+                        // Fact validity is the stricter of the cache's
+                        // fact-valid-until clock and the referenced fact's own
+                        // window (its effective_until and the reference's
+                        // valid_until); either lapsing expires the row.
+                        let validity_lapsed = [
+                            crate::json::get_str(company_value, "effective_until"),
+                            reference.valid_until.as_deref(),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .any(|until| until <= as_of);
+                        let effective_freshness = freshness.map(|freshness| {
+                            let mut clocks = freshness.clone();
+                            clocks.fact_fresh = clocks.fact_fresh && !validity_lapsed;
+                            clocks
+                        });
+                        let safety = stricter == "safety_critical";
+                        let (projection, reasons) = effective_freshness
+                            .as_ref()
+                            .map(|clocks| clocks.projection(safety, self.trust.certificate_valid))
+                            .unwrap_or_else(|| {
+                                if !self.trust.certificate_valid {
+                                    ("withheld", vec!["certificate-or-root-invalid"])
+                                } else if validity_lapsed && safety {
+                                    ("withheld", vec!["CACHE_EXPIRED"])
+                                } else if validity_lapsed {
+                                    ("excluded", vec!["CACHE_EXPIRED"])
+                                } else {
+                                    ("trusted", Vec::new())
+                                }
+                            });
+                        record["fact_validity_lapsed"] = Value::Bool(validity_lapsed);
+                        if projection != "trusted" {
+                            fact.trust = projection.to_owned();
+                            fact.stale_reasons
+                                .extend(reasons.iter().map(|r| (*r).to_owned()));
+                            if validity_lapsed {
+                                fact.stale_reasons.push("fact-validity-expired".to_owned());
                             }
+                            // Architecture §6: a stale revocation snapshot opens a
+                            // Company-steward Unknown; an expired fact opens the
+                            // fact owner's Unknown.
+                            let revocation_stale =
+                                reasons.iter().any(|reason| *reason == "REVOCATION_STALE");
+                            let (owner_role, owner_identity) = if revocation_stale {
+                                (
+                                    "company-steward".to_owned(),
+                                    self.trust
+                                        .steward_authority_id()
+                                        .unwrap_or_else(|| "company-steward".to_owned()),
+                                )
+                            } else {
+                                let scope = crate::json::get_str(company_value, "authority_scope")
+                                    .unwrap_or_default();
+                                (
+                                    company_owner_role(scope).to_owned(),
+                                    crate::json::get_str(company_value, "authority_id")
+                                        .unwrap_or(reference.authority.as_str())
+                                        .to_owned(),
+                                )
+                            };
+                            view.unknowns.push(reference_unknown(
+                                &fact.logical_key,
+                                &reference.fact_id,
+                                &owner_role,
+                                &owner_identity,
+                                &format!(
+                                    "the referenced Company fact is {} ({}); refresh Company state or update the reference before this repository relies on it",
+                                    projection,
+                                    fact.stale_reasons.join(",")
+                                ),
+                                if safety { 9_000 } else { 3_000 },
+                            ));
                         }
                         record["cache_truth_table"] = json!({
-                            "expected": expected_projection,
+                            "revocation_fresh": effective_freshness.as_ref().map(|clocks| clocks.revocation_fresh),
+                            "fact_fresh": effective_freshness.as_ref().map(|clocks| clocks.fact_fresh),
+                            "dependence_class": stricter,
+                            "expected": projection,
                             "actual": fact.trust,
-                            "matches_expected": fact.trust == expected_projection
+                            "matches_expected": fact.trust == projection
                         });
                     }
                     (Some(_), _) => {
-                        // Known mismatch: consult the historical digest for the
-                        // reference's exact fact version and Company's head.
-                        let version = reference
-                            .fact_version
-                            .clone()
-                            .unwrap_or_else(|| "1".to_owned());
-                        let historical = versions.iter().find(|item| {
-                            crate::json::get_str(item, "version") == Some(version.as_str())
-                        });
+                        // Known mismatch: consult Company's retained digest for
+                        // the reference's exact historical fact version and its
+                        // current head. A reference names its version explicitly
+                        // or, in the ratified field set, by the digest it copied.
+                        let historical = match reference.fact_version.as_deref() {
+                            Some(version) => versions.iter().find(|item| {
+                                crate::json::get_str(item, "version") == Some(version)
+                            }),
+                            None => versions
+                                .iter()
+                                .find(|item| {
+                                    crate::json::get_str(item, "semantic_content_digest")
+                                        == Some(reference.semantic_digest.as_str())
+                                })
+                                .or_else(|| versions.first()),
+                        };
                         let (resolution, owner, reason) = digest_mismatch_attribution(
                             reference,
                             historical,
@@ -937,12 +1014,14 @@ impl RepoContext {
                         record["reference_resolved"] = Value::Bool(false);
                         match owner {
                             "client" => view.unknowns.push(client_unknown(
+                                &self.trust,
                                 &fact.logical_key,
                                 &reference.fact_id,
                                 "client",
                                 "client canonicalization defect: recompute the reference from the published digest",
                             )),
                             "company-steward" => view.unknowns.push(client_unknown(
+                                &self.trust,
                                 &fact.logical_key,
                                 &reference.fact_id,
                                 "company-steward",
@@ -974,37 +1053,109 @@ impl RepoContext {
         results
     }
 
+    /// The steward relaxation, if any, that currently applies to this
+    /// repository's reference. Interface contract C13: a relaxation is a
+    /// steward-signed FactEvent whose `parents` name the affected events; it
+    /// is bound to this repository through the maintainer's `exception_request`
+    /// it answers (a Codebase event carrying the certified UUID) and to the
+    /// relaxed fact through that fact's event. Explicit `repository_id` /
+    /// `relaxed_fact_id` fields are honoured when present.
     fn active_relaxation<'a>(
         &'a self,
         repository_uuid: &str,
         reference: &crate::model::CompanyReference,
+        company_event_id: Option<&str>,
+        exception_requests: &[FactEvent],
         as_of: &str,
     ) -> Option<&'a Value> {
+        let request_ids: BTreeSet<&str> = exception_requests
+            .iter()
+            .filter(|event| event.repository_id.as_deref() == Some(repository_uuid))
+            .flat_map(|event| [event.event_id.as_str(), event.fact_id.as_str()])
+            .collect();
         self.trust.relaxations.iter().find(|relaxation| {
-            let repository = crate::json::get_str(relaxation, "repository_id")
-                .or_else(|| crate::json::get_str(relaxation, "repository_uuid"));
-            let fact_id = crate::json::get_str(relaxation, "relaxed_fact_id")
-                .or_else(|| crate::json::get_str(relaxation, "fact_id"));
+            if crate::json::get_str(relaxation, "status").unwrap_or("active") != "active" {
+                return false;
+            }
             let expiry = crate::json::get_str(relaxation, "expires_at")
+                .filter(|value| !value.is_empty())
                 .or_else(|| crate::json::get_str(relaxation, "effective_until"));
-            repository == Some(repository_uuid)
-                && fact_id == Some(reference.fact_id.as_str())
-                && expiry.is_some_and(|until| until > as_of)
-                && crate::json::get_str(relaxation, "status").unwrap_or("active") == "active"
+            if !expiry.is_some_and(|until| until > as_of) {
+                return false;
+            }
+            let parents: Vec<&str> = crate::json::get_array(relaxation, "parents")
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
+            let repository = crate::json::get_str(relaxation, "repository_id")
+                .or_else(|| crate::json::get_str(relaxation, "repository_uuid"))
+                .filter(|value| !value.is_empty());
+            let repository_bound = match repository {
+                Some(bound) => bound == repository_uuid,
+                None => parents.iter().any(|parent| request_ids.contains(parent)),
+            };
+            // Only an explicit `relaxed_fact_id` names the relaxed fact; the
+            // document's own `fact_id` is the relaxation's identity.
+            let fact = crate::json::get_str(relaxation, "relaxed_fact_id")
+                .filter(|value| !value.is_empty());
+            let fact_bound = match fact {
+                Some(bound) => bound == reference.fact_id,
+                None => parents.iter().any(|parent| {
+                    *parent == reference.fact_id
+                        || company_event_id.is_some_and(|event_id| *parent == event_id)
+                }),
+            };
+            repository_bound && fact_bound
         })
+    }
+
+    /// The class a relaxation grants: an explicit `relaxed_class`, else the
+    /// relaxation fact's own Company-owned criticality (ruling R-8).
+    fn relaxed_class(relaxation: &Value) -> String {
+        if let Some(class) = crate::json::get_str(relaxation, "relaxed_class") {
+            return class.to_owned();
+        }
+        match relaxation
+            .get("distortion")
+            .and_then(|distortion| distortion.get("loss_if_absent"))
+        {
+            Some(Value::String(label)) => {
+                if crate::model::criticality_is_safety(label) || label == "high" {
+                    "safety_critical".to_owned()
+                } else {
+                    "advisory".to_owned()
+                }
+            }
+            Some(Value::Number(number)) => {
+                if number.as_i64().unwrap_or(0) >= 7_500 {
+                    "safety_critical".to_owned()
+                } else {
+                    "advisory".to_owned()
+                }
+            }
+            _ => "advisory".to_owned(),
+        }
     }
 
     fn effective_company_class(
         &self,
         repository_uuid: &str,
         reference: &crate::model::CompanyReference,
+        company_event_id: Option<&str>,
+        exception_requests: &[FactEvent],
         live_class: &str,
         as_of: &str,
     ) -> String {
-        self.active_relaxation(repository_uuid, reference, as_of)
-            .and_then(|relaxation| crate::json::get_str(relaxation, "relaxed_class"))
-            .unwrap_or(live_class)
-            .to_owned()
+        self.active_relaxation(
+            repository_uuid,
+            reference,
+            company_event_id,
+            exception_requests,
+            as_of,
+        )
+        .map(Self::relaxed_class)
+        .unwrap_or_else(|| live_class.to_owned())
     }
 
     pub fn repository_uuid(&self) -> Result<String, ContractError> {
@@ -1072,7 +1223,90 @@ fn local_dependence_class(statement: &str) -> Option<String> {
     }
 }
 
+/// Exception records in lifecycle order: requests first, then the
+/// relaxations that answer them; ties by signer and event id.
+fn ordered_exceptions(mut exceptions: Vec<Value>) -> Vec<Value> {
+    let rank = |record: &Value| match crate::json::get_str(record, "kind") {
+        Some("exception_request") => 0,
+        _ => 1,
+    };
+    exceptions.sort_by(|left, right| {
+        rank(left).cmp(&rank(right)).then_with(|| {
+            crate::json::get_str(left, "signed_by")
+                .cmp(&crate::json::get_str(right, "signed_by"))
+                .then_with(|| {
+                    crate::json::get_str(left, "event_id")
+                        .cmp(&crate::json::get_str(right, "event_id"))
+                })
+        })
+    });
+    exceptions
+}
+
+/// The role that owns a Company fact, from its authority scope.
+fn company_owner_role(scope: &str) -> &'static str {
+    if scope.starts_with("architecture:") {
+        "chief-architect"
+    } else if scope.starts_with("environment:") {
+        "deploy-owner"
+    } else {
+        "company-steward"
+    }
+}
+
+/// An Unknown a withheld or excluded Company reference opens, owned by a
+/// named authority rather than a role label.
+fn reference_unknown(
+    logical_key: &str,
+    company_fact_id: &str,
+    owner_role: &str,
+    owner_identity: &str,
+    question: &str,
+    loss_if_absent: u16,
+) -> crate::reducer::DerivedUnknown {
+    crate::reducer::DerivedUnknown {
+        unknown_id: format!(
+            "unknown_ref_{}",
+            &crate::hash::sha256_text(&format!(
+                "{logical_key}\0{company_fact_id}\0{owner_role}\0{owner_identity}"
+            ))[..24]
+        ),
+        logical_key: logical_key.to_owned(),
+        scope: format!("company-reference:{company_fact_id}"),
+        decision_blocked: format!("use of Company reference {company_fact_id}"),
+        owner_role: owner_role.to_owned(),
+        owner_identity: owner_identity.to_owned(),
+        question: question.to_owned(),
+        closure_evidence: vec![
+            "a refreshed Company snapshot or an updated reference event naming a current fact version"
+                .to_owned(),
+        ],
+        loss_if_absent,
+        discriminating_evidence: vec![company_fact_id.to_owned()],
+        status: "open".to_owned(),
+        kind: "reference".to_owned(),
+    }
+}
+
+/// The registered identity behind an Unknown owner role, when the trust
+/// context names exactly one: the steward for Company-owned Unknowns, the
+/// certified repository's maintainer for repository-owned ones. The local
+/// processor ("client") has no registry identity.
+fn owner_identity_for(trust: &TrustContext, owner_role: &str) -> String {
+    match owner_role {
+        "company-steward" => trust.steward_authority_id(),
+        "repository-maintainer" => trust.repository_uuid.as_ref().and_then(|uuid| {
+            trust
+                .authority_owner_by_scope()
+                .remove(&format!("codebase:{uuid}"))
+        }),
+        _ => None,
+    }
+    .unwrap_or_else(|| owner_role.to_owned())
+}
+
 fn client_unknown(
+    trust: &TrustContext,
     logical_key: &str,
     company_fact_id: &str,
     owner: &str,
@@ -1087,7 +1321,7 @@ fn client_unknown(
         scope: format!("company-reference:{company_fact_id}"),
         decision_blocked: format!("use of Company reference {company_fact_id}"),
         owner_role: owner.to_owned(),
-        owner_identity: owner.to_owned(),
+        owner_identity: owner_identity_for(trust, owner),
         question: question.to_owned(),
         closure_evidence: vec![
             "an updated reference event or Company publication naming the resolved digest"
@@ -1177,22 +1411,23 @@ pub fn trust_facts(
     facts
 }
 
-/// Replay the proof clock recorded at repository creation.
+/// Replay the proof clock recorded at repository creation, advanced by this
+/// invocation's `GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS` (ruling R-14).
 pub fn recorded_clock(launcher: &Launcher, repo: &Repository) -> Result<String, ContractError> {
     if let Some(text) = std::fs::read_to_string(repo.local_dir().join("proof-clock"))
         .ok()
-        .and_then(|text| crate::time::parse_rfc3339_millis(text.trim()).ok())
+        .and_then(|text| crate::time::recorded_with_offset(text.trim()).ok())
     {
-        return Ok(crate::time::format_rfc3339_millis(text));
+        return Ok(text);
     }
     let store = launcher.private_store()?;
     if let Some(uuid) = repo.uuid_hint() {
         let key = format!("proof-clock:{uuid}");
         if let Some(value) = store
             .meta(&key)?
-            .and_then(|text| crate::time::parse_rfc3339_millis(text.trim()).ok())
+            .and_then(|text| crate::time::recorded_with_offset(text.trim()).ok())
         {
-            return Ok(crate::time::format_rfc3339_millis(value));
+            return Ok(value);
         }
     }
     if let Some(value) = store
@@ -1667,18 +1902,35 @@ pub fn init(
         )
         .with_detail(json!({"collisions": collisions, "planned_paths": planned})));
     }
+    let init_clock = crate::time::proof_clock().as_of;
     if let Some(existing) = &repo.config {
-        if crate::json::get_str(&document, "repository_uuid")
-            != Some(existing.repository_uuid_hint.as_str())
-        {
+        let offered = crate::json::get_str(&document, "repository_uuid").unwrap_or_default();
+        if offered != existing.repository_uuid_hint.as_str() {
+            // A hint resolving to a different UUID after pinning never
+            // silently repins (architecture §2): the binding stays, and a
+            // steward-owned identity Unknown is opened in the cache so every
+            // later status reports it until a signed lineage/move event.
+            let pinned = existing.repository_uuid_hint.clone();
+            if let Ok(Some((cache, _root))) = launcher.company_cache() {
+                let _ = cache.set_meta(
+                    &format!("certificate_identity_conflict:{pinned}"),
+                    &format!("{offered}:{}", crate::json::digest(&document)),
+                );
+            }
+            let unknown = identity_unknown(&pinned, &init_clock);
             return Err(ContractError::refused(
                 "FOREIGN_REPO_EVENTS",
                 ".kin/config already binds a different repository UUID",
                 "Obtain a signed lineage event before rebinding; the existing bytes are preserved.",
-            ));
+            )
+            .with_detail(json!({
+                "pinned_repository_uuid": pinned,
+                "offered_repository_uuid": offered,
+                "repository_uuid": pinned,
+                "unknowns": [unknown]
+            })));
         }
     }
-    let init_clock = crate::time::proof_clock().as_of;
     let authority_snapshot = ensure_authority_snapshot(&launcher, None, &init_clock);
     let Some((cache, root)) = launcher.company_cache()? else {
         return Err(ContractError::user_action(
@@ -2557,6 +2809,28 @@ pub fn status(
         manifest_expired_publication,
         manifest_comparisons,
     ) = manifest_observation_report(&context.repo, &local_digests, &as_of.as_of)?;
+    // A lapsed publication is Company's own event (architecture §6, Codebase):
+    // the retired observation opens a Company-steward publication Unknown that
+    // does not wait for a maintainer or clone to notice.
+    let uuid = context.trust.repository_uuid.clone().unwrap_or_default();
+    let company_expired = context.trust.company_facts.iter().any(|fact| {
+        crate::json::get_str(fact, "disposition") == Some("manifest_observation_expired")
+            && crate::json::get_str(fact, "logical_key")
+                .is_some_and(|key| key.ends_with(uuid.as_str()))
+    });
+    if manifest_expired_publication || company_expired {
+        unknowns.push(json!({
+            "kind": "publication",
+            "unknown_id": format!("unknown_publication_{}", &crate::hash::sha256_text(&uuid)[..24]),
+            "logical_key": format!("manifest-observation:{uuid}"),
+            "owner_role": "company-steward",
+            "owner_identity": context.trust.steward_authority_id().unwrap_or_else(|| "company-steward".to_owned()),
+            "response_due_at": crate::time::plus_seconds(&as_of.as_of, 24 * 3600).unwrap_or_default(),
+            "question": format!("The maintainer-published manifest observation for repository {uuid} lapsed without replacement and is historical-only; republish or retire the repository."),
+            "status": "open",
+            "unknown_state": "open"
+        }));
+    }
     let mut fact_by_event_id: BTreeMap<&str, &crate::model::FactEvent> = BTreeMap::new();
     let mut fact_by_fact_id: BTreeMap<&str, &crate::model::FactEvent> = BTreeMap::new();
     for item in &events {
@@ -2568,6 +2842,29 @@ pub fn status(
     let mut event_records = Vec::new();
     let mut exceptions = Vec::new();
     let mut exception_request_accepted = false;
+    // Steward relaxations live in Company; the snapshot publishes them. They
+    // are accepted only when the document verifies under a steward key.
+    let steward_keys = context.trust.steward_keys();
+    for relaxation in &context.trust.relaxations {
+        let signer = crate::json::get_str(relaxation, "signer").unwrap_or_default();
+        let mut document = relaxation.clone();
+        if let Some(map) = document.as_object_mut() {
+            map.remove("expires_at");
+            map.remove("status");
+        }
+        let verified = PublicKey::verify_document("fact-event", &document)
+            .is_some_and(|key| steward_keys.contains(&key.to_hex()));
+        let steward = steward_keys.contains(signer) && verified;
+        exceptions.push(json!({
+            "signed_by": crate::json::get_str(relaxation, "authority_id").unwrap_or("company-steward"),
+            "kind": "relaxation",
+            "store": "company",
+            "event_id": crate::json::get_str(relaxation, "event_id"),
+            "expires_at": crate::json::get_str(relaxation, "expires_at").filter(|value| !value.is_empty()).or_else(|| crate::json::get_str(relaxation, "effective_until")),
+            "accepted": steward,
+            "refusal_code": if steward { Value::Null } else { Value::String("AUTHORITY_WRONG_SCOPE".to_owned()) }
+        }));
+    }
     let mut misextraction_notices = Vec::new();
     let mut never_true = Vec::new();
     for item in &events {
@@ -2602,21 +2899,25 @@ pub fn status(
             let action = crate::model::action_of(event).unwrap_or(event.atom_kind.as_str());
             match action {
                 "exception_request" => {
+                    // Interface contract C13: the request is a maintainer-signed
+                    // FactEvent bound to this repository whose parents name the
+                    // Company fact it asks to relax, with a bounded expiry.
                     let document = event.document();
+                    let names_target = !event.parents.is_empty()
+                        || !event.supersedes.is_empty()
+                        || crate::json::get_str(&document, "relaxed_fact_id").is_some();
+                    let bounded = event.effective_until.is_some()
+                        || crate::json::get_str(&document, "expires_at").is_some();
                     let bound = event.repository_id.as_deref()
                         == context.trust.repository_uuid.as_deref()
-                        && crate::json::get_str(&document, "relaxed_fact_id").is_some()
-                        && crate::json::get_str(&document, "requested_class")
-                            .is_some_and(|class| crate::model::CRITICALITIES.contains(&class))
-                        && !crate::json::get_str(&document, "reason")
-                            .unwrap_or_default()
-                            .is_empty()
-                        && crate::json::get_str(&document, "expires_at").is_some();
+                        && names_target
+                        && bounded;
                     let accepted = verified && bound;
                     exception_request_accepted = exception_request_accepted || accepted;
                     exceptions.push(json!({
                         "signed_by": event.authority_id,
                         "kind": "exception_request",
+                        "event_id": event.event_id,
                         "accepted": accepted,
                         "refusal_code": if accepted { Value::Null } else { Value::String("CONFIG_INVARIANT".to_owned()) }
                     }));
@@ -2625,7 +2926,8 @@ pub fn status(
                     let steward = context.trust.steward_keys().contains(&event.signer) && verified;
                     exceptions.push(json!({
                         "signed_by": event.authority_id,
-                        "kind": event.atom_kind,
+                        "kind": if action == "relaxation" { "relaxation" } else { event.atom_kind.as_str() },
+                        "event_id": event.event_id,
                         "accepted": steward,
                         "refusal_code": if steward { Value::Null } else { Value::String("AUTHORITY_WRONG_SCOPE".to_owned()) }
                     }));
@@ -2724,8 +3026,14 @@ pub fn status(
             || crate::json::get_str(fact, "disposition")
                 .is_some_and(|d| d == "orphan_abandoned" || d == "manifest_observation_expired")
         {
+            let disposition = crate::json::get_str(fact, "disposition").unwrap_or_default();
+            let orphan = kind == "orphan_abandoned" || disposition == "orphan_abandoned";
             event_records.push(json!({
-                "atom_kind": if kind == "orphan_abandoned" || crate::json::get_str(fact, "disposition") == Some("orphan_abandoned") { "orphan_abandoned" } else { "observation_expired" },
+                "event_id": fact.get("event_id").cloned().unwrap_or(Value::Null),
+                "logical_key": fact.get("logical_key").cloned().unwrap_or(Value::Null),
+                "atom_kind": if orphan { "orphan_abandoned" } else { "observation_expired" },
+                "disposition": if orphan { "orphan_abandoned" } else { "manifest_observation_expired" },
+                "store_kind": "company",
                 "statement": fact.get("statement").cloned().unwrap_or(Value::Null),
                 "fact_state": fact.get("status").cloned().unwrap_or(Value::Null),
                 "unresponsive_closing_authority": fact.get("unresponsive_closing_authority").cloned().unwrap_or(Value::Null),
@@ -2941,7 +3249,7 @@ pub fn status(
         "approver_minted_accepted": !never_true.iter().any(|notice| notice.get("approver_minted_accepted") == Some(&Value::Bool(false))),
         "view_stabilises": true,
         "growth_bounded": counts.total_files <= crate::codebase::EVENT_CEILING,
-        "exceptions": exceptions,
+        "exceptions": ordered_exceptions(exceptions),
         "exception_request_accepted": exception_request_accepted,
         "events": event_records,
         "effective_criticality": effective,
@@ -3468,7 +3776,13 @@ pub fn doctor(
     let now = crate::time::now_rfc3339_millis();
     let repo = Repository::discover(repo_path).ok();
     let capabilities = launcher.capability_report();
-    let mut core = launcher.core_store()?;
+    // A diagnostic reads the Core store when it exists and reports an empty
+    // one otherwise; it never creates or records state under HOME.
+    let core = if crate::private::PrivateStore::core_exists() {
+        launcher.core_store()?
+    } else {
+        crate::private::PrivateStore::open_memory("core")?
+    };
     let shard = core.budget_shard(launcher.principal_id(), launcher.host_instance_id(), &now)?;
     let shard_id = format!(
         "shard_{}",
@@ -3485,9 +3799,7 @@ pub fn doctor(
             key.sign_document("receipt", &json!({"schema": "guildhall-prompt-budget-shard/1", "shard_id": shard_id, "observed_at": now, "shard": shard})).ok()
         }
     };
-    if let Some(signed) = &signed_shard {
-        core.record_shard_observation(signed, &now)?;
-    }
+    // A diagnostic signs and shows the shard; it records nothing.
     let sweep = core.sweep(&now)?;
     let metrics = shard.get("metrics").cloned().unwrap_or(Value::Null);
     let reserved = metrics.get("reserved").and_then(Value::as_i64).unwrap_or(0);
@@ -3511,16 +3823,24 @@ pub fn doctor(
         "consecutive": shard.get("consecutive").cloned().unwrap_or(Value::from(0)),
         "warning": "no global cross-machine prompt total is known; this shard covers exactly one (principal_id, host_instance_id)"
     });
-    let hooks = host.map(|host| crate::hooks::hook_state(host, &launcher.shared.hosts));
-    if let Some(state) = hooks.as_ref() {
-        if state.get("installed").and_then(Value::as_bool) != Some(true) {
-            let host = host.unwrap_or("codex");
-            return Err(crate::hooks::hook_approval_error(
-                host,
-                &launcher.shared.hosts,
-            ));
-        }
-    }
+    // C9: doctor reports HOOK_APPROVAL_REQUIRED for every host whose
+    // user-level config lacks the planned entries. It is evidence, read from
+    // the config files alone; the host is not run and nothing is written.
+    let hooks = match host {
+        Some(host) => json!({ host: crate::hooks::hook_state(host, &launcher.shared.hosts) }),
+        None => crate::hooks::doctor_report(&launcher.shared.hosts),
+    };
+    let hooks_approval_required: Vec<Value> = hooks
+        .as_object()
+        .map(|table| {
+            table
+                .iter()
+                .filter(|(_, state)| state.get("installed").and_then(Value::as_bool) != Some(true))
+                .map(|(name, _)| Value::String(name.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let hooks = Some(hooks);
     let sandbox = launcher.personal_root().map(|root| {
         let probe = crate::sandbox::denial_probe(&root, &repo.as_ref().map(|r| vec![r.root.clone()]).unwrap_or_default(), launcher.company_port());
         json!({"enforced": probe.enforced, "personal_root_readable": probe.personal_root_readable, "disabled_loudly": probe.disabled_loudly, "detail": probe.detail})
@@ -3605,6 +3925,7 @@ pub fn doctor(
         "host": host,
         "host_versions": {"codex": crate::hooks::host_version("codex"), "claude": crate::hooks::host_version("claude"), "supported_ranges": launcher.shared.hosts},
         "hooks": hooks,
+        "hooks_approval_required": hooks_approval_required,
         "prompt_budget_shard": prompt_budget_shard,
         "budget_shard": {"shard_id": shard_id, "signed": signed_shard.is_some(), "signature": signed_shard.as_ref().and_then(|s| s.get("signature").cloned()), "shard": shard},
         "unknown_global_total_warning": true,
@@ -3807,13 +4128,39 @@ pub fn fsck(
         crate::hash::sha256_text(&local_digests.iter().cloned().collect::<Vec<_>>().join("\n"));
     let certificate_conflict = repo.kin.join("certificate.json").exists()
         && repo.kin.join("certificate-second.json").exists();
-    let digest_attribution = if context.trust.company_reachable == Some(false) {
-        "none"
-    } else if counts.signature_invalid > 0 || counts.malformed > 0 {
-        "client"
-    } else {
-        "none"
-    };
+    // P-8: resolve every Company reference in the store and attribute any
+    // digest mismatch to its owner (steward, client, or nobody when Company
+    // is unavailable) exactly as the projection does.
+    let (reference_view, _, company_references) = context.current_view(&as_of.as_of, None)?;
+    let mismatch = company_references.iter().find(|record| {
+        crate::json::get_str(record, "resolution").is_some_and(|value| value != "resolved")
+    });
+    let digest_attribution = mismatch
+        .and_then(|record| record.get("digest_attribution").cloned())
+        .unwrap_or_else(|| {
+            json!({
+                "owner_role": if context.trust.company_reachable != Some(false)
+                    && (counts.signature_invalid > 0 || counts.malformed > 0)
+                {
+                    "client"
+                } else {
+                    "none"
+                },
+                "reason": if counts.signature_invalid > 0 || counts.malformed > 0 {
+                    "local event bytes fail verification; no Company digest is in question"
+                } else {
+                    "every Company reference resolves to its published digest"
+                }
+            })
+        });
+    for unknown in &reference_view.unknowns {
+        unknowns.push(json!({
+            "kind": unknown.kind,
+            "owner_role": unknown.owner_role,
+            "owner_identity": unknown.owner_identity,
+            "logical_key": unknown.logical_key
+        }));
+    }
     let lock_path = repo.common_dir.join(format!("guildhall-{uuid}.lock"));
     crate::paths::write_atomic(
         &cache_checkpoint,
@@ -3851,7 +4198,8 @@ pub fn fsck(
         "cascade_seconds": elapsed.as_secs_f64(),
         "admission_lock_path": lock_path.to_string_lossy(),
         "store_digest": store_digest,
-        "digest_attribution": {"owner_role": digest_attribution},
+        "digest_attribution": digest_attribution,
+        "company_references": company_references,
         "company_query_attempted": context.trust.company_query_attempted,
         "unknowns": unknowns,
         "sparse_checkout": sparse,

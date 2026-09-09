@@ -876,10 +876,38 @@ fn status(
 ) -> Handled {
     require_scope(auth, "facts:read")?;
     let cursor = db.cursor().map_err(|error| refuse(500, error))?;
+    // Company's own lifecycle events (observation expiry, orphan abandonment,
+    // ...): the events it emits on its own clock, without client activity.
+    let lifecycle_events: Vec<Value> = db
+        .events_of_kind("fact-event")
+        .map_err(|error| refuse(500, error))?
+        .into_iter()
+        .filter(|(_, document, _)| {
+            crate::json::get_str(document, "disposition")
+                .is_some_and(|disposition| crate::model::ACTION_DISPOSITIONS.contains(&disposition))
+        })
+        .map(|(cursor, document, _)| {
+            json!({
+                "cursor": cursor.to_string(),
+                "event_id": crate::json::get_str(&document, "event_id"),
+                "atom_kind": crate::json::get_str(&document, "atom_kind"),
+                "disposition": crate::json::get_str(&document, "disposition"),
+                "logical_key": crate::json::get_str(&document, "logical_key"),
+                "statement": crate::json::get_str(&document, "statement"),
+                "asserted_at": crate::json::get_str(&document, "asserted_at"),
+                "observation_status": crate::json::get_str(&document, "observation_status")
+            })
+        })
+        .collect();
+    let open_unknowns = db
+        .unknowns(Some("open"))
+        .map_err(|error| refuse(500, error))?;
     Ok((
         200,
         json!({
             "status": "ok",
+            "events": lifecycle_events,
+            "unknowns": open_unknowns,
             "company_id": state.config.company_id,
             "bind": state.config.bind.to_string(),
             "cursor": cursor.to_string(),

@@ -244,6 +244,25 @@ impl Cache {
         }
     }
 
+    /// Company's published current view, proxied as reducer input.
+    ///
+    /// Each entry of a root-signed snapshot's `facts` is Company's own derived
+    /// current fact: data on the outside, immutable, versioned by the snapshot
+    /// cursor, a reference to a point in time. The client never re-derives
+    /// Company's supersession or authority ranking; it re-applies only its own
+    /// clocks (the architecture §6 truth table) and certificate state. The
+    /// proxy therefore carries one FactEvent-shaped document per published
+    /// fact, authenticated by the snapshot signature rather than a per-event
+    /// signature. A snapshot that already publishes full signed events is
+    /// passed through unchanged.
+    pub fn snapshot_fact_documents(&self) -> Result<Vec<Value>, ContractError> {
+        Ok(self
+            .snapshot()?
+            .as_ref()
+            .map(snapshot_fact_documents)
+            .unwrap_or_default())
+    }
+
     /// Install a steward certificate into the cache (C2): verify the closed
     /// certificate shape and root signature, then copy the supplied bytes
     /// verbatim to the UUID-keyed path. The SQLite row remains an index, but
@@ -488,6 +507,102 @@ impl Cache {
             })
             .unwrap_or_default()
     }
+}
+
+/// Proxy every fact of a signed snapshot into a FactEvent-shaped document.
+pub fn snapshot_fact_documents(snapshot: &Value) -> Vec<Value> {
+    let cursor = crate::json::get_str(snapshot, "cursor").unwrap_or("0");
+    crate::json::get_array(snapshot, "facts")
+        .into_iter()
+        .flatten()
+        .filter_map(|fact| proxy_fact_document(fact, cursor))
+        .collect()
+}
+
+fn proxy_fact_document(fact: &Value, snapshot_cursor: &str) -> Option<Value> {
+    if crate::json::get_str(fact, "schema") == Some(crate::model::EVENT_SCHEMA) {
+        return Some(fact.clone());
+    }
+    let map = fact.as_object()?;
+    let text = |key: &str| map.get(key).and_then(Value::as_str).map(str::to_owned);
+    let list = |key: &str| {
+        map.get(key)
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new()))
+    };
+    let effective_from = text("effective_from")?;
+    let mut document = serde_json::Map::new();
+    document.insert(
+        "schema".to_owned(),
+        Value::String(crate::model::EVENT_SCHEMA.to_owned()),
+    );
+    document.insert("event_id".to_owned(), Value::String(text("event_id")?));
+    document.insert("store_kind".to_owned(), Value::String("company".to_owned()));
+    document.insert(
+        "authority_id".to_owned(),
+        Value::String(text("authority_id")?),
+    );
+    document.insert(
+        "authority_scope".to_owned(),
+        Value::String(text("authority_scope")?),
+    );
+    document.insert("fact_id".to_owned(), Value::String(text("fact_id")?));
+    document.insert(
+        "logical_key".to_owned(),
+        Value::String(text("logical_key")?),
+    );
+    document.insert("atom_kind".to_owned(), Value::String(text("atom_kind")?));
+    document.insert(
+        "scope".to_owned(),
+        Value::String(text("scope").or_else(|| text("authority_scope"))?),
+    );
+    document.insert("statement".to_owned(), Value::String(text("statement")?));
+    document.insert("evidence_refs".to_owned(), list("evidence_refs"));
+    document.insert(
+        "asserted_at".to_owned(),
+        Value::String(text("asserted_at").unwrap_or_else(|| effective_from.clone())),
+    );
+    document.insert("effective_from".to_owned(), Value::String(effective_from));
+    if let Some(until) = text("effective_until") {
+        document.insert("effective_until".to_owned(), Value::String(until));
+    }
+    document.insert(
+        "disposition".to_owned(),
+        Value::String(text("disposition").unwrap_or_else(|| "accepted".to_owned())),
+    );
+    document.insert(
+        "distortion".to_owned(),
+        map.get("distortion").cloned().unwrap_or_else(|| {
+            json!({"trigger": "dependent decision", "loss_if_absent": 3000, "rationale": "unstated"})
+        }),
+    );
+    document.insert("parents".to_owned(), list("parents"));
+    document.insert("supersedes".to_owned(), list("supersedes"));
+    document.insert("redundancy_with".to_owned(), list("redundancy_with"));
+    document.insert("complements".to_owned(), list("complements"));
+    document.insert("company_refs".to_owned(), list("company_refs"));
+    document.insert(
+        "authority_snapshot_cursor".to_owned(),
+        Value::String(
+            text("authority_snapshot_cursor").unwrap_or_else(|| snapshot_cursor.to_owned()),
+        ),
+    );
+    document.insert(
+        "confidence".to_owned(),
+        map.get("confidence")
+            .cloned()
+            .unwrap_or_else(|| Value::from(6_000)),
+    );
+    document.insert("unresolved_uncertainty".to_owned(), Value::Null);
+    document.insert(
+        "signer".to_owned(),
+        Value::String(text("signer").unwrap_or_default()),
+    );
+    document.insert(
+        "signature".to_owned(),
+        Value::String(text("signature").unwrap_or_default()),
+    );
+    Some(Value::Object(document))
 }
 
 fn validate_certificate(document: &Value) -> Result<(), ContractError> {

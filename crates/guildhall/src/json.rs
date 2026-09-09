@@ -24,6 +24,16 @@ pub fn try_canonical_bytes(value: &Value) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// RFC 8785 serialization of a display document that may legitimately carry
+/// control characters in strings (a rendered file preview, for instance).
+/// Durable records use [`canonical_text`], which additionally enforces the
+/// architecture §3 text rule before serialization.
+pub fn jcs_text(value: &Value) -> String {
+    let mut out = Vec::new();
+    canonical_unchecked(value, &mut out);
+    String::from_utf8(out).unwrap_or_default()
+}
+
 pub fn try_canonical_text(value: &Value) -> Result<String, String> {
     try_canonical_bytes(value).and_then(|bytes| {
         String::from_utf8(bytes).map_err(|_| "canonical JSON is not UTF-8".to_owned())
