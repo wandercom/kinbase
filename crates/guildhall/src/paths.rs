@@ -232,29 +232,98 @@ pub fn list_files(root: &Path) -> Result<Vec<PathBuf>, ContractError> {
 }
 
 fn walk(root: &Path, current: &Path, output: &mut Vec<PathBuf>) -> Result<(), ContractError> {
-    let mut children: Vec<PathBuf> = fs::read_dir(current)
-        .map_err(|error| ContractError::io("read directory", error))?
-        .map(|entry| entry.map(|entry| entry.path()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| ContractError::io("read directory entry", error))?;
-    children.sort();
-    for child in children {
-        let metadata =
-            fs::symlink_metadata(&child).map_err(|error| ContractError::io("stat", error))?;
-        if metadata.file_type().is_symlink() {
+    // The directory entry already carries its own kind, so the walk costs one
+    // `readdir` per directory rather than one `lstat` per file. The symlink
+    // rejection is unchanged: an entry type is never followed.
+    let mut children: Vec<(PathBuf, fs::FileType)> = Vec::new();
+    for entry in
+        fs::read_dir(current).map_err(|error| ContractError::io("read directory", error))?
+    {
+        let entry = entry.map_err(|error| ContractError::io("read directory entry", error))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| ContractError::io("stat", error))?;
+        children.push((entry.path(), file_type));
+    }
+    children.sort_by(|left, right| left.0.cmp(&right.0));
+    for (child, file_type) in children {
+        if file_type.is_symlink() {
             return Err(ContractError::integrity(
                 "DIGEST_MISMATCH",
                 "symlink inside a declared store root",
                 "Remove the symlink; store paths must be regular files and directories.",
             ));
         }
-        if metadata.is_dir() {
+        if file_type.is_dir() {
             walk(root, &child, output)?;
-        } else if metadata.is_file() {
+        } else if file_type.is_file() {
             output.push(child.strip_prefix(root).unwrap_or(&child).to_path_buf());
         }
     }
     Ok(())
+}
+
+/// Count regular files under `root`, stopping as soon as `cap` is exceeded.
+///
+/// Returns `(observed, capped)`; `capped` marks the count as a lower bound.
+/// A ceiling refusal reads no event bytes and does not materialize the tree:
+/// the store is refused before the work (architecture §11 ceilings).
+pub fn count_files_capped(root: &Path, cap: usize) -> Result<(usize, bool), ContractError> {
+    let mut observed = 0usize;
+    if root.is_dir() {
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(current) = stack.pop() {
+            let entries = fs::read_dir(&current)
+                .map_err(|error| ContractError::io("read directory", error))?;
+            for entry in entries {
+                let entry =
+                    entry.map_err(|error| ContractError::io("read directory entry", error))?;
+                let file_type = entry
+                    .file_type()
+                    .map_err(|error| ContractError::io("stat", error))?;
+                if file_type.is_dir() {
+                    stack.push(entry.path());
+                } else if file_type.is_file() {
+                    observed += 1;
+                    if observed > cap {
+                        return Ok((observed, true));
+                    }
+                }
+            }
+        }
+    }
+    Ok((observed, false))
+}
+
+/// Total byte length of the regular files under `root`, from directory
+/// metadata only; no file content is read.
+pub fn total_file_bytes(root: &Path) -> Result<u64, ContractError> {
+    let mut total = 0u64;
+    if root.is_dir() {
+        let mut stack = vec![root.to_path_buf()];
+        while let Some(current) = stack.pop() {
+            let entries = fs::read_dir(&current)
+                .map_err(|error| ContractError::io("read directory", error))?;
+            for entry in entries {
+                let entry =
+                    entry.map_err(|error| ContractError::io("read directory entry", error))?;
+                let file_type = entry
+                    .file_type()
+                    .map_err(|error| ContractError::io("stat", error))?;
+                if file_type.is_dir() {
+                    stack.push(entry.path());
+                } else if file_type.is_file() {
+                    total = total.saturating_add(
+                        entry
+                            .metadata()
+                            .map_err(|error| ContractError::io("stat", error))?
+                            .len(),
+                    );
+                }
+            }
+        }
+    }
+    Ok(total)
 }
 
 pub fn home_dir() -> PathBuf {

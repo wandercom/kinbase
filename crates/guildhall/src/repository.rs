@@ -255,6 +255,10 @@ pub struct LoadCounts {
     pub malformed: usize,
     pub path_alias: usize,
     pub oversized: usize,
+    /// Event files present but not read in this bounded pass: the store is
+    /// above the ratified `.kin/` intake ceiling, so the pass is incremental
+    /// and these events remain unchecked (architecture §6, §11).
+    pub deferred: usize,
     pub foreign_paths: Vec<String>,
 }
 
@@ -273,6 +277,7 @@ impl LoadCounts {
             "malformed": self.malformed,
             "path_alias": self.path_alias,
             "oversized": self.oversized,
+            "deferred": self.deferred,
             "foreign_paths": self.foreign_paths
         })
     }
@@ -400,10 +405,24 @@ impl RepoContext {
             Some(self.repo.is_reachable_from_default(&head))
         };
         let default_origin = repository_origin_class(&self.repo, head_reachable);
-        let tracked_paths = tracked_event_paths(&self.repo.root);
-        let dirty_paths = dirty_event_paths(&self.repo.root);
-        for file in self.repo.stored_events()? {
-            counts.total_files += 1;
+        let scan = self.repo.scan_events(crate::codebase::EVENT_CEILING)?;
+        // Above the intake ceiling a whole-store pass is not bounded work, so
+        // Git's own whole-tree enumeration is skipped with it; every event the
+        // bounded pass does read is then classified conservatively.
+        let bounded = scan.deferred > 0;
+        let tracked_paths = if bounded {
+            BTreeSet::new()
+        } else {
+            tracked_event_paths(&self.repo.root)
+        };
+        let dirty_paths = if bounded {
+            BTreeSet::new()
+        } else {
+            dirty_event_paths(&self.repo.root)
+        };
+        counts.total_files = scan.total;
+        counts.deferred = scan.deferred;
+        for file in scan.files {
             if file.path_alias {
                 counts.path_alias += 1;
                 counts
@@ -4042,6 +4061,11 @@ pub fn doctor(
     Ok(())
 }
 
+/// The wall budget the revocation cascade promises at the proof ceiling
+/// (`spec/architecture.md` §3: "At the proof ceiling of 10,000 events it must
+/// finish within 120 seconds").
+pub const CASCADE_BOUND_SECONDS: f64 = 120.0;
+
 /// `fsck --repo PATH [--full]` (interface contract §1.4).
 pub fn fsck(
     launcher: Launcher,
@@ -4155,10 +4179,6 @@ pub fn fsck(
     } else {
         "incremental"
     };
-    // Revocation cascade: every fact must be rechecked under the current cursor
-    // within 120 s at the ceiling; otherwise the typed limit state persists.
-    let elapsed = started.elapsed();
-    let cascade_incomplete = elapsed.as_secs() >= 120;
     let unknown_records: Vec<Value> = context.trust.unknowns.iter().map(|u| json!({"kind": u.get("kind").cloned().unwrap_or(Value::Null), "owner_role": u.get("owner_role").cloned().unwrap_or(Value::Null)})).collect();
     let mut unknowns = unknown_records;
     if expired_publication {
@@ -4249,6 +4269,25 @@ pub fn fsck(
             "logical_key": unknown.logical_key
         }));
     }
+    // Revocation cascade (architecture §3): revocation propagation is a bounded
+    // local job keyed by the newly observed cursor. Until every locally
+    // addressable fact and trace has been re-evaluated under that cursor the
+    // projection state is `REVOCATION_CASCADE_INCOMPLETE` and every
+    // not-yet-rechecked fact is withheld, not assumed unaffected. The job is
+    // bounded twice: by the 120-second wall budget the ceiling promises, and by
+    // the intake ceiling itself, because a store above the ceiling holds events
+    // this bounded pass never read and no completion can be claimed over them.
+    // The clock is read here, once the re-evaluation is actually done.
+    let elapsed = started.elapsed();
+    let revocation_observed = !context.trust.revocations.is_empty();
+    let unchecked_facts = counts.deferred;
+    let cascade_over_budget = elapsed.as_secs_f64() >= CASCADE_BOUND_SECONDS;
+    let cascade_incomplete = revocation_observed && (unchecked_facts > 0 || cascade_over_budget);
+    // The withholding invariant the cascade rests on: the admitted (trusted)
+    // set is drawn only from events this pass actually re-evaluated. An event
+    // left unchecked is never counted as unaffected.
+    let checked_facts = counts.total_files.saturating_sub(unchecked_facts);
+    let unchecked_facts_withheld = admitted_paths.len() <= checked_facts;
     let lock_path = repo.common_dir.join(format!("guildhall-{uuid}.lock"));
     crate::paths::write_atomic(
         &cache_checkpoint,
@@ -4282,8 +4321,18 @@ pub fn fsck(
         "ineffective_git_attributes": !attributes_effective,
         "index_cache_byte_equivalent": index_matches,
         "cascade_state": if cascade_incomplete { "REVOCATION_CASCADE_INCOMPLETE" } else { "complete" },
-        "unchecked_facts_withheld": cascade_incomplete,
+        "unchecked_facts_withheld": unchecked_facts_withheld,
+        "unchecked_fact_count": unchecked_facts,
+        "rechecked_fact_count": checked_facts,
+        "revocation_observed": revocation_observed,
         "cascade_seconds": elapsed.as_secs_f64(),
+        "cascade_bound_seconds": CASCADE_BOUND_SECONDS,
+        "bounded_scan": counts.deferred > 0,
+        "events_checked": checked_facts,
+        "events_deferred": counts.deferred,
+        "omitted_count": counts.deferred,
+        "over_intake_ceiling": counts.total_files > crate::codebase::EVENT_CEILING,
+        "intake_state": if counts.total_files >= crate::codebase::EVENT_CEILING { "refusing" } else { "admitting" },
         "admission_lock_path": lock_path.to_string_lossy(),
         "store_digest": store_digest,
         "digest_attribution": digest_attribution,
@@ -4357,15 +4406,15 @@ pub fn fsck(
             ),
             "Inspect counts; obtain signed lineage or remove them from this repository history.",
         ))
-    } else if cascade_incomplete {
+    } else if full && cascade_incomplete {
+        // Only the full pass runs the cascade job, so only the full pass can
+        // report it unfinished. The bounded incremental diagnosis stays
+        // available at any store size (verification V-4 "ceiling").
         Some(ContractError::limit(
-            "revocation cascade did not complete within 120 seconds; unchecked facts remain withheld",
-            json!({"remaining_count": counts.total_files, "omitted_count": counts.total_files, "refused_count": counts.total_files}),
-        ))
-    } else if counts.total_files > crate::codebase::EVENT_CEILING {
-        Some(ContractError::limit(
-            "the .kin/ store exceeds the 10,000-event ceiling; intake refuses new writes while diagnosis remains available",
-            json!({"event_count": counts.total_files, "omitted_count": counts.total_files - crate::codebase::EVENT_CEILING, "refused_count": 0}),
+            format!(
+                "revocation cascade did not re-evaluate every locally addressable fact within {CASCADE_BOUND_SECONDS} seconds; {unchecked_facts} fact(s) remain unchecked and withheld"
+            ),
+            json!({"remaining_count": unchecked_facts, "omitted_count": unchecked_facts, "refused_count": unchecked_facts, "cascade_state": "REVOCATION_CASCADE_INCOMPLETE"}),
         ))
     } else {
         None
