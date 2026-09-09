@@ -161,12 +161,13 @@ pub fn rebuild(
     let previous_view_digest = private.meta(&last_view_key)?;
     let state_changed = previous_view_digest.as_deref() != Some(current_view_digest.as_str());
     private.set_meta(&last_view_key, &current_view_digest)?;
-    let manifest_publication =
-        if state_changed && crate::repository::committed_event_count(repo)? > 0 {
-            Some(crate::repository::publish_manifest_value(launcher, repo)?)
-        } else {
-            None
-        };
+    // Architecture section 6: derived views are disposable and `rebuild` is a
+    // recomputation of one, not an admission. Publishing a manifest here made
+    // the command write durable store bytes on its first run and none on the
+    // next, so two rebuilds over one frozen event set left different stores.
+    // Manifests are published by the admission path (`ingest`) and by the
+    // explicit `repo publish-manifest`, which own that fact.
+    let manifest_publication: Option<Value> = None;
     let manifest_lineages = Repository::discover(repo)?.manifest_heads()?.len();
     let result = json!({
         "status": "rebuilt",

@@ -611,7 +611,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 trace.rejected.push(json!({
                     "event_id": event.event_id,
                     "step": 4,
-                    "reason": format!("NOT_YET_EFFECTIVE: effective_from {} is after as_of {}", event.effective_from, input.as_of)
+                    "reason": format!("NOT_YET_EFFECTIVE: effective_from {} has not been reached", event.effective_from)
                 }));
                 continue;
             }
@@ -625,9 +625,13 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                     trace.rejected.push(json!({
                         "event_id": event.event_id,
                         "step": 4,
+                        // The published reason cites the event's own declared
+                        // validity only. Stamping the reader's as_of into it
+                        // made one immutable fact serialise differently on
+                        // every read (architecture section 6: the projection is
+                        // a function of its inputs, not of when it was read).
                         "reason": format!(
-                            "EXPIRED: declared validity ended at {until} before as_of {}; temporary evidence past its validity is not a current rule",
-                            input.as_of
+                            "EXPIRED: declared validity ended at {until}; temporary evidence past its validity is not a current rule"
                         )
                     }));
                     continue;
