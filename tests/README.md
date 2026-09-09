@@ -114,6 +114,19 @@ supersession links. All 117 obligations and 482 thresholds are retained. The
 catalogue, frozen controls, and kill-ledger digests below were recomputed and
 remain unchanged; no product clause or control was relaxed.
 
+Dispatch 013 starts at `8d9e873`. Kindex and authority-answer revocation witnesses
+use a boolean unchanged-tree flag and carry the external-registry explanation
+separately. The native lifecycle selftest checks typed transition evidence for
+all 64 cells. V-4 distinctness applies to the ten mutation-stage post-state
+digests; all thirteen stages retain their before/after evidence. Duplicate,
+rebuild, and restart must preserve state, with rebuild/restart also retaining
+their view-determinism checks. Seventeen synthetic cycle regressions cover a
+valid preserving cycle, every idle mutation or unintended preserving-stage
+change, failed rebuild/restart determinism, and a mutation revisiting an earlier
+state. All 117 obligations, 482 thresholds, numeric bounds, and frozen control
+bytes are retained. Catalogue wording and its mirror and recorded digests are
+updated; the human-signature debt remains open.
+
 ## Reviewer entrypoint
 
 ```sh
@@ -190,16 +203,16 @@ Every assertion cites an exact ratified requirement:
 
 | quantity | value |
 |---|---:|
-| collected by pytest | 332 |
+| collected by pytest | 349 |
 | catalogued obligations | 117 |
 | catalogued thresholds | 482 |
 | kill-ledger rows over frozen controls | 482 |
 | executable pre-execution planters | 35 |
 | detector mutations with a demonstrated escape | 6 |
-| product-independent self-tests | 213 |
+| product-independent self-tests | 230 |
 | unbackreferenced tests | 0 |
 
-Catalog digest `8320395313ff6f00`; kill-ledger digest `b16d7fd1b37174a5`;
+Catalog digest `a8655ac61a8c33db`; kill-ledger digest `6df354962e4f0178`;
 frozen-controls digest `0c264e8c12f2e969`;
 instrument-debt digest `99d8a395782c8760`.
 

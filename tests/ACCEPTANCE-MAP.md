@@ -5,20 +5,23 @@ resolved `@spec_ref` backreferences, not test counts; a single test may carry
 several exact citations.
 
 The machine-readable catalog is `tests/fixtures/catalog/obligations.json`
-(digest `8320395313ff6f00`): 117 obligations and
+(digest `a8655ac61a8c33db`): 117 obligations and
 482 thresholds, each freezing a
 threshold, positive control, negative control, product mutation and detector
 mutation. `tests/fixtures/catalog/planters.json` records the 35
 executable pre-execution planters and `tests/fixtures/controls/controls.json` the frozen raw positive and
-negative controls. 322 node ids collect; none is unbackreferenced.
-Kill-ledger digest: `b16d7fd1b37174a5`; frozen-controls digest: `0c264e8c12f2e969`.
-The 203 selftest nodes include seven dispatch-007, ten dispatch-008, and five
+negative controls. 349 node ids collect; none is unbackreferenced.
+Kill-ledger digest: `6df354962e4f0178`; frozen-controls digest: `0c264e8c12f2e969`.
+The 230 selftest nodes include seven dispatch-007, ten dispatch-008, and five
 dispatch-009 regression guards (the latter expand to ten nodes), plus 36
 dispatch-010 nodes for native control removal, typed product observations,
 journal-triggered kills, isolated crash worlds, input pipes, and model config.
 Dispatch 011 adds 17 nodes for recorded-clock stability, destination-bound fan-out,
 receipt expiry inputs, public lifecycle receipts, evidence aliases, bounded ceiling stops,
 native in-scope conflict resolution, doctor diagnostics, and intact adapter corpora.
+Dispatch 012 adds ten nodes for snapshots, receipt/freshness clocks, and identity.
+Dispatch 013 adds 17 cycle mutation/preservation nodes and strengthens the existing
+native lifecycle guards to require boolean transition evidence.
 
 Authority precedence (`spec/ratification-manifest.json`):
 `source-request.md > product.md > architecture.md > threat-model.md >

@@ -1044,7 +1044,7 @@ _o(
     "Repeated incremental cycle: create, duplicate, edit, supersede, retract, revoke, "
     "expire, branch, merge, conflict, resolve, rebuild, restart.",
     clauses(
-        every("stages", "each stage performs a real state transition",
+        every("stages", "each stage performs its required mutation or preservation check",
               present("stage", "which stage"),
               is_true("stage_verified",
                       "mutation stages advance state; duplicate/rebuild/restart preserve it"),
@@ -1053,7 +1053,8 @@ _o(
         is_true("view_stabilises", "the derived view stabilises across repeats"),
         is_true("growth_bounded", "storage growth stays bounded"),
         distinct("cycle_state_digests",
-                 "the cycle actually advanced state rather than idling", min_len=3),
+                 "mutation-stage post-state digests are distinct; preserving stages are excluded",
+                 min_len=3),
     ),
     surfaces=("guildhall corpus rebuild --json", "repository state"),
     vectors=("create", "duplicate", "edit", "supersede", "retract", "revoke",

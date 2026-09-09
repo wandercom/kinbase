@@ -27,6 +27,13 @@ def test_all_native_lifecycle_transitions_execute_without_product(tmp_path: Path
     assert len(witnesses) == 64
     assert all(w["source_tree_before"] != w["source_tree_after"]
                or w.get("tree_unchanged_is_the_point") for w in witnesses.values())
+    for cell in L.CELLS:
+        witness = witnesses[cell.key]
+        assert LO.derive(cell, witness, {}, {})["transition_executed_natively"] is True
+        if "registry_revoke" in witness:
+            assert witness["source_tree_before"] == witness["source_tree_after"]
+            assert witness["tree_unchanged_is_the_point"] is True
+            assert witness["tree_unchanged_reason"] == "revocation occurs in the external registry"
     import json
     from ._harness import synth
     for path in (ctx.sources / "answers").glob("*.json"):
@@ -73,6 +80,10 @@ def test_lifecycle_oracle_uses_public_records_and_rejects_count_only_evidence():
     # Harness labels and claimed mutation outcomes have no influence.
     positive["lifecycle_cells"] = [{"cell": cell.cell, "negative_mutation_killed": True}]
     assert LO.derive(cell, witness, {}, positive) == result
+    unchanged = {"source_tree_before": "a", "source_tree_after": "a"}
+    assert LO.derive(cell, unchanged, {}, positive)["transition_executed_natively"] is False
+    unchanged["tree_unchanged_is_the_point"] = True
+    assert LO.derive(cell, unchanged, {}, positive)["transition_executed_natively"] is True
 
 
 @spec_ref(VERIFY("INSTRUMENT", "v1", "Every declared cell has an expected observation/current-fact/Unknown state and at least one negative mutation."))
@@ -1132,3 +1143,68 @@ def test_dispatch012_duplicate_certificate_fsck_observation(roots, behavior, exp
     assert observed is expected
     assert calls == [1, 2, 1]
     assert installed.read_bytes() == original.read_bytes()
+
+
+@pytest.mark.parametrize("fault", [
+    None, "create", "duplicate", "edit", "supersede", "retract", "revoke",
+    "expire", "branch", "merge", "conflict", "resolve", "rebuild", "restart",
+    "rebuild-view", "restart-view", "revisited-state",
+])
+@spec_ref(_REMEDIATION_010)
+def test_dispatch013_cycle_accepts_preservation_and_rejects_idle_mutations(fault):
+    import ast
+    import hashlib
+    from . import test_v4_maintenance as gate
+    from ._harness.catalog import BY_ID
+    from ._harness.evidence_model import Evidence, Origin
+
+    # Execute the actual stage recorder and final evidence expression, as in
+    # the snapshot guard above. No action here invokes the product.
+    module = ast.parse(Path(gate.__file__).read_text())
+    cycle = next(n for n in module.body if isinstance(n, ast.FunctionDef)
+                 and n.name == "test_repeated_incremental_cycle_is_restart_safe_and_bounded")
+    recorder = next(n for n in cycle.body if isinstance(n, ast.FunctionDef)
+                    and n.name == "stage")
+    check = next(n.value for n in cycle.body if isinstance(n, ast.Expr)
+                 and isinstance(n.value, ast.Call)
+                 and isinstance(n.value.func, ast.Attribute)
+                 and isinstance(n.value.func.value, ast.Name)
+                 and n.value.func.value.id == "O" and n.value.func.attr == "check")
+    names = [n.value.args[0].value for n in cycle.body if isinstance(n, ast.Expr)
+             and isinstance(n.value, ast.Call) and isinstance(n.value.func, ast.Name)
+             and n.value.func.id == "stage"]
+    assert names == ["create", "duplicate", "edit", "supersede", "retract", "revoke",
+                     "expire", "branch", "merge", "conflict", "resolve", "rebuild", "restart"]
+    preserving = {"duplicate", "rebuild", "restart"}
+    state = [0]
+
+    def snapshot():
+        return hashlib.sha256(str(state[0]).encode()).hexdigest()
+
+    namespace = dict(snapshot=snapshot, stages=[], cycle_digests=[], field=gate.field,
+                     final={"view_stabilises": True, "growth_bounded": True})
+    exec(compile(ast.Module(body=[recorder], type_ignores=[]), gate.__file__, "exec"), namespace)
+    for name in names:
+        def action():
+            if (name not in preserving) != (fault == name):
+                state[0] += 1
+            if fault == "revisited-state" and name == "resolve":
+                state[0] = 1  # Advances locally but revisits create's state.
+            if name in ("rebuild", "restart"):
+                namespace["cycle_digests"].append("" if fault == name + "-view" else "stable-view")
+        namespace["stage"](name, action)
+
+    payload = eval(compile(ast.Expression(check.args[1]), gate.__file__, "eval"), namespace)
+    assert len(payload["stages"]) == 13
+    assert len(payload["cycle_state_digests"]) == 10
+    ev = Evidence(obligation="V-4.incremental-cycle", origin=Origin.PRODUCT,
+                  label="synthetic mutation/preservation sequence", payload=payload)
+    clauses = BY_ID[ev.obligation].clause_set
+    if fault is None:
+        assert all(s["stage_verified"] is True for s in payload["stages"])
+        assert len({s["post_state_digest"] for s in payload["stages"]}) == 10
+        clauses.check(ev)
+    else:
+        tag = "cycle_state_digests" if fault == "revisited-state" else "stages"
+        with pytest.raises(ProductFailure, match=tag):
+            clauses.check(ev)

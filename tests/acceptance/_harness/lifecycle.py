@@ -769,7 +769,8 @@ def _kindex_revoke(ctx: LifecycleContext) -> dict:
     # support_withdrawn row would not exercise an authority revocation.
     return {"native_path": str(_kindex_path(ctx)),
             "registry_revoke": ctx.world.maintainer.authority_id,
-            "tree_unchanged_is_the_point": "revocation occurs in the external registry"}
+            "tree_unchanged_is_the_point": True,
+            "tree_unchanged_reason": "revocation occurs in the external registry"}
 
 
 def _kindex_expire(ctx: LifecycleContext) -> dict:
@@ -855,7 +856,8 @@ def _answer_revoke(ctx: LifecycleContext) -> dict:
     # Re-read the previously admitted answer after actual registry republication.
     return {"native_path": str(_answer_path(ctx, "answer-3")),
             "registry_revoke": ctx.world.architect.authority_id,
-            "tree_unchanged_is_the_point": "revocation occurs in the external registry"}
+            "tree_unchanged_is_the_point": True,
+            "tree_unchanged_reason": "revocation occurs in the external registry"}
 
 
 def _answer_late_arrival(ctx: LifecycleContext) -> dict:

@@ -2825,7 +2825,7 @@
           "positive_control": "V-4.incremental-cycle#pc:every:stages",
           "product_mutation": "V-4.incremental-cycle#pm:every:stages",
           "tag": "every:stages",
-          "why": "each stage performs a real state transition"
+          "why": "each stage performs its required mutation or preservation check"
         },
         {
           "bound": null,
@@ -2861,7 +2861,7 @@
           "positive_control": "V-4.incremental-cycle#pc:distinct:cycle_state_digests",
           "product_mutation": "V-4.incremental-cycle#pm:distinct:cycle_state_digests",
           "tag": "distinct:cycle_state_digests",
-          "why": "the cycle actually advanced state rather than idling"
+          "why": "mutation-stage post-state digests are distinct; preserving stages are excluded"
         }
       ],
       "title": "the repeated incremental cycle is bounded",

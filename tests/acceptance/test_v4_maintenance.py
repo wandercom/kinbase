@@ -146,7 +146,8 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
         stages.append({
             "stage": name,
             "stage_verified": (before == after if name == "duplicate" else
-                               bool(cycle_digests[-1]) if name in ("rebuild", "restart")
+                               before == after and bool(cycle_digests[-1])
+                               if name in ("rebuild", "restart")
                                else before != after),
             "pre_state_digest": before,
             "post_state_digest": after,
@@ -216,7 +217,10 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
             "stages": stages,
             "view_stabilises": field(final, "view_stabilises"),
             "growth_bounded": field(final, "growth_bounded"),
-            "cycle_state_digests": [s["post_state_digest"] for s in stages],
+            # Preserving stages intentionally repeat the preceding digest.
+            # Every mutation still has to advance in stage_verified above.
+            "cycle_state_digests": [s["post_state_digest"] for s in stages
+                                    if s["stage"] not in ("duplicate", "rebuild", "restart")],
         },
         label="thirteen incremental stages, each digested before and after",
     )
