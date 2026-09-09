@@ -94,6 +94,26 @@ a reaped SIGKILL exit and exactly one recovered event. No stale marker, ordinary
 nonzero exit, or completed transaction can license crash coverage. Live journal
 timing and model quality remain Validator measurements.
 
+Dispatch 012 starts at `c9391e6` and implements the reopened-suite R-18 ruling.
+The incremental snapshot consumes `GitRepo.run`'s string result. All nine V-5
+histories now contain at least two signed events: earlier expired observations
+and an earlier unregistered observation are explicitly superseded in rows 4, 8,
+and 9. The late test envelope reuses its earlier receipt even after a long
+delivery delay. Runtime freshness and intentionally expired V-4/V-7/Kindex
+fixtures use the proof clock; V-5 retains historical validity against its frozen
+`2026-03-05` as-of query. Identity testing supplies the duplicate-certificate
+clause from a clean/duplicate/restored `fsck` sequence before the UUID-repin probe.
+Every anchored world writes its registered maintainer's seed outside Git, mode
+0600, and supplies the absolute path through `[identity] maintainer_key_file`;
+config rewrites retain that identity. Manifest expiry reports a publication
+refusal before attempting the Company clock advance.
+
+Ten new product-independent selftest nodes exercise these repairs, and the
+existing temporal witness guard checks every row's minimum history and the new
+supersession links. All 117 obligations and 482 thresholds are retained. The
+catalogue, frozen controls, and kill-ledger digests below were recomputed and
+remain unchanged; no product clause or control was relaxed.
+
 ## Reviewer entrypoint
 
 ```sh
@@ -170,13 +190,13 @@ Every assertion cites an exact ratified requirement:
 
 | quantity | value |
 |---|---:|
-| collected by pytest | 322 |
+| collected by pytest | 332 |
 | catalogued obligations | 117 |
 | catalogued thresholds | 482 |
 | kill-ledger rows over frozen controls | 482 |
 | executable pre-execution planters | 35 |
 | detector mutations with a demonstrated escape | 6 |
-| product-independent self-tests | 203 |
+| product-independent self-tests | 213 |
 | unbackreferenced tests | 0 |
 
 Catalog digest `8320395313ff6f00`; kill-ledger digest `b16d7fd1b37174a5`;

@@ -175,6 +175,7 @@ class ProofRoots:
         claude_version: str = ">=0.0.0",
         personal_data_root: Path | None = None,
         company_url: str | None = None,
+        maintainer_key_file: Path | None = None,
     ) -> Path:
         """Write the launcher-only user config exactly as ``spec/cli.md`` frames it.
 
@@ -196,6 +197,7 @@ class ProofRoots:
             "claude_version": claude_version,
             "personal_data_root": personal_data_root,
             "company_url": company_url,
+            "maintainer_key_file": maintainer_key_file,
         }
         path = self.user_config_path
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -216,6 +218,11 @@ class ProofRoots:
         }
         classifier_args = table["classifier_args"]
         body = 'schema_version = "1"\n\n'
+        if maintainer_key_file is not None:
+            body += render_toml(
+                {"maintainer_key_file": str(maintainer_key_file.resolve())},
+                section="identity",
+            ) + "\n"
         if extra_lines:
             body += render_toml(extra_lines, section="policy")
             body += "\n"

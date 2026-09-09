@@ -191,7 +191,15 @@ def test_dispatch008_temporal_branch_preserves_plants_on_reducer_revision(tmp_pa
         registry=SimpleNamespace(is_registered=lambda authority: True),
         admit_fact=lambda document: {"admitted": True})
     for case in W.TEMPORAL_CASES:
-        W.plant_temporal_history(world, case)
+        events = W.plant_temporal_history(world, case)
+        assert len(events) >= 2, case.case_id
+        if case.case_id in {"expired_incident_workaround", "runtime_freshness_lapsed",
+                            "unregistered_environment"}:
+            documents = [json.loads((world.repo.path / event["path"]).read_bytes())
+                         for event in events]
+            assert documents[0]["event_id"] in documents[1]["supersedes"]
+            assert documents[0]["event_id"] in documents[1]["parents"]
+            assert documents[0]["authority_scope"] == documents[1]["authority_scope"]
         world.verify_planted()
         # Every intermediate reducer revision must carry all previous plants.
         assert all(world._tracked(r["path"]) for r in world.codebase_records())
@@ -988,3 +996,139 @@ def test_dispatch011_native_corpus_survives_without_lifecycle_teardown(tmp_path,
     assert all(json.loads(p.read_bytes())["schema"] == "guildhall-command-result/1" for p in envelopes)
     assert (world.repo.path / "src").is_dir()
     assert (ctx.sources / "answers").is_dir()
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch012_incremental_snapshot_uses_real_git_result(tmp_path):
+    import ast
+    import hashlib
+    from . import test_v4_maintenance as gate
+    from ._harness import canonical
+    # Execute the actual nested snapshot against GitRepo, without running any
+    # product stage or replacing GitRepo.run with a differently shaped double.
+    module = ast.parse(Path(gate.__file__).read_text())
+    cycle = next(n for n in module.body if isinstance(n, ast.FunctionDef)
+                 and n.name == "test_repeated_incremental_cycle_is_restart_safe_and_bounded")
+    snapshot = next(n for n in cycle.body if isinstance(n, ast.FunctionDef)
+                    and n.name == "snapshot")
+    world = SignedWorld.create(tmp_path / "repo")
+    namespace = dict(world=world, repo=world.repo.path, hashlib=hashlib,
+                     canonical=canonical, rows=gate.rows, _store_digest=gate._store_digest,
+                     anchors=SimpleNamespace(
+                         client=SimpleNamespace(get=lambda path: SimpleNamespace(json={"facts": []})),
+                         registry=SimpleNamespace(document=lambda: {})))
+    exec(compile(ast.Module(body=[snapshot], type_ignores=[]), gate.__file__, "exec"), namespace)
+    initial = namespace["snapshot"]()
+    assert len(initial) == 64 and initial == namespace["snapshot"]()
+    world.repo.branch("maintenance/snapshot")
+    world.repo.checkout("maintenance/snapshot")
+    assert namespace["snapshot"]() != initial
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch012_late_test_result_preserves_earlier_receipt(tmp_path, monkeypatch):
+    import json
+    import time
+    from datetime import datetime
+    clock = [1790000000]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+    monkeypatch.setenv("GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS", "60")
+    ctx = L.LifecycleContext(None, tmp_path / "sources", tmp_path / "external")
+    receipts = []
+    for hour in range(1, 5):
+        path = L._test_envelope(ctx, exit_code=0, stdout="passed", hour=hour,
+                                name=f"run-{hour}")
+        stamp = json.loads(path.read_bytes())["observed_at"]
+        receipts.append(stamp)
+        assert abs(datetime.fromisoformat(stamp).timestamp() - (clock[0] + 60)) <= 30
+        clock[0] += 120
+    # Long delivery delay must not turn the older failure into a newer result.
+    clock[0] += 3600
+    late = L._tests_out_of_order(ctx)
+    document = json.loads(Path(late["native_path"]).read_bytes())
+    assert document["exit_code"] == 1
+    assert receipts == sorted(set(receipts))
+    assert document["observed_at"] == receipts[1] < receipts[3]
+
+
+@spec_ref(_REMEDIATION_010)
+@pytest.mark.parametrize("now,offset", [(1790000000, 0), (1925000000, 604800),
+                                        (1925000000, -604800)])
+def test_dispatch012_runtime_freshness_tracks_proof_clock(tmp_path, monkeypatch, now, offset):
+    import json
+    import time
+    from datetime import datetime
+    monkeypatch.setattr(time, "time", lambda: now)
+    monkeypatch.setenv("GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS", str(offset))
+    ctx = L.LifecycleContext(None, tmp_path / "sources", tmp_path / "external")
+    for transition in (L._runtime_create, L._runtime_changed_value,
+                       L._runtime_owner_change, L._runtime_late_arrival,
+                       L._runtime_bounded_skew):
+        witness = transition(ctx)
+        doc = json.loads(Path(witness["native_path"]).read_bytes())
+        assert datetime.fromisoformat(doc["effective_until"]).timestamp() == now + offset + 604800
+        assert doc["environment_owner"] in ("sre-owner-1", "sre-owner-2")
+    expired = L._runtime_expiry(ctx)
+    doc = json.loads(Path(expired["native_path"]).read_bytes())
+    assert doc["effective_until"] == expired["effective_until"]
+    assert datetime.fromisoformat(doc["effective_until"]).timestamp() == now + offset - 60
+
+
+@spec_ref(_REMEDIATION_010)
+def test_dispatch012_maintainer_key_matches_registry_and_survives_config_rewrite(roots):
+    import tomllib
+    from ._harness import ed25519_pure, trust
+    world = SignedWorld.create(roots.repo_root)
+    classifier = trust.Classifier(roots.client_root / "unspawned", "a" * 64,
+                                  ("classifier", "--json"), "product")
+    config, _ = trust.write_user_config(
+        roots, company_url="http://127.0.0.1:1", facts_token="selftest",
+        root_key=roots.client_root / "root.pub", classifier=classifier,
+        maintainer=world.maintainer)
+    key = Path(tomllib.loads(config.read_text())["identity"]["maintainer_key_file"])
+    assert key.is_absolute() and not key.is_relative_to(world.repo.path)
+    assert key.read_bytes() == world.maintainer.seed == bytes([13]) * 32
+    assert key.stat().st_mode & 0o777 == 0o600
+    registry = trust.AuthorityRegistry(world.steward)
+    registry.register(world.maintainer, channel=world.maintainer.scope,
+                      capabilities=("request", "publish-manifest"))
+    assert ed25519_pure.public_key(key.read_bytes()).hex() == registry.entry_for(
+        world.maintainer.authority_id).public_key
+    roots.rewrite_user_config(company_url="http://127.0.0.1:2")
+    assert tomllib.loads(config.read_text())["identity"]["maintainer_key_file"] == str(key)
+    assert config.stat().st_mode & 0o777 == 0o600
+
+
+@spec_ref(_REMEDIATION_010)
+@pytest.mark.parametrize("behavior,expected", [("detect", True), ("ignore", False),
+                                               ("internal-error", False), ("sticky", False)])
+def test_dispatch012_duplicate_certificate_fsck_observation(roots, behavior, expected):
+    import json
+    from . import test_v8_company_refs as gate
+    from ._harness import synth, trust
+    from ._harness.worldbuilder import REPO_UUID
+    world = SignedWorld.create(roots.repo_root)
+    original = trust.write_certificate_file(roots, world.steward, repository_uuid=REPO_UUID)
+    installed = roots.company_cache / REPO_UUID / "certificate.json"
+    installed.parent.mkdir(parents=True)
+    installed.write_bytes(original.read_bytes())
+    calls = []
+
+    def run(*args, **kwargs):
+        assert args[:2] == ("fsck", "--repo")
+        docs = [json.loads(p.read_bytes()) for p in installed.parent.glob("*.json")]
+        calls.append(len(docs))
+        assert all(d["repository_uuid"] == REPO_UUID for d in docs)
+        assert all(synth.verify_document("repo-certificate", d) for d in docs)
+        if len(docs) == 2:
+            assert docs[0]["issued_at"] != docs[1]["issued_at"]
+            code = {"detect": 5, "ignore": 0, "internal-error": 70, "sticky": 5}[behavior]
+        else:
+            code = 5 if behavior == "sticky" and len(calls) == 3 else 0
+        return SimpleNamespace(returncode=code, json={"checks": []})
+
+    observed = gate._two_certificates_fail_fsck(
+        SimpleNamespace(run=run), world, SimpleNamespace(roots=roots))
+    assert observed is expected
+    assert calls == [1, 2, 1]
+    assert installed.read_bytes() == original.read_bytes()

@@ -120,10 +120,10 @@ def planted_world(roots: ProofRoots, guildhall: Guildhall):
     for case in TEMPORAL_CASES:
         per_case[case.case_id] = plant_temporal_history(world, case)
     world.verify_planted()
-    if len(world.planted) < 2 * len(TEMPORAL_CASES):
+    incomplete = {key: len(events) for key, events in per_case.items() if len(events) < 2}
+    if incomplete:
         raise HarnessInvalid(
-            f"only {len(world.planted)} events were planted for "
-            f"{len(TEMPORAL_CASES)} cases; each case needs a real history"
+            f"temporal histories with fewer than two signed events: {incomplete}"
         )
     _ingest_planted(guildhall, world)
     return world, per_case

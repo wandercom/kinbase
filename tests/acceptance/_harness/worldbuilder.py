@@ -638,13 +638,22 @@ def plant_temporal_history(world: SignedWorld, case: TemporalCase) -> list[dict]
             asserted_at="2026-02-01T00:00:00.000Z",
             supersedes=[old["event_id"]], parents=[old["event_id"]], commit=False))
     elif case.case_id == "expired_incident_workaround":
+        old = world.plant_event(
+            m, store_kind="codebase", logical_key=key,
+            statement="Temporarily widen the queue until the incident handover.",
+            atom_kind="observation", disposition="accepted",
+            asserted_at="2026-01-01T00:00:00.000Z",
+            effective_from="2026-01-01T00:00:00.000Z",
+            effective_until="2026-01-02T00:00:00.000Z", commit=False)
+        planted.append(old)
         planted.append(world.plant_event(
             m, store_kind="codebase", logical_key=key,
             statement="Temporarily widen the queue during the incident.",
             atom_kind="observation", disposition="accepted",
             asserted_at="2026-01-02T00:00:00.000Z",
             effective_from="2026-01-02T00:00:00.000Z",
-            effective_until="2026-01-03T00:00:00.000Z", commit=False))
+            effective_until="2026-01-03T00:00:00.000Z",
+            parents=[old["event_id"]], supersedes=[old["event_id"]], commit=False))
     elif case.case_id == "deployed_568_vs_default_90":
         planted.append(world.plant_event(
             m, store_kind="codebase", logical_key=key,
@@ -694,20 +703,37 @@ def plant_temporal_history(world: SignedWorld, case: TemporalCase) -> list[dict]
         branch_event["witness"].update(
             head_at_witness=world.repo.head(), tracked_at_witness=True)
     elif case.case_id == "runtime_freshness_lapsed":
+        old = world.plant_event(
+            DEPLOY_OWNER, store_kind="codebase", logical_key=key,
+            statement="The observed queue depth is 8.",
+            atom_kind="observation", disposition="accepted",
+            asserted_at="2025-12-31T00:00:00.000Z",
+            effective_until="2026-01-01T00:00:00.000Z", commit=False)
+        planted.append(old)
         planted.append(world.plant_event(
             DEPLOY_OWNER,
             store_kind="codebase", logical_key=key,
             statement="The observed queue depth is 12.",
             atom_kind="observation", disposition="accepted",
             asserted_at="2026-01-01T00:00:00.000Z",
-            effective_until="2026-01-02T00:00:00.000Z", commit=False))
+            effective_until="2026-01-02T00:00:00.000Z",
+            parents=[old["event_id"]], supersedes=[old["event_id"]], commit=False))
     elif case.case_id == "unregistered_environment":
+        unregistered = synth.make_signer(
+            "unregistered-owner", "environment:staging-xx", seed_byte=29)
+        old = world.plant_event(
+            unregistered, store_kind="codebase", logical_key=key,
+            statement="The observed queue depth in an unregistered environment is 2.",
+            atom_kind="observation", disposition="accepted",
+            asserted_at="2026-03-03T00:00:00.000Z", commit=False)
+        planted.append(old)
         planted.append(world.plant_event(
-            synth.make_signer("unregistered-owner", "environment:staging-xx", seed_byte=29),
+            unregistered,
             store_kind="codebase", logical_key=key,
             statement="The observed queue depth in an unregistered environment is 3.",
             atom_kind="observation", disposition="accepted",
-            asserted_at="2026-03-04T00:00:00.000Z", commit=False))
+            asserted_at="2026-03-04T00:00:00.000Z",
+            parents=[old["event_id"]], supersedes=[old["event_id"]], commit=False))
     else:  # pragma: no cover - guarded by the frozen tuple
         raise HarnessInvalid(f"unknown temporal case {case.case_id!r}")
 
@@ -727,7 +753,7 @@ class CandidateRecord:
     statement: str
     atom_kind: str
     distortion_rank: int
-    effective_until: str | None = None
+    freshness_seconds: int | None = None
 
 
 V7_CANDIDATES: tuple[CandidateRecord, ...] = (
@@ -754,7 +780,7 @@ V7_CANDIDATES: tuple[CandidateRecord, ...] = (
                     "rationale", 5),
     CandidateRecord("stale_fact", "scheduler/stale/queue-depth",
                     "The observed queue depth is 12.",
-                    "observation", 3, effective_until="2026-01-02T00:00:00.000Z"),
+                    "observation", 3, freshness_seconds=-60),
     CandidateRecord("high_distortion_unknown", "scheduler/unknown/retention",
                     "The retention class for scheduling traces is unresolved.",
                     "question", 8),
@@ -776,7 +802,8 @@ def plant_v7_corpus(world: SignedWorld) -> list[dict]:
             logical_key=record.logical_key,
             statement=record.statement,
             atom_kind=record.atom_kind,
-            effective_until=record.effective_until,
+            effective_until=(synth.receipt_stamp(record.freshness_seconds)
+                             if record.freshness_seconds is not None else None),
             distortion={
                 "trigger": "scheduler diagnosis edit",
                 "loss_if_absent": "safety_critical" if record.distortion_rank >= 8 else "advisory",

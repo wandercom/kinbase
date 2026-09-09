@@ -36,6 +36,7 @@ from ._harness.evidence_model import field, rows
 from ._harness.requirements import (
     ARCH,
     VERIFY,
+    HarnessInvalid,
     ProductFailure,
     spec_ref,
 )
@@ -616,15 +617,48 @@ def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
     )
 
 
+def _two_certificates_fail_fsck(guildhall: Guildhall, world, anchors) -> bool:
+    """Isolate the duplicate-certificate corruption before any repin refusal.
+
+    Discover the installed certificate by its bytes; do not guess the product's
+    cache layout. A second, valid steward signature certifies the same UUID at
+    a different issuance time. Both files coexist in the installed directory.
+    """
+    installed = sorted(trust.cached_certificate_paths(anchors.roots))
+    if not installed:
+        raise HarnessInvalid("duplicate-certificate probe has no installed certificate")
+    repo = world.repo.path
+    baseline = _run(guildhall, "fsck", "--repo", str(repo), "--json", cwd=repo)
+    if baseline.returncode != 0:
+        raise ProductFailure(f"fsck refused before duplicate certificate: {_json(baseline)}")
+    body = json.loads(installed[0].read_bytes())
+    body.pop("signature")
+    body["issued_at"] = synth._stamp(day=2)
+    duplicate = installed[0].with_name(installed[0].stem + "-duplicate.json")
+    if duplicate.exists():
+        raise HarnessInvalid("duplicate-certificate probe would overwrite an existing file")
+    document = world.steward.sign_message("repo-certificate", body)
+    try:
+        duplicate.write_bytes(canonical.jcs(document))
+        duplicate.chmod(0o600)
+        refused = _run(guildhall, "fsck", "--repo", str(repo), "--json", cwd=repo)
+    finally:
+        duplicate.unlink(missing_ok=True)
+    restored = _run(guildhall, "fsck", "--repo", str(repo), "--json", cwd=repo)
+    return refused.returncode in (2, 3, 4, 5) and restored.returncode == 0
+
+
 @spec_ref(
     VERIFY("V-8", "identity",
            "Change URL/protocol/ownership hint without changing the certified UUID; identity "
            "remains stable."),
+    VERIFY("V-8", "identity", "Two certificates for one UUID fail `fsck`."),
 )
 def test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change(
     guildhall: Guildhall, anchored, ids: OpaqueIds, roots: ProofRoots
 ) -> None:
     world, anchors = anchored
+    two_certificates_fail_fsck = _two_certificates_fail_fsck(guildhall, world, anchors)
     _populate_company(anchors, world)
     before = _json(_run(guildhall, "status", "--repo", str(world.repo.path),
                         "--json", cwd=world.repo.path))
@@ -668,6 +702,7 @@ def test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change(
     O.check(
         "V-8.identity",
         {
+            "two_certificates_fail_fsck": two_certificates_fail_fsck,
             "uuid_stable_under_hint_change":
                 field(before, "repository_uuid") == field(after, "repository_uuid")
                 and field(before, "repository_uuid") is not None,
@@ -751,8 +786,10 @@ def test_company_emits_its_own_observation_expired_event(
     )
     _plant_reference(world, anchors, published=_published(anchors, fact))
     # The dated default-branch observation whose fresh_until Company watches.
-    _run(guildhall, "repo", "publish-manifest", "--repo", str(world.repo.path),
-         "--json", cwd=world.repo.path)
+    publication = _run(guildhall, "repo", "publish-manifest", "--repo", str(world.repo.path),
+                       "--json", cwd=world.repo.path)
+    if publication.returncode != 0:
+        raise ProductFailure(f"manifest publication refused before expiry: {_json(publication)}")
     # R-14 applies separately to the long-lived service and the invoking client.
     # Restart the same service state/config under the advanced proof clock, then
     # read its status before any clone activity can manufacture an expiry event.

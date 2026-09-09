@@ -592,11 +592,21 @@ def verify_classifier_spawn(guildhall, repo: Path) -> None:
 
 def write_user_config(roots: ProofRoots, *, company_url: str,
                       facts_token: str, root_key: Path,
-                      classifier: Classifier) -> tuple[Path, Path]:
+                      classifier: Classifier,
+                      maintainer: synth.Signer | None = None) -> tuple[Path, Path]:
     """Write the client token copy and the launcher user config (C1)."""
     token_path = roots.client_root / "facts.token"
     token_path.write_bytes(facts_token.encode("utf-8"))
     os.chmod(token_path, 0o600)
+    # R-18: the publishing identity is an ordinary user-config key, held
+    # outside Git. Supply the very seed whose public key the registry admits.
+    maintainer_key = None
+    if maintainer is not None:
+        maintainer_key = roots.client_root / "maintainer.key"
+        descriptor = os.open(maintainer_key, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            handle.write(maintainer.seed)
     config = roots.write_user_config(
         classifier_path=classifier.path,
         classifier_sha256=classifier.sha256,
@@ -605,6 +615,7 @@ def write_user_config(roots: ProofRoots, *, company_url: str,
         facts_token_file=token_path,
         root_public_key_file=root_key,
         company_url=company_url,
+        maintainer_key_file=maintainer_key,
     )
     return config, token_path
 
@@ -637,6 +648,7 @@ def establish(
     user_config, token_path = write_user_config(
         roots, company_url=service.url, facts_token=service.facts_token,
         root_key=root_key, classifier=classifier,
+        maintainer=world.maintainer,
     )
 
     client = ServiceClient(

@@ -64,6 +64,7 @@ class LifecycleContext:
     sources: Path                   # native source tree, inside the repo
     external: Path                  # native sources outside the work tree
     last_transcript: dict[str, str] = dataclass_field(default_factory=dict)
+    test_receipts: dict[int, str] = dataclass_field(default_factory=dict)
     clock_day: int = 1
     _counter: int = 0
 
@@ -401,7 +402,10 @@ def _test_envelope(ctx: LifecycleContext, *, exit_code: int, stdout: str,
     path.parent.mkdir(parents=True, exist_ok=True)
     synth.command_result_envelope(
         path, command=["pytest", "-q", "tests/test_window.py"],
-        exit_code=exit_code, stdout=stdout, observed_at=synth.receipt_stamp(),
+        # Keep ordinary receipts within the skew bound, and replay the original
+        # receipt for an earlier hour even when delivery is substantially later.
+        exit_code=exit_code, stdout=stdout, observed_at=ctx.test_receipts.setdefault(
+            hour, synth.receipt_stamp((hour - 4) * 10)),
     )
     return path
 
@@ -437,10 +441,10 @@ def _tests_delete(ctx: LifecycleContext) -> dict:
 
 
 def _tests_out_of_order(ctx: LifecycleContext) -> dict:
-    """A result observed later but *asserted* earlier than the current one."""
+    """An earlier receipt delivered after the current result."""
     path = _test_envelope(ctx, exit_code=1, stdout="1 failed", hour=2,
                           name="run-5-late")
-    return {"native_path": str(path), "asserted_hour": 2, "arrived_after": "run-4"}
+    return {"native_path": str(path), "observed_hour": 2, "arrived_after": "run-4"}
 
 
 # ==========================================================================
@@ -662,39 +666,40 @@ def _runtime(ctx: LifecycleContext, name: str, *, stdout: str, hour: int,
 
 def _runtime_create(ctx: LifecycleContext) -> dict:
     path = _runtime(ctx, "obs-1", stdout='{"lookahead_seconds": 568}', hour=1,
-                    effective_until=synth._stamp(day=ctx.clock_day + 7))
+                    effective_until=synth.receipt_stamp(7 * 86400))
     return {"native_path": str(path), "value": 568}
 
 
 def _runtime_changed_value(ctx: LifecycleContext) -> dict:
     path = _runtime(ctx, "obs-2", stdout='{"lookahead_seconds": 300}', hour=2,
-                    effective_until=synth._stamp(day=ctx.clock_day + 7))
+                    effective_until=synth.receipt_stamp(7 * 86400))
     return {"native_path": str(path), "value": 300}
 
 
 def _runtime_owner_change(ctx: LifecycleContext) -> dict:
     path = _runtime(ctx, "obs-3", stdout='{"lookahead_seconds": 300}', hour=3,
                     owner="sre-owner-2",
-                    effective_until=synth._stamp(day=ctx.clock_day + 7))
+                    effective_until=synth.receipt_stamp(7 * 86400))
     return {"native_path": str(path), "owner": "sre-owner-2"}
 
 
 def _runtime_expiry(ctx: LifecycleContext) -> dict:
+    deadline = synth.receipt_stamp(-60)
     path = _runtime(ctx, "obs-4", stdout='{"lookahead_seconds": 300}', hour=4,
-                    effective_until=synth._stamp(day=ctx.clock_day))
+                    effective_until=deadline)
     return {"native_path": str(path),
-            "effective_until": synth._stamp(day=ctx.clock_day)}
+            "effective_until": deadline}
 
 
 def _runtime_late_arrival(ctx: LifecycleContext) -> dict:
     path = _runtime(ctx, "obs-5-late", stdout='{"lookahead_seconds": 240}', hour=2,
-                    effective_until=synth._stamp(day=ctx.clock_day + 7))
+                    effective_until=synth.receipt_stamp(7 * 86400))
     return {"native_path": str(path), "observed_hour": 2, "arrived_after": "obs-4"}
 
 
 def _runtime_bounded_skew(ctx: LifecycleContext) -> dict:
     path = _runtime(ctx, "obs-6-skew", stdout='{"lookahead_seconds": 240}', hour=0,
-                    effective_until=synth._stamp(day=ctx.clock_day + 7))
+                    effective_until=synth.receipt_stamp(7 * 86400))
     return {"native_path": str(path), "skew_minutes": 4, "bounded": True}
 
 
@@ -770,7 +775,7 @@ def _kindex_revoke(ctx: LifecycleContext) -> dict:
 def _kindex_expire(ctx: LifecycleContext) -> dict:
     path = _kindex_write(ctx, [_kindex_node(
         "kx-expired", "expired at the publication horizon",
-        disposition="manifest_observation_expired", effective_until=ctx.stamp(),
+        disposition="manifest_observation_expired", effective_until=synth.receipt_stamp(-60),
     )])
     return {"native_path": str(path), "expired": "kx-expired"}
 

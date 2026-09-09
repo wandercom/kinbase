@@ -134,7 +134,7 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
         facts = rows(company, "facts")
         material = {"repository": _store_digest(repo),
                     "head": world.repo.head(),
-                    "branch": world.repo.run("symbolic-ref", "--short", "HEAD").stdout.strip(),
+                    "branch": world.repo.run("symbolic-ref", "--short", "HEAD").strip(),
                     "company_facts": facts,
                     "registry": anchors.registry.document()}
         return hashlib.sha256(canonical.jcs(material)).hexdigest()
@@ -180,7 +180,7 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
     stage("expire", lambda: world.plant_event(
         world.steward, store_kind="company", logical_key=key + "/interim",
         statement="the interim window has expired",
-        effective_until=synth._stamp(day=1)))
+        effective_until=synth.receipt_stamp(-60)))
     stage("branch", lambda: (world.repo.branch("maintenance/alt"),
                              world.repo.checkout("maintenance/alt"),
                              world.repo.write("docs/alt.md", "alternate\n"),
@@ -317,7 +317,7 @@ def test_manifest_comparison_classifies_lag_incomplete_and_expiry(
                           "count": 5},
                          {"heads": {"main": local_head}, "count": 4}),
         "expired": ({"heads": {"main": local_head}, "count": 4,
-                     "fresh_until": synth._stamp(day=1)},
+                     "fresh_until": synth.receipt_stamp(-60)},
                     {"heads": {"main": local_head}, "count": 4}),
         "unavailable": ({"heads": {}, "count": 0, "unreachable": True},
                         {"heads": {"main": local_head}, "count": 4}),
