@@ -235,7 +235,10 @@ Use `corpora.bind_operator_exercise(corpora.load_gold("operator_exercise.json"),
 Path("/private/tmp/operator-presentation.jsonl"))` from a harness process with
 `tests/` on its Python path. Give the operator only the emitted JSONL, never the
 gold fixture or the returned harness mapping. Each record includes its opaque
-`id`, statement, proposed destination and single-write instructions. IDs derive
+`id`, statement, atom kind, proposed destination, and the fixture's verbatim
+`decision_semantics` and routing context. Approve means the displayed routing
+action is correct, including retaining nothing for `none`; reject means the
+statement warrants a different routing action. IDs derive
 from the canonical frozen exercise digest, so a later scoring process uses the
 same IDs; changing the exercise invalidates earlier recordings.
 

@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from ._harness import corpora, hosts
+from ._harness import corpora, hosts, operator_exercise
 from ._harness import obligations as O
 from ._harness import prereq, synth, trust
 from ._harness.cli import Guildhall
@@ -360,6 +360,7 @@ def test_blinded_operator_exercise_accuracy_and_median_time(
 ) -> None:
     """Scored by the harness against gold the operator never saw."""
     exercise = corpora.load_gold("operator_exercise.json")
+    operator_exercise.validate(exercise)
     items = prereq.gold_records(
         exercise["items"], name="operator exercise", minimum=20,
         why="V-9 freezes a twenty-item blinded exercise",

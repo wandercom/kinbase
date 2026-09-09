@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from ._harness import auxsel, corpora
+from ._harness import auxsel, consumption, corpora
 from ._harness.requirements import HarnessInvalid, VERIFY, spec_ref
 from ._harness.roots import ProofRoots
 from . import test_v9_fatigue as fatigue
@@ -82,6 +82,8 @@ def test_current_grant_and_selection_remain_required(tmp_path):
 
 @spec_ref(REFERENCE)
 def test_prior_process_operator_recording_joins_and_fanout_is_not_penalized(tmp_path, monkeypatch):
+    # Exercise real scoring without crediting synthetic evidence to a V-9 run.
+    monkeypatch.setattr(consumption, "record", lambda *args, **kwargs: None)
     # Synthetic responses intentionally read gold in the producer process. They
     # prove harness mechanics only and must never be reported as a human run.
     producer = r'''

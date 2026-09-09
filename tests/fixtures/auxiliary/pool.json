@@ -126,9 +126,9 @@
   "named_rightsholder": "Jeremy McEntire",
   "permits_local_evaluation": true,
   "permits_transmission_to_pinned_model_provider": true,
-  "rightsholder_signature": "Signed: Jeremy McEntire; Name: Jeremy McEntire; Date: 2026-09-09T20:42:31Z",
+  "rightsholder_signature": "Signed: Jeremy McEntire; Name: Jeremy McEntire; Date: 2026-09-09T23:34:19Z (re-attestation over the current reproducible digest; supersedes the 2026-09-09T20:42:31Z signature over the non-reproducible 1f3d9db708ffcfe4c37f299e2d699e2f402f5a2e8c2f88d137c8e5e547295eb3)",
   "tester_claim": "Every byte under sources/ first appeared in this lane, authored for this instrument; no third-party text is reproduced, quoted or adapted. This is a claim with a checkable commit history, not an independent proof of authority to grant a licence.",
-  "why_incomplete": "The supplied human grant records the named rightsholder, asserted authority and signature. Tester cannot independently prove authorship, employment authority, signature authenticity or legal sufficiency. Clause 5 cites the superseded unreproducible digest; Validator must obtain founder re-attestation over the new pool digest before Reviewer selection."
+  "why_incomplete": "The supplied human grant records the named rightsholder, asserted authority and signature, and clause 5 now cites the current reproducible pool digest. Tester cannot independently prove authorship, employment authority, signature authenticity or legal sufficiency; that residual is disclosed, not closed. RIGHTS.md still carries the pre-re-attestation status line: RIGHTS.md is block 2 of the digest preimage, so correcting its prose would move the pool digest and invalidate the very attestation the correction describes. The machine-readable state in this object is authoritative over that prose."
  },
  "schema": "guildhall-acceptance-auxiliary-corpus-pool/2",
  "selectable": true,

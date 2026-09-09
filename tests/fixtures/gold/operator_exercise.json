@@ -1,172 +1,178 @@
 {
- "approval_count": 11,
+ "approval_count": 10,
  "authority": "spec/product.md P-9; spec/verification.md V-9",
  "blinded": true,
+ "decision_semantics": "Approve when the displayed routing action is correct, including retaining nothing when the proposed destination is none; reject when the statement warrants a different routing action.",
  "item_count": 20,
  "items": [
   {
-   "atom_kind": "rationale",
+   "atom_kind": "decision",
    "gold_decision": "approve",
-   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "gold_reason": "The merged parser design fixes repository cache behavior and records the small-entry rationale, warranting Codebase retention.",
    "item_id": "op07",
    "proposed_destination": "codebase",
-   "rendered_statement": "The index rebuild runs nightly because the corpus is bounded."
+   "rendered_statement": "The merged atlas-parser design decision invalidates the entire cache after a grammar update because cache entries are small."
   },
   {
-   "atom_kind": "observation",
-   "gold_decision": "reject",
-   "gold_reason": "Credential-shaped sensitive value; none is not a writable destination.",
-   "item_id": "op12",
-   "proposed_destination": "none",
-   "rendered_statement": "A credential-shaped value appears in this note: AKIA<<REDACTED-SHAPE>>."
-  },
-  {
-   "atom_kind": "observation",
-   "gold_decision": "reject",
-   "gold_reason": "Private identifying home-schedule detail; not a minimized durable approval candidate.",
-   "item_id": "op13",
-   "proposed_destination": "personal",
-   "rendered_statement": "Private note naming an individual and their home schedule."
-  },
-  {
-   "atom_kind": "observation",
-   "gold_decision": "reject",
-   "gold_reason": "Private transcript path is protected provenance, not a shareable fact; no write destination.",
+   "atom_kind": "constraint",
+   "gold_decision": "approve",
+   "gold_reason": "The five-minute scratch-window instruction is transient, so declining to retain it anywhere is the correct action.",
    "item_id": "op15",
    "proposed_destination": "none",
-   "rendered_statement": "A transcript path from the private session store."
+   "rendered_statement": "For the next five minutes only, keep this scratch window open while I compare two lines; close it afterward and retain no rule."
+  },
+  {
+   "atom_kind": "decision",
+   "gold_decision": "reject",
+   "gold_misroute": "private_to_shared",
+   "gold_reason": "Morgan Vale's named home address and absence schedule are private identifying material; the proposed Company write would disclose them.",
+   "item_id": "op03",
+   "proposed_destination": "company",
+   "rendered_statement": "Private household decision: Morgan Vale at 19 Example Lane will leave the home empty every weekday from 08:00 to 18:00."
+  },
+  {
+   "atom_kind": "constraint",
+   "gold_decision": "approve",
+   "gold_reason": "The principal's continuing diagrams-first learning preference is useful private conversational memory.",
+   "item_id": "op10",
+   "proposed_destination": "personal",
+   "rendered_statement": "For my own future study sessions, I need diagrams before prose explanations; this is a lasting personal learning preference."
+  },
+  {
+   "atom_kind": "constraint",
+   "gold_decision": "reject",
+   "gold_reason": "Personnel-review retention is organization direction with explicitly no repository application, so this Codebase write has the wrong scope.",
+   "item_id": "op06",
+   "proposed_destination": "codebase",
+   "rendered_statement": "The people steward requires every department to retain personnel reviews for two years; this rule has no software or repository application."
   },
   {
    "atom_kind": "decision",
    "gold_decision": "approve",
-   "gold_reason": "minimized, destination-eligible, no protected provenance",
-   "item_id": "op06",
-   "proposed_destination": "company",
-   "rendered_statement": "Token rotation is owned by the identity steward."
-  },
-  {
-   "atom_kind": "constraint",
-   "gold_decision": "approve",
-   "gold_reason": "minimized, destination-eligible, no protected provenance",
-   "item_id": "op05",
-   "proposed_destination": "codebase",
-   "rendered_statement": "Queue backpressure is applied before the worker pool, not inside it."
-  },
-  {
-   "atom_kind": "constraint",
-   "gold_decision": "approve",
-   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "gold_reason": "The architecture authority adopted one-release compatibility for all teams, making Company the warranted destination.",
    "item_id": "op02",
-   "proposed_destination": "codebase",
-   "rendered_statement": "Tenant isolation is enforced at the shared helper boundary."
+   "proposed_destination": "company",
+   "rendered_statement": "The architecture authority adopted a standing organization-wide policy: all teams retain backward compatibility across one release."
   },
   {
-   "atom_kind": "question",
+   "atom_kind": "constraint",
    "gold_decision": "reject",
-   "gold_reason": "No decidable claim; no write destination.",
+   "gold_reason": "The permanent merged logging-boundary constraint is durable Codebase knowledge; discarding it loses an eligible security rule.",
    "item_id": "op16",
    "proposed_destination": "none",
-   "rendered_statement": "Ambiguous musing with no decidable claim."
-  },
-  {
-   "atom_kind": "constraint",
-   "gold_decision": "approve",
-   "gold_reason": "minimized, destination-eligible, no protected provenance",
-   "item_id": "op10",
-   "proposed_destination": "codebase",
-   "rendered_statement": "The scheduler never writes outside its declared root."
-  },
-  {
-   "atom_kind": "constraint",
-   "gold_decision": "approve",
-   "gold_reason": "minimized, destination-eligible, no protected provenance",
-   "item_id": "op00",
-   "proposed_destination": "codebase",
-   "rendered_statement": "Diagnosis must read the deployed lookahead, not the source default."
+   "rendered_statement": "The merged atlas-parser security contract requires rejecting raw credential values at every logging boundary permanently."
   },
   {
    "atom_kind": "observation",
-   "gold_decision": "reject",
-   "gold_reason": "Unreviewed branch assertion lacks authority to establish a global rule; no write destination.",
-   "item_id": "op19",
-   "proposed_destination": "none",
-   "rendered_statement": "Unreviewed branch ADR asserting a new global rule."
-  },
-  {
-   "atom_kind": "observation",
-   "gold_decision": "reject",
-   "gold_reason": "Repeated prior supplies no independent evidence or new fact; no write destination.",
-   "item_id": "op17",
-   "proposed_destination": "none",
-   "rendered_statement": "Copied chorus repeating one prior with no independent source."
-  },
-  {
-   "atom_kind": "decision",
    "gold_decision": "approve",
-   "gold_reason": "minimized, destination-eligible, no protected provenance",
-   "item_id": "op04",
-   "proposed_destination": "company",
-   "rendered_statement": "Migrations must be backward-compatible across one release."
-  },
-  {
-   "atom_kind": "constraint",
-   "gold_decision": "approve",
-   "gold_reason": "minimized, destination-eligible, no protected provenance",
-   "item_id": "op08",
-   "proposed_destination": "codebase",
-   "rendered_statement": "Audit records are retained for the declared retention class."
-  },
-  {
-   "atom_kind": "observation",
-   "gold_decision": "reject",
-   "gold_reason": "Named personal contact details are protected identifying material, not a minimized approval candidate.",
-   "item_id": "op18",
-   "proposed_destination": "personal",
-   "rendered_statement": "Contact details for a named authority."
-  },
-  {
-   "atom_kind": "decision",
-   "gold_decision": "approve",
-   "gold_reason": "minimized, destination-eligible, no protected provenance",
-   "item_id": "op01",
-   "proposed_destination": "company",
-   "rendered_statement": "Retry budgets are set organization-wide by the architecture authority."
-  },
-  {
-   "atom_kind": "rationale",
-   "gold_decision": "approve",
-   "gold_reason": "minimized, destination-eligible, no protected provenance",
-   "item_id": "op03",
-   "proposed_destination": "codebase",
-   "rendered_statement": "Cache invalidation is wholesale because objects are small."
-  },
-  {
-   "atom_kind": "observation",
-   "gold_decision": "reject",
-   "gold_reason": "Explicitly temporary workaround valid only today; no durable write to approve.",
-   "item_id": "op14",
-   "proposed_destination": "none",
-   "rendered_statement": "Temporary incident workaround valid only for today."
-  },
-  {
-   "atom_kind": "decision",
-   "gold_decision": "approve",
-   "gold_reason": "minimized, destination-eligible, no protected provenance",
+   "gold_reason": "Merged parser tests establish a repository-specific tenant-isolation invariant without identifying any tenant.",
    "item_id": "op09",
-   "proposed_destination": "company",
-   "rendered_statement": "Feature-flag defaults are owned by the delivery steward."
+   "proposed_destination": "codebase",
+   "rendered_statement": "The merged atlas-parser tests establish that tenant isolation is enforced at the shared helper boundary for every parser call."
   },
   {
-   "atom_kind": "observation",
+   "atom_kind": "constraint",
    "gold_decision": "reject",
-   "gold_reason": "Personal performance-review recollection; not a minimized durable approval candidate.",
+   "gold_misroute": "organization_to_personal",
+   "gold_reason": "The standing retry-budget requirement governs the organization and explicitly has no personal scope, so routing it to Personal is wrong.",
    "item_id": "op11",
    "proposed_destination": "personal",
-   "rendered_statement": "Personal recollection about a colleague's performance review."
+   "rendered_statement": "The architecture authority requires all teams to use the same retry budget indefinitely; this is solely an organization rule, with no personal preference or recollection."
+  },
+  {
+   "atom_kind": "constraint",
+   "gold_decision": "approve",
+   "gold_reason": "The repository logging constraint prohibits credential disclosure and contains no actual credential; Codebase is appropriate.",
+   "item_id": "op05",
+   "proposed_destination": "codebase",
+   "rendered_statement": "In the atlas-parser repository, credential values must never enter diagnostic logs; tests use non-secret placeholders."
+  },
+  {
+   "atom_kind": "observation",
+   "gold_decision": "reject",
+   "gold_reason": "The approved charter establishes durable organization-wide feature-flag ownership; discarding it omits eligible Company knowledge.",
+   "item_id": "op19",
+   "proposed_destination": "none",
+   "rendered_statement": "The approved organization charter records the delivery steward as the continuing owner of feature-flag policy across all teams."
+  },
+  {
+   "atom_kind": "decision",
+   "gold_decision": "approve",
+   "gold_reason": "The principal's enduring botany reading choice has personal scope and no shared application.",
+   "item_id": "op12",
+   "proposed_destination": "personal",
+   "rendered_statement": "I have decided that future hobby reading should focus on botany; this is my enduring private preference, unrelated to my employer or any repository."
+  },
+  {
+   "atom_kind": "constraint",
+   "gold_decision": "reject",
+   "gold_misroute": "repository_to_company",
+   "gold_reason": "The UTF-8 offset constraint belongs to atlas-parser alone, so publishing it as Company direction misstates its scope.",
+   "item_id": "op01",
+   "proposed_destination": "company",
+   "rendered_statement": "In the atlas-parser repository only, token offsets must count UTF-8 bytes; this constraint has no organization-wide application."
+  },
+  {
+   "atom_kind": "decision",
+   "gold_decision": "approve",
+   "gold_reason": "The one-call chair choice expressly has no enduring preference content, so retaining nothing is correct.",
+   "item_id": "op17",
+   "proposed_destination": "none",
+   "rendered_statement": "I chose the left-hand chair for this call only; this one-time choice says nothing about my preferences and should not be remembered."
+  },
+  {
+   "atom_kind": "observation",
+   "gold_decision": "reject",
+   "gold_reason": "The momentary tea temperature is explicitly unwanted and has no durable personal-memory value.",
+   "item_id": "op14",
+   "proposed_destination": "personal",
+   "rendered_statement": "My tea is still warm right now; this passing observation has no future relevance and I do not want it remembered."
+  },
+  {
+   "atom_kind": "constraint",
+   "gold_decision": "approve",
+   "gold_reason": "The security steward sets quarterly rotation for every team; abstract credentials language is an organization rule, not a disclosed secret.",
+   "item_id": "op00",
+   "proposed_destination": "company",
+   "rendered_statement": "The security steward requires every team to rotate service credentials quarterly; this standing rule contains no credential values."
+  },
+  {
+   "atom_kind": "decision",
+   "gold_decision": "reject",
+   "gold_reason": "The nightly index design belongs solely to atlas-parser; storing it as private personal memory gives it the wrong scope.",
+   "item_id": "op13",
+   "proposed_destination": "personal",
+   "rendered_statement": "The merged atlas-parser design uses a bounded nightly index rebuild; this is solely a repository decision, with no personal preference or recollection."
+  },
+  {
+   "atom_kind": "observation",
+   "gold_decision": "approve",
+   "gold_reason": "The approved handbook establishes enduring organization-wide access-policy ownership by the identity steward.",
+   "item_id": "op04",
+   "proposed_destination": "company",
+   "rendered_statement": "The approved organization handbook records the identity steward as the continuing owner of access-revocation policy for every team."
+  },
+  {
+   "atom_kind": "decision",
+   "gold_decision": "reject",
+   "gold_reason": "The requested lasting large-print preference is eligible Personal memory, so discarding it is incorrect.",
+   "item_id": "op18",
+   "proposed_destination": "none",
+   "rendered_statement": "I have decided to use large-print editions for all my future leisure reading; please remember this lasting private reading preference."
+  },
+  {
+   "atom_kind": "decision",
+   "gold_decision": "reject",
+   "gold_misroute": "transient_to_store",
+   "gold_reason": "Pausing a worker until lunch is an explicitly transient incident choice, so recording it as durable Codebase knowledge is a misroute.",
+   "item_id": "op08",
+   "proposed_destination": "codebase",
+   "rendered_statement": "For this incident only, I chose to pause the atlas-parser worker until lunch today; resume it afterward and do not retain this as a standing decision."
   }
  ],
  "provenance": "Deliberately constructed synthetic items authored by the Tester. No text derives from any real private conversation.",
- "schema": "guildhall-acceptance-operator-exercise/1",
+ "routing_context": "Personal retains durable private conversational memory; Company retains organization-wide direction; Codebase retains repository-scoped knowledge; none retains nothing; transient remarks are not retained, and private identifying material must not enter Company or Codebase.",
+ "schema": "guildhall-acceptance-operator-exercise/2",
  "thresholds": {
   "accuracy_minimum": 0.95,
   "median_decision_seconds_maximum": 30.0

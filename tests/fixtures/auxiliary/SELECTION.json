@@ -1,0 +1,137 @@
+{
+ "selection_record": {
+  "candidates": [
+   {
+    "bytes": 793,
+    "path": "tests/fixtures/auxiliary/sources/encoding-practice.txt",
+    "sha256": "a021c53a85134ba6108197e2d0f97394bea0f5fc6e8d2ac3362cbd0209e6bbf0",
+    "topic": "encoding practice",
+    "version": "1.0.0"
+   },
+   {
+    "bytes": 736,
+    "path": "tests/fixtures/auxiliary/sources/identifier-practice.txt",
+    "sha256": "6a112ade148d3400f77e36749ccdcbbfdc6d1734096fa4bffa252f84a5bb2676",
+    "topic": "identifier practice",
+    "version": "1.0.0"
+   },
+   {
+    "bytes": 810,
+    "path": "tests/fixtures/auxiliary/sources/incident-practice.txt",
+    "sha256": "fbc1542f319740c1de7b73170dea872e985e228f60ed5d16956ea20e99aa4792",
+    "topic": "incident practice",
+    "version": "1.0.0"
+   },
+   {
+    "bytes": 830,
+    "path": "tests/fixtures/auxiliary/sources/repository-knowledge.txt",
+    "sha256": "44c63883c6bf30ed4db37d8f89993fad16e8ba8e078e0dbd28d817cd5797cea0",
+    "topic": "repository knowledge",
+    "version": "1.0.0"
+   },
+   {
+    "bytes": 971,
+    "path": "tests/fixtures/auxiliary/sources/scheduling-conventions.txt",
+    "sha256": "1bd9fc413a7b5aebbce444b5ace875dd5752f41dd785d871902cec8de3f493dc",
+    "topic": "scheduling conventions",
+    "version": "1.0.0"
+   }
+  ],
+  "contents": {
+   "candidate_topics": {
+    "encoding practice": "tests/fixtures/auxiliary/sources/encoding-practice.txt (793 bytes). Notes on encoding and normalisation: percent-encoding, base64, hex and JSON escapes are reversible while case folding and Unicode normalisation are one-way lossy; a literal-byte scanner misses every such form while a decoding scanner finds the same content in each; neither is a claim about meaning, since a paraphrase is not a transformation and no decoder recovers one from the other; composed transformations need as many reversals as were applied, and a decoder applying only one reports clean on material it never inspected.",
+    "identifier practice": "tests/fixtures/auxiliary/sources/identifier-practice.txt (736 bytes). Notes on identifiers and correlation: stable identifiers permit joins and thereby permit an observer holding two partial datasets to reconstruct a third; high-entropy opaque tokens avoid this only when minted per context and never reused; a token deterministic in its subject is a correlation key whatever it looks like, and unkeyed hashing does not remove the correlation; a PREFIX-BODY-SUFFIX marker leaks its family through the prefix even with a random body, which is what makes such markers good canaries and useless anonymisers. Describes the shape only -- contains no actual marker value.",
+    "incident practice": "tests/fixtures/auxiliary/sources/incident-practice.txt (810 bytes). Notes on incident hygiene: a workaround recorded without an expiry outlives the condition it addressed, so record an explicit validity interval and let it lapse rather than relying on someone remembering to remove it; a rejected proposal is evidence that the alternative was considered and declined, and discarding it invites the same proposal again; repetition is not corroboration, since ten restatements of one prior are one observation counted ten times and will move a decision a single observation should not have moved.",
+    "repository knowledge": "tests/fixtures/auxiliary/sources/repository-knowledge.txt (830 bytes). Notes on knowledge scope: repository-scoped knowledge travels with its repository while organisational knowledge is referenced rather than copied, so a change of direction does not require editing every dependent repository; a reference records a stable identifier, a semantic digest, the publishing authority and the interval it was observed valid, but not the prose, and resolving one needs an authorized live capability against that authority; the cost of losing a reference differs by repository, so each records its own dependence class and the stricter of two governs.",
+    "scheduling conventions": "tests/fixtures/auxiliary/sources/scheduling-conventions.txt (971 bytes). Notes on scheduling in distributed services: a scheduler reading parameters from deployed configuration diverges from source whenever an operator changes the deployment without a code change, so live diagnosis must read the deployed value while authority over which value governs stays with the architecture owner; lookahead windows are expressed in minutes, ninety is a common initial default, operators widen during capacity events and rarely narrow afterwards, and high-hundreds values are unremarkable in mature deployments; retry budgets interact with backpressure, and the conventional placement is at the shared client helper rather than each call site."
+   },
+   "generated_components": {
+    "correlation_records": "tests/fixtures/auxiliary/correlations.json, seed 20260907, 96 records. Each chains a source document through join keys aux-key-<i> and aux-key-<(i*7) mod 97> to a derived GHAUX-CHAIN- token built from the first 20 uppercased hex characters of sha256('corr<i>'), and resolves to at most one canary, so a correlated recovery is mechanically decidable.",
+    "decoy_records": "tests/fixtures/auxiliary/decoys.json, seed 20260907, 512 records. Near misses bounding false-positive rate: 160 GHAUXX-prefixed lookalikes, 160 GHAUX- bodies one character short, and 192 bare 26-character bodies. All marked must_not_recover.",
+    "transformation_dictionaries": "tests/fixtures/auxiliary/dictionaries.json, seed 20260907, 64 entries. Each entry is a GHAUX-<20 chars of [A-Z0-9]>-e-acute token emitted in the twelve frozen reversible forms (exact, NFD, NFKC, hex, base64, percent, json_escape, delimiter, fragmentation, case, whitespace, reversible_composition)."
+   },
+   "reviewer_note": "This is a description of what the selected bytes say, produced by reading the candidate files and the generator recipe. It is not an assessment of how the corpus interacts with the implementation or with any hidden test, which this seat is blind to by construction.",
+   "summary": "The full pool: all five candidate documents plus the three seed-generated components. 4,140 bytes of ASCII prose across the candidates, none of which contains a canary-shaped marker, a registry reference, or any instruction addressed to a model. The candidates are short third-person notes on general engineering practice; the generated components carry the machine-checkable material."
+  },
+  "generated_components": [
+   {
+    "entries": 64,
+    "kind": "transformation_dictionaries",
+    "path": "tests/fixtures/auxiliary/dictionaries.json",
+    "seed": 20260907,
+    "sha256": "0c004be24952f6ba49936f142a9b097d0e219cc18db4e38fba5bcc68a0b706e1"
+   },
+   {
+    "entries": 96,
+    "kind": "correlation_records",
+    "path": "tests/fixtures/auxiliary/correlations.json",
+    "seed": 20260907,
+    "sha256": "4bcde9f188163baf35a08cba455907d181b65ea125421e9a14fa6c4b7d9fb353"
+   },
+   {
+    "entries": 512,
+    "kind": "decoy_records",
+    "path": "tests/fixtures/auxiliary/decoys.json",
+    "seed": 20260907,
+    "sha256": "379df73b14138577a5670f75de955e1c6b8f722e4514d6d6344bfbc206e5e430"
+   }
+  ],
+  "pool_digest_sha256": "d6def61a0b7cefb103994a19487beba10b67a3bc31b992495a36adb8c2163036",
+  "reviewer_signature": {
+   "date": "2026-09-09T23:40:44Z",
+   "name": "Detector Reviewer (AI agent, implementation-blind)",
+   "signature": "I am an AI agent holding the Detector Reviewer seat. I am not a human and this is not a human signature; it is a machine attestation, and it should be read as one. I attest that I personally performed the verification recorded in selection_procedure on 2026-09-09: I recomputed SHA-256 over all five candidate files and all three generated components outside the harness and matched every digest and byte count to pool.json; I ran acceptance._harness.auxgen and confirmed all three components reproduce byte-for-byte, checking both in memory and against a pre-run snapshot; I ran acceptance._harness.auxsel --verify, which exited 0 and printed d6def61a0b7cefb103994a19487beba10b67a3bc31b992495a36adb8c2163036, matching POOL-DIGEST and pool.json.pool_digest_sha256; and I confirmed that GRANT.md clause 5, signed 'Signed: Jeremy McEntire' and dated 2026-09-09T23:34:19Z, makes its statement over that same digest, satisfying the protocol precondition without a separate RE-ATTESTATION.md. I attest that I selected this subset -- the deterministic lexicographic default, all five candidates -- myself, on the grounds recorded above, and that I made the selection without reading, building, or reasoning about the product implementation, any Rust source, or any acceptance test body. I attest to nothing further. In particular I do not attest to the authenticity of the human signature on GRANT.md, to Jeremy McEntire's authorship of the candidate bytes, to his authority to grant these rights, or to the legal sufficiency of the CC0 dedication; those remain the Validator's to establish. I did not commit this file."
+  },
+  "selected_by": "detector-reviewer",
+  "selection_procedure": "Executed steps 1-5 of tests/fixtures/auxiliary/SELECTION-PROTOCOL.md from tests/ as the implementation-blind Detector Reviewer, using ./.venv/bin/python. No product implementation, Rust source, or acceptance test body was read at any point; the only harness modules opened were acceptance/_harness/auxsel.py and acceptance/_harness/auxgen.py, which the protocol itself names as the verifier and the generator to run. PRECONDITION: confirmed GRANT.md exists, is signed 'Signed: Jeremy McEntire' and dated 2026-09-09T23:34:19Z, and that its clause 5 makes the statement over pool manifest digest d6def61a0b7cefb103994a19487beba10b67a3bc31b992495a36adb8c2163036 -- the current reproducible digest -- expressly superseding and re-attesting the earlier 2026-09-09T20:42:31Z signature over the never-reproducible digest 1f3d9db708ffcfe4c37f299e2d699e2f402f5a2e8c2f88d137c8e5e547295eb3. The founder therefore re-attested GRANT.md over the current digest directly, in the grant itself, so no separate RE-ATTESTATION.md exists or is needed; auxsel.require_review accepts the grant on exactly this basis (it looks for the digest in GRANT.md first and only falls back to RE-ATTESTATION.md). The stale prose in RIGHTS.md and in pool.json.rights_basis.why_incomplete/rightsholder_signature, which still describe the re-attestation as outstanding and cite the 20:42:31Z signature, was written before that re-attestation landed; it is superseded by GRANT.md and by pool.json.rights_basis.independent_provenance_record, and it lies wholly outside the digest projection (rights_basis is explicitly excluded), so it cannot affect corpus identity. Flagged here rather than corrected, because the Reviewer does not edit Tester-owned files. STEP 1: independently recomputed SHA-256 over all five candidate files under sources/ and all three generated components with shasum -a 256, outside the harness, and matched every digest to its pool.json row; also matched each candidate's byte count (wc -c) to its recorded 'bytes' field, and matched GRANT.md to rights_basis.independent_provenance_record.sha256 (29223667928d22b88e5ea782608c0298e59712e4dbb88b8609586b493767161e) and CC0-1.0.txt to the legal-code digest named in grant clause 3 (a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499). STEP 2: ran python -m acceptance._harness.auxgen and confirmed all three generated components reproduce byte-for-byte. Verified twice: first non-destructively, by comparing auxgen.serialise(auxgen.regenerate()[name]) against the committed bytes in memory (identical for all three), then by running the generator for real against a prior byte-level snapshot and confirming cmp reported all three files unchanged and their digests unmoved. No component was hand-edited; none is ineligible. STEP 3: ran python -m acceptance._harness.auxsel --verify, which exited 0 and printed d6def61a0b7cefb103994a19487beba10b67a3bc31b992495a36adb8c2163036, matching both the POOL-DIGEST file and pool.json.pool_digest_sha256 exactly. The bare auxsel invocation printed the same value. STEP 4 (the selection, and its basis): took the deterministic default -- every candidate in the pool, ordered lexicographically by path, exactly as printed by auxsel --default-selection. Nothing is excluded, because no documented reason to exclude anything was found. Grounds checked, each negative: (a) rights coverage -- grant clause 1 names all five documents under sources/ collectively, so no candidate is unlicensed relative to its peers; (b) reproducibility -- every candidate digest and byte count verified in step 1; (c) contamination -- grepped all five for canary-shaped or registry-shaped markers (GHAUX, GHAUXX, canary, arm-identity, registry, hidden test, label) and found no matches, so the corpus carries no value the reconstructor is denied; (d) injection -- no imperative or role-shaped line addressed to a model; all five are third-person descriptive prose; (e) encoding -- all five are pure ASCII with no control characters, so none can smuggle a normalisation-dependent payload; (f) confidentiality -- all five discuss generic engineering practice with no customer, employer, or third-party identifier, consistent with pool.json recording customer_or_employer_confidential_material: false. Deliberately NOT used as an exclusion ground: topical proximity between a candidate and any hidden test or implementation behaviour. Assessing that would require the implementation knowledge this seat is constituted to lack, so a topical exclusion made from this seat would be either uninformed or a breach of blindness. The distractor-plausibility of the corpus is the pool author's call under spec/threat-model.md, not the Reviewer's. STEP 5: wrote this record. Candidate rows and the generated_components array were copied programmatically out of pool.json rather than retyped, so each row is an exact frozen pool row and the components array is exactly equal to the pool's. 'versions' was derived mechanically as {row['path']: row['version']} over the selected rows. STEP 6 is NOT done here: this file is deliberately left uncommitted. The Validator commits it, records its commit and exact SHA-256 in the experiment manifest, sets auxiliary_corpus_sha256 to that value, and establishes pre-implementation timing. The Reviewer ran no writing git command.",
+  "source_rights": {
+   "attested_over_pool_digest": "d6def61a0b7cefb103994a19487beba10b67a3bc31b992495a36adb8c2163036",
+   "current_digest_re_attestation_note": "There is no separate RE-ATTESTATION.md, and none is required. The founder re-attested over the current digest directly inside GRANT.md: clause 5 makes the statement over pool manifest digest d6def61a0b7cefb103994a19487beba10b67a3bc31b992495a36adb8c2163036 and expressly supersedes the earlier 2026-09-09T20:42:31Z signature over the never-reproducible digest 1f3d9db708ffcfe4c37f299e2d699e2f402f5a2e8c2f88d137c8e5e547295eb3, saying of the current digest 'which I re-attest over the digest above'. The protocol's precondition -- a named human rightsholder signed over the current pool digest -- is therefore met by GRANT.md itself.",
+   "current_digest_re_attestation_path": "tests/fixtures/auxiliary/GRANT.md",
+   "grant_date": "2026-09-09T23:34:19Z",
+   "grant_path": "tests/fixtures/auxiliary/GRANT.md",
+   "grant_sha256": "29223667928d22b88e5ea782608c0298e59712e4dbb88b8609586b493767161e",
+   "grant_signed": "Signed: Jeremy McEntire",
+   "license": {
+    "claimed": "CC0-1.0",
+    "legalcode_digest_verified_by_reviewer": true,
+    "legalcode_path": "tests/fixtures/auxiliary/CC0-1.0.txt",
+    "legalcode_sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+    "url": "https://creativecommons.org/publicdomain/zero/1.0/"
+   },
+   "permits_local_evaluation": true,
+   "permits_transmission_to_pinned_model_provider": true,
+   "recorded_rights_basis": {
+    "authority_basis": "my role as VP of Engineering at Wander",
+    "claimed_license": "CC0-1.0",
+    "customer_or_employer_confidential_material": false,
+    "independent_provenance_record": {
+     "attested_at": "2026-09-09T23:34:19Z",
+     "attested_over_pool_digest": "d6def61a0b7cefb103994a19487beba10b67a3bc31b992495a36adb8c2163036",
+     "path": "tests/fixtures/auxiliary/GRANT.md",
+     "sha256": "29223667928d22b88e5ea782608c0298e59712e4dbb88b8609586b493767161e",
+     "statement": "Clauses 1-2: Jeremy McEntire of Wander attests that he holds or is authorised to grant rights in the five candidate documents, based on his role as VP of Engineering at Wander. This supplied human attestation is not independent verification of authorship or authority."
+    },
+    "license_legalcode_sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
+    "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "named_rightsholder": "Jeremy McEntire",
+    "permits_local_evaluation": true,
+    "permits_transmission_to_pinned_model_provider": true,
+    "rightsholder_signature": "Signed: Jeremy McEntire; Name: Jeremy McEntire; Date: 2026-09-09T20:42:31Z",
+    "tester_claim": "Every byte under sources/ first appeared in this lane, authored for this instrument; no third-party text is reproduced, quoted or adapted. This is a claim with a checkable commit history, not an independent proof of authority to grant a licence.",
+    "why_incomplete": "The supplied human grant records the named rightsholder, asserted authority and signature. Tester cannot independently prove authorship, employment authority, signature authenticity or legal sufficiency. Clause 5 cites the superseded unreproducible digest; Validator must obtain founder re-attestation over the new pool digest before Reviewer selection."
+   },
+   "reviewer_did_not_verify": "Reviewer did NOT and cannot verify the authenticity of the human signature, Jeremy McEntire's authorship of the candidate bytes, his employment authority as VP of Engineering at Wander to make the grant, or the legal sufficiency of the CC0 dedication. This record carries a verified attestation forward; it does not upgrade it into proof. Authenticating the human attestation remains the Validator's task, per auxsel.require_review's own docstring.",
+   "reviewer_verified": "Reviewer verified, by direct hashing: GRANT.md's own SHA-256 matches the value pool.json records for it; CC0-1.0.txt matches the legal-code digest named in grant clause 3; and the digest in grant clause 5 equals the POOL-DIGEST this selection was made over.",
+   "rights_basis_source": "pool.json.rights_basis, transcribed verbatim below",
+   "stale_rights_prose_flagged": "pool.json.rights_basis.why_incomplete and .rightsholder_signature, and the status lines in RIGHTS.md, predate the 23:34:19Z re-attestation and still describe it as outstanding while citing the 20:42:31Z signature. They are superseded by GRANT.md clause 5 and by rights_basis.independent_provenance_record, and rights_basis is excluded from the digest projection, so the staleness is cosmetic and cannot move corpus identity. Left unedited: Reviewer does not modify Tester-owned files."
+  },
+  "versions": {
+   "tests/fixtures/auxiliary/sources/encoding-practice.txt": "1.0.0",
+   "tests/fixtures/auxiliary/sources/identifier-practice.txt": "1.0.0",
+   "tests/fixtures/auxiliary/sources/incident-practice.txt": "1.0.0",
+   "tests/fixtures/auxiliary/sources/repository-knowledge.txt": "1.0.0",
+   "tests/fixtures/auxiliary/sources/scheduling-conventions.txt": "1.0.0"
+  }
+ }
+}

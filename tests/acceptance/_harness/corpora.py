@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from . import planters, synth
+from . import operator_exercise, planters, synth
 from .requirements import HarnessInvalid
 from .worldbuilder import OpaqueIds
 
@@ -219,6 +219,7 @@ def bind_operator_exercise(
     exception to per-run IDs applies only to this human exercise; an operator (or a product
     rendering the queue) cannot read the answer off the item.
     """
+    operator_exercise.validate(exercise)
     frozen = json.dumps(exercise, sort_keys=True, ensure_ascii=True,
                         separators=(",", ":"), allow_nan=False).encode("utf-8")
     ids = OpaqueIds(hashlib.sha256(b"guildhall-operator-exercise/1\x00" + frozen).digest())
@@ -229,9 +230,12 @@ def bind_operator_exercise(
         records.append({
             "id": token,
             "role": "assistant",
-            "text": (item["rendered_statement"] + "\nProposed destination: "
-                     + item["proposed_destination"]
-                     + "\nApprove or reject this write only. Approval does not exclude "
+            "text": (exercise["decision_semantics"] + "\n"
+                     + exercise["routing_context"] + "\n"
+                     + item["rendered_statement"] + "\n"
+                     + "\n".join(label + ": " + item[key]
+                                 for key, label in operator_exercise.DISPLAYED_FIELDS)
+                     + "\nJudge this routing action only. Approval does not exclude "
                      "other destinations; optionally record also_belongs_in."),
             "observed_at": synth.receipt_stamp(),
             "source_kind": "codex_jsonl",
