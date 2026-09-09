@@ -444,7 +444,17 @@ fn normalize_ollama_output(input: &Value, candidate: &Value) -> Result<Value, Co
     }))
 }
 
-fn normalized_atom_confidence(model_atom: &Value, _text: &str) -> &'static str {
+/// Confidence is a fact the product owns (P-2), not one the provider reports.
+///
+/// A model's self-report is an input to that judgement: it may lower the
+/// product's reading of an atom, never raise it above what the claim's own
+/// language supports. A provider that answers "high" for every atom would
+/// otherwise let an unsettled guess reach a shared store, which is exactly the
+/// failure P-2 names.
+fn normalized_atom_confidence(model_atom: &Value, text: &str) -> &'static str {
+    if is_unsettled_claim(text) {
+        return "low";
+    }
     match model_atom.get("confidence") {
         Some(Value::String(value)) => match value.trim().to_ascii_lowercase().as_str() {
             "high" => "high",
@@ -681,8 +691,143 @@ fn base_confidence(map: &Map<String, Value>) -> &'static str {
     }
 }
 
+/// Marks of a claim its own author has not settled: hedged assertions,
+/// unresolved questions and conditionals, vague attribution, and proposals
+/// still only under consideration. Every entry is matched on whole words, so
+/// "try" never fires inside "retry budget".
+const UNSETTLED_PHRASES: [&str; 76] = [
+    // Hedged assertion.
+    "maybe",
+    "perhaps",
+    "possibly",
+    "probably",
+    "presumably",
+    "apparently",
+    "arguably",
+    "supposedly",
+    "allegedly",
+    "reportedly",
+    "might",
+    "may be",
+    "could be",
+    "seem",
+    "seems",
+    "seemed",
+    "appear",
+    "appears",
+    "i think",
+    "we think",
+    "i believe",
+    "we believe",
+    "i guess",
+    "i suspect",
+    "we suspect",
+    "i heard",
+    "not sure",
+    "unsure",
+    "not certain",
+    "uncertain",
+    "unclear",
+    "no idea",
+    "as far as i know",
+    "roughly",
+    "sort of",
+    "kind of",
+    "more or less",
+    // Unsettled question.
+    "wonder",
+    "wonders",
+    "wondering",
+    "whether",
+    "open question",
+    "still open",
+    "undecided",
+    "not yet decided",
+    "to be decided",
+    "tbd",
+    "without deciding",
+    // Unresolved conditional.
+    "in case",
+    "depending on",
+    "assuming",
+    "if we",
+    "unless we",
+    // Vague attribution or quantity.
+    "someone",
+    "somebody",
+    "some people",
+    "somewhere",
+    "a few",
+    "a couple",
+    "several",
+    "various",
+    // A proposal is not yet a fact.
+    "we should",
+    "we could",
+    "we might",
+    "we may",
+    "i should",
+    "consider",
+    "let s",
+    "let us",
+    "i suggest",
+    "we suggest",
+    "i propose",
+    "we propose",
+    "ought to",
+    "try",
+    "trying",
+];
+
+/// Words that open an interrogative even when the writer dropped the mark.
+const INTERROGATIVE_OPENERS: [&str; 22] = [
+    "what", "why", "how", "when", "where", "who", "whom", "whose", "which", "whether", "is", "are",
+    "was", "were", "am", "do", "does", "did", "can", "will", "shall", "should",
+];
+
+/// Lowercase the text and collapse every run of non-alphanumeric characters to
+/// one space, framed by spaces, so a phrase test matches whole words only.
+fn word_frame(text: &str) -> String {
+    let mut frame = String::with_capacity(text.len() + 2);
+    frame.push(' ');
+    for character in text.chars() {
+        if character.is_alphanumeric() {
+            frame.extend(character.to_lowercase());
+        } else if !frame.ends_with(' ') {
+            frame.push(' ');
+        }
+    }
+    if !frame.ends_with(' ') {
+        frame.push(' ');
+    }
+    frame
+}
+
+fn frame_contains(frame: &str, phrase: &str) -> bool {
+    frame.contains(&format!(" {phrase} "))
+}
+
+/// The one product-owned reading of whether a claim's own language leaves its
+/// ownership unsettled (P-2). Both providers obey it: the deterministic one as
+/// its confidence floor, the model one as the ceiling on a self-report.
+fn is_unsettled_claim(text: &str) -> bool {
+    if text.contains('?') {
+        return true;
+    }
+    let frame = word_frame(text);
+    if UNSETTLED_PHRASES
+        .iter()
+        .any(|phrase| frame_contains(&frame, phrase))
+    {
+        return true;
+    }
+    INTERROGATIVE_OPENERS
+        .iter()
+        .any(|opener| frame.starts_with(&format!(" {opener} ")))
+}
+
 fn sentence_confidence(text: &str) -> &'static str {
-    if is_nonfact_statement(text) {
+    if is_nonfact_statement(text) || is_unsettled_claim(text) {
         return "low";
     }
     let lower = text.to_lowercase();
@@ -1203,6 +1348,46 @@ mod tests {
                 .iter()
                 .any(|atom| atom.get("confidence") == Some(&Value::String("low".to_owned())))
         );
+    }
+
+    #[test]
+    fn a_models_self_report_cannot_outrank_the_products_reading_of_the_claim() {
+        let unsettled = [
+            "I wonder whether the lookahead still matters here at all",
+            "Try widening the retry budget for today's incident",
+            "Is the queue worker still relevant",
+            "Someone mentioned the shard rebalance in passing",
+            "We should consider moving the scheduler off the shared helper",
+            "This might be the wrong module",
+        ];
+        let settled = [
+            "The retry budget must stay inside the repository default",
+            "Organization-wide, the audit retention direction is owned by the architecture authority",
+            "The queue worker retries failed jobs",
+            "A private recollection with no shared content",
+            "In this service we implement tenant isolation through the shared helper",
+        ];
+        for text in unsettled {
+            let model_atom = json!({"confidence": "high"});
+            assert_eq!(
+                normalized_atom_confidence(&model_atom, text),
+                "low",
+                "unsettled claim kept the model's self-report: {text}"
+            );
+            assert_eq!(
+                normalized_destinations(&model_atom, &json!({}), "low"),
+                vec!["none".to_owned()],
+                "a low-confidence claim kept a guessed destination: {text}"
+            );
+        }
+        for text in settled {
+            let model_atom = json!({"confidence": "high"});
+            assert_eq!(
+                normalized_atom_confidence(&model_atom, text),
+                "high",
+                "settled claim was demoted: {text}"
+            );
+        }
     }
 
     #[test]
