@@ -4017,7 +4017,7 @@ pub fn doctor(
         "consecutive_prompts": shard.get("consecutive").cloned().unwrap_or(Value::from(0)),
         "reservations_held_after_crash": shard.get("reserved_in_window").cloned().unwrap_or(Value::from(0)),
         "delivery_loss_rate": if reserved > 0 { format!("{}/{}", lost, reserved) } else { "0/0".to_owned() },
-        "low_authority_displaced_high_distortion": false,
+        "low_authority_displaced_high_distortion": crate::proposals::low_authority_displaced_high_distortion(),
         "sweep": sweep,
         "sandbox": sandbox,
         "cache_clocks": cache_clocks,

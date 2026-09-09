@@ -173,7 +173,10 @@ pub fn observe(
         );
         let observation = Observation {
             observation_id: observation_id.clone(),
-            source_kind: "codex_jsonl".to_owned(),
+            source_kind: record["source_kind"]
+                .as_str()
+                .unwrap_or("codex_jsonl")
+                .to_owned(),
             source_identity: format!("session:{session}"),
             native_id: event_id.clone(),
             content_digest: digest.clone(),
@@ -232,6 +235,7 @@ pub fn observe(
 
     let mut atom_records = Vec::new();
     let mut candidate_records = Vec::new();
+    let mut knowledge = crate::proposals::KnowledgeLedger::load();
     for (observation, event) in &observations {
         let native_id = event
             .get("event_id")
@@ -312,10 +316,26 @@ pub fn observe(
                 };
                 let mut candidate =
                     build_candidate(session, &destination, &atom, native_id, false)?;
-                let rendered =
-                    reserve_candidate_prompt(&candidate, principal_id, host_instance_id)?;
-                candidate["rendered"] = Value::Bool(rendered);
-                candidate["suppressed"] = Value::Bool(!rendered);
+                // P-9: which eligible candidates get the four scarce slots is
+                // the product's decision, taken from the material's own
+                // authority account and its distortion, before any slot is
+                // reserved.
+                let payload_digest = crate::json::get_str(&candidate, "payload_digest")
+                    .unwrap_or_default()
+                    .to_owned();
+                let knowledge_key = crate::proposals::knowledge_key(&destination, &atom.statement);
+                let byte_only = knowledge.is_byte_only_reissue(&knowledge_key, &payload_digest);
+                knowledge.record(&knowledge_key, &payload_digest);
+                let priority =
+                    crate::proposals::queue_priority(&atom.statement, &atom.atom_kind, byte_only);
+                candidate["knowledge_key"] = Value::String(knowledge_key);
+                candidate["queue"] = json!({
+                    "fresh": priority.fresh,
+                    "trust_rank": priority.trust_rank,
+                    "accounted_trust_class": priority.trust_class(),
+                    "distortion_bp": priority.distortion_bp,
+                    "byte_only_reissue": byte_only
+                });
                 candidate_records.push(candidate);
             }
             atom_records.push(
@@ -324,6 +344,8 @@ pub fn observe(
             );
         }
     }
+
+    reserve_in_queue_order(&mut candidate_records, principal_id, host_instance_id)?;
 
     for (_, event) in &observations {
         append_personal("session-events.jsonl", event)?;
@@ -392,6 +414,97 @@ fn ensure_session_record(session: &str) -> Result<(), ContractError> {
     append_personal("sessions.jsonl", &record)
 }
 
+/// What one attempt at a display slot resolved to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SlotOutcome {
+    /// The candidate holds a reserved slot and is rendered.
+    Rendered,
+    /// Three shared prompts have been surfaced without returning to the
+    /// primary task. The refusal itself breaks the run, so the queue may try
+    /// again at its head; it never hands the freed slot to a lower-priority
+    /// candidate.
+    PausedForPrimaryTask,
+    /// The four shared slots in this sliding hour are gone. Nothing else can
+    /// render until the window clears.
+    WindowExhausted,
+    /// This candidate alone is ineligible (its digest is inside the reissue
+    /// lock); the queue moves on.
+    Ineligible,
+}
+
+/// Walk the eligible candidates in distortion/authority order and reserve the
+/// scarce slots for the highest-priority material (product.md P-9). The
+/// records keep their arrival order for reporting; only the *reservation*
+/// order is the queue's.
+fn reserve_in_queue_order(
+    candidates: &mut [Value],
+    principal_id: &str,
+    host_instance_id: &str,
+) -> Result<(), ContractError> {
+    let mut order: Vec<usize> = (0..candidates.len()).collect();
+    order.sort_by(|left, right| {
+        let (left_priority, right_priority) = (
+            candidate_priority(&candidates[*left]),
+            candidate_priority(&candidates[*right]),
+        );
+        right_priority
+            .cmp(&left_priority)
+            // Ties resolve on the content-addressed payload digest, never on
+            // arrival time: recency is not authority.
+            .then_with(|| {
+                crate::json::get_str(&candidates[*left], "payload_digest")
+                    .cmp(&crate::json::get_str(&candidates[*right], "payload_digest"))
+            })
+    });
+    let mut window_open = true;
+    for index in order {
+        let mut rendered = false;
+        if window_open {
+            match reserve_candidate_prompt(&candidates[index], principal_id, host_instance_id)? {
+                SlotOutcome::Rendered => rendered = true,
+                SlotOutcome::PausedForPrimaryTask => {
+                    // The pause does not reorder the queue: this candidate
+                    // keeps its place rather than yielding the next slot to a
+                    // lower-authority one.
+                    match reserve_candidate_prompt(
+                        &candidates[index],
+                        principal_id,
+                        host_instance_id,
+                    )? {
+                        SlotOutcome::Rendered => rendered = true,
+                        SlotOutcome::WindowExhausted => window_open = false,
+                        _ => {}
+                    }
+                }
+                SlotOutcome::WindowExhausted => window_open = false,
+                SlotOutcome::Ineligible => {}
+            }
+        }
+        candidates[index]["rendered"] = Value::Bool(rendered);
+        candidates[index]["suppressed"] = Value::Bool(!rendered);
+    }
+    Ok(())
+}
+
+fn candidate_priority(record: &Value) -> crate::proposals::QueuePriority {
+    let queue = record.get("queue");
+    crate::proposals::QueuePriority {
+        fresh: queue
+            .and_then(|queue| queue.get("fresh"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        trust_rank: queue
+            .and_then(|queue| queue.get("trust_rank"))
+            .and_then(Value::as_u64)
+            .and_then(|rank| u8::try_from(rank).ok())
+            .unwrap_or(0),
+        distortion_bp: queue
+            .and_then(|queue| queue.get("distortion_bp"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+    }
+}
+
 /// Reserve one display slot in the private Core shard.  A typed budget
 /// refusal means this eligible candidate remains private and suppressed; it
 /// is never an observation failure.
@@ -399,7 +512,7 @@ fn reserve_candidate_prompt(
     record: &Value,
     principal_id: &str,
     host_instance_id: &str,
-) -> Result<bool, ContractError> {
+) -> Result<SlotOutcome, ContractError> {
     let candidate_id = record
         .get("candidate_id")
         .and_then(Value::as_str)
@@ -431,11 +544,24 @@ fn reserve_candidate_prompt(
     ) {
         Ok(_) => {
             core.mark_reservation(candidate_id, "rendered")?;
-            Ok(true)
+            Ok(SlotOutcome::Rendered)
         }
-        Err(error) if error.code == "LIMIT_EXCEEDED" => Ok(false),
+        Err(error) if error.code == "LIMIT_EXCEEDED" => Ok(slot_refusal(&error)),
         Err(error) => Err(error),
     }
+}
+
+/// Which of the three budget refusals the private store returned. The typed
+/// evidence names the ceiling it hit, so the queue never has to guess.
+fn slot_refusal(error: &ContractError) -> SlotOutcome {
+    let detail = error.detail.as_ref();
+    if detail.is_some_and(|detail| detail.get("reserved_in_window").is_some()) {
+        return SlotOutcome::WindowExhausted;
+    }
+    if detail.is_some_and(|detail| detail.get("consecutive").is_some()) {
+        return SlotOutcome::PausedForPrimaryTask;
+    }
+    SlotOutcome::Ineligible
 }
 
 fn parse_session_corpus(bytes: &[u8]) -> Result<Vec<Map<String, Value>>, ContractError> {
@@ -485,9 +611,13 @@ fn parse_session_corpus(bytes: &[u8]) -> Result<Vec<Map<String, Value>>, Contrac
                 index + 1
             )));
         }
-        if map["source_kind"].as_str() != Some("codex_jsonl") {
+        // The host adapter declares which native artefact each line came
+        // from.  Any source kind the extractor supports is admissible; an
+        // unknown one is a host-version defect, not a silent relabel.
+        let source_kind = map["source_kind"].as_str().unwrap_or_default();
+        if !crate::classify::source_kind_is_supported(source_kind) {
             return Err(host_error(format!(
-                "line {} source_kind must be codex_jsonl",
+                "line {} source_kind `{source_kind}` is not a supported native source",
                 index + 1
             )));
         }
