@@ -722,7 +722,10 @@ fn decide(
     if decision == "approve" {
         let store = destination_store(destination)?;
         match store {
-            crate::StoreKind::Codebase => {
+            crate::StoreKind::Codebase | crate::StoreKind::Company => {
+                // The saga finalizes the principal's receipt copy inside its
+                // receipt generation, so the decision record is durable
+                // before the destination lock is released.
                 let saga = fanout_saga_result(
                     launcher,
                     &repo()?,
@@ -730,19 +733,11 @@ fn decide(
                     destination,
                     &digest,
                     &receipt_id,
+                    &receipt,
                 )?;
                 merge_receipt(&mut receipt, &saga);
-            }
-            crate::StoreKind::Company => {
-                let saga = fanout_saga_result(
-                    launcher,
-                    &repo()?,
-                    &record,
-                    destination,
-                    &digest,
-                    &receipt_id,
-                )?;
-                merge_receipt(&mut receipt, &saga);
+                print_value(&receipt, json);
+                return Ok(());
             }
             crate::StoreKind::Personal => {
                 let (fact_id, event_id) = write_fact_event(store, &repo()?, &record)?;
@@ -760,6 +755,50 @@ fn decide(
     }
     print_value(&receipt, json);
     Ok(())
+}
+
+/// Append the principal's copy of a destination receipt and make it durable
+/// (file and directory fsync): receipt finalization is one generation, and
+/// the record must survive a crash that follows the destination commit.
+fn finalize_principal_receipt(base: &Value, saga: &Value) -> Result<Value, ContractError> {
+    let mut receipt = base.clone();
+    merge_receipt(&mut receipt, saga);
+    let repo_root = repo()?;
+    let already = personal_records("proposal-decisions.jsonl")
+        .into_iter()
+        .any(|record| {
+            crate::json::get_str(&record, "candidate_id")
+                == crate::json::get_str(&receipt, "candidate_id")
+                && crate::json::get_str(&record, "receipt_id")
+                    == crate::json::get_str(&receipt, "receipt_id")
+                && crate::json::get_str(&record, "state") == crate::json::get_str(&receipt, "state")
+        });
+    if !already {
+        crate::store::append_record(
+            crate::StoreKind::Personal,
+            &repo_root,
+            "proposal-decisions.jsonl",
+            &receipt,
+        )?;
+        let path = crate::store::store_root(crate::StoreKind::Personal, &repo_root)
+            .join("proposal-decisions.jsonl");
+        if let Ok(file) = std::fs::File::open(&path) {
+            let _ = file.sync_all();
+        }
+        if let Some(parent) = path.parent() {
+            if let Ok(directory) = std::fs::File::open(parent) {
+                let _ = directory.sync_all();
+            }
+        }
+    }
+    // The rendered prompt slot is consumed by this decision (prompt budget
+    // bookkeeping lives in the durable Core shard).
+    if let Some(candidate_id) = crate::json::get_str(&receipt, "candidate_id") {
+        if let Ok(core) = crate::private::PrivateStore::open_core() {
+            let _ = core.mark_reservation(candidate_id, "decided");
+        }
+    }
+    Ok(receipt)
 }
 
 fn merge_receipt(receipt: &mut Value, saga: &Value) {
@@ -919,6 +958,7 @@ fn fanout_saga_result(
     destination: &str,
     payload_digest: &str,
     receipt_id: &str,
+    base_receipt: &Value,
 ) -> Result<Value, ContractError> {
     let repository = crate::codebase::Repository::discover(repo_root)?;
     let repository_uuid = crate::repository::repository_id(repo_root)?;
@@ -948,6 +988,7 @@ fn fanout_saga_result(
             record,
             payload_digest,
             receipt_id,
+            base_receipt,
         )
     } else {
         commit_company(
@@ -958,6 +999,7 @@ fn fanout_saga_result(
             record,
             payload_digest,
             receipt_id,
+            base_receipt,
         )
     }
 }
@@ -1032,6 +1074,7 @@ fn commit_codebase(
     record: &Value,
     payload_digest: &str,
     receipt_id: &str,
+    base_receipt: &Value,
 ) -> Result<Value, ContractError> {
     let (bytes, event) = reserve_nonce(
         repository,
@@ -1106,11 +1149,49 @@ fn commit_codebase(
                 false,
             )?;
         }
+        // The receipt names exactly the bytes the destination holds: re-read
+        // and re-hash the committed event before the receipt is final.
+        let committed = std::fs::read(&final_path)
+            .map_err(|error| ContractError::io("re-read committed event", error))?;
+        if crate::hash::sha256_bytes(&committed) != event_digest {
+            return Err(ContractError::integrity(
+                "DIGEST_MISMATCH",
+                "committed event bytes differ from the approved bytes",
+                "Run full fsck; the destination journal is inconsistent.",
+            ));
+        }
+        let summary = receipt_summary(
+            &receipt_path,
+            receipt_id,
+            &event_digest,
+            &event_path,
+            &event,
+            journal,
+        )?;
+        finalize_principal_receipt(base_receipt, &summary)?;
         journal.complete("receipt", json!({}))?;
         journal.finish()?;
     }
+    receipt_summary(
+        &receipt_path,
+        receipt_id,
+        &event_digest,
+        &event_path,
+        &event,
+        journal,
+    )
+}
+
+fn receipt_summary(
+    receipt_path: &Path,
+    receipt_id: &str,
+    event_digest: &str,
+    event_path: &str,
+    event: &Value,
+    journal: &FanoutJournal,
+) -> Result<Value, ContractError> {
     let stored =
-        std::fs::read(&receipt_path).map_err(|error| ContractError::io("read receipt", error))?;
+        std::fs::read(receipt_path).map_err(|error| ContractError::io("read receipt", error))?;
     let stored = crate::json::parse_strict_value(&stored).map_err(|error| {
         ContractError::integrity(
             "DIGEST_MISMATCH",
@@ -1138,6 +1219,7 @@ fn commit_company(
     record: &Value,
     payload_digest: &str,
     receipt_id: &str,
+    base_receipt: &Value,
 ) -> Result<Value, ContractError> {
     let (_bytes, event) = reserve_nonce(
         repository,
@@ -1155,8 +1237,10 @@ fn commit_company(
                 crate::json::get_str(&marker, "state"),
                 Some("committed") | Some("refused")
             ) {
+                let summary = receipt_from_marker(&marker, receipt_id);
+                finalize_principal_receipt(base_receipt, &summary)?;
                 journal.finish()?;
-                return Ok(receipt_from_marker(&marker, receipt_id));
+                return Ok(summary);
             }
         }
     }
@@ -1227,10 +1311,12 @@ fn commit_company(
             "receipt_id": receipt_id
         }),
     )?;
+    let summary = receipt_from_marker(&marker, receipt_id);
+    finalize_principal_receipt(base_receipt, &summary)?;
     if state != "pending" {
         journal.finish()?;
     }
-    Ok(receipt_from_marker(&marker, receipt_id))
+    Ok(summary)
 }
 
 fn receipt_from_marker(marker: &Value, receipt_id: &str) -> Value {
@@ -1556,6 +1642,20 @@ fn recover_fanout_journal(
         let receipt_id = crate::json::get_str(&reservation, "receipt_id")
             .unwrap_or_default()
             .to_owned();
+        // A replayed transaction completes with the principal's receipt copy
+        // reconstructed from the bound reservation.
+        let base_receipt = json!({
+            "candidate_id": candidate_id,
+            "destination": destination,
+            "decision": "approve",
+            "digest": payload_digest,
+            "decided_at": now_rfc3339_millis(),
+            "receipt_id": receipt_id,
+            "state": "committed",
+            "receipt_ids_equal": true,
+            "retry_after_token_expiry": false,
+            "recovered": true
+        });
         commit_codebase(
             repository,
             repository_uuid,
@@ -1563,6 +1663,7 @@ fn recover_fanout_journal(
             &record,
             &payload_digest,
             &receipt_id,
+            &base_receipt,
         )?;
         replayed
             .push(json!({"candidate_id": candidate_id, "digest": digest, "action": "completed"}));

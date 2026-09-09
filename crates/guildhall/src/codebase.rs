@@ -284,6 +284,77 @@ impl Repository {
             .map(|config| config.repository_uuid_hint.as_str())
     }
 
+    /// Take the shared (reader) admission lock for a report over `path`
+    /// without spawning Git: the worktree root and Git's common directory are
+    /// resolved from `.git` the way Git itself records them (a `.git` file
+    /// names the worktree's gitdir, whose `commondir` file names the common
+    /// directory). Returns `None` when the path is not an initialized
+    /// Guildhall repository, so uninitialized worktrees are never locked.
+    pub fn shared_generation_lock(path: &Path) -> Result<Option<AdmissionLock>, ContractError> {
+        let start = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map_err(|error| ContractError::io("current dir", error))?
+                .join(path)
+        };
+        let mut root = start.clone();
+        loop {
+            if root.join(".git").exists() {
+                break;
+            }
+            let Some(parent) = root.parent() else {
+                return Ok(None);
+            };
+            root = parent.to_path_buf();
+        }
+        let config_path = root.join(".kin").join("config");
+        let Ok(text) = std::fs::read_to_string(&config_path) else {
+            return Ok(None);
+        };
+        let Ok(config) = RepoConfig::parse(&text) else {
+            return Ok(None);
+        };
+        let dot_git = root.join(".git");
+        let gitdir = if dot_git.is_dir() {
+            dot_git
+        } else {
+            let pointer = std::fs::read_to_string(&dot_git).unwrap_or_default();
+            let Some(target) = pointer.trim().strip_prefix("gitdir:") else {
+                return Ok(None);
+            };
+            let target = target.trim();
+            if Path::new(target).is_absolute() {
+                PathBuf::from(target)
+            } else {
+                root.join(target)
+            }
+        };
+        let common_dir = match std::fs::read_to_string(gitdir.join("commondir")) {
+            Ok(pointer) => {
+                let pointer = pointer.trim();
+                if Path::new(pointer).is_absolute() {
+                    PathBuf::from(pointer)
+                } else {
+                    gitdir.join(pointer)
+                }
+            }
+            Err(_) => gitdir,
+        };
+        let common_dir = common_dir.canonicalize().unwrap_or(common_dir);
+        let repository = Self {
+            root: root.clone(),
+            kin: root.join(".kin"),
+            common_dir,
+            config: Some(config),
+        };
+        let uuid = repository
+            .uuid_hint()
+            .map(str::to_owned)
+            .unwrap_or_default();
+        repository.admission_lock_shared(&uuid).map(Some)
+    }
+
     pub fn require_initialized(&self) -> Result<&RepoConfig, ContractError> {
         self.config
             .as_ref()

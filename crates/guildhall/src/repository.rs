@@ -2060,15 +2060,14 @@ pub fn status(
     as_of: &crate::time::AsOf,
     json_output: bool,
 ) -> Result<(), ContractError> {
-    let context = RepoContext::load(launcher, repo_path, true, Some(&as_of.as_of))?;
-    crate::proposals::emit_due_orphan_abandonments(&context.launcher, repo_path)?;
+    // Overdue apologies close under the exclusive lock before this report
+    // takes its shared read of the destination.
+    crate::proposals::emit_due_orphan_abandonments(&launcher, repo_path)?;
     // Read one consistent destination generation: the shared admission lock
-    // keeps this report from straddling a writer's journal transition.
-    let _generation_read = context
-        .repo
-        .uuid_hint()
-        .map(|uuid| context.repo.admission_lock_shared(uuid))
-        .transpose()?;
+    // is held for the whole report so it never straddles a writer's journal
+    // transition (writers advance between reads, never under one).
+    let _generation_read = Repository::shared_generation_lock(repo_path)?;
+    let context = RepoContext::load(launcher, repo_path, true, Some(&as_of.as_of))?;
     let (view, counts, references) = if context.repo.config.is_some() {
         context.current_view(&as_of.as_of, None)?
     } else {
