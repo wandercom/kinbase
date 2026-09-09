@@ -2405,27 +2405,9 @@ fn trust_class_name(rank: u8) -> &'static str {
     }
 }
 
-/// Lowercase the text and collapse every run of non-alphanumeric characters to
-/// one space, framed by spaces, so a phrase test matches whole words only.
-fn word_frame(text: &str) -> String {
-    let mut frame = String::with_capacity(text.len() + 2);
-    frame.push(' ');
-    for character in text.chars() {
-        if character.is_alphanumeric() {
-            frame.extend(character.to_lowercase());
-        } else if !frame.ends_with(' ') {
-            frame.push(' ');
-        }
-    }
-    if !frame.ends_with(' ') {
-        frame.push(' ');
-    }
-    frame
-}
-
-fn frame_has(frame: &str, phrase: &str) -> bool {
-    frame.contains(&format!(" {phrase} "))
-}
+/// The product's one whole-word frame (`classifier::word_frame`), so a phrase
+/// test here means exactly what it means when the classifier reads a claim.
+use crate::classifier::{frame_contains as frame_has, word_frame};
 
 fn frame_has_any(frame: &str, phrases: &[&str]) -> bool {
     phrases.iter().any(|phrase| frame_has(frame, phrase))
@@ -2706,4 +2688,48 @@ fn recorded_priority(record: &Value) -> Option<QueuePriority> {
         trust_rank: u8::try_from(queue.get("trust_rank").and_then(Value::as_u64)?).ok()?,
         distortion_bp: queue.get("distortion_bp").and_then(Value::as_i64)?,
     })
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use super::*;
+
+    const DURABLE: &str = "Reviewed and merged onto the default branch: the token \
+                           refresh rule is owned by the platform maintainer and \
+                           applies to every environment.";
+    const CHURN: &str = "Draft note on an unreviewed branch: whitespace and \
+                         formatting only, no decision behind it.";
+    const TRANSIENT: &str = "We temporarily raised the pool size during the \
+                             incident; revert it once the incident closes.";
+
+    #[test]
+    fn a_merged_owned_rule_outranks_unreviewed_churn_and_a_transient_note() {
+        let durable = queue_priority(DURABLE, "constraint", false);
+        let churn = queue_priority(CHURN, "observation", false);
+        let transient = queue_priority(TRANSIENT, "observation", false);
+        assert_eq!(durable.trust_class(), "merged-default");
+        assert_eq!(churn.trust_class(), "unreviewed-branch");
+        assert!(durable > churn, "{durable:?} must outrank {churn:?}");
+        assert!(
+            durable > transient,
+            "{durable:?} must outrank {transient:?}"
+        );
+    }
+
+    #[test]
+    fn a_byte_only_reissue_never_outranks_the_same_material_reissued_fresh() {
+        let fresh = queue_priority(DURABLE, "constraint", false);
+        let reissued = queue_priority(DURABLE, "constraint", true);
+        assert!(fresh > reissued);
+        // and it does not climb over lower-authority *fresh* material either.
+        assert!(queue_priority(CHURN, "observation", false) > reissued);
+    }
+
+    #[test]
+    fn distortion_stays_inside_the_basis_point_range() {
+        for text in [DURABLE, CHURN, TRANSIENT, "", "?"] {
+            let score = statement_distortion_bp(text, "observation");
+            assert!((0..=10_000).contains(&score), "{text:?} scored {score}");
+        }
+    }
 }
