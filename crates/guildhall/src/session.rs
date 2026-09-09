@@ -722,7 +722,35 @@ const LIVE_CLASSIFIER_WORKERS: usize = 16;
 /// Wall budget for one live extraction pass (the host command itself is
 /// bounded at two minutes by its callers; the remainder is for candidate
 /// construction and durable writes).
-const LIVE_EXTRACTION_BUDGET_SECONDS: u64 = 105;
+const LIVE_EXTRACTION_BUDGET_SECONDS: u64 = 95;
+
+/// The shortest request worth starting. Below this the queue closes rather
+/// than spend the tail of the budget on a request that would be killed.
+const LIVE_MINIMUM_REQUEST_SECONDS: u64 = 3;
+
+/// How much of the extraction budget is left, or `None` when what remains is
+/// too little to finish a request inside it.
+fn remaining_budget(started: &std::time::Instant) -> Option<std::time::Duration> {
+    let elapsed = started.elapsed().as_secs();
+    let remaining = LIVE_EXTRACTION_BUDGET_SECONDS.saturating_sub(elapsed);
+    (remaining >= LIVE_MINIMUM_REQUEST_SECONDS).then(|| std::time::Duration::from_secs(remaining))
+}
+
+/// The queue closed on its own wall bound. This is a fact about the command's
+/// budget, never an observation the model declined to read.
+fn budget_closed() -> ContractError {
+    ContractError::degraded(
+        "UNKNOWN_OWNER_UNRESOLVED",
+        "classifier wall budget closed the sample queue",
+        "Raise classifier.timeout_seconds or reduce the observation batch.",
+    )
+}
+
+fn is_budget_closed(error: &ContractError) -> bool {
+    error
+        .message
+        .contains("wall budget closed the sample queue")
+}
 
 fn extract_atoms(
     classifier: Option<&crate::config::SharedClassifier>,
@@ -738,7 +766,9 @@ fn extract_atoms(
     if provider.live_model.is_none() {
         for batch in crate::classifier::request_batches(observations)? {
             extraction.requests += 1;
-            for (observation_id, atoms) in pinned_classifier_atoms(classifier, provider, &batch)? {
+            for (observation_id, atoms) in
+                pinned_classifier_atoms(classifier, provider, &batch, None)?
+            {
                 extraction
                     .atoms
                     .entry(observation_id)
@@ -763,6 +793,8 @@ fn extract_atoms(
     // observation's only answer.
     let work = batches.len() * LIVE_CONSISTENCY_SAMPLES;
     let next = std::sync::atomic::AtomicUsize::new(0);
+    let dispatched = std::sync::atomic::AtomicUsize::new(0);
+    let closed = std::sync::atomic::AtomicBool::new(false);
     let started = std::time::Instant::now();
     type SampleOutcome = (
         usize,
@@ -775,6 +807,9 @@ fn extract_atoms(
         for _ in 0..LIVE_CLASSIFIER_WORKERS.min(work.max(1)) {
             scope.spawn(|| {
                 loop {
+                    if closed.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
                     let item = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     if item >= work {
                         break;
@@ -786,26 +821,26 @@ fn extract_atoms(
                     };
                     let mut attempts = 0usize;
                     let outcome = loop {
-                        // The session command has a bounded wall budget: a
-                        // slow answer is retried while there is time for
-                        // another full attempt, and abstains otherwise.
-                        let elapsed = started.elapsed().as_secs();
-                        if elapsed >= LIVE_EXTRACTION_BUDGET_SECONDS {
-                            break Err(ContractError::degraded(
-                                "UNKNOWN_OWNER_UNRESOLVED",
-                                "classifier wall budget exhausted; extraction abstained",
-                                "Reduce the batch or raise classifier.timeout_seconds.",
-                            ));
-                        }
-                        let allowed = if elapsed < LIVE_EXTRACTION_BUDGET_SECONDS / 3 {
-                            3
-                        } else if elapsed < LIVE_EXTRACTION_BUDGET_SECONDS * 2 / 3 {
-                            2
-                        } else {
-                            1
+                        // The command answers inside its own wall bound. A
+                        // request that could outlive the budget is never
+                        // started: the queue closes instead, so the cost of a
+                        // slow provider is a later *sample*, not a request the
+                        // caller must wait past its deadline for.
+                        let Some(remaining) = remaining_budget(&started) else {
+                            closed.store(true, std::sync::atomic::Ordering::Relaxed);
+                            break Err(budget_closed());
                         };
+                        let allowed =
+                            if remaining.as_secs() > LIVE_EXTRACTION_BUDGET_SECONDS * 2 / 3 {
+                                3
+                            } else if remaining.as_secs() > LIVE_EXTRACTION_BUDGET_SECONDS / 3 {
+                                2
+                            } else {
+                                1
+                            };
                         attempts += 1;
-                        match pinned_classifier_atoms(classifier, provider, batch) {
+                        match pinned_classifier_atoms(classifier, provider, batch, Some(remaining))
+                        {
                             Ok(atoms) => break Ok(atoms),
                             // Backpressure is not an answer: the provider is
                             // asking us to wait, so it never consumes the
@@ -821,6 +856,7 @@ fn extract_atoms(
                             Err(error) => break Err(error),
                         }
                     };
+                    dispatched.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     if let Ok(mut results) = results.lock() {
                         results.push((index, sample, outcome, attempts));
                     }
@@ -840,6 +876,7 @@ fn extract_atoms(
             .to_owned();
         match outcome {
             Ok(atoms) => samples_by_batch.entry(index).or_default().push(atoms),
+            Err(error) if is_budget_closed(&error) => {}
             Err(error) => {
                 // A configuration or authorization defect is not a draw from
                 // the model: it stops the run rather than losing one vote.
@@ -852,6 +889,21 @@ fn extract_atoms(
                 );
             }
         }
+    }
+    let taken = dispatched.into_inner();
+    if taken < work {
+        // One line, not one per skipped sample: the budget closed and the
+        // vote was taken over fewer draws. Saying so is the point --- a
+        // quieter answer is still a weaker one.
+        crate::output::diagnostic(
+            "classifier-budget-closed",
+            json!({
+                "samples_requested": work,
+                "samples_taken": taken,
+                "observations": batches.len(),
+                "budget_seconds": LIVE_EXTRACTION_BUDGET_SECONDS
+            }),
+        );
     }
     for (index, batch) in batches.iter().enumerate() {
         let observation_id = batch["observations"][0]["observation_id"]
@@ -969,6 +1021,7 @@ fn pinned_classifier_atoms(
     classifier: Option<&crate::config::SharedClassifier>,
     provider: &SelectedProvider,
     input: &Value,
+    timeout: Option<std::time::Duration>,
 ) -> Result<BTreeMap<String, Vec<Value>>, ContractError> {
     let bytes = if let Some(classifier) = classifier {
         // The pinned child selects its provider from explicit arguments: the
@@ -990,7 +1043,12 @@ fn pinned_classifier_atoms(
             &classifier.executable_sha256,
             &args,
             &crate::json::canonical_bytes(input),
-            std::time::Duration::from_secs(classifier.timeout_seconds),
+            // A request is never given more time than the extraction budget
+            // has left: the command must answer inside its own bound, and a
+            // request that could outlive the budget is not started at all.
+            timeout
+                .unwrap_or(std::time::Duration::from_secs(classifier.timeout_seconds))
+                .min(std::time::Duration::from_secs(classifier.timeout_seconds)),
         )?
     } else {
         // No pinned executable means the product-owned deterministic provider
