@@ -1085,6 +1085,11 @@ fn records_into_quarantine_or_admitted(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
+        let source_kind = record
+            .get("source_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("codex_jsonl")
+            .to_owned();
         let digest = sha256_bytes(text.as_bytes());
         if let Some((direction, seconds)) =
             crate::time::receipt_clock_skew(&observed_at, proof_clock)
@@ -1094,7 +1099,7 @@ fn records_into_quarantine_or_admitted(
                     "obs_{:x}",
                     Sha256::digest(format!("session\0{event_id}\0{digest}").as_bytes())
                 ),
-                "source_kind": "codex_jsonl",
+                "source_kind": source_kind,
                 "source_identity": "host-session",
                 "native_id": event_id,
                 "content_digest": digest,
