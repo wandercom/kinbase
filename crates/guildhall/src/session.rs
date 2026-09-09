@@ -749,26 +749,38 @@ fn extract_atoms(
         return Ok(extraction);
     }
     // A live model answers one observation per request so that one slow
-    // answer cannot time out a whole batch; requests run concurrently and a
-    // failed request is retried once before the observation abstains.
+    // answer cannot time out a whole batch. Each observation is asked
+    // `LIVE_CONSISTENCY_SAMPLES` times and the product decides the answer by
+    // self-consistency (below): one sample of a sampling decoder is a draw
+    // from the model's distribution, not the model's reading, and P-2 makes
+    // the destination set a fact this product owns.
     let batches: Vec<Value> = observations
         .into_iter()
         .map(|observation| json!({ "observations": [observation] }))
         .collect();
+    // Sample-major order: every observation is asked once before any is asked
+    // twice, so exhausting the wall budget costs later *samples*, never an
+    // observation's only answer.
+    let work = batches.len() * LIVE_CONSISTENCY_SAMPLES;
     let next = std::sync::atomic::AtomicUsize::new(0);
     let started = std::time::Instant::now();
-    let results: std::sync::Mutex<
-        Vec<(
-            usize,
-            Result<BTreeMap<String, Vec<Value>>, ContractError>,
-            usize,
-        )>,
-    > = std::sync::Mutex::new(Vec::new());
+    type SampleOutcome = (
+        usize,
+        usize,
+        Result<BTreeMap<String, Vec<Value>>, ContractError>,
+        usize,
+    );
+    let results: std::sync::Mutex<Vec<SampleOutcome>> = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
-        for _ in 0..LIVE_CLASSIFIER_WORKERS.min(batches.len().max(1)) {
+        for _ in 0..LIVE_CLASSIFIER_WORKERS.min(work.max(1)) {
             scope.spawn(|| {
                 loop {
-                    let index = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let item = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if item >= work {
+                        break;
+                    }
+                    let index = item % batches.len();
+                    let sample = item / batches.len();
                     let Some(batch) = batches.get(index) else {
                         break;
                     };
@@ -795,6 +807,14 @@ fn extract_atoms(
                         attempts += 1;
                         match pinned_classifier_atoms(classifier, provider, batch) {
                             Ok(atoms) => break Ok(atoms),
+                            // Backpressure is not an answer: the provider is
+                            // asking us to wait, so it never consumes the
+                            // answer-quality retry budget, only the wall
+                            // budget. Everything else keeps that budget.
+                            Err(error) if provider_backpressure(&error) => {
+                                std::thread::sleep(backpressure_pause(attempts));
+                                continue;
+                            }
                             Err(error) if attempts < allowed && retryable_extraction(&error) => {
                                 continue;
                             }
@@ -802,14 +822,16 @@ fn extract_atoms(
                         }
                     };
                     if let Ok(mut results) = results.lock() {
-                        results.push((index, outcome, attempts));
+                        results.push((index, sample, outcome, attempts));
                     }
                 }
             });
         }
     });
-    let results = results.into_inner().unwrap_or_default();
-    for (index, outcome, attempts) in results {
+    let mut results = results.into_inner().unwrap_or_default();
+    results.sort_by_key(|(index, sample, _, _)| (*index, *sample));
+    let mut samples_by_batch: BTreeMap<usize, Vec<BTreeMap<String, Vec<Value>>>> = BTreeMap::new();
+    for (index, _sample, outcome, attempts) in results {
         extraction.requests += attempts;
         extraction.retries += attempts.saturating_sub(1);
         let observation_id = batches[index]["observations"][0]["observation_id"]
@@ -817,29 +839,120 @@ fn extract_atoms(
             .unwrap_or_default()
             .to_owned();
         match outcome {
-            Ok(atoms) => {
-                let mut any = false;
-                for (id, items) in atoms {
-                    any = any || !items.is_empty();
-                    extraction.atoms.entry(id).or_default().extend(items);
-                }
-                if !any {
-                    extraction.abstained.insert(observation_id);
-                }
-            }
+            Ok(atoms) => samples_by_batch.entry(index).or_default().push(atoms),
             Err(error) => {
+                // A configuration or authorization defect is not a draw from
+                // the model: it stops the run rather than losing one vote.
                 if !retryable_extraction(&error) {
                     return Err(error);
                 }
                 crate::output::diagnostic(
-                    "classifier-abstained",
+                    "classifier-sample-abstained",
                     json!({"observation_id": observation_id, "code": error.code, "message": error.message}),
                 );
+            }
+        }
+    }
+    for (index, batch) in batches.iter().enumerate() {
+        let observation_id = batch["observations"][0]["observation_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let samples = samples_by_batch.remove(&index).unwrap_or_default();
+        match self_consistent_atoms(&samples, &observation_id) {
+            Some(atoms) if !atoms.is_empty() => {
+                extraction
+                    .atoms
+                    .entry(observation_id)
+                    .or_default()
+                    .extend(atoms);
+            }
+            _ => {
                 extraction.abstained.insert(observation_id);
             }
         }
     }
     Ok(extraction)
+}
+
+/// How many times a sampling decoder is asked to read one observation before
+/// the product decides what it read. One draw is a sample, not an answer:
+/// three lets the modal reading win and keeps a single unlucky draw from
+/// deciding a destination on its own.
+const LIVE_CONSISTENCY_SAMPLES: usize = 3;
+
+/// The provider refusing work because too many requests are already in
+/// flight. This carries no information about the observation, so it is a wait,
+/// never an abstention.
+fn provider_backpressure(error: &ContractError) -> bool {
+    error.code == "PROCESSOR_UNAUTHORIZED"
+        && (error.message.contains("429") || error.message.contains("too many"))
+}
+
+/// Bounded, growing pause before re-offering a request the provider pushed
+/// back on, so a saturated provider is drained rather than hammered.
+fn backpressure_pause(attempts: usize) -> std::time::Duration {
+    std::time::Duration::from_millis((100 * attempts.min(10)) as u64)
+}
+
+/// The destination set one sample proposed for an observation. This is the
+/// unit the vote is taken over: P-2 makes the *set* of destinations the
+/// classification, so voting per atom would let two samples that disagree
+/// about how to split a message manufacture a third reading neither gave.
+fn sample_destinations(atoms: &[Value]) -> Vec<String> {
+    let mut destinations: BTreeSet<String> = BTreeSet::new();
+    for atom in atoms {
+        if let Some(values) = atom.get("proposed_destinations").and_then(Value::as_array) {
+            for value in values {
+                if let Some(label) = value.as_str() {
+                    destinations.insert(label.to_owned());
+                }
+            }
+        }
+    }
+    destinations.into_iter().collect()
+}
+
+/// Decide what the model read by self-consistency over the samples that
+/// answered: the modal destination set wins; ties go to the smaller set (the
+/// product never invents a destination a tie could not settle) and then to
+/// lexicographic order, so the choice is deterministic given the samples. The
+/// atoms returned are one sample's own atoms --- the first that proposed the
+/// winning set --- never a merge, so every emitted atom is text some sample
+/// actually produced.
+fn self_consistent_atoms(
+    samples: &[BTreeMap<String, Vec<Value>>],
+    observation_id: &str,
+) -> Option<Vec<Value>> {
+    let readings: Vec<(Vec<String>, &Vec<Value>)> = samples
+        .iter()
+        .filter_map(|sample| sample.get(observation_id))
+        .filter(|atoms| !atoms.is_empty())
+        .map(|atoms| (sample_destinations(atoms), atoms))
+        .collect();
+    if readings.is_empty() {
+        return None;
+    }
+    let mut votes: BTreeMap<&Vec<String>, usize> = BTreeMap::new();
+    for (destinations, _) in &readings {
+        *votes.entry(destinations).or_default() += 1;
+    }
+    let winner = votes
+        .into_iter()
+        .max_by(|left, right| {
+            left.1
+                .cmp(&right.1)
+                // Ties: the smaller set, then lexicographic order. Both are
+                // properties of the reading, so the same samples always
+                // decide the same way.
+                .then_with(|| right.0.len().cmp(&left.0.len()))
+                .then_with(|| right.0.cmp(left.0))
+        })
+        .map(|(destinations, _)| destinations.clone())?;
+    readings
+        .into_iter()
+        .find(|(destinations, _)| *destinations == winner)
+        .map(|(_, atoms)| atoms.clone())
 }
 
 /// Transport, timeout, and malformed-answer failures abstain per
@@ -1477,5 +1590,91 @@ mod tests {
         assert_eq!(deidentify_statement(statement), (statement.to_owned(), 0));
         let version = "We pinned requests to 2.31 because 2.32 broke the proxy handling.";
         assert_eq!(deidentify_statement(version), (version.to_owned(), 0));
+    }
+}
+
+#[cfg(test)]
+mod consistency_tests {
+    use super::*;
+
+    fn atom(observation: &str, text: &str, destination: &str) -> Value {
+        json!({
+            "atom_id": format!("atom_{text}_{destination}"),
+            "observation_id": observation,
+            "text": text,
+            "proposed_destinations": [destination],
+            "confidence": "high"
+        })
+    }
+
+    fn sample(atoms: Vec<Value>) -> BTreeMap<String, Vec<Value>> {
+        let mut map: BTreeMap<String, Vec<Value>> = BTreeMap::new();
+        for atom in atoms {
+            let id = atom["observation_id"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            map.entry(id).or_default().push(atom);
+        }
+        map
+    }
+
+    #[test]
+    fn the_modal_reading_wins_over_a_single_odd_draw() {
+        let samples = vec![
+            sample(vec![atom("o1", "the scheduler default", "codebase")]),
+            sample(vec![atom("o1", "the scheduler default", "personal")]),
+            sample(vec![atom("o1", "the scheduler default", "codebase")]),
+        ];
+        let chosen = self_consistent_atoms(&samples, "o1").expect("a reading");
+        assert_eq!(sample_destinations(&chosen), vec!["codebase".to_owned()]);
+    }
+
+    #[test]
+    fn a_tie_takes_the_smaller_set_then_lexicographic_order() {
+        let samples = vec![
+            sample(vec![
+                atom("o1", "a", "codebase"),
+                atom("o1", "b", "company"),
+            ]),
+            sample(vec![atom("o1", "a", "personal")]),
+        ];
+        let chosen = self_consistent_atoms(&samples, "o1").expect("a reading");
+        assert_eq!(sample_destinations(&chosen), vec!["personal".to_owned()]);
+
+        let samples = vec![
+            sample(vec![atom("o1", "a", "personal")]),
+            sample(vec![atom("o1", "a", "codebase")]),
+        ];
+        let chosen = self_consistent_atoms(&samples, "o1").expect("a reading");
+        assert_eq!(sample_destinations(&chosen), vec!["codebase".to_owned()]);
+    }
+
+    #[test]
+    fn every_emitted_atom_comes_from_one_sample_never_a_merge() {
+        let samples = vec![
+            sample(vec![atom("o1", "first half", "codebase")]),
+            sample(vec![
+                atom("o1", "first half", "codebase"),
+                atom("o1", "second half", "codebase"),
+            ]),
+            sample(vec![atom("o1", "first half", "codebase")]),
+        ];
+        let chosen = self_consistent_atoms(&samples, "o1").expect("a reading");
+        assert_eq!(
+            chosen.len(),
+            1,
+            "the first sample with the winning set is emitted whole"
+        );
+        assert_eq!(chosen[0]["text"], json!("first half"));
+    }
+
+    #[test]
+    fn an_observation_no_sample_answered_abstains() {
+        assert!(self_consistent_atoms(&[], "o1").is_none());
+        assert!(self_consistent_atoms(&[sample(vec![])], "o1").is_none());
+        assert!(
+            self_consistent_atoms(&[sample(vec![atom("other", "x", "codebase")])], "o1").is_none()
+        );
     }
 }
