@@ -39,6 +39,9 @@ pub struct TrustContext {
     pub company_fact_parents: BTreeMap<String, Vec<Value>>,
     /// Per-key reduction traces of the Company view (state, admitted ids).
     pub company_traces: Vec<Value>,
+    /// Every revocation the Company recorded, including keys later
+    /// republished; pre-revocation artefacts stay historical.
+    pub revocation_history: Vec<Revocation>,
     pub fact_versions: BTreeMap<String, Vec<Value>>,
     pub authority_cursor: String,
     pub freshness: Option<Freshness>,
@@ -1372,7 +1375,14 @@ pub fn trust_facts(
             cursor,
         ));
     }
-    for revocation in &trust.revocations {
+    // The full history decides which artefacts predate a revocation; the
+    // governing list (which the reducer applies) is a subset of it.
+    let history: Vec<&Revocation> = if trust.revocation_history.is_empty() {
+        trust.revocations.iter().collect()
+    } else {
+        trust.revocation_history.iter().collect()
+    };
+    for revocation in history {
         facts.revocations.push((
             revocation.revoked_key.clone(),
             revocation.cursor.clone(),
@@ -1384,7 +1394,12 @@ pub fn trust_facts(
     // later arrivals are historical on arrival and reopen nothing.
     if let Ok(private) = launcher.private_store() {
         if let Ok(now_cursor) = private.observation_cursor() {
-            for revocation in &trust.revocations {
+            for (revoked_key, cursor, _) in facts.revocations.clone() {
+                let revocation = Revocation {
+                    revoked_key,
+                    cursor,
+                    effective_at: String::new(),
+                };
                 let key = format!(
                     "revocation-watermark:{}:{}",
                     revocation.revoked_key, revocation.cursor
@@ -1487,6 +1502,7 @@ pub fn build_trust(
         company_lifecycle: Vec::new(),
         company_fact_parents: BTreeMap::new(),
         company_traces: Vec::new(),
+        revocation_history: Vec::new(),
         fact_versions: BTreeMap::new(),
         authority_cursor: "0".to_owned(),
         freshness: None,
@@ -1569,6 +1585,14 @@ pub fn build_trust(
             .unwrap_or_default();
         trust.company_traces = crate::json::get_array(&snapshot, "traces")
             .cloned()
+            .unwrap_or_default();
+        trust.revocation_history = crate::json::get_array(&snapshot, "revocation_history")
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|item| serde_json::from_value(item.clone()).ok())
+                    .collect()
+            })
             .unwrap_or_default();
         if let Some(Value::Object(parents)) = snapshot.get("fact_parents") {
             for (fact_id, items) in parents {
