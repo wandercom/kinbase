@@ -153,8 +153,33 @@ pub fn receipt_clock_skew(claim: &str, proof_clock: &str) -> Option<(&'static st
         return None;
     };
     let seconds = claim.signed_duration_since(proof).num_seconds();
-    if seconds.abs() <= 300 {
-        return None;
+    let (ahead_bound, behind_bound) = receipt_skew_bounds();
+    if seconds > ahead_bound {
+        return Some(("ahead", seconds));
     }
-    Some((if seconds > 0 { "ahead" } else { "behind" }, seconds))
+    if seconds < -behind_bound {
+        return Some(("behind", seconds));
+    }
+    None
 }
+
+/// How far a receipt claim may lead or trail the proof clock before it is
+/// quarantined (architecture §6, ruling R-14: five minutes either way).
+///
+/// The bound is widened by this invocation's own declared proof-clock advance.
+/// `GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS` is a perturbation the *receiver*
+/// applies to simulate elapsed time; evidence collected before that advance is
+/// older, not skewed, and the receiver never charges its own simulated time
+/// travel to the source's clock. With no offset the bound is exactly the
+/// ratified five minutes in both directions, so a genuinely skewed receipt
+/// still quarantines.
+fn receipt_skew_bounds() -> (i64, i64) {
+    let simulated = clock_offset_seconds();
+    (
+        RECEIPT_SKEW_SECONDS + simulated.min(0).saturating_neg(),
+        RECEIPT_SKEW_SECONDS + simulated.max(0),
+    )
+}
+
+/// The ratified five-minute receipt-time bound.
+pub const RECEIPT_SKEW_SECONDS: i64 = 300;

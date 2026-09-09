@@ -787,7 +787,7 @@ const INTERROGATIVE_OPENERS: [&str; 22] = [
 
 /// Lowercase the text and collapse every run of non-alphanumeric characters to
 /// one space, framed by spaces, so a phrase test matches whole words only.
-fn word_frame(text: &str) -> String {
+pub(crate) fn word_frame(text: &str) -> String {
     let mut frame = String::with_capacity(text.len() + 2);
     frame.push(' ');
     for character in text.chars() {
@@ -803,7 +803,7 @@ fn word_frame(text: &str) -> String {
     frame
 }
 
-fn frame_contains(frame: &str, phrase: &str) -> bool {
+pub(crate) fn frame_contains(frame: &str, phrase: &str) -> bool {
     frame.contains(&format!(" {phrase} "))
 }
 

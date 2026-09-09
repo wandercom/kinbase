@@ -846,12 +846,6 @@ impl PrivateStore {
                 ));
             }
         }
-        transaction
-            .execute(
-                "INSERT OR IGNORE INTO reissue_locks(principal_id, destination, content_digest, lock_window, locked_at, source_revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![principal_id, destination, content_digest, lock_window, now, source_revision],
-            )
-            .map_err(sqlite_error("reissue lock insert"))?;
         // Four total cross-destination slots in the sliding hour; crash or
         // abandonment never releases a slot, it expires on the same clock.
         let reserved_in_window: i64 = transaction
@@ -912,6 +906,16 @@ impl PrivateStore {
                 params![principal_id, host_instance_id, now],
             )
             .map_err(sqlite_error("consecutive"))?;
+        // The digest lock is a fact about a digest that reached a human, so it
+        // is taken in the same transaction as the slot it reached them in. A
+        // proposal the budget refused was never put to anyone and never
+        // decided, so it must stay reissuable.
+        transaction
+            .execute(
+                "INSERT OR IGNORE INTO reissue_locks(principal_id, destination, content_digest, lock_window, locked_at, source_revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![principal_id, destination, content_digest, lock_window, now, source_revision],
+            )
+            .map_err(sqlite_error("reissue lock insert"))?;
         self_bump(&transaction, "reserved")?;
         transaction.commit().map_err(sqlite_error("commit"))?;
         Ok(json!({

@@ -2353,3 +2353,383 @@ mod tests {
         assert!(question.contains("closing authority repository-maintainer"));
     }
 }
+
+// --------------------------------------------------------------------------
+// The distortion/authority approval queue (product.md P-9)
+// --------------------------------------------------------------------------
+//
+// "In a preregistered 100-observation workload with 20 independently gold-
+// labeled durable shared facts, the distortion/authority queue must place at
+// least 18 of those facts into a human decision slot within five simulated
+// sliding-hour windows [...] Low-authority source churn and byte-only reissues
+// cannot displace a higher-distortion eligible fact."
+//
+// The four reserved slots in a sliding hour are scarce, so which eligible
+// candidates get them is a decision the product owns. It is made from two
+// facts it can read off the material itself: the origin trust class the
+// statement accounts for (architecture section 4: `merged-default` >
+// `approved-pr` > `unreviewed-branch` > `uncommitted-worktree`, where anything
+// below `merged-default` is ineligible for trusted durable direction), and the
+// expected loss if the fact were absent from the shared store. Neither is a
+// recency test: an older merged rule outranks a note written a second ago.
+
+/// Where one eligible candidate sits in the approval queue. Ordered highest
+/// first; the derived `Ord` compares the fields in declaration order, which is
+/// the ratified precedence: fresh material before a byte-only reissue, then
+/// the origin trust ladder, then distortion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct QueuePriority {
+    /// False for a byte-only reissue: the same knowledge whose rendered bytes
+    /// changed without new evidence never displaces fresh material.
+    pub fresh: bool,
+    /// The origin trust ladder, 3 = `merged-default` down to 0 =
+    /// `uncommitted-worktree`.
+    pub trust_rank: u8,
+    /// Expected loss in basis points if this fact is absent when a dependent
+    /// decision is made.
+    pub distortion_bp: i64,
+}
+
+impl QueuePriority {
+    pub fn trust_class(self) -> &'static str {
+        trust_class_name(self.trust_rank)
+    }
+}
+
+fn trust_class_name(rank: u8) -> &'static str {
+    match rank {
+        3 => "merged-default",
+        2 => "approved-pr",
+        1 => "unreviewed-branch",
+        _ => "uncommitted-worktree",
+    }
+}
+
+/// The product's one whole-word frame (`classifier::word_frame`), so a phrase
+/// test here means exactly what it means when the classifier reads a claim.
+use crate::classifier::{frame_contains as frame_has, word_frame};
+
+fn frame_has_any(frame: &str, phrases: &[&str]) -> bool {
+    phrases.iter().any(|phrase| frame_has(frame, phrase))
+}
+
+/// Marks that a statement accounts for review having reached the default
+/// branch --- the top of the architecture section 4 trust ladder.
+const MERGED_MARKS: [&str; 6] = [
+    "merged",
+    "landed",
+    "shipped",
+    "released",
+    "committed",
+    "merge",
+];
+const DEFAULT_BRANCH_MARKS: [&str; 6] = [
+    "default branch",
+    "main",
+    "trunk",
+    "master",
+    "mainline",
+    "release branch",
+];
+
+/// Marks of review that has been granted but not yet merged.
+const REVIEWED_MARKS: [&str; 9] = [
+    "reviewed",
+    "approved",
+    "signed off",
+    "sign off",
+    "sign-off",
+    "ratified",
+    "pull request",
+    "code review",
+    "accepted",
+];
+
+/// Marks that the material is still someone's unreviewed working copy.
+const UNREVIEWED_MARKS: [&str; 11] = [
+    "unreviewed",
+    "unmerged",
+    "draft",
+    "wip",
+    "work in progress",
+    "scratch",
+    "prototype",
+    "sketch",
+    "experiment",
+    "personal branch",
+    "feature branch",
+];
+
+/// The trust class a statement accounts for. This is the statement's own
+/// provenance claim, which is evidence for *queue order* only: it never
+/// promotes anything into a store, and a human still decides. Where Git
+/// evidence exists, `codebase::origin_trust` remains the authority.
+pub fn accounted_trust_rank(statement: &str) -> u8 {
+    let frame = word_frame(statement);
+    if frame_has_any(&frame, &UNREVIEWED_MARKS) {
+        return 1;
+    }
+    if frame_has_any(&frame, &MERGED_MARKS) && frame_has_any(&frame, &DEFAULT_BRANCH_MARKS) {
+        return 3;
+    }
+    if frame_has_any(&frame, &REVIEWED_MARKS) {
+        return 2;
+    }
+    0
+}
+
+/// Breadth: the statement binds more than the case in front of the writer.
+const BREADTH_MARKS: [&str; 10] = [
+    "every",
+    "all",
+    "any",
+    "each",
+    "always",
+    "everywhere",
+    "service wide",
+    "organization wide",
+    "company wide",
+    "fleet",
+];
+
+/// Normative force: the statement is direction, not an anecdote.
+const NORMATIVE_MARKS: [&str; 13] = [
+    "must",
+    "never",
+    "required",
+    "requires",
+    "rule",
+    "policy",
+    "invariant",
+    "constraint",
+    "standard",
+    "convention",
+    "contract",
+    "guarantee",
+    "forbidden",
+];
+
+/// Named ownership: someone answers for this fact.
+const OWNERSHIP_MARKS: [&str; 10] = [
+    "owned by",
+    "owner",
+    "owns",
+    "authority",
+    "steward",
+    "maintainer",
+    "architect",
+    "governance",
+    "responsible for",
+    "accountable",
+];
+
+/// Transience: the statement is true only for the moment that produced it.
+const TRANSIENT_MARKS: [&str; 14] = [
+    "temporarily",
+    "temporary",
+    "for now",
+    "until",
+    "revert",
+    "reverts",
+    "reverted",
+    "rollback",
+    "roll back",
+    "incident",
+    "workaround",
+    "hotfix",
+    "stopgap",
+    "today",
+];
+
+/// Churn: bytes moved without a decision behind them.
+const CHURN_MARKS: [&str; 12] = [
+    "formatting",
+    "typo",
+    "whitespace",
+    "cosmetic",
+    "rename only",
+    "no decision",
+    "without deciding",
+    "note",
+    "notes",
+    "nit",
+    "lint",
+    "reformat",
+];
+
+const DISTORTION_BASE: i64 = 3_000;
+const DISTORTION_STEP: i64 = 2_000;
+const DISTORTION_PENALTY: i64 = 2_500;
+const DISTORTION_CEILING: i64 = 10_000;
+
+/// Expected loss in basis points if this statement is absent from the shared
+/// store when a dependent decision is made (architecture section 5,
+/// `distortion.loss_if_absent`). Breadth, normative force and named ownership
+/// raise it; language that scopes the claim to one passing moment, or that
+/// says the bytes moved without a decision, lowers it.
+pub fn statement_distortion_bp(statement: &str, atom_kind: &str) -> i64 {
+    let frame = word_frame(statement);
+    let mut score = DISTORTION_BASE;
+    if frame_has_any(&frame, &BREADTH_MARKS) {
+        score += DISTORTION_STEP;
+    }
+    if frame_has_any(&frame, &NORMATIVE_MARKS) || matches!(atom_kind, "constraint" | "decision") {
+        score += DISTORTION_STEP;
+    }
+    if frame_has_any(&frame, &OWNERSHIP_MARKS) {
+        score += DISTORTION_STEP;
+    }
+    if frame_has_any(&frame, &TRANSIENT_MARKS) {
+        score -= DISTORTION_PENALTY;
+    }
+    if frame_has_any(&frame, &CHURN_MARKS) {
+        score -= DISTORTION_PENALTY;
+    }
+    score.clamp(0, DISTORTION_CEILING)
+}
+
+/// The queue priority of one eligible candidate.
+pub fn queue_priority(statement: &str, atom_kind: &str, byte_only_reissue: bool) -> QueuePriority {
+    QueuePriority {
+        fresh: !byte_only_reissue,
+        trust_rank: accounted_trust_rank(statement),
+        distortion_bp: statement_distortion_bp(statement, atom_kind),
+    }
+}
+
+/// Normalize a statement to the knowledge it carries, so that a reissue whose
+/// rendered *bytes* changed but whose content did not is recognisable as one.
+pub fn knowledge_key(destination: &str, statement: &str) -> String {
+    sha256_text(&format!("{destination}\0{}", word_frame(statement)))
+}
+
+/// The knowledge this principal has already proposed, read once from the
+/// private candidate ledger. A candidate whose knowledge is already here under
+/// a *different* payload digest is a byte-only reissue: the same fact with
+/// different rendered bytes, and no new evidence behind it.
+#[derive(Default)]
+pub struct KnowledgeLedger {
+    digests: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl KnowledgeLedger {
+    pub fn load() -> Self {
+        let mut digests: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for record in personal_records("candidates.jsonl") {
+            let (Some(key), Some(digest)) = (
+                crate::json::get_str(&record, "knowledge_key"),
+                crate::json::get_str(&record, "payload_digest"),
+            ) else {
+                continue;
+            };
+            digests
+                .entry(key.to_owned())
+                .or_default()
+                .insert(digest.to_owned());
+        }
+        Self { digests }
+    }
+
+    pub fn is_byte_only_reissue(&self, knowledge_key: &str, payload_digest: &str) -> bool {
+        self.digests
+            .get(knowledge_key)
+            .is_some_and(|digests| digests.iter().any(|digest| digest != payload_digest))
+    }
+
+    /// Record a candidate this run just built, so a byte-only reissue inside
+    /// one batch is recognised as one too.
+    pub fn record(&mut self, knowledge_key: &str, payload_digest: &str) {
+        self.digests
+            .entry(knowledge_key.to_owned())
+            .or_default()
+            .insert(payload_digest.to_owned());
+    }
+}
+
+/// Read back from the private candidate ledger whether a lower-priority
+/// candidate ever took a decision slot a higher-priority one was denied
+/// (product.md P-9). This is a recomputation over immutable records, not a
+/// flag the render path sets about itself.
+pub fn low_authority_displaced_high_distortion() -> bool {
+    let mut rendered: BTreeMap<String, Vec<QueuePriority>> = BTreeMap::new();
+    let mut suppressed: BTreeMap<String, Vec<QueuePriority>> = BTreeMap::new();
+    for record in personal_records("candidates.jsonl") {
+        let Some(session) = crate::json::get_str(&record, "session_id").map(str::to_owned) else {
+            continue;
+        };
+        let Some(priority) = recorded_priority(&record) else {
+            continue;
+        };
+        if record.get("rendered").and_then(Value::as_bool) == Some(true) {
+            rendered.entry(session).or_default().push(priority);
+        } else {
+            suppressed.entry(session).or_default().push(priority);
+        }
+    }
+    for (session, held) in &suppressed {
+        let Some(shown) = rendered.get(session) else {
+            continue;
+        };
+        let best_held = held.iter().max();
+        let worst_shown = shown.iter().min();
+        if let (Some(best_held), Some(worst_shown)) = (best_held, worst_shown) {
+            if best_held > worst_shown {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn recorded_priority(record: &Value) -> Option<QueuePriority> {
+    let queue = record.get("queue")?;
+    Some(QueuePriority {
+        fresh: queue.get("fresh").and_then(Value::as_bool)?,
+        trust_rank: u8::try_from(queue.get("trust_rank").and_then(Value::as_u64)?).ok()?,
+        distortion_bp: queue.get("distortion_bp").and_then(Value::as_i64)?,
+    })
+}
+
+#[cfg(test)]
+mod queue_tests {
+    use super::*;
+
+    const DURABLE: &str = "Reviewed and merged onto the default branch: the token \
+                           refresh rule is owned by the platform maintainer and \
+                           applies to every environment.";
+    const CHURN: &str = "Draft note on an unreviewed branch: whitespace and \
+                         formatting only, no decision behind it.";
+    const TRANSIENT: &str = "We temporarily raised the pool size during the \
+                             incident; revert it once the incident closes.";
+
+    #[test]
+    fn a_merged_owned_rule_outranks_unreviewed_churn_and_a_transient_note() {
+        let durable = queue_priority(DURABLE, "constraint", false);
+        let churn = queue_priority(CHURN, "observation", false);
+        let transient = queue_priority(TRANSIENT, "observation", false);
+        assert_eq!(durable.trust_class(), "merged-default");
+        assert_eq!(churn.trust_class(), "unreviewed-branch");
+        assert!(durable > churn, "{durable:?} must outrank {churn:?}");
+        assert!(
+            durable > transient,
+            "{durable:?} must outrank {transient:?}"
+        );
+    }
+
+    #[test]
+    fn a_byte_only_reissue_never_outranks_the_same_material_reissued_fresh() {
+        let fresh = queue_priority(DURABLE, "constraint", false);
+        let reissued = queue_priority(DURABLE, "constraint", true);
+        assert!(fresh > reissued);
+        // and it does not climb over lower-authority *fresh* material either.
+        assert!(queue_priority(CHURN, "observation", false) > reissued);
+    }
+
+    #[test]
+    fn distortion_stays_inside_the_basis_point_range() {
+        for text in [DURABLE, CHURN, TRANSIENT, "", "?"] {
+            let score = statement_distortion_bp(text, "observation");
+            assert!((0..=10_000).contains(&score), "{text:?} scored {score}");
+        }
+    }
+}

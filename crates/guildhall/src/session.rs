@@ -173,7 +173,10 @@ pub fn observe(
         );
         let observation = Observation {
             observation_id: observation_id.clone(),
-            source_kind: "codex_jsonl".to_owned(),
+            source_kind: record["source_kind"]
+                .as_str()
+                .unwrap_or("codex_jsonl")
+                .to_owned(),
             source_identity: format!("session:{session}"),
             native_id: event_id.clone(),
             content_digest: digest.clone(),
@@ -232,6 +235,7 @@ pub fn observe(
 
     let mut atom_records = Vec::new();
     let mut candidate_records = Vec::new();
+    let mut knowledge = crate::proposals::KnowledgeLedger::load();
     for (observation, event) in &observations {
         let native_id = event
             .get("event_id")
@@ -312,10 +316,26 @@ pub fn observe(
                 };
                 let mut candidate =
                     build_candidate(session, &destination, &atom, native_id, false)?;
-                let rendered =
-                    reserve_candidate_prompt(&candidate, principal_id, host_instance_id)?;
-                candidate["rendered"] = Value::Bool(rendered);
-                candidate["suppressed"] = Value::Bool(!rendered);
+                // P-9: which eligible candidates get the four scarce slots is
+                // the product's decision, taken from the material's own
+                // authority account and its distortion, before any slot is
+                // reserved.
+                let payload_digest = crate::json::get_str(&candidate, "payload_digest")
+                    .unwrap_or_default()
+                    .to_owned();
+                let knowledge_key = crate::proposals::knowledge_key(&destination, &atom.statement);
+                let byte_only = knowledge.is_byte_only_reissue(&knowledge_key, &payload_digest);
+                knowledge.record(&knowledge_key, &payload_digest);
+                let priority =
+                    crate::proposals::queue_priority(&atom.statement, &atom.atom_kind, byte_only);
+                candidate["knowledge_key"] = Value::String(knowledge_key);
+                candidate["queue"] = json!({
+                    "fresh": priority.fresh,
+                    "trust_rank": priority.trust_rank,
+                    "accounted_trust_class": priority.trust_class(),
+                    "distortion_bp": priority.distortion_bp,
+                    "byte_only_reissue": byte_only
+                });
                 candidate_records.push(candidate);
             }
             atom_records.push(
@@ -324,6 +344,8 @@ pub fn observe(
             );
         }
     }
+
+    reserve_in_queue_order(&mut candidate_records, principal_id, host_instance_id)?;
 
     for (_, event) in &observations {
         append_personal("session-events.jsonl", event)?;
@@ -392,6 +414,97 @@ fn ensure_session_record(session: &str) -> Result<(), ContractError> {
     append_personal("sessions.jsonl", &record)
 }
 
+/// What one attempt at a display slot resolved to.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SlotOutcome {
+    /// The candidate holds a reserved slot and is rendered.
+    Rendered,
+    /// Three shared prompts have been surfaced without returning to the
+    /// primary task. The refusal itself breaks the run, so the queue may try
+    /// again at its head; it never hands the freed slot to a lower-priority
+    /// candidate.
+    PausedForPrimaryTask,
+    /// The four shared slots in this sliding hour are gone. Nothing else can
+    /// render until the window clears.
+    WindowExhausted,
+    /// This candidate alone is ineligible (its digest is inside the reissue
+    /// lock); the queue moves on.
+    Ineligible,
+}
+
+/// Walk the eligible candidates in distortion/authority order and reserve the
+/// scarce slots for the highest-priority material (product.md P-9). The
+/// records keep their arrival order for reporting; only the *reservation*
+/// order is the queue's.
+fn reserve_in_queue_order(
+    candidates: &mut [Value],
+    principal_id: &str,
+    host_instance_id: &str,
+) -> Result<(), ContractError> {
+    let mut order: Vec<usize> = (0..candidates.len()).collect();
+    order.sort_by(|left, right| {
+        let (left_priority, right_priority) = (
+            candidate_priority(&candidates[*left]),
+            candidate_priority(&candidates[*right]),
+        );
+        right_priority
+            .cmp(&left_priority)
+            // Ties resolve on the content-addressed payload digest, never on
+            // arrival time: recency is not authority.
+            .then_with(|| {
+                crate::json::get_str(&candidates[*left], "payload_digest")
+                    .cmp(&crate::json::get_str(&candidates[*right], "payload_digest"))
+            })
+    });
+    let mut window_open = true;
+    for index in order {
+        let mut rendered = false;
+        if window_open {
+            match reserve_candidate_prompt(&candidates[index], principal_id, host_instance_id)? {
+                SlotOutcome::Rendered => rendered = true,
+                SlotOutcome::PausedForPrimaryTask => {
+                    // The pause does not reorder the queue: this candidate
+                    // keeps its place rather than yielding the next slot to a
+                    // lower-authority one.
+                    match reserve_candidate_prompt(
+                        &candidates[index],
+                        principal_id,
+                        host_instance_id,
+                    )? {
+                        SlotOutcome::Rendered => rendered = true,
+                        SlotOutcome::WindowExhausted => window_open = false,
+                        _ => {}
+                    }
+                }
+                SlotOutcome::WindowExhausted => window_open = false,
+                SlotOutcome::Ineligible => {}
+            }
+        }
+        candidates[index]["rendered"] = Value::Bool(rendered);
+        candidates[index]["suppressed"] = Value::Bool(!rendered);
+    }
+    Ok(())
+}
+
+fn candidate_priority(record: &Value) -> crate::proposals::QueuePriority {
+    let queue = record.get("queue");
+    crate::proposals::QueuePriority {
+        fresh: queue
+            .and_then(|queue| queue.get("fresh"))
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        trust_rank: queue
+            .and_then(|queue| queue.get("trust_rank"))
+            .and_then(Value::as_u64)
+            .and_then(|rank| u8::try_from(rank).ok())
+            .unwrap_or(0),
+        distortion_bp: queue
+            .and_then(|queue| queue.get("distortion_bp"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0),
+    }
+}
+
 /// Reserve one display slot in the private Core shard.  A typed budget
 /// refusal means this eligible candidate remains private and suppressed; it
 /// is never an observation failure.
@@ -399,7 +512,7 @@ fn reserve_candidate_prompt(
     record: &Value,
     principal_id: &str,
     host_instance_id: &str,
-) -> Result<bool, ContractError> {
+) -> Result<SlotOutcome, ContractError> {
     let candidate_id = record
         .get("candidate_id")
         .and_then(Value::as_str)
@@ -431,11 +544,24 @@ fn reserve_candidate_prompt(
     ) {
         Ok(_) => {
             core.mark_reservation(candidate_id, "rendered")?;
-            Ok(true)
+            Ok(SlotOutcome::Rendered)
         }
-        Err(error) if error.code == "LIMIT_EXCEEDED" => Ok(false),
+        Err(error) if error.code == "LIMIT_EXCEEDED" => Ok(slot_refusal(&error)),
         Err(error) => Err(error),
     }
+}
+
+/// Which of the three budget refusals the private store returned. The typed
+/// evidence names the ceiling it hit, so the queue never has to guess.
+fn slot_refusal(error: &ContractError) -> SlotOutcome {
+    let detail = error.detail.as_ref();
+    if detail.is_some_and(|detail| detail.get("reserved_in_window").is_some()) {
+        return SlotOutcome::WindowExhausted;
+    }
+    if detail.is_some_and(|detail| detail.get("consecutive").is_some()) {
+        return SlotOutcome::PausedForPrimaryTask;
+    }
+    SlotOutcome::Ineligible
 }
 
 fn parse_session_corpus(bytes: &[u8]) -> Result<Vec<Map<String, Value>>, ContractError> {
@@ -485,9 +611,13 @@ fn parse_session_corpus(bytes: &[u8]) -> Result<Vec<Map<String, Value>>, Contrac
                 index + 1
             )));
         }
-        if map["source_kind"].as_str() != Some("codex_jsonl") {
+        // The host adapter declares which native artefact each line came
+        // from.  Any source kind the extractor supports is admissible; an
+        // unknown one is a host-version defect, not a silent relabel.
+        let source_kind = map["source_kind"].as_str().unwrap_or_default();
+        if !crate::classify::source_kind_is_supported(source_kind) {
             return Err(host_error(format!(
-                "line {} source_kind must be codex_jsonl",
+                "line {} source_kind `{source_kind}` is not a supported native source",
                 index + 1
             )));
         }
@@ -592,7 +722,35 @@ const LIVE_CLASSIFIER_WORKERS: usize = 16;
 /// Wall budget for one live extraction pass (the host command itself is
 /// bounded at two minutes by its callers; the remainder is for candidate
 /// construction and durable writes).
-const LIVE_EXTRACTION_BUDGET_SECONDS: u64 = 105;
+const LIVE_EXTRACTION_BUDGET_SECONDS: u64 = 95;
+
+/// The shortest request worth starting. Below this the queue closes rather
+/// than spend the tail of the budget on a request that would be killed.
+const LIVE_MINIMUM_REQUEST_SECONDS: u64 = 3;
+
+/// How much of the extraction budget is left, or `None` when what remains is
+/// too little to finish a request inside it.
+fn remaining_budget(started: &std::time::Instant) -> Option<std::time::Duration> {
+    let elapsed = started.elapsed().as_secs();
+    let remaining = LIVE_EXTRACTION_BUDGET_SECONDS.saturating_sub(elapsed);
+    (remaining >= LIVE_MINIMUM_REQUEST_SECONDS).then(|| std::time::Duration::from_secs(remaining))
+}
+
+/// The queue closed on its own wall bound. This is a fact about the command's
+/// budget, never an observation the model declined to read.
+fn budget_closed() -> ContractError {
+    ContractError::degraded(
+        "UNKNOWN_OWNER_UNRESOLVED",
+        "classifier wall budget closed the sample queue",
+        "Raise classifier.timeout_seconds or reduce the observation batch.",
+    )
+}
+
+fn is_budget_closed(error: &ContractError) -> bool {
+    error
+        .message
+        .contains("wall budget closed the sample queue")
+}
 
 fn extract_atoms(
     classifier: Option<&crate::config::SharedClassifier>,
@@ -608,7 +766,9 @@ fn extract_atoms(
     if provider.live_model.is_none() {
         for batch in crate::classifier::request_batches(observations)? {
             extraction.requests += 1;
-            for (observation_id, atoms) in pinned_classifier_atoms(classifier, provider, &batch)? {
+            for (observation_id, atoms) in
+                pinned_classifier_atoms(classifier, provider, &batch, None)?
+            {
                 extraction
                     .atoms
                     .entry(observation_id)
@@ -618,53 +778,186 @@ fn extract_atoms(
         }
         return Ok(extraction);
     }
-    // A live model answers one observation per request so that one slow
-    // answer cannot time out a whole batch; requests run concurrently and a
-    // failed request is retried once before the observation abstains.
-    let batches: Vec<Value> = observations
-        .into_iter()
-        .map(|observation| json!({ "observations": [observation] }))
-        .collect();
-    let next = std::sync::atomic::AtomicUsize::new(0);
+    // Every observation is read `LIVE_BASE_SAMPLES` times and the product
+    // decides the answer by self-consistency (below): one draw from a
+    // sampling decoder is a draw from the model's distribution, not the
+    // model's reading, and P-2 makes the destination set a fact this product
+    // owns.
     let started = std::time::Instant::now();
-    let results: std::sync::Mutex<
-        Vec<(
-            usize,
-            Result<BTreeMap<String, Vec<Value>>, ContractError>,
-            usize,
-        )>,
-    > = std::sync::Mutex::new(Vec::new());
+    let mut samples: BTreeMap<String, Vec<Vec<Value>>> = BTreeMap::new();
+    let mut taken = 0usize;
+    let mut wanted = 0usize;
+
+    let base = live_sample_pass(
+        classifier,
+        provider,
+        &observations,
+        LIVE_BASE_SAMPLES,
+        &started,
+        &mut extraction,
+    )?;
+    wanted += live_batches(&observations)?.len() * LIVE_BASE_SAMPLES;
+    taken += base.0;
+    merge_samples(&observations, base.1, &mut samples);
+
+    // A third draw is bought only where the first two disagree --- where a
+    // tie would otherwise be settled by rule rather than by evidence --- so
+    // the extra requests go to the observations that are actually contested.
+    let contested: Vec<Value> = observations
+        .iter()
+        .filter(|observation| {
+            let id = observation["observation_id"].as_str().unwrap_or_default();
+            readings_disagree(samples.get(id).map(Vec::as_slice).unwrap_or(&[]))
+        })
+        .cloned()
+        .collect();
+    if !contested.is_empty() {
+        let tiebreak = live_sample_pass(
+            classifier,
+            provider,
+            &contested,
+            LIVE_TIEBREAK_SAMPLES,
+            &started,
+            &mut extraction,
+        )?;
+        wanted += live_batches(&contested)?.len() * LIVE_TIEBREAK_SAMPLES;
+        taken += tiebreak.0;
+        merge_samples(&contested, tiebreak.1, &mut samples);
+    }
+
+    if taken < wanted {
+        // One line, not one per skipped request: the budget closed and the
+        // vote was taken over fewer draws. Saying so is the point --- a
+        // quieter answer is still a weaker one.
+        crate::output::diagnostic(
+            "classifier-budget-closed",
+            json!({
+                "requests_planned": wanted,
+                "requests_taken": taken,
+                "observations": observations.len(),
+                "contested_observations": contested.len(),
+                "budget_seconds": LIVE_EXTRACTION_BUDGET_SECONDS
+            }),
+        );
+    }
+    for observation in &observations {
+        let observation_id = observation["observation_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let drawn = samples.remove(&observation_id).unwrap_or_default();
+        match self_consistent_atoms(&drawn) {
+            Some(atoms) if !atoms.is_empty() => {
+                extraction
+                    .atoms
+                    .entry(observation_id)
+                    .or_default()
+                    .extend(atoms);
+            }
+            _ => {
+                extraction.abstained.insert(observation_id);
+            }
+        }
+    }
+    Ok(extraction)
+}
+
+/// Group observations into live requests. A request carries a few
+/// observations rather than one: the routing instruction is the same for
+/// every request and is far larger than an observation, so asking one
+/// observation at a time spends most of the wall budget re-sending the
+/// instruction. `classifier::request_batches` still splits any group whose
+/// bytes exceed the request bound.
+fn live_batches(observations: &[Value]) -> Result<Vec<Value>, ContractError> {
+    let mut batches = Vec::new();
+    for chunk in observations.chunks(LIVE_OBSERVATIONS_PER_REQUEST) {
+        for batch in crate::classifier::request_batches(chunk.to_vec())? {
+            if batch["observations"]
+                .as_array()
+                .is_some_and(|values| !values.is_empty())
+            {
+                batches.push(batch);
+            }
+        }
+    }
+    Ok(batches)
+}
+
+/// One request's outcome: which batch it answered for, and what came back.
+type SampleOutcome = (
+    usize,
+    Result<BTreeMap<String, Vec<Value>>, ContractError>,
+    usize,
+);
+
+/// Ask for `samples` more draws of every observation, concurrently, inside
+/// the extraction budget. Work is queued sample-major --- every batch is asked
+/// once before any is asked twice --- so exhausting the budget costs later
+/// *samples*, never a batch's only answer. Returns how many requests were
+/// actually taken and their outcomes.
+#[allow(clippy::type_complexity)]
+fn live_sample_pass(
+    classifier: Option<&crate::config::SharedClassifier>,
+    provider: &SelectedProvider,
+    observations: &[Value],
+    samples: usize,
+    started: &std::time::Instant,
+    extraction: &mut Extraction,
+) -> Result<(usize, Vec<(usize, BTreeMap<String, Vec<Value>>)>), ContractError> {
+    let batches = live_batches(observations)?;
+    let work = batches.len() * samples;
+    if work == 0 {
+        return Ok((0, Vec::new()));
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let closed = std::sync::atomic::AtomicBool::new(false);
+    let results: std::sync::Mutex<Vec<SampleOutcome>> = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
-        for _ in 0..LIVE_CLASSIFIER_WORKERS.min(batches.len().max(1)) {
+        for _ in 0..LIVE_CLASSIFIER_WORKERS.min(work) {
             scope.spawn(|| {
                 loop {
-                    let index = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if closed.load(std::sync::atomic::Ordering::Relaxed) {
+                        break;
+                    }
+                    let item = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    if item >= work {
+                        break;
+                    }
+                    let index = item % batches.len();
                     let Some(batch) = batches.get(index) else {
                         break;
                     };
                     let mut attempts = 0usize;
                     let outcome = loop {
-                        // The session command has a bounded wall budget: a
-                        // slow answer is retried while there is time for
-                        // another full attempt, and abstains otherwise.
-                        let elapsed = started.elapsed().as_secs();
-                        if elapsed >= LIVE_EXTRACTION_BUDGET_SECONDS {
-                            break Err(ContractError::degraded(
-                                "UNKNOWN_OWNER_UNRESOLVED",
-                                "classifier wall budget exhausted; extraction abstained",
-                                "Reduce the batch or raise classifier.timeout_seconds.",
-                            ));
-                        }
-                        let allowed = if elapsed < LIVE_EXTRACTION_BUDGET_SECONDS / 3 {
-                            3
-                        } else if elapsed < LIVE_EXTRACTION_BUDGET_SECONDS * 2 / 3 {
-                            2
-                        } else {
-                            1
+                        // The command answers inside its own wall bound. A
+                        // request that could outlive the budget is never
+                        // started: the queue closes instead, so the cost of a
+                        // slow provider is a later sample, not a request the
+                        // caller must wait past its deadline for.
+                        let Some(remaining) = remaining_budget(started) else {
+                            closed.store(true, std::sync::atomic::Ordering::Relaxed);
+                            break Err(budget_closed());
                         };
+                        let allowed =
+                            if remaining.as_secs() > LIVE_EXTRACTION_BUDGET_SECONDS * 2 / 3 {
+                                3
+                            } else if remaining.as_secs() > LIVE_EXTRACTION_BUDGET_SECONDS / 3 {
+                                2
+                            } else {
+                                1
+                            };
                         attempts += 1;
-                        match pinned_classifier_atoms(classifier, provider, batch) {
+                        match pinned_classifier_atoms(classifier, provider, batch, Some(remaining))
+                        {
                             Ok(atoms) => break Ok(atoms),
+                            // Backpressure is not an answer: the provider is
+                            // asking us to wait, so it never consumes the
+                            // answer-quality retry budget, only the wall
+                            // budget. Everything else keeps that budget.
+                            Err(error) if provider_backpressure(&error) => {
+                                std::thread::sleep(backpressure_pause(attempts));
+                                continue;
+                            }
                             Err(error) if attempts < allowed && retryable_extraction(&error) => {
                                 continue;
                             }
@@ -678,38 +971,157 @@ fn extract_atoms(
             });
         }
     });
-    let results = results.into_inner().unwrap_or_default();
-    for (index, outcome, attempts) in results {
+    let mut outcomes = results.into_inner().unwrap_or_default();
+    outcomes.sort_by_key(|(index, _, _)| *index);
+    let mut answered = Vec::new();
+    let mut taken = 0usize;
+    for (index, outcome, attempts) in outcomes {
         extraction.requests += attempts;
         extraction.retries += attempts.saturating_sub(1);
-        let observation_id = batches[index]["observations"][0]["observation_id"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned();
         match outcome {
             Ok(atoms) => {
-                let mut any = false;
-                for (id, items) in atoms {
-                    any = any || !items.is_empty();
-                    extraction.atoms.entry(id).or_default().extend(items);
-                }
-                if !any {
-                    extraction.abstained.insert(observation_id);
-                }
+                taken += 1;
+                answered.push((index, atoms));
             }
+            Err(error) if is_budget_closed(&error) => {}
             Err(error) => {
+                taken += 1;
+                // A configuration or authorization defect is not a draw from
+                // the model: it stops the run rather than losing one vote.
                 if !retryable_extraction(&error) {
                     return Err(error);
                 }
                 crate::output::diagnostic(
-                    "classifier-abstained",
-                    json!({"observation_id": observation_id, "code": error.code, "message": error.message}),
+                    "classifier-sample-abstained",
+                    json!({"batch": index, "code": error.code, "message": error.message}),
                 );
-                extraction.abstained.insert(observation_id);
             }
         }
     }
-    Ok(extraction)
+    Ok((taken, answered))
+}
+
+/// Fold one pass's answers into the per-observation draws. A batch answer
+/// carries every observation it was asked about, so an observation the model
+/// omitted contributes an empty draw, which never wins a vote.
+fn merge_samples(
+    observations: &[Value],
+    answered: Vec<(usize, BTreeMap<String, Vec<Value>>)>,
+    samples: &mut BTreeMap<String, Vec<Vec<Value>>>,
+) {
+    let known: BTreeSet<&str> = observations
+        .iter()
+        .filter_map(|observation| observation["observation_id"].as_str())
+        .collect();
+    for (_, atoms) in answered {
+        for (observation_id, drawn) in atoms {
+            if !known.contains(observation_id.as_str()) {
+                continue;
+            }
+            samples.entry(observation_id).or_default().push(drawn);
+        }
+    }
+}
+
+/// Whether the draws taken so far leave the reading contested: fewer than two
+/// answered, or the two that answered proposed different destination sets.
+fn readings_disagree(drawn: &[Vec<Value>]) -> bool {
+    let readings: Vec<Vec<String>> = drawn
+        .iter()
+        .filter(|atoms| !atoms.is_empty())
+        .map(|atoms| sample_destinations(atoms))
+        .collect();
+    match readings.len() {
+        0 | 1 => true,
+        _ => readings.iter().any(|reading| *reading != readings[0]),
+    }
+}
+
+/// How many times a sampling decoder is asked to read every observation. One
+/// draw is a sample, not an answer, so two are always taken and compared.
+const LIVE_BASE_SAMPLES: usize = 2;
+
+/// How many observations one live request carries. The routing instruction is
+/// the same for every request and is far larger than an observation, so a
+/// request per observation spends the wall budget re-sending the instruction:
+/// measured on this provider, thirty-two observations cost 4.4s one at a time
+/// and 1.4s in groups of four. Small enough that one slow answer costs a few
+/// observations' draw, never the pass.
+const LIVE_OBSERVATIONS_PER_REQUEST: usize = 4;
+
+/// How many further draws a *contested* observation buys --- one, which turns
+/// a disagreement into a majority. Uncontested observations pay nothing for
+/// it, so the extra requests go where the reading is actually in doubt.
+const LIVE_TIEBREAK_SAMPLES: usize = 1;
+
+/// The provider refusing work because too many requests are already in
+/// flight. This carries no information about the observation, so it is a wait,
+/// never an abstention.
+fn provider_backpressure(error: &ContractError) -> bool {
+    error.code == "PROCESSOR_UNAUTHORIZED"
+        && (error.message.contains("429") || error.message.contains("too many"))
+}
+
+/// Bounded, growing pause before re-offering a request the provider pushed
+/// back on, so a saturated provider is drained rather than hammered.
+fn backpressure_pause(attempts: usize) -> std::time::Duration {
+    std::time::Duration::from_millis((100 * attempts.min(10)) as u64)
+}
+
+/// The destination set one sample proposed for an observation. This is the
+/// unit the vote is taken over: P-2 makes the *set* of destinations the
+/// classification, so voting per atom would let two samples that disagree
+/// about how to split a message manufacture a third reading neither gave.
+fn sample_destinations(atoms: &[Value]) -> Vec<String> {
+    let mut destinations: BTreeSet<String> = BTreeSet::new();
+    for atom in atoms {
+        if let Some(values) = atom.get("proposed_destinations").and_then(Value::as_array) {
+            for value in values {
+                if let Some(label) = value.as_str() {
+                    destinations.insert(label.to_owned());
+                }
+            }
+        }
+    }
+    destinations.into_iter().collect()
+}
+
+/// Decide what the model read by self-consistency over the samples that
+/// answered: the modal destination set wins; ties go to the smaller set (the
+/// product never invents a destination a tie could not settle) and then to
+/// lexicographic order, so the choice is deterministic given the samples. The
+/// atoms returned are one sample's own atoms --- the first that proposed the
+/// winning set --- never a merge, so every emitted atom is text some sample
+/// actually produced.
+fn self_consistent_atoms(drawn: &[Vec<Value>]) -> Option<Vec<Value>> {
+    let readings: Vec<(Vec<String>, &Vec<Value>)> = drawn
+        .iter()
+        .filter(|atoms| !atoms.is_empty())
+        .map(|atoms| (sample_destinations(atoms), atoms))
+        .collect();
+    if readings.is_empty() {
+        return None;
+    }
+    let mut votes: BTreeMap<&Vec<String>, usize> = BTreeMap::new();
+    for (destinations, _) in &readings {
+        *votes.entry(destinations).or_default() += 1;
+    }
+    let winner = votes
+        .into_iter()
+        .max_by(|left, right| {
+            left.1
+                .cmp(&right.1)
+                // Ties: the smaller set, then lexicographic order. Both are
+                // properties of the reading, so the same samples always
+                // decide the same way.
+                .then_with(|| right.0.len().cmp(&left.0.len()))
+                .then_with(|| right.0.cmp(left.0))
+        })
+        .map(|(destinations, _)| destinations.clone())?;
+    readings
+        .into_iter()
+        .find(|(destinations, _)| *destinations == winner)
+        .map(|(_, atoms)| atoms.clone())
 }
 
 /// Transport, timeout, and malformed-answer failures abstain per
@@ -726,6 +1138,7 @@ fn pinned_classifier_atoms(
     classifier: Option<&crate::config::SharedClassifier>,
     provider: &SelectedProvider,
     input: &Value,
+    timeout: Option<std::time::Duration>,
 ) -> Result<BTreeMap<String, Vec<Value>>, ContractError> {
     let bytes = if let Some(classifier) = classifier {
         // The pinned child selects its provider from explicit arguments: the
@@ -747,7 +1160,12 @@ fn pinned_classifier_atoms(
             &classifier.executable_sha256,
             &args,
             &crate::json::canonical_bytes(input),
-            std::time::Duration::from_secs(classifier.timeout_seconds),
+            // A request is never given more time than the extraction budget
+            // has left: the command must answer inside its own bound, and a
+            // request that could outlive the budget is not started at all.
+            timeout
+                .unwrap_or(std::time::Duration::from_secs(classifier.timeout_seconds))
+                .min(std::time::Duration::from_secs(classifier.timeout_seconds)),
         )?
     } else {
         // No pinned executable means the product-owned deterministic provider
@@ -955,6 +1373,11 @@ fn records_into_quarantine_or_admitted(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
+        let source_kind = record
+            .get("source_kind")
+            .and_then(Value::as_str)
+            .unwrap_or("codex_jsonl")
+            .to_owned();
         let digest = sha256_bytes(text.as_bytes());
         if let Some((direction, seconds)) =
             crate::time::receipt_clock_skew(&observed_at, proof_clock)
@@ -964,7 +1387,7 @@ fn records_into_quarantine_or_admitted(
                     "obs_{:x}",
                     Sha256::digest(format!("session\0{event_id}\0{digest}").as_bytes())
                 ),
-                "source_kind": "codex_jsonl",
+                "source_kind": source_kind,
                 "source_identity": "host-session",
                 "native_id": event_id,
                 "content_digest": digest,
@@ -1342,5 +1765,90 @@ mod tests {
         assert_eq!(deidentify_statement(statement), (statement.to_owned(), 0));
         let version = "We pinned requests to 2.31 because 2.32 broke the proxy handling.";
         assert_eq!(deidentify_statement(version), (version.to_owned(), 0));
+    }
+}
+
+#[cfg(test)]
+mod consistency_tests {
+    use super::*;
+
+    fn atom(observation: &str, text: &str, destination: &str) -> Value {
+        json!({
+            "atom_id": format!("atom_{text}_{destination}"),
+            "observation_id": observation,
+            "text": text,
+            "proposed_destinations": [destination],
+            "confidence": "high"
+        })
+    }
+
+    #[test]
+    fn the_modal_reading_wins_over_a_single_odd_draw() {
+        let drawn = vec![
+            vec![atom("o1", "the scheduler default", "codebase")],
+            vec![atom("o1", "the scheduler default", "personal")],
+            vec![atom("o1", "the scheduler default", "codebase")],
+        ];
+        let chosen = self_consistent_atoms(&drawn).expect("a reading");
+        assert_eq!(sample_destinations(&chosen), vec!["codebase".to_owned()]);
+    }
+
+    #[test]
+    fn a_tie_takes_the_smaller_set_then_lexicographic_order() {
+        let drawn = vec![
+            vec![atom("o1", "a", "codebase"), atom("o1", "b", "company")],
+            vec![atom("o1", "a", "personal")],
+        ];
+        let chosen = self_consistent_atoms(&drawn).expect("a reading");
+        assert_eq!(sample_destinations(&chosen), vec!["personal".to_owned()]);
+
+        let drawn = vec![
+            vec![atom("o1", "a", "personal")],
+            vec![atom("o1", "a", "codebase")],
+        ];
+        let chosen = self_consistent_atoms(&drawn).expect("a reading");
+        assert_eq!(sample_destinations(&chosen), vec!["codebase".to_owned()]);
+    }
+
+    #[test]
+    fn every_emitted_atom_comes_from_one_sample_never_a_merge() {
+        let drawn = vec![
+            vec![atom("o1", "first half", "codebase")],
+            vec![
+                atom("o1", "first half", "codebase"),
+                atom("o1", "second half", "codebase"),
+            ],
+            vec![atom("o1", "first half", "codebase")],
+        ];
+        let chosen = self_consistent_atoms(&drawn).expect("a reading");
+        assert_eq!(
+            chosen.len(),
+            1,
+            "the first sample with the winning set is emitted whole"
+        );
+        assert_eq!(chosen[0]["text"], json!("first half"));
+    }
+
+    #[test]
+    fn an_observation_no_sample_answered_abstains() {
+        assert!(self_consistent_atoms(&[]).is_none());
+        assert!(self_consistent_atoms(&[Vec::new()]).is_none());
+    }
+
+    #[test]
+    fn a_third_draw_is_bought_only_where_the_first_two_disagree() {
+        let agree = vec![
+            vec![atom("o1", "a", "codebase")],
+            vec![atom("o1", "a", "codebase")],
+        ];
+        assert!(!readings_disagree(&agree));
+        let differ = vec![
+            vec![atom("o1", "a", "codebase")],
+            vec![atom("o1", "a", "personal")],
+        ];
+        assert!(readings_disagree(&differ));
+        // One answer is not a majority either.
+        assert!(readings_disagree(&[vec![atom("o1", "a", "codebase")]]));
+        assert!(readings_disagree(&[]));
     }
 }
