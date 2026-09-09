@@ -508,7 +508,14 @@ fn normalized_destinations(
     if confidence == "low" || labels.is_empty() {
         return vec!["none".to_owned()];
     }
-    labels.into_iter().take(1).collect()
+    // P-2: one message may fan out to several stores. Keeping every label the
+    // model proposed preserves that fan-out; taking only the alphabetically
+    // first silently dropped the second destination of a mixed claim.
+    labels.retain(|label| label != "none");
+    if labels.is_empty() {
+        return vec!["none".to_owned()];
+    }
+    labels
 }
 
 fn ollama_request(
