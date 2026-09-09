@@ -223,8 +223,9 @@ Rules:
 1. Split a message into atoms, one per independent statement. A mixed message (for example a private remark followed by a repository fact) yields several atoms with different destinations. Never force one label on a whole mixed message.
 2. Copy each atom's text verbatim from the message (the sentence or clause it came from). Do not paraphrase, summarize, or invent text.
 3. Every statement in the message belongs to exactly one atom; do not drop a statement. Do not merge two statements with different destinations into one atom. A bare greeting, thanks, or acknowledgement that carries no content of its own is not an atom: omit it when the message says something else, and when the whole message is such filler return one atom for the whole message with destination "none".
-4. confidence is "high" when the destination is clear, "medium" when plausible, "low" when the ownership is genuinely ambiguous. When you are unsure between a shared store (company, codebase) and something else, prefer "personal" for private matters and "none" for non-facts; never guess a shared store at low confidence.
-5. Private material stays private: an atom containing a secret, credential, token, private identifier, or private life detail is "personal" even if the sentence also mentions code or the company.
+4. A reference annotation is not an atom. A short trailing note that only attaches a reference code, ticket, record, or identifier to the statement before it (for example "Ref <code>", "Ticket <code>", "Tracked as <code>", "I logged this as <code>", "I filed it under <code>") is part of that statement: include it in that atom's text and give the atom the destination of the statement it annotates. Such a bookkeeping note is not private memory, even when phrased in the first person.
+5. confidence is "high" when the destination is clear, "medium" when plausible, "low" when the ownership is genuinely ambiguous. When you are unsure between a shared store (company, codebase) and something else, prefer "personal" for private matters and "none" for non-facts; never guess a shared store at low confidence.
+6. Private material stays private: a statement that is itself about the person's private life or private credentials (their own account, key, passphrase, booking, health, family, plans) is "personal" even if it also mentions code or the company. A private statement that opens a message stays a separate personal atom.
 
 Answer with exactly one JSON object and nothing else (no prose, no markdown fences):
 {"atoms":[{"id":"<message id>","text":"<verbatim atom text>","destination":"personal|company|codebase|none","confidence":"high|medium|low"}]}"#;
@@ -278,12 +279,13 @@ fn ollama(model: &str, document: &Value) -> Result<Value, ContractError> {
             })
         })
         .collect();
-    // The model is asked to answer directly (no extended thinking): the
-    // answer contract is short, and a brief in-line rationale costs far less
-    // than a thinking pass. If an answer carries no JSON object at all, one
-    // retry allows the model its thinking pass.
+    // The model is asked for its lowest reasoning effort: the answer
+    // contract is short and the routing judgement does not improve with a
+    // long deliberation, while every generated token is paid for out of the
+    // session's wall budget. If an answer carries no JSON object at all, one
+    // retry allows the model its full thinking pass.
     let mut candidate: Option<Value> = None;
-    for think in [false, true] {
+    for think in [json!("low"), json!(true)] {
         let request = json!({
             "model": model,
             "stream": false,

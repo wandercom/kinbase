@@ -998,12 +998,20 @@ fn build_candidate(
     message_id: &str,
     rendered: bool,
 ) -> Result<Value, ContractError> {
-    crate::proposals::destination_store(destination)?;
+    let store = crate::proposals::destination_store(destination)?;
+    // P-2: shared proposals are minimized and de-identified. Opaque private
+    // codes and the bookkeeping notes that carry them stay in the private
+    // atom; the shared payload keeps the knowledge without them.
+    let (statement, removed) = if store == crate::StoreKind::Personal {
+        (atom.statement.clone(), 0)
+    } else {
+        deidentify_statement(&atom.statement)
+    };
     let payload = json!({
         "destination": destination,
         "atom_kind": atom.atom_kind,
         "scope": atom.scope,
-        "statement": atom.statement
+        "statement": statement
     });
     let canonical = canonical_text(&payload);
     let payload_digest = sha256_text(&canonical);
@@ -1025,7 +1033,8 @@ fn build_candidate(
         "rendered": rendered,
         "suppressed": !rendered,
         "taint_cleared": false,
-        "hard_block_respected": true
+        "hard_block_respected": true,
+        "deidentified_tokens": removed
     });
     let token = json!({
         "candidate_id": record.get("candidate_id"),
@@ -1044,6 +1053,109 @@ fn build_candidate(
     )?;
     record["signature"] = Value::String(signature);
     Ok(record)
+}
+
+/// Remove opaque identifiers (long hex, base64-like, or digit-dense tokens)
+/// from a statement bound for a shared destination, together with a trailing
+/// bookkeeping note that only carried such a code. Returns the minimized
+/// text and the number of tokens removed.
+pub(crate) fn deidentify_statement(statement: &str) -> (String, usize) {
+    fn opaque(word: &str) -> bool {
+        let core: String = word
+            .trim_matches(|c: char| !c.is_alphanumeric() && c != '=' && c != '+' && c != '/')
+            .to_owned();
+        if core.len() < 16 {
+            return false;
+        }
+        let hex_run = core
+            .split(|c: char| !c.is_ascii_hexdigit())
+            .map(str::len)
+            .max()
+            .unwrap_or(0);
+        if hex_run >= 12 {
+            return true;
+        }
+        let digits = core.chars().filter(char::is_ascii_digit).count();
+        let letters = core.chars().filter(char::is_ascii_alphabetic).count();
+        let base64_like = core.len() >= 20
+            && core
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '-' | '_'))
+            && digits >= 2
+            && letters >= 2
+            && (core.ends_with('=')
+                || digits >= 4
+                || core.chars().any(|c| c.is_ascii_uppercase())
+                    && core.chars().any(|c| c.is_ascii_lowercase()));
+        base64_like
+    }
+    let mut removed = 0usize;
+    let mut sentences: Vec<String> = Vec::new();
+    for sentence in split_sentences_keep(statement) {
+        let mut kept: Vec<&str> = Vec::new();
+        let mut dropped_here = 0usize;
+        for word in sentence.split_whitespace() {
+            if opaque(word) {
+                dropped_here += 1;
+            } else {
+                kept.push(word);
+            }
+        }
+        removed += dropped_here;
+        let text = kept.join(" ");
+        // A note that only carried a code ("Ref <code>", "I logged this as
+        // <code>") has nothing left to share once the code is gone.
+        let residual_words = text
+            .split_whitespace()
+            .filter(|w| w.chars().any(char::is_alphanumeric))
+            .count();
+        if dropped_here > 0 && residual_words <= 5 && !sentences.is_empty() {
+            continue;
+        }
+        if dropped_here > 0 && residual_words == 0 {
+            continue;
+        }
+        sentences.push(text);
+    }
+    let minimized = sentences.join(" ").trim().to_owned();
+    if minimized.is_empty() {
+        (statement.to_owned(), 0)
+    } else {
+        (minimized, removed)
+    }
+}
+
+/// Sentence split that keeps terminators and never breaks inside a token.
+fn split_sentences_keep(text: &str) -> Vec<String> {
+    let mut output = Vec::new();
+    let mut current = String::new();
+    let characters: Vec<char> = text.chars().collect();
+    let mut index = 0;
+    while index < characters.len() {
+        let character = characters[index];
+        current.push(character);
+        if matches!(character, '.' | '!' | '?') {
+            let boundary = index + 1 >= characters.len() || characters[index + 1].is_whitespace();
+            let previous_is_digit_dot = character == '.'
+                && index > 0
+                && characters[index - 1].is_ascii_digit()
+                && index + 1 < characters.len()
+                && characters[index + 1].is_ascii_digit();
+            if boundary && !previous_is_digit_dot {
+                let trimmed = current.trim().to_owned();
+                if !trimmed.is_empty() {
+                    output.push(trimmed);
+                }
+                current.clear();
+            }
+        }
+        index += 1;
+    }
+    let trimmed = current.trim().to_owned();
+    if !trimmed.is_empty() {
+        output.push(trimmed);
+    }
+    output
 }
 
 pub fn checkpoint(session: &str, json: bool) -> Result<(), ContractError> {
@@ -1198,4 +1310,35 @@ fn io_error(error: std::io::Error) -> ContractError {
         false,
         ExitCode::InternalFailure,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deidentify_statement;
+
+    #[test]
+    fn shared_payload_drops_opaque_codes_and_their_carrier_note() {
+        let (text, removed) = deidentify_statement(
+            "The scheduler retries at most three times. Ref kxslot0a1b2c3d4e5f6a7b",
+        );
+        assert_eq!(text, "The scheduler retries at most three times.");
+        assert_eq!(removed, 1);
+        let (text, removed) = deidentify_statement(
+            "The migration adds the composite index. I logged this as kxticket9f8e7d6c5b4a3921",
+        );
+        assert_eq!(text, "The migration adds the composite index.");
+        assert_eq!(removed, 1);
+        let (text, removed) =
+            deidentify_statement("My passphrase is a3hkZWFkYmVlZjEyMzQ1Njc4OTAxMg==");
+        assert_eq!(text, "My passphrase is");
+        assert_eq!(removed, 1);
+    }
+
+    #[test]
+    fn shared_payload_keeps_ordinary_statements_intact() {
+        let statement = "The lookahead window defaults to 15 minutes in scheduler/lookahead.py.";
+        assert_eq!(deidentify_statement(statement), (statement.to_owned(), 0));
+        let version = "We pinned requests to 2.31 because 2.32 broke the proxy handling.";
+        assert_eq!(deidentify_statement(version), (version.to_owned(), 0));
+    }
 }
