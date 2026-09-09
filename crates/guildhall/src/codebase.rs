@@ -597,8 +597,23 @@ impl Repository {
 
     // ----- events -----
 
+    /// One bounded pass over `.kin/events/`: at most `EVENT_CEILING` events
+    /// are read and digested. Above the ceiling the surplus is counted and
+    /// deferred, never silently treated as checked.
     pub fn stored_events(&self) -> Result<Vec<StoredFile>, ContractError> {
-        stored_files(&self.kin.join("events"))
+        Ok(self.scan_events(EVENT_CEILING)?.files)
+    }
+
+    /// The same pass with the deferral counts the caller needs to report a
+    /// bounded diagnosis (architecture §6 bounded storage behaviour).
+    pub fn scan_events(&self, limit: usize) -> Result<EventScan, ContractError> {
+        stored_files_bounded(&self.kin.join("events"), limit)
+    }
+
+    /// How many event files the store holds, counted without reading bytes.
+    /// `capped` marks the answer as a lower bound once `cap` is passed.
+    pub fn count_events_capped(&self, cap: usize) -> Result<(usize, bool), ContractError> {
+        paths::count_files_capped(&self.kin.join("events"), cap)
     }
 
     pub fn stored_manifests(&self) -> Result<Vec<StoredFile>, ContractError> {
@@ -606,30 +621,46 @@ impl Repository {
     }
 
     pub fn total_event_bytes(&self) -> u64 {
-        self.stored_events()
-            .map(|files| files.iter().map(|file| file.bytes.len() as u64).sum())
-            .unwrap_or(0)
+        paths::total_file_bytes(&self.kin.join("events")).unwrap_or(0)
     }
 
     /// Intake ceiling check (architecture §11, verification limits).
+    ///
+    /// The count is taken first and stops as soon as the ceiling is passed, so
+    /// a store already over the ceiling refuses before any event byte is read
+    /// or any tree is materialized. Byte totals come from directory metadata.
     pub fn check_intake_ceiling(
         &self,
         incoming: usize,
         incoming_bytes: u64,
     ) -> Result<(), ContractError> {
-        let files = self.stored_events()?;
-        let count = files.len();
-        let bytes: u64 = files.iter().map(|file| file.bytes.len() as u64).sum();
-        if count + incoming > EVENT_CEILING || bytes + incoming_bytes > BYTES_CEILING {
+        let headroom = EVENT_CEILING.saturating_sub(incoming);
+        let (count, capped) = self.count_events_capped(headroom)?;
+        let bytes = if capped {
+            0
+        } else {
+            paths::total_file_bytes(&self.kin.join("events"))?
+        };
+        let over_count = capped || count + incoming > EVENT_CEILING;
+        if over_count || bytes + incoming_bytes > BYTES_CEILING {
+            // What the ceiling stop omits: the events beyond the ceiling when
+            // the count binds (a lower bound once the walk short-circuited),
+            // otherwise the whole refused batch.
+            let omitted = if over_count {
+                (count + incoming).saturating_sub(EVENT_CEILING).max(1)
+            } else {
+                incoming.max(1)
+            };
             return Err(ContractError::limit(
                 "the .kin/ intake ceiling of 10,000 events / 128 MiB would be crossed",
                 json!({
                     "event_count": count,
+                    "event_count_is_lower_bound": capped,
                     "event_bytes": bytes,
                     "incoming_count": incoming,
                     "incoming_bytes": incoming_bytes,
-                    "refused_count": incoming,
-                    "omitted_count": incoming,
+                    "refused_count": omitted,
+                    "omitted_count": omitted,
                     "ceiling_events": EVENT_CEILING,
                     "ceiling_bytes": BYTES_CEILING
                 }),
@@ -1247,9 +1278,26 @@ pub struct StoredFile {
     pub path_alias: bool,
 }
 
-fn stored_files(root: &Path) -> Result<Vec<StoredFile>, ContractError> {
+/// One bounded pass over a store directory: the files actually read and
+/// digested, plus the total the directory holds.
+///
+/// A store at or below the ratified `.kin/` intake ceiling is read whole.
+/// Above it the pass is incremental by construction (architecture §6 bounded
+/// storage behaviour, §11 ceilings): the surplus is counted, never read, and
+/// is reported as deferred so no caller can mistake an unread event for a
+/// checked one.
+#[derive(Debug, Clone, Default)]
+pub struct EventScan {
+    pub files: Vec<StoredFile>,
+    pub total: usize,
+    pub deferred: usize,
+}
+
+fn stored_files_bounded(root: &Path, limit: usize) -> Result<EventScan, ContractError> {
+    let relatives = paths::list_files(root)?;
+    let total = relatives.len();
     let mut output = Vec::new();
-    for relative in paths::list_files(root)? {
+    for relative in relatives.into_iter().take(limit) {
         let path = root.join(&relative);
         let bytes =
             std::fs::read(&path).map_err(|error| ContractError::io("read stored file", error))?;
@@ -1264,7 +1312,16 @@ fn stored_files(root: &Path) -> Result<Vec<StoredFile>, ContractError> {
         });
     }
     output.sort_by(|left, right| left.relative.cmp(&right.relative));
-    Ok(output)
+    let deferred = total.saturating_sub(output.len());
+    Ok(EventScan {
+        files: output,
+        total,
+        deferred,
+    })
+}
+
+fn stored_files(root: &Path) -> Result<Vec<StoredFile>, ContractError> {
+    Ok(stored_files_bounded(root, EVENT_CEILING)?.files)
 }
 
 fn index_value(files: &[StoredFile]) -> Value {

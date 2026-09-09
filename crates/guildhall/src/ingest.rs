@@ -145,6 +145,12 @@ pub fn ingest(
         }
         crate::lifecycle::SourceScan::default()
     } else if kin_events_intake {
+        // Admission is one transaction, and the `.kin/` intake ceiling is the
+        // first thing in it: a store already at 10,000 events / 128 MiB refuses
+        // new writes before a single event byte is read (architecture §11,
+        // verification "Operational limits"). Refusing after the work would
+        // make the ceiling unobservable exactly when it binds.
+        discovered_repository.check_intake_ceiling(0, 0)?;
         let bytes = read_source(source_kind, source)?;
         let records = parse_kindex_events(&bytes)?;
         let mut scan = crate::lifecycle::SourceScan::default();
@@ -697,7 +703,7 @@ fn read_source(source_kind: &str, source: &Path) -> Result<Vec<u8>, ContractErro
     }
     let root_canonical = root.canonicalize().map_err(io_error)?;
     let mut paths = Vec::new();
-    collect_regular_files(&root, &root_canonical, &mut paths)?;
+    collect_regular_files(&root, &root_canonical, MAX_ITEMS, &mut paths)?;
     if source_kind == "repo_tests" {
         // The command-result envelope is JSON, but native fixtures do not
         // promise a `.json` suffix. Keep object-bearing files (including
@@ -740,9 +746,13 @@ fn read_source(source_kind: &str, source: &Path) -> Result<Vec<u8>, ContractErro
     Ok(bytes)
 }
 
+/// Enumerate the regular files of a directory source, stopping the moment the
+/// 10,000-item observation-batch ceiling is passed. The refusal costs one
+/// directory walk, never the whole tree and never the bytes.
 fn collect_regular_files(
     directory: &Path,
     root: &Path,
+    cap: usize,
     output: &mut Vec<std::path::PathBuf>,
 ) -> Result<(), ContractError> {
     let mut children = std::fs::read_dir(directory)
@@ -769,9 +779,25 @@ fn collect_regular_files(
             if child.file_name().and_then(|name| name.to_str()) == Some(".git") {
                 continue;
             }
-            collect_regular_files(&child, root, output)?;
+            collect_regular_files(&child, root, cap, output)?;
         } else if metadata.is_file() {
             output.push(child);
+            if output.len() > cap {
+                return Err(ContractError::new(
+                    "LIMIT_EXCEEDED",
+                    format!("directory source exceeds the {cap}-item observation batch ceiling"),
+                    "Use an explicit checkpoint and smaller batches.",
+                    false,
+                    ExitCode::Refused,
+                )
+                .with_detail(json!({
+                    "observed_count": output.len(),
+                    "observed_count_is_lower_bound": true,
+                    "ceiling": cap,
+                    "refused_count": output.len(),
+                    "omitted_count": output.len()
+                })));
+            }
         }
     }
     Ok(())
