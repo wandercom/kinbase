@@ -1378,6 +1378,18 @@ pub fn trust_facts(
             cursor,
         ));
     }
+    // Which keys are revoked *now* is the publishing authority's fact, not a
+    // cursor comparison the client repeats: registry entry cursors are service
+    // row cursors while revocation cursors are authority cursors, so the two
+    // are not comparable. The snapshot's governing list already excludes every
+    // key the steward republished at a newer epoch (R-10).
+    facts.governing_revoked_keys = Some(
+        trust
+            .revocations
+            .iter()
+            .map(|revocation| revocation.revoked_key.clone())
+            .collect(),
+    );
     // The full history decides which artefacts predate a revocation; the
     // governing list (which the reducer applies) is a subset of it.
     let history: Vec<&Revocation> = if trust.revocation_history.is_empty() {

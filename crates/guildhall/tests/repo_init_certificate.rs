@@ -1213,7 +1213,31 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
     );
     let rebuild_result: Value =
         serde_json::from_slice(&rebuild.stdout).expect("corpus rebuild receipt is JSON");
-    assert_eq!(rebuild_result["manifest_publication"].is_null(), false);
+    // Architecture section 6: `corpus rebuild` recomputes a disposable derived
+    // view and publishes nothing. Publishing the default-branch manifest is
+    // `repo publish-manifest` (and the admission path), which owns that fact.
+    assert!(rebuild_result["manifest_publication"].is_null());
+
+    let publish = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+        .current_dir(&repo)
+        .args([
+            "repo",
+            "publish-manifest",
+            "--repo",
+            &repo.display().to_string(),
+            "--json",
+        ])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env_remove("GUILDHALL_COMPANY_URL")
+        .output()
+        .expect("run packet 19 manifest publication");
+    assert!(
+        publish.status.success(),
+        "repo publish-manifest failed: {}{}",
+        String::from_utf8_lossy(&publish.stdout),
+        String::from_utf8_lossy(&publish.stderr)
+    );
 
     let fsck = Command::new(env!("CARGO_BIN_EXE_guildhall"))
         .current_dir(&repo)

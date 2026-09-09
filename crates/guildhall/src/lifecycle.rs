@@ -1542,6 +1542,13 @@ pub struct TrustFacts {
     pub personal_owner: String,
     /// revoked_key -> (latest revocation cursor, ledger cursor when first observed).
     pub revocation_watermarks: BTreeMap<String, (String, u64)>,
+    /// The keys the publishing authority still reports as revoked at the
+    /// current authority cursor. The registry authority owns this fact: its
+    /// entry cursors and its revocation cursors live in different spaces, so a
+    /// client that re-derives revocation by comparing them decides it locally
+    /// and gets it wrong. `None` means no authority answer was read and the
+    /// cursor comparison below is the only evidence available.
+    pub governing_revoked_keys: Option<BTreeSet<String>>,
 }
 
 impl TrustFacts {
@@ -1565,6 +1572,9 @@ impl TrustFacts {
     /// Currently revoked: the newest revocation of the key is not followed
     /// by a re-registration at a later cursor.
     fn key_revoked(&self, key: &str) -> bool {
+        if let Some(governing) = &self.governing_revoked_keys {
+            return governing.contains(key);
+        }
         let Some(latest) = self
             .revocations
             .iter()
