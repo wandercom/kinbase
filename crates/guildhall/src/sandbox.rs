@@ -419,9 +419,20 @@ pub fn run_verified_executable(
         ));
     }
     let fd = file.as_raw_fd();
-    clear_cloexec(fd)?;
+    // The verified descriptor is exposed to exactly this child: CLOEXEC stays
+    // set in the parent and is cleared after fork, so a concurrently spawned
+    // sibling never inherits another child's descriptor (which its own
+    // startup attestation would rightly refuse).
+    let inherit_verified_descriptor = move || -> std::io::Result<()> {
+        // SAFETY: fcntl is async-signal-safe and the descriptor is ours.
+        if unsafe { libc::fcntl(fd, libc::F_SETFD, 0) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
+    };
     let program = format!("/dev/fd/{fd}");
-    let spawn = Command::new(&program)
+    let mut command = Command::new(&program);
+    command
         .args(args)
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
@@ -429,8 +440,12 @@ pub fn run_verified_executable(
         .env("GUILDHALL_SHARED_CONFIG_FD", fd.to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+        .stderr(Stdio::piped());
+    // SAFETY: the hook only calls fcntl, which is async-signal-safe.
+    unsafe {
+        std::os::unix::process::CommandExt::pre_exec(&mut command, inherit_verified_descriptor);
+    }
+    let spawn = command.spawn();
     let mut child = match spawn {
         Ok(child) => child,
         Err(error)
@@ -456,7 +471,8 @@ pub fn run_verified_executable(
                     "Repin the classifier digest; the changed executable was not run.",
                 ));
             }
-            Command::new(executable)
+            let mut fallback_command = Command::new(executable);
+            fallback_command
                 .args(args)
                 .env_clear()
                 .env("PATH", "/usr/bin:/bin")
@@ -464,7 +480,15 @@ pub fn run_verified_executable(
                 .env("GUILDHALL_SHARED_CONFIG_FD", fd.to_string())
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
+                .stderr(Stdio::piped());
+            // SAFETY: the hook only calls fcntl, which is async-signal-safe.
+            unsafe {
+                std::os::unix::process::CommandExt::pre_exec(
+                    &mut fallback_command,
+                    inherit_verified_descriptor,
+                );
+            }
+            fallback_command
                 .spawn()
                 .map_err(|error| ContractError::integrity("PROCESSOR_UNAUTHORIZED", format!("descriptor-backed execution failed ({})", error.kind()), "A platform without verified descriptor-backed execution disables the external classifier."))?
         }

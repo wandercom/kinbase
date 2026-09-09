@@ -145,7 +145,12 @@ impl Launcher {
     }
 
     /// Capability report for `doctor` (cli.md: every process reports its
-    /// granted capability names).
+    /// granted capability names, and the doctor must show that shared
+    /// processes lack Personal). `processes` enumerates exactly the shared
+    /// processes the launcher runs from the derived shared configuration;
+    /// the launcher itself and the Personal worker are reported separately
+    /// under `personal_processes` because they hold the Personal capability
+    /// by design and are never part of the shared writer/projector graph.
     pub fn capability_report(&self) -> Value {
         let shared_names: Vec<&str> = {
             let mut names = vec!["codebase:read", "codebase:write"];
@@ -155,20 +160,25 @@ impl Launcher {
             }
             names
         };
+        let personal_root = self.personal_root();
+        let shared_mentions_personal =
+            serialized_shared_config_mentions_personal(&self.shared, personal_root.as_deref());
         json!({
             "processes": [
                 {
                     "role": "shared-writer",
                     "granted_capabilities": shared_names,
                     "holds_personal_capability": false,
-                    "personal_root_in_serialized_config": serialized_shared_config_mentions_personal(&self.shared, self.personal_root().as_deref())
+                    "personal_root_in_serialized_config": shared_mentions_personal
                 },
                 {
                     "role": "shared-projector",
                     "granted_capabilities": shared_names,
                     "holds_personal_capability": false,
-                    "personal_root_in_serialized_config": serialized_shared_config_mentions_personal(&self.shared, self.personal_root().as_deref())
-                },
+                    "personal_root_in_serialized_config": shared_mentions_personal
+                }
+            ],
+            "personal_processes": [
                 {
                     "role": "launcher",
                     "granted_capabilities": ["config:read", "personal:open", "shared-config:derive", "sandbox:launch"],

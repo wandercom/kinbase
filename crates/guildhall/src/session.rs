@@ -226,16 +226,9 @@ pub fn observe(
             })
         })
         .collect::<Vec<_>>();
-    let mut external_atoms: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-    for batch in crate::classifier::request_batches(classifier_observations)? {
-        let batch_atoms = pinned_classifier_atoms(classifier, &batch)?;
-        for (observation_id, atoms) in batch_atoms {
-            external_atoms
-                .entry(observation_id)
-                .or_default()
-                .extend(atoms);
-        }
-    }
+    let provider = select_provider(classifier);
+    let extraction = extract_atoms(classifier, &provider, classifier_observations)?;
+    let external_atoms = extraction.atoms;
 
     let mut atom_records = Vec::new();
     let mut candidate_records = Vec::new();
@@ -258,16 +251,42 @@ pub fn observe(
             }
         }
         if atoms.is_empty() {
-            atoms.push(crate::classify::atomize(
-                "codex_jsonl",
-                native_id,
-                &text,
-                "host-session",
-                8_000,
-                &observation.observation_id,
-                &observation.content_digest,
-                repository_id.as_deref(),
-            ));
+            if extraction.abstained.contains(&observation.observation_id)
+                || provider.live_model.is_some()
+            {
+                // The live classifier abstained (timeout, transport failure,
+                // or no atoms): the observation stays private at low
+                // confidence with destination none. No rule provider guesses
+                // in its place inside a pinned live run.
+                let mut atom = crate::classify::atomize(
+                    "codex_jsonl",
+                    native_id,
+                    &text,
+                    "host-session",
+                    3_000,
+                    &observation.observation_id,
+                    &observation.content_digest,
+                    repository_id.as_deref(),
+                );
+                atom.proposed_destinations = vec!["none".to_owned()];
+                atom.eligible_destinations = Vec::new();
+                atom.unresolved_uncertainty = Some(
+                    "classifier abstained for this observation; no destination was guessed"
+                        .to_owned(),
+                );
+                atoms.push(atom);
+            } else {
+                atoms.push(crate::classify::atomize(
+                    "codex_jsonl",
+                    native_id,
+                    &text,
+                    "host-session",
+                    8_000,
+                    &observation.observation_id,
+                    &observation.content_digest,
+                    repository_id.as_deref(),
+                ));
+            }
         }
         for atom in atoms {
             // Hard-blocked material never has a shared candidate, including
@@ -333,7 +352,17 @@ pub fn observe(
         "candidate_count": candidate_records.len(),
         "quarantine_count": quarantine_count,
         "quarantined_observations": quarantined_observations,
-        "classifier": {"fingerprint": classifier_fingerprint(classifier)}
+        "classifier": {
+            "fingerprint": classifier_fingerprint(classifier, &provider),
+            "provider": provider.name(),
+            "model": provider.live_model.clone(),
+            "configured_model": provider.configured_model.clone(),
+            "fallback_from": provider.fallback_from.clone(),
+            "fallback_reason": provider.fallback_reason.clone(),
+            "abstained_observations": extraction.abstained.len(),
+            "requests": extraction.requests,
+            "retries": extraction.retries
+        }
     });
     print_value(&result, json);
     Ok(())
@@ -486,15 +515,237 @@ fn session_corpus_text(records: &[Map<String, Value>], native_id: &str) -> Strin
         .to_owned()
 }
 
+/// Which classifier provider a pinned run actually uses. The configured
+/// `model` selects the live Ollama provider (R-11); when Ollama does not
+/// serve that model the run falls back to the product's own deterministic
+/// rule provider and says so in every receipt, never silently.
+#[derive(Debug, Clone)]
+pub(crate) struct SelectedProvider {
+    pub configured_model: Option<String>,
+    pub live_model: Option<String>,
+    pub fallback_from: Option<String>,
+    pub fallback_reason: Option<String>,
+}
+
+impl SelectedProvider {
+    fn name(&self) -> &'static str {
+        if self.live_model.is_some() {
+            "ollama"
+        } else {
+            "deterministic"
+        }
+    }
+}
+
+fn select_provider(classifier: Option<&crate::config::SharedClassifier>) -> SelectedProvider {
+    let configured = classifier
+        .map(|classifier| classifier.model.clone())
+        .filter(|model| model.starts_with("ollama:"));
+    let Some(model) = configured.clone() else {
+        return SelectedProvider {
+            configured_model: classifier.map(|classifier| classifier.model.clone()),
+            live_model: None,
+            fallback_from: None,
+            fallback_reason: None,
+        };
+    };
+    match crate::classifier::ollama_model_available(model.trim_start_matches("ollama:")) {
+        Ok(()) => SelectedProvider {
+            configured_model: Some(model.clone()),
+            live_model: Some(model),
+            fallback_from: None,
+            fallback_reason: None,
+        },
+        Err(reason) => {
+            crate::output::diagnostic(
+                "classifier-fallback",
+                json!({
+                    "configured_model": model,
+                    "provider": "deterministic",
+                    "reason": reason
+                }),
+            );
+            SelectedProvider {
+                configured_model: Some(model.clone()),
+                live_model: None,
+                fallback_from: Some(model),
+                fallback_reason: Some(reason),
+            }
+        }
+    }
+}
+
+struct Extraction {
+    atoms: BTreeMap<String, Vec<Value>>,
+    abstained: BTreeSet<String>,
+    requests: usize,
+    retries: usize,
+}
+
+/// Bounded parallelism for live single-observation requests: enough to keep
+/// a session batch inside the command budget, few enough that requests are
+/// served rather than queued (queue time counts against each request's
+/// timeout, so more workers than the provider serves concurrently only
+/// manufactures timeouts).
+const LIVE_CLASSIFIER_WORKERS: usize = 16;
+
+/// Wall budget for one live extraction pass (the host command itself is
+/// bounded at two minutes by its callers; the remainder is for candidate
+/// construction and durable writes).
+const LIVE_EXTRACTION_BUDGET_SECONDS: u64 = 105;
+
+fn extract_atoms(
+    classifier: Option<&crate::config::SharedClassifier>,
+    provider: &SelectedProvider,
+    observations: Vec<Value>,
+) -> Result<Extraction, ContractError> {
+    let mut extraction = Extraction {
+        atoms: BTreeMap::new(),
+        abstained: BTreeSet::new(),
+        requests: 0,
+        retries: 0,
+    };
+    if provider.live_model.is_none() {
+        for batch in crate::classifier::request_batches(observations)? {
+            extraction.requests += 1;
+            for (observation_id, atoms) in pinned_classifier_atoms(classifier, provider, &batch)? {
+                extraction
+                    .atoms
+                    .entry(observation_id)
+                    .or_default()
+                    .extend(atoms);
+            }
+        }
+        return Ok(extraction);
+    }
+    // A live model answers one observation per request so that one slow
+    // answer cannot time out a whole batch; requests run concurrently and a
+    // failed request is retried once before the observation abstains.
+    let batches: Vec<Value> = observations
+        .into_iter()
+        .map(|observation| json!({ "observations": [observation] }))
+        .collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let started = std::time::Instant::now();
+    let results: std::sync::Mutex<
+        Vec<(
+            usize,
+            Result<BTreeMap<String, Vec<Value>>, ContractError>,
+            usize,
+        )>,
+    > = std::sync::Mutex::new(Vec::new());
+    std::thread::scope(|scope| {
+        for _ in 0..LIVE_CLASSIFIER_WORKERS.min(batches.len().max(1)) {
+            scope.spawn(|| {
+                loop {
+                    let index = next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    let Some(batch) = batches.get(index) else {
+                        break;
+                    };
+                    let mut attempts = 0usize;
+                    let outcome = loop {
+                        // The session command has a bounded wall budget: a
+                        // slow answer is retried while there is time for
+                        // another full attempt, and abstains otherwise.
+                        let elapsed = started.elapsed().as_secs();
+                        if elapsed >= LIVE_EXTRACTION_BUDGET_SECONDS {
+                            break Err(ContractError::degraded(
+                                "UNKNOWN_OWNER_UNRESOLVED",
+                                "classifier wall budget exhausted; extraction abstained",
+                                "Reduce the batch or raise classifier.timeout_seconds.",
+                            ));
+                        }
+                        let allowed = if elapsed < LIVE_EXTRACTION_BUDGET_SECONDS / 3 {
+                            3
+                        } else if elapsed < LIVE_EXTRACTION_BUDGET_SECONDS * 2 / 3 {
+                            2
+                        } else {
+                            1
+                        };
+                        attempts += 1;
+                        match pinned_classifier_atoms(classifier, provider, batch) {
+                            Ok(atoms) => break Ok(atoms),
+                            Err(error) if attempts < allowed && retryable_extraction(&error) => {
+                                continue;
+                            }
+                            Err(error) => break Err(error),
+                        }
+                    };
+                    if let Ok(mut results) = results.lock() {
+                        results.push((index, outcome, attempts));
+                    }
+                }
+            });
+        }
+    });
+    let results = results.into_inner().unwrap_or_default();
+    for (index, outcome, attempts) in results {
+        extraction.requests += attempts;
+        extraction.retries += attempts.saturating_sub(1);
+        let observation_id = batches[index]["observations"][0]["observation_id"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        match outcome {
+            Ok(atoms) => {
+                let mut any = false;
+                for (id, items) in atoms {
+                    any = any || !items.is_empty();
+                    extraction.atoms.entry(id).or_default().extend(items);
+                }
+                if !any {
+                    extraction.abstained.insert(observation_id);
+                }
+            }
+            Err(error) => {
+                if !retryable_extraction(&error) {
+                    return Err(error);
+                }
+                crate::output::diagnostic(
+                    "classifier-abstained",
+                    json!({"observation_id": observation_id, "code": error.code, "message": error.message}),
+                );
+                extraction.abstained.insert(observation_id);
+            }
+        }
+    }
+    Ok(extraction)
+}
+
+/// Transport, timeout, and malformed-answer failures abstain per
+/// observation; configuration and authorization failures stop the run.
+fn retryable_extraction(error: &ContractError) -> bool {
+    matches!(
+        error.code.as_str(),
+        "COMPANY_UNREACHABLE" | "UNKNOWN_OWNER_UNRESOLVED"
+    ) || (error.code == "PROCESSOR_UNAUTHORIZED"
+        && (error.message.contains("Ollama") || error.message.contains("classifier output")))
+}
+
 fn pinned_classifier_atoms(
     classifier: Option<&crate::config::SharedClassifier>,
+    provider: &SelectedProvider,
     input: &Value,
 ) -> Result<BTreeMap<String, Vec<Value>>, ContractError> {
     let bytes = if let Some(classifier) = classifier {
+        // The pinned child selects its provider from explicit arguments: the
+        // configured live model, or the deterministic provider after a loud
+        // fallback. It never reads the launcher config itself.
+        let mut args = classifier.args.clone();
+        match &provider.live_model {
+            Some(model) => {
+                args.push("--model".to_owned());
+                args.push(model.clone());
+            }
+            None => {
+                args.push("--provider".to_owned());
+                args.push("deterministic".to_owned());
+            }
+        }
         crate::sandbox::run_verified_executable(
             &classifier.executable,
             &classifier.executable_sha256,
-            &classifier.args,
+            &args,
             &crate::json::canonical_bytes(input),
             std::time::Duration::from_secs(classifier.timeout_seconds),
         )?
@@ -616,13 +867,10 @@ fn atom_from_classifier(
         if !atom.hard_blocked && atom.confidence >= 6_000 && taint_boundary {
             // Approval-gating taint stays on the private atom and candidate
             // audit record; it does not erase an otherwise eligible, minimized
-            // destination that exact-byte human approval may license.
-            if !proposed_destinations
-                .iter()
-                .any(|value| value == "personal")
-            {
-                proposed_destinations.push("personal".to_owned());
-            }
+            // destination that exact-byte human approval may license. The
+            // principal's private memory is always an eligible home for a
+            // session atom, but that boundary is not the classifier's
+            // semantic prediction, so it is not added to the proposal.
             let eligible_personal = eligible_destinations
                 .iter()
                 .any(|value| value == "personal");
@@ -658,15 +906,17 @@ fn atom_from_classifier(
     Ok(atom)
 }
 
-fn classifier_fingerprint(classifier: Option<&crate::config::SharedClassifier>) -> String {
+fn classifier_fingerprint(
+    classifier: Option<&crate::config::SharedClassifier>,
+    provider: &SelectedProvider,
+) -> String {
     match classifier {
         Some(classifier) => format!(
             "sha256:{}:{}",
             classifier.executable_sha256,
-            if classifier.model.starts_with("ollama:") {
-                "ollama"
-            } else {
-                "deterministic"
+            match &provider.live_model {
+                Some(model) => model.clone(),
+                None => "deterministic".to_owned(),
             }
         ),
         None => {
@@ -750,12 +1000,20 @@ fn build_candidate(
     message_id: &str,
     rendered: bool,
 ) -> Result<Value, ContractError> {
-    crate::proposals::destination_store(destination)?;
+    let store = crate::proposals::destination_store(destination)?;
+    // P-2: shared proposals are minimized and de-identified. Opaque private
+    // codes and the bookkeeping notes that carry them stay in the private
+    // atom; the shared payload keeps the knowledge without them.
+    let (statement, removed) = if store == crate::StoreKind::Personal {
+        (atom.statement.clone(), 0)
+    } else {
+        deidentify_statement(&atom.statement)
+    };
     let payload = json!({
         "destination": destination,
         "atom_kind": atom.atom_kind,
         "scope": atom.scope,
-        "statement": atom.statement
+        "statement": statement
     });
     let canonical = canonical_text(&payload);
     let payload_digest = sha256_text(&canonical);
@@ -777,7 +1035,8 @@ fn build_candidate(
         "rendered": rendered,
         "suppressed": !rendered,
         "taint_cleared": false,
-        "hard_block_respected": true
+        "hard_block_respected": true,
+        "deidentified_tokens": removed
     });
     let token = json!({
         "candidate_id": record.get("candidate_id"),
@@ -796,6 +1055,109 @@ fn build_candidate(
     )?;
     record["signature"] = Value::String(signature);
     Ok(record)
+}
+
+/// Remove opaque identifiers (long hex, base64-like, or digit-dense tokens)
+/// from a statement bound for a shared destination, together with a trailing
+/// bookkeeping note that only carried such a code. Returns the minimized
+/// text and the number of tokens removed.
+pub(crate) fn deidentify_statement(statement: &str) -> (String, usize) {
+    fn opaque(word: &str) -> bool {
+        let core: String = word
+            .trim_matches(|c: char| !c.is_alphanumeric() && c != '=' && c != '+' && c != '/')
+            .to_owned();
+        if core.len() < 16 {
+            return false;
+        }
+        let hex_run = core
+            .split(|c: char| !c.is_ascii_hexdigit())
+            .map(str::len)
+            .max()
+            .unwrap_or(0);
+        if hex_run >= 12 {
+            return true;
+        }
+        let digits = core.chars().filter(char::is_ascii_digit).count();
+        let letters = core.chars().filter(char::is_ascii_alphabetic).count();
+        let base64_like = core.len() >= 20
+            && core
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '/' | '=' | '-' | '_'))
+            && digits >= 2
+            && letters >= 2
+            && (core.ends_with('=')
+                || digits >= 4
+                || core.chars().any(|c| c.is_ascii_uppercase())
+                    && core.chars().any(|c| c.is_ascii_lowercase()));
+        base64_like
+    }
+    let mut removed = 0usize;
+    let mut sentences: Vec<String> = Vec::new();
+    for sentence in split_sentences_keep(statement) {
+        let mut kept: Vec<&str> = Vec::new();
+        let mut dropped_here = 0usize;
+        for word in sentence.split_whitespace() {
+            if opaque(word) {
+                dropped_here += 1;
+            } else {
+                kept.push(word);
+            }
+        }
+        removed += dropped_here;
+        let text = kept.join(" ");
+        // A note that only carried a code ("Ref <code>", "I logged this as
+        // <code>") has nothing left to share once the code is gone.
+        let residual_words = text
+            .split_whitespace()
+            .filter(|w| w.chars().any(char::is_alphanumeric))
+            .count();
+        if dropped_here > 0 && residual_words <= 5 && !sentences.is_empty() {
+            continue;
+        }
+        if dropped_here > 0 && residual_words == 0 {
+            continue;
+        }
+        sentences.push(text);
+    }
+    let minimized = sentences.join(" ").trim().to_owned();
+    if minimized.is_empty() {
+        (statement.to_owned(), 0)
+    } else {
+        (minimized, removed)
+    }
+}
+
+/// Sentence split that keeps terminators and never breaks inside a token.
+fn split_sentences_keep(text: &str) -> Vec<String> {
+    let mut output = Vec::new();
+    let mut current = String::new();
+    let characters: Vec<char> = text.chars().collect();
+    let mut index = 0;
+    while index < characters.len() {
+        let character = characters[index];
+        current.push(character);
+        if matches!(character, '.' | '!' | '?') {
+            let boundary = index + 1 >= characters.len() || characters[index + 1].is_whitespace();
+            let previous_is_digit_dot = character == '.'
+                && index > 0
+                && characters[index - 1].is_ascii_digit()
+                && index + 1 < characters.len()
+                && characters[index + 1].is_ascii_digit();
+            if boundary && !previous_is_digit_dot {
+                let trimmed = current.trim().to_owned();
+                if !trimmed.is_empty() {
+                    output.push(trimmed);
+                }
+                current.clear();
+            }
+        }
+        index += 1;
+    }
+    let trimmed = current.trim().to_owned();
+    if !trimmed.is_empty() {
+        output.push(trimmed);
+    }
+    output
 }
 
 pub fn checkpoint(session: &str, json: bool) -> Result<(), ContractError> {
@@ -950,4 +1312,35 @@ fn io_error(error: std::io::Error) -> ContractError {
         false,
         ExitCode::InternalFailure,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::deidentify_statement;
+
+    #[test]
+    fn shared_payload_drops_opaque_codes_and_their_carrier_note() {
+        let (text, removed) = deidentify_statement(
+            "The scheduler retries at most three times. Ref kxslot0a1b2c3d4e5f6a7b",
+        );
+        assert_eq!(text, "The scheduler retries at most three times.");
+        assert_eq!(removed, 1);
+        let (text, removed) = deidentify_statement(
+            "The migration adds the composite index. I logged this as kxticket9f8e7d6c5b4a3921",
+        );
+        assert_eq!(text, "The migration adds the composite index.");
+        assert_eq!(removed, 1);
+        let (text, removed) =
+            deidentify_statement("My passphrase is a3hkZWFkYmVlZjEyMzQ1Njc4OTAxMg==");
+        assert_eq!(text, "My passphrase is");
+        assert_eq!(removed, 1);
+    }
+
+    #[test]
+    fn shared_payload_keeps_ordinary_statements_intact() {
+        let statement = "The lookahead window defaults to 15 minutes in scheduler/lookahead.py.";
+        assert_eq!(deidentify_statement(statement), (statement.to_owned(), 0));
+        let version = "We pinned requests to 2.31 because 2.32 broke the proxy handling.";
+        assert_eq!(deidentify_statement(version), (version.to_owned(), 0));
+    }
 }

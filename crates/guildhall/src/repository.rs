@@ -2469,8 +2469,14 @@ pub fn status(
     as_of: &crate::time::AsOf,
     json_output: bool,
 ) -> Result<(), ContractError> {
+    // Overdue apologies close under the exclusive lock before this report
+    // takes its shared read of the destination.
+    crate::proposals::emit_due_orphan_abandonments(&launcher, repo_path)?;
+    // Read one consistent destination generation: the shared admission lock
+    // is held for the whole report so it never straddles a writer's journal
+    // transition (writers advance between reads, never under one).
+    let _generation_read = Repository::shared_generation_lock(repo_path)?;
     let context = RepoContext::load(launcher, repo_path, true, Some(&as_of.as_of))?;
-    crate::proposals::emit_due_orphan_abandonments(repo_path)?;
     let (view, counts, references) = if context.repo.config.is_some() {
         context.current_view(&as_of.as_of, None)?
     } else {
@@ -2895,6 +2901,16 @@ pub fn status(
             {
                 record["unresponsive_closing_authority"] = Value::String(closing.to_owned());
             }
+            // A terminal saga event emitted by the destination service carries
+            // the saga's own state for the orphaned claim (withdrawn) and the
+            // unresponsive closing authority; the fan-out saga owns that fact.
+            if let Some(Value::Object(saga)) =
+                crate::proposals::saga_terminal_event_fields(&event.event_id)
+            {
+                for (key, value) in saga {
+                    record[key] = value;
+                }
+            }
             event_records.push(record);
             let action = crate::model::action_of(event).unwrap_or(event.atom_kind.as_str());
             match action {
@@ -3165,7 +3181,8 @@ pub fn status(
                 })
                 .count()
         })
-        .unwrap_or(0);
+        .unwrap_or(0)
+        .max(crate::proposals::pending_orphan_count(repo_path));
     let mut origin_trust_classes: BTreeMap<&str, usize> = BTreeMap::new();
     for event in &events {
         *origin_trust_classes
@@ -3256,6 +3273,7 @@ pub fn status(
         "company_references": references,
         "observation_status": if event_records.iter().any(|e| crate::json::get_str(e, "atom_kind") == Some("observation_expired")) { "historical-only" } else { "current" },
         "pending_orphans": pending_orphans,
+        "journal_state": crate::proposals::inflight_journal_state(repo_path),
         "query_log": query_log,
         "privacy_claim": PRIVACY_CLAIM,
         "threat_model": "guildhall-atm/1",
@@ -3916,6 +3934,7 @@ pub fn doctor(
     let mut result = json!({
         "status": if apology_quarantine > 0 { "quarantined" } else { "ok" },
         "processes": processes,
+        "personal_processes": capabilities["personal_processes"],
         "mode": launcher.mode,
         "fd_attestation": capabilities["fd_attestation"],
         "capabilities": ["company", "codebase"],
