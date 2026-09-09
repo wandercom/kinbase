@@ -47,6 +47,9 @@ pub struct TrustContext {
     pub company_connect_seconds: Option<f64>,
     pub unknowns: Vec<Value>,
     pub foreign_certificate_paths: Vec<String>,
+    /// Distinct installed certificates claiming the certified UUID beyond
+    /// the one binding; non-empty means the identity is ambiguous.
+    pub certificate_conflicts: Vec<Value>,
     pub pin_state: String,
     pub local_maintainer_keys: BTreeSet<String>,
 }
@@ -1495,6 +1498,7 @@ pub fn build_trust(
         company_connect_seconds: None,
         unknowns: Vec::new(),
         foreign_certificate_paths: Vec::new(),
+        certificate_conflicts: Vec::new(),
         pin_state: "none".to_owned(),
         local_maintainer_keys: BTreeSet::new(),
     };
@@ -1601,7 +1605,32 @@ pub fn build_trust(
             trust.pin_state = "conflict".to_owned();
             trust.unknowns.push(identity_unknown(&uuid, &now));
         }
+        // Architecture §2: one UUID binds one certificate. A second distinct
+        // certificate installed for the same UUID (a later issuance, a stray
+        // copy, or an index that disagrees with the file) makes the binding
+        // ambiguous: nothing is trusted and the steward owns the Unknown.
+        let claims = company.cache.certificate_claims(&uuid)?;
+        let distinct_digests: BTreeSet<&str> = claims
+            .iter()
+            .filter_map(|claim| crate::json::get_str(claim, "digest"))
+            .collect();
+        if distinct_digests.len() > 1 {
+            trust.certificate_conflicts = claims.clone();
+            trust.pin_state = "conflict".to_owned();
+            trust.certificate_reason = format!(
+                "{} distinct certificates claim repository UUID {uuid} in the Company cache; the binding is ambiguous and nothing is trusted until the steward retires one",
+                distinct_digests.len()
+            );
+            if !trust
+                .unknowns
+                .iter()
+                .any(|unknown| crate::json::get_str(unknown, "kind") == Some("identity"))
+            {
+                trust.unknowns.push(identity_unknown(&uuid, &now));
+            }
+        }
         match company.cache.certificate(&uuid)? {
+            Some(_) if !trust.certificate_conflicts.is_empty() => {}
             Some((certificate, digest)) => {
                 let signer = PublicKey::verify_document("repo-certificate", &certificate);
                 match signer {
@@ -4145,8 +4174,12 @@ pub fn fsck(
     let path_refusal_count = refused_paths.len();
     let store_digest =
         crate::hash::sha256_text(&local_digests.iter().cloned().collect::<Vec<_>>().join("\n"));
-    let certificate_conflict = repo.kin.join("certificate.json").exists()
+    // Two certificates for one UUID fail fsck (verification V-8 identity):
+    // a worktree pair, or distinct installed claims in the Company cache.
+    let worktree_certificate_pair = repo.kin.join("certificate.json").exists()
         && repo.kin.join("certificate-second.json").exists();
+    let certificate_conflict =
+        worktree_certificate_pair || !context.trust.certificate_conflicts.is_empty();
     // P-8: resolve every Company reference in the store and attribute any
     // digest mismatch to its owner (steward, client, or nobody when Company
     // is unavailable) exactly as the projection does.
@@ -4223,9 +4256,25 @@ pub fn fsck(
         "unknowns": unknowns,
         "sparse_checkout": sparse,
         "shallow": repo.is_shallow(),
-        "certificate": {"valid": context.trust.certificate_valid, "reason": context.trust.certificate_reason, "foreign_paths": context.trust.foreign_certificate_paths, "conflict": certificate_conflict}
+        "certificate": {"valid": context.trust.certificate_valid, "reason": context.trust.certificate_reason, "foreign_paths": context.trust.foreign_certificate_paths, "conflict": certificate_conflict, "conflicting_claims": context.trust.certificate_conflicts}
     });
-    let typed_failure = if certificate_conflict {
+    let typed_failure = if !context.trust.certificate_conflicts.is_empty() {
+        let paths: Vec<&str> = context
+            .trust
+            .certificate_conflicts
+            .iter()
+            .filter_map(|claim| crate::json::get_str(claim, "path"))
+            .collect();
+        Some(ContractError::integrity(
+            "DIGEST_MISMATCH",
+            format!(
+                "{} distinct certificates claim repository UUID {uuid} in the Company cache ({}); one UUID binds exactly one certificate",
+                context.trust.certificate_conflicts.len(),
+                paths.join(", ")
+            ),
+            "Ask the Company steward which certificate is current and remove the other installed copies; the binding never silently repins.",
+        ))
+    } else if certificate_conflict {
         Some(ContractError::integrity(
             "DIGEST_MISMATCH",
             "two certificates appear under .kin/; worktree certificates are inert and a pair is a conflict",

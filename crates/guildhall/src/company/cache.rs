@@ -386,6 +386,95 @@ impl Cache {
         Ok(Some((document, digest)))
     }
 
+    /// Every installed certificate document claiming `repository_uuid`:
+    /// the UUID-keyed file plus any other JSON document under the
+    /// repositories cache that certifies the same UUID, and the SQLite index
+    /// row. One repository UUID binds exactly one certificate (architecture
+    /// §2); two distinct claims make the binding ambiguous and block.
+    pub fn certificate_claims(&self, repository_uuid: &str) -> Result<Vec<Value>, ContractError> {
+        let mut claims = Vec::new();
+        let repositories = self.root.join("repositories");
+        if repositories.is_dir() {
+            let mut pending = vec![repositories.clone()];
+            let mut visited = 0usize;
+            while let Some(directory) = pending.pop() {
+                let Ok(entries) = std::fs::read_dir(&directory) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    visited += 1;
+                    if visited > 10_000 {
+                        break;
+                    }
+                    let path = entry.path();
+                    let Ok(metadata) = std::fs::symlink_metadata(&path) else {
+                        continue;
+                    };
+                    if metadata.is_dir() {
+                        pending.push(path);
+                        continue;
+                    }
+                    if !metadata.is_file()
+                        || path.extension().and_then(|value| value.to_str()) != Some("json")
+                    {
+                        continue;
+                    }
+                    let Ok(bytes) =
+                        crate::paths::read_bounded(&path, 64 * 1024, "cached certificate")
+                    else {
+                        continue;
+                    };
+                    let Ok(document) = crate::json::parse_strict_value(&bytes) else {
+                        continue;
+                    };
+                    if crate::json::get_str(&document, "schema")
+                        != Some(crate::model::CERTIFICATE_SCHEMA)
+                        || crate::json::get_str(&document, "repository_uuid")
+                            != Some(repository_uuid)
+                    {
+                        continue;
+                    }
+                    let relative = path
+                        .strip_prefix(&self.root)
+                        .map(|value| value.to_string_lossy().into_owned())
+                        .unwrap_or_else(|_| path.to_string_lossy().into_owned());
+                    claims.push(json!({
+                        "source": "file",
+                        "path": relative,
+                        "digest": crate::json::digest(&document),
+                        "issued_at": crate::json::get_str(&document, "issued_at"),
+                        "signer": crate::json::get_str(&document, "signer")
+                    }));
+                }
+            }
+        }
+        if let Some(connection) = self.connection.as_ref() {
+            let indexed: Option<(String, String)> = connection
+                .query_row(
+                    "SELECT document, digest FROM certificates WHERE repository_uuid=?1",
+                    params![repository_uuid],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()
+                .map_err(sqlite_error("certificate index"))?;
+            if let Some((document, digest)) = indexed {
+                let issued_at = serde_json::from_str::<Value>(&document)
+                    .ok()
+                    .and_then(|value| crate::json::get_str(&value, "issued_at").map(str::to_owned));
+                claims.push(json!({
+                    "source": "index",
+                    "path": CACHE_FILE,
+                    "digest": digest,
+                    "issued_at": issued_at
+                }));
+            }
+        }
+        claims.sort_by(|left, right| {
+            crate::json::get_str(left, "path").cmp(&crate::json::get_str(right, "path"))
+        });
+        Ok(claims)
+    }
+
     fn certificate_file(&self, repository_uuid: &str) -> Result<PathBuf, ContractError> {
         if uuid::Uuid::parse_str(repository_uuid).is_err() {
             return Err(ContractError::integrity(
