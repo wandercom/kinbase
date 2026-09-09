@@ -12,11 +12,13 @@ can travel, because the builder never copies the source record.
 
 Message identity is a per-run opaque token. A stable ``message_id`` would let an
 implementation memorise the answer key across runs; the opaque token carries no
-information and the mapping back to gold exists only in the harness.
+information and the mapping back to gold exists only in the harness. The frozen
+human operator exercise alone uses digest-derived IDs so prior recordings join.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -212,10 +214,14 @@ def bind_operator_exercise(
     """Instantiate the blinded 20-item operator exercise.
 
     The operator sees the rendered statement and proposed destination. The gold
-    decision and its rationale stay in the harness, so an operator (or a product
+    decision and its rationale stay in the harness. IDs derive from the frozen
+    exercise digest so a recording from an earlier process joins to gold. This
+    exception to per-run IDs applies only to this human exercise; an operator (or a product
     rendering the queue) cannot read the answer off the item.
     """
-    ids = OpaqueIds()
+    frozen = json.dumps(exercise, sort_keys=True, ensure_ascii=True,
+                        separators=(",", ":"), allow_nan=False).encode("utf-8")
+    ids = OpaqueIds(hashlib.sha256(b"guildhall-operator-exercise/1\x00" + frozen).digest())
     records: list[dict] = []
     gold: dict[str, dict] = {}
     for item in exercise["items"]:
@@ -223,7 +229,10 @@ def bind_operator_exercise(
         records.append({
             "id": token,
             "role": "assistant",
-            "text": item["rendered_statement"],
+            "text": (item["rendered_statement"] + "\nProposed destination: "
+                     + item["proposed_destination"]
+                     + "\nApprove or reject this write only. Approval does not exclude "
+                     "other destinations; optionally record also_belongs_in."),
             "observed_at": synth.receipt_stamp(),
             "source_kind": "codex_jsonl",
         })

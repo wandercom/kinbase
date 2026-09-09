@@ -1,20 +1,9 @@
 """The instrument's own outstanding-validity ledger.
 
-Detector Reviewer dispatch 003 found 22 blocking defects. Twenty-one are closed
-by causal rework: the entries below record what each finding was and what
-replaced it, so a later reviewer can check the repair rather than take it on
-trust.
-
-One entry remains open. It is not engineering work: it needs a named human
-rightsholder to sign a rights grant, which the Tester must not fabricate.
-
-An instrument with known validity debt must not report green.
-``spec/verification.md`` "Instrument validity" makes an instrument that cannot
-substantiate its own controls ``INVALID_HARNESS``, and "Verdict semantics"
-forbids an unperformed measurement from becoming proof. So the open entry is
-enumerated here, machine readable and content addressed, it forces its gate's
-instrument channel to ``INVALID_HARNESS`` at census construction, and the suite
-*fails* while it remains open.
+Detector Reviewer dispatch 003 found 22 blocking defects. The entries record
+closure evidence for each. Finding 21's supplied human grant closes the missing
+grant debt; current-digest re-attestation and independent selection remain
+explicit prerequisites checked by auxiliary qualification, not fabricated acts.
 
 This is deliberately not a suppression list. Nothing here is skipped, xfailed or
 tolerated.
@@ -277,20 +266,16 @@ LEDGER: tuple[DebtEntry, ...] = (
         "identifiers.",
         "semantic identity no longer reaches the product on any inspected channel",
     ),
-    DebtEntry(
-        21, "Auxiliary corpus rights grant is unsigned", OPEN, ("V-3",),
-        "A Tester assertion of authorship cannot independently prove authority to "
-        "grant CC0. Every component the Tester can author is in place --- "
-        "deterministic generation from named seeds, a digest binding the manifest "
-        "core, RIGHTS.md, GRANT-TEMPLATE.md, SELECTION-PROTOCOL.md and every "
-        "candidate byte, and the Reviewer's selection protocol --- but the pool "
-        "is marked not selectable until a named human rightsholder signs.",
-        "A named human with authority over the five files under "
-        "tests/fixtures/auxiliary/sources/ must sign "
-        "tests/fixtures/auxiliary/GRANT-TEMPLATE.md over pool digest "
-        "1f3d9db708ffcfe4c37f299e2d699e2f402f5a2e8c2f88d137c8e5e547295eb3 and "
-        "commit the result as tests/fixtures/auxiliary/GRANT.md. The Tester must "
-        "not author, sign or simulate that grant.",
+    _closed(
+        21, "Auxiliary corpus human rights grant", ("V-3",),
+        "A Tester assertion of authorship cannot independently prove authority to grant CC0.",
+        "Supplied tests/fixtures/auxiliary/GRANT.md, signed Jeremy McEntire of Wander "
+        "at 2026-09-09T20:42:31Z, clauses 1-4, supplies the named rightsholder, "
+        "asserted VP of Engineering authority, CC0 legal-code digest and both permissions. "
+        "pool.json records the grant digest as closure evidence; auxsel verifies the "
+        "reproducible pool. Tester did not author or modify the grant.",
+        "human-grant absence closed; qualification still requires Validator's founder "
+        "re-attestation over the current digest and Detector Reviewer's signed selection",
     ),
     _closed(
         22, "Reviewer environment did not enforce pytest timeouts", ("INSTRUMENT",),

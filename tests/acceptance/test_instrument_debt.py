@@ -1,9 +1,8 @@
 """The instrument reports its own outstanding validity debt.
 
-Detector Reviewer dispatch 003 raised 22 blocking defects. Twenty-one are closed
-by causal rework. One is not engineering work at all: it needs a named human
-rightsholder's signature, which the Tester must not fabricate. An instrument in
-that state must say so rather than pass.
+Detector Reviewer dispatch 003 raised 22 defects. The ledger records their
+closure evidence, including the supplied human grant for finding 21. Auxiliary
+qualification separately requires current-digest re-attestation and selection.
 
 These tests fail while blocking debt is open. That is the intended behaviour:
 ``spec/verification.md`` "Instrument validity" makes an instrument that cannot

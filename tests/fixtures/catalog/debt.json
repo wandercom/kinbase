@@ -1,5 +1,5 @@
 {
-  "closed": 21,
+  "closed": 22,
   "entries": [
     {
       "current_effect": "the attestation states its own scope and unreadable paths",
@@ -282,15 +282,15 @@
       "why_blocking": "The policy read only literal env= keys, missing argv, cwd, stdin, extra_env and committed history; the V-4 scenario, V-8 digest case and V-9 start state crossed those channels."
     },
     {
-      "current_effect": "gate instrument channel reports INVALID_HARNESS",
+      "current_effect": "human-grant absence closed; qualification still requires Validator's founder re-attestation over the current digest and Detector Reviewer's signed selection",
       "finding": 21,
       "gates": [
         "V-3"
       ],
-      "required_work": "A named human with authority over the five files under tests/fixtures/auxiliary/sources/ must sign tests/fixtures/auxiliary/GRANT-TEMPLATE.md over pool digest 1f3d9db708ffcfe4c37f299e2d699e2f402f5a2e8c2f88d137c8e5e547295eb3 and commit the result as tests/fixtures/auxiliary/GRANT.md. The Tester must not author, sign or simulate that grant.",
-      "status": "OPEN",
-      "title": "Auxiliary corpus rights grant is unsigned",
-      "why_blocking": "A Tester assertion of authorship cannot independently prove authority to grant CC0. Every component the Tester can author is in place --- deterministic generation from named seeds, a digest binding the manifest core, RIGHTS.md, GRANT-TEMPLATE.md, SELECTION-PROTOCOL.md and every candidate byte, and the Reviewer's selection protocol --- but the pool is marked not selectable until a named human rightsholder signs."
+      "required_work": "Supplied tests/fixtures/auxiliary/GRANT.md, signed Jeremy McEntire of Wander at 2026-09-09T20:42:31Z, clauses 1-4, supplies the named rightsholder, asserted VP of Engineering authority, CC0 legal-code digest and both permissions. pool.json records the grant digest as closure evidence; auxsel verifies the reproducible pool. Tester did not author or modify the grant.",
+      "status": "CLOSED",
+      "title": "Auxiliary corpus human rights grant",
+      "why_blocking": "A Tester assertion of authorship cannot independently prove authority to grant CC0."
     },
     {
       "current_effect": "a missing timeout plugin stops the run",
@@ -304,10 +304,8 @@
       "why_blocking": "pytest_timeout was unavailable and the strict run still exited zero."
     }
   ],
-  "gates_with_open_debt": [
-    "V-3"
-  ],
-  "open": 1,
+  "gates_with_open_debt": [],
+  "open": 0,
   "review": "detector-reviewer dispatch 003",
   "schema": "guildhall-acceptance-instrument-debt/1",
   "total_findings": 22

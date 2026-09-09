@@ -32,6 +32,7 @@ from ._harness import prereq, synth, trust
 from ._harness.cli import Guildhall
 from ._harness.evidence_model import Origin, field, require_nonempty, rows
 from ._harness.requirements import (
+    HarnessInvalid,
     CLI,
     VERIFY,
     ProductFailure,
@@ -373,19 +374,34 @@ def test_blinded_operator_exercise_accuracy_and_median_time(
             "decision is not an implicit approval",
     )
     gold = {presented.ids.token(i["item_id"]): i["gold_decision"] for i in items}
+    response_ids = [str(r["item_id"]) for r in responses]
+    if response_ids != list(gold):
+        raise HarnessInvalid("operator responses must contain each presented ID exactly once, in presentation order")
+    for response in responses:
+        if response.get("decision") not in ("approve", "reject"):
+            raise HarnessInvalid("operator decision must be approve or reject")
+        if "also_belongs_in" in response:
+            additional = response["also_belongs_in"]
+            if not isinstance(additional, list) or any(
+                store not in ("personal", "company", "codebase") for store in additional
+            ):
+                raise HarnessInvalid("also_belongs_in must list personal, company or codebase")
     answered = {str(r["item_id"]): r for r in responses}
     joined = prereq.gold_join(answered, gold, name="operator exercise")
 
     correct = 0
     seconds: list[float] = []
     previous = None
-    for token in joined:
+    # gold_join sorts opaque keys; timing must follow the recorded presentation.
+    for token in response_ids:
         response = answered[token]
         if response.get("decision") == gold[token]:
             correct += 1
         stamp = _epoch(str(response["decided_at"]))
         if previous is not None:
-            seconds.append(max(0.0, stamp - previous))
+            if stamp < previous:
+                raise HarnessInvalid("operator decision timestamps must be monotonic")
+            seconds.append(stamp - previous)
         previous = stamp
     rendered_input = presented.path.read_text(encoding="utf-8")
     O.check(

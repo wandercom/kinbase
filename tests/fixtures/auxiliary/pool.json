@@ -1,8 +1,6 @@
 {
  "authority": "spec/threat-model.md, section 'Canary and auxiliary-corpus custody'",
- "blocking": [
-  "GRANT.md is absent; a named human rightsholder must sign GRANT-TEMPLATE.md"
- ],
+ "blocking": [],
  "candidates": [
   {
    "bytes": 793,
@@ -41,12 +39,11 @@
   }
  ],
  "digest_binds": [
-  "this complete manifest core, canonically serialised",
-  "RIGHTS.md bytes",
-  "GRANT-TEMPLATE.md bytes",
-  "SELECTION-PROTOCOL.md bytes",
-  "every candidate digest, version and declared order",
-  "every generated-component digest, seed and entry count"
+  "Preimage v1 is defined by acceptance._harness.auxsel: ASCII guildhall-auxiliary-pool-digest/1 plus NUL, then four blocks, each prefixed with its unsigned 8-byte big-endian byte length.",
+  "Block 1: explicit project() whitelist (FIELDS, CANDIDATE_FIELDS, COMPONENT_FIELDS, GENERATION_FIELDS and COMPONENTS); JSON sort_keys=True, ensure_ascii=True, separators=(comma, colon), allow_nan=False; UTF-8, no newline; arrays retain manifest order.",
+  "Blocks 2-4: exact raw bytes of RIGHTS.md, GRANT-TEMPLATE.md, SELECTION-PROTOCOL.md, in that order. SHA-256 of the assembled preimage.",
+  "Ordered candidates bind paths, byte counts, digests, topics and versions; ordered generated components bind paths, kinds, seeds, digests and counts; the generation recipe is projected explicitly. --verify also checks actual files and regeneration.",
+  "Excluded: rights_basis, selectable, status, blocking, selection_record, pool_digest_sha256, digest_binds, superseded_pool_digests, GRANT.md, CC0-1.0.txt and any fields not explicitly projected. Grant and selection evidence are verified separately; changing their status cannot change the signed corpus identity."
  ],
  "digest_field": "auxiliary_corpus_sha256",
  "generated_components": [
@@ -94,7 +91,7 @@
  },
  "grant_template": "tests/fixtures/auxiliary/GRANT-TEMPLATE.md",
  "mutable_after_execution_begins": false,
- "pool_digest_sha256": "1f3d9db708ffcfe4c37f299e2d699e2f402f5a2e8c2f88d137c8e5e547295eb3",
+ "pool_digest_sha256": "d6def61a0b7cefb103994a19487beba10b67a3bc31b992495a36adb8c2163036",
  "reconstructor_denied": [
   "labels",
   "registry",
@@ -114,24 +111,36 @@
   "digest_field"
  ],
  "rights_basis": {
-  "authority_basis": null,
+  "authority_basis": "my role as VP of Engineering at Wander",
   "claimed_license": "CC0-1.0",
   "customer_or_employer_confidential_material": false,
-  "independent_provenance_record": null,
-  "license_legalcode_sha256": null,
+  "independent_provenance_record": {
+   "path": "tests/fixtures/auxiliary/GRANT.md",
+   "sha256": "29223667928d22b88e5ea782608c0298e59712e4dbb88b8609586b493767161e",
+   "statement": "Clauses 1-2: Jeremy McEntire of Wander attests that he holds or is authorised to grant rights in the five candidate documents, based on his role as VP of Engineering at Wander. This supplied human attestation is not independent verification of authorship or authority.",
+   "attested_over_pool_digest": "d6def61a0b7cefb103994a19487beba10b67a3bc31b992495a36adb8c2163036",
+   "attested_at": "2026-09-09T23:34:19Z"
+  },
+  "license_legalcode_sha256": "a2010f343487d3f7618affe54f789f5487602331c0a8d03f49e9a7c547cf0499",
   "license_url": "https://creativecommons.org/publicdomain/zero/1.0/",
-  "named_rightsholder": null,
-  "permits_local_evaluation": null,
-  "permits_transmission_to_pinned_model_provider": null,
-  "rightsholder_signature": null,
+  "named_rightsholder": "Jeremy McEntire",
+  "permits_local_evaluation": true,
+  "permits_transmission_to_pinned_model_provider": true,
+  "rightsholder_signature": "Signed: Jeremy McEntire; Name: Jeremy McEntire; Date: 2026-09-09T20:42:31Z",
   "tester_claim": "Every byte under sources/ first appeared in this lane, authored for this instrument; no third-party text is reproduced, quoted or adapted. This is a claim with a checkable commit history, not an independent proof of authority to grant a licence.",
-  "why_incomplete": "A Tester cannot supply a named human rightsholder, that person's signature over an exact grant, or an independent authorship record. Authoring them would be fabricating a human grant."
+  "why_incomplete": "The supplied human grant records the named rightsholder, asserted authority and signature. Tester cannot independently prove authorship, employment authority, signature authenticity or legal sufficiency. Clause 5 cites the superseded unreproducible digest; Validator must obtain founder re-attestation over the new pool digest before Reviewer selection."
  },
  "schema": "guildhall-acceptance-auxiliary-corpus-pool/2",
- "selectable": false,
+ "selectable": true,
  "selected_by": "detector-reviewer",
  "selection_protocol": "tests/fixtures/auxiliary/SELECTION-PROTOCOL.md",
  "selection_record": null,
  "selection_timing": "before implementation is combined",
- "status": "NOT SELECTABLE \u2014 named human rightsholder grant outstanding"
+ "status": "GRANT RE-ATTESTED over the reproducible current digest — eligible pool; independent Reviewer selection pending",
+ "superseded_pool_digests": [
+  {
+   "note": "Superseded historical marker: this digest was never reproducible.",
+   "sha256": "1f3d9db708ffcfe4c37f299e2d699e2f402f5a2e8c2f88d137c8e5e547295eb3"
+  }
+ ]
 }

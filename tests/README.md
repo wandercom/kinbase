@@ -203,30 +203,49 @@ Every assertion cites an exact ratified requirement:
 
 | quantity | value |
 |---|---:|
-| collected by pytest | 349 |
+| collected by pytest | 359 |
 | catalogued obligations | 117 |
 | catalogued thresholds | 482 |
 | kill-ledger rows over frozen controls | 482 |
 | executable pre-execution planters | 35 |
 | detector mutations with a demonstrated escape | 6 |
-| product-independent self-tests | 230 |
+| product-independent self-tests | 240 |
 | unbackreferenced tests | 0 |
 
 Catalog digest `a8655ac61a8c33db`; kill-ledger digest `6df354962e4f0178`;
 frozen-controls digest `0c264e8c12f2e969`;
-instrument-debt digest `99d8a395782c8760`.
+instrument-debt digest `ac2ee9f12dff2a8b`.
 
 Collected node ids exceed authored functions because `@pytest.mark.parametrize`
 expands one function into several, most visibly the nine frozen V-5 temporal rows
 and the per-host V-9 functions. Verify with
 `tests/run-acceptance.sh --collect-only -q`.
 
-Two selftest nodes fail on the same open debt. `test_instrument_debt.py` fails while any entry in
-`tests/fixtures/catalog/debt.json` is open; finding 21 needs a named human
-rightsholder's signature, which the Tester must not fabricate, so V-3 and the
-instrument channel report `INVALID_HARNESS` and no gate reports a green product
-channel. `test_auxiliary_corpus_selection_record_is_complete_and_frozen` also
-refuses the unsigned grant.
+Finding 21 is closed with the supplied Jeremy McEntire grant as evidence.
+The grant's original digest is superseded; `acceptance._harness.auxsel --verify`
+now verifies a precisely framed, reproducible pool identity. Auxiliary
+qualification remains `INVALID_HARNESS` until Validator obtains the founder's
+current-digest re-attestation and the implementation-blind Detector Reviewer
+produces the signed, frozen selection in `SELECTION-PROTOCOL.md` steps 4-6.
+No product result follows from a passing debt ledger.
+
+### Recording the blinded operator exercise
+
+Use `corpora.bind_operator_exercise(corpora.load_gold("operator_exercise.json"),
+Path("/private/tmp/operator-presentation.jsonl"))` from a harness process with
+`tests/` on its Python path. Give the operator only the emitted JSONL, never the
+gold fixture or the returned harness mapping. Each record includes its opaque
+`id`, statement, proposed destination and single-write instructions. IDs derive
+from the canonical frozen exercise digest, so a later scoring process uses the
+same IDs; changing the exercise invalidates earlier recordings.
+
+Record JSONL objects in presentation order with `item_id` equal to the emitted
+`id`, `decision` (`approve` or `reject`) and `decided_at` (UTC
+`YYYY-MM-DDTHH:MM:SS.ffffffZ`). Set `GUILDHALL_OPERATOR_RESPONSES` to that file.
+An optional `also_belongs_in` list (`personal`, `company`, `codebase`) annotates
+other independently warranted destinations. It does not change the decision on
+the shown write and is not itself scored or executed. This binary exercise does
+not measure fan-out completeness. See `fixtures/gold/OPERATOR-AUDIT.md`.
 
 ## Instrument validity comes first
 

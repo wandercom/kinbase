@@ -1,40 +1,37 @@
 # Auxiliary-corpus rights basis
 
-## Status: INCOMPLETE — a named human rightsholder grant is outstanding
+## Status: grant recorded; current-digest re-attestation and selection pending
 
-Detector Reviewer finding 21 is correct that a Tester assertion of authorship
-cannot independently prove authorship or authority to grant a licence. That
-gap is stated here rather than papered over, and the pool is **not selectable**
-until it is closed.
+The supplied `GRANT.md` names Jeremy McEntire of Wander, asserts authority based
+on his role as VP of Engineering at Wander, and is signed and dated
+2026-09-09T20:42:31Z. Clauses 1-4 identify the five candidate documents, dedicate
+them under CC0 1.0, and expressly permit local evaluation and transmission to
+the model provider named in the experiment manifest. `pool.json.rights_basis`
+transcribes these claims and records the grant's content digest. The local
+`CC0-1.0.txt` digest matches the legal-code digest in clause 3.
 
-## What the Tester can and cannot establish
+Finding 21's missing human grant is closed with that supplied grant as evidence.
+This is an attestation, not independent proof of authorship, signature authenticity,
+employment authority, or legal sufficiency. The Tester still claims that the
+candidate source bytes originated in this lane without reproduced third-party
+text; repository history can corroborate that claim but cannot prove legal title.
 
-The Tester **can** state, and this repository's history can corroborate, that
-every byte under `sources/` first appeared in this lane, authored for this
-acceptance instrument, and that no third-party text was reproduced, quoted or
-adapted. That is a provenance *claim* with a checkable commit history.
+The signature in clause 5 cites the superseded, never-reproducible pool digest.
+The Tester preserves `GRANT.md` exactly. The Validator must obtain the founder's
+re-attestation over the reproducible current `POOL-DIGEST` before selection.
+`selectable: true` records the supplied grant's permissions and pool eligibility;
+it does not attest completion of that precondition or of independent selection.
+The qualification test refuses missing current-digest attestation or selection.
 
-The Tester **cannot** supply what the finding requires:
+## Reproducible corpus identity
 
-* a named human rightsholder,
-* that person's signature over an exact licence grant, and
-* an independently verifiable publication or authorship record.
+`python3 -m acceptance._harness.auxsel --verify` (from `tests/`) verifies the
+explicit manifest projection, exact rights/protocol/template bytes, candidate
+content, and seed-generated components. The framing, serialization and assembly
+order are defined in `auxsel.py` and summarized by `digest_binds`. Grant status,
+grant bytes, selection evidence and historical digest markers are excluded to
+avoid circular signatures. No old digest preimage has been fabricated.
 
-Authoring any of those would be fabricating a human grant, which the Tester
-dispatch forbids outright. So they are left blank, and the fields naming them
-are present-but-null in `pool.json` so a Reviewer sees the exact hole.
-
-## What is ready for the Reviewer
-
-* Five candidate documents with recorded versions and per-file digests.
-* Three generated components, each reproducible byte-for-byte from a named seed
-  by `python3 -m acceptance._harness.auxgen` (see `generation` in `pool.json`).
-* A combined digest that binds the complete pool manifest, this file, the rights
-  metadata, candidate versions and declared ordering — not only content hashes.
-* A deterministic selection protocol the Reviewer executes and signs.
-
-## What is needed to close the finding
-
-A named human with authority over these bytes must sign the exact grant text in
-`GRANT-TEMPLATE.md`, and the signed bytes must be committed as `GRANT.md`. The
-pool digest then rebinds over it and the Reviewer may select.
+The implementation-blind Detector Reviewer owns steps 4-6 of
+`SELECTION-PROTOCOL.md`; `selection_record` stays null until that pass. The
+Validator owns obtaining and retaining the current-digest re-attestation.

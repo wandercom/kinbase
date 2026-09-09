@@ -12,11 +12,9 @@ missed) by the real sweep over that surface. The denominators, the Wilson
 bounds, the stratification and the deterministic-control result are all computed
 from those sweeps.
 
-Finding 21 governs the second test: the licensed-public auxiliary corpus is
-deterministically generated, digest bound and selection-ready, but a named human
-rightsholder grant is a human act the Tester may not perform. That test states
-exactly which bytes are missing and fails as ``INVALID_HARNESS`` until they
-exist.
+Finding 21's supplied grant is recorded. The second test verifies reproducible
+content identity and refuses missing current-digest re-attestation or independent
+Reviewer selection; it never fabricates either human act.
 """
 
 from __future__ import annotations
@@ -26,13 +24,14 @@ from pathlib import Path
 
 import pytest
 
-from ._harness import auxgen, canaries, matrix as MX
+from ._harness import auxgen, auxsel, canaries, matrix as MX
 from ._harness import obligations as O
 from ._harness import prereq, scanners
 from ._harness.canaries import TRANSFORMATION_FAMILIES
 from ._harness.detectors import stratification_ok, wilson_interval
 from ._harness.evidence_model import Origin, require_nonempty
 from ._harness.requirements import (
+    HarnessInvalid,
     THREAT,
     VERIFY,
     spec_ref,
@@ -168,20 +167,17 @@ def test_randomized_qualification_publishes_every_denominator(
            "registry, hidden tests, or arm identity."),
 )
 def test_auxiliary_corpus_selection_record_is_complete_and_frozen() -> None:
-    """Everything the Tester can author is in place; the human grant is not.
-
-    Finding 21. Deterministic regeneration, the provenance digest, the selection
-    protocol and the exact candidate bytes are all committed and verified here.
-    What remains is a named human rightsholder's signature, which the Tester
-    must not fabricate: the pool is therefore marked not selectable and this
-    obligation reports ``INVALID_HARNESS`` naming the exact missing bytes.
-    """
+    """Verify the frozen pool, then require the independent human evidence."""
     pool_raw = prereq.fixture_file(
         AUXILIARY / "pool.json",
         why="the auxiliary pool manifest the Detector Reviewer selects from",
         minimum_bytes=256,
     )
     pool = json.loads(pool_raw.decode("utf-8"))
+    try:
+        verified_digest = auxsel.verify(AUXILIARY)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise HarnessInvalid(f"auxiliary pool verification failed: {exc}") from exc
     candidates = require_nonempty(
         pool["candidates"], obligation="V-3.auxiliary-corpus",
         why="a pool with no candidate cannot be selected from",
@@ -205,8 +201,7 @@ def test_auxiliary_corpus_selection_record_is_complete_and_frozen() -> None:
             "candidate_count": len(candidates),
             "deterministic_components_reproduced": len(diverged) == 0,
             "generation_recipe": recorded,
-            "pool_digest": (AUXILIARY / "POOL-DIGEST").read_text(
-                encoding="utf-8").strip(),
+            "pool_digest": verified_digest,
             "selection_protocol_present": (AUXILIARY / "SELECTION-PROTOCOL.md").is_file(),
             "grant_template_present": (AUXILIARY / "GRANT-TEMPLATE.md").is_file(),
             "named_rightsholder_grant_present": grant.is_file(),
@@ -214,3 +209,5 @@ def test_auxiliary_corpus_selection_record_is_complete_and_frozen() -> None:
         },
         label="auxiliary corpus provenance, generation and selection record",
     )
+
+    auxsel.require_review(AUXILIARY, pool, verified_digest)
