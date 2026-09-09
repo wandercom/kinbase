@@ -457,13 +457,17 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
         }
     };
 
-    let (principal_id, host_instance_id) = match table.get("identity") {
-        None => (default_principal(), default_host_instance()),
+    let (principal_id, host_instance_id, identity_maintainer_key) = match table.get("identity") {
+        None => (default_principal(), default_host_instance(), None),
         Some(value) => {
             let section = value
                 .as_table()
                 .ok_or_else(|| config_error("[identity] must be a table"))?;
-            closed_keys(section, &["principal_id", "host_instance_id"], "[identity]")?;
+            closed_keys(
+                section,
+                &["principal_id", "host_instance_id", "maintainer_key_file"],
+                "[identity]",
+            )?;
             (
                 section
                     .get("principal_id")
@@ -475,8 +479,19 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                     .and_then(toml::Value::as_str)
                     .map(str::to_owned)
                     .unwrap_or_else(default_host_instance),
+                // Ruling R-18: the repository maintainer's signing key reaches the
+                // product through `[identity] maintainer_key_file`; it takes
+                // precedence over the legacy `[company]` location.
+                optional_path(section, "maintainer_key_file", "identity")?,
             )
         }
+    };
+    let company = match (company, identity_maintainer_key) {
+        (Some(mut company), Some(path)) => {
+            company.maintainer_key_file = path;
+            Some(company)
+        }
+        (company, _) => company,
     };
 
     Ok(UserConfig {
