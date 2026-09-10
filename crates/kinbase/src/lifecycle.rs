@@ -281,6 +281,7 @@ pub fn scan(
         "issue_tracker" => scan_issue_tracker(source, repo)?,
         "pull_request" => scan_pull_request(source, repo)?,
         "chat_thread" => scan_chat_thread(source, repo)?,
+        "document" => scan_document(source, repo)?,
         "github_export" => scan_github_export(source, repo)?,
         "kindex" => scan_kindex(source, repo)?,
         "authority_answer" => scan_answers(source, repo)?,
@@ -1249,6 +1250,104 @@ fn scan_chat_thread(source: &Path, _repo: &Repository) -> Result<SourceScan, Con
             // form of evidence in a company, and the scanner has the most work to do
             // on it.
             record.confidence = 5_000;
+            scan.records.push(record);
+        }
+    }
+    Ok(scan)
+}
+
+// --------------------------------------------------------------------------
+// document: prose that states direction
+// --------------------------------------------------------------------------
+
+/// A written document is the strongest evidence short of asking a person, because
+/// somebody sat down and decided what it should say. That is why `standing` and
+/// `governs_paths` are read from the envelope here and nowhere else: a document is
+/// the natural home of a north star, and a north star that cannot say which paths
+/// it governs cannot demote the code it supersedes.
+///
+/// Envelope: id, title, body, author, author_kind, standing, atom_kind,
+/// governs_paths[], url, modified_at.
+fn scan_document(source: &Path, _repo: &Repository) -> Result<SourceScan, ContractError> {
+    let mut scan = SourceScan::default();
+    for path in source_files(source)? {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if !name.ends_with(".jsonl") {
+            continue;
+        }
+        let bytes = read_bounded(&path)?;
+        check_budget(&mut scan, bytes.len())?;
+        scan.unit_ids
+            .insert(name.trim_end_matches(".jsonl").to_owned());
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(document) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let id = crate::json::get_str(&document, "id")
+                .unwrap_or_default()
+                .to_owned();
+            if id.is_empty() {
+                continue;
+            }
+            let title = crate::json::get_str(&document, "title").unwrap_or_default();
+            let mut record =
+                SourceRecord::new(&format!("document:{id}"), &format!("document:{id}"));
+            record.logical_key = format!("document:{id}");
+            record.statement = format!(
+                "{title}\n{}",
+                crate::json::get_str(&document, "body").unwrap_or_default()
+            );
+            // A document may declare what kind of claim it makes, but only from the
+            // ruling vocabulary. Anything else is an ordinary claim: a doc does not
+            // get to promote itself to `invariant` by saying so in its own metadata.
+            record.atom_kind = match crate::json::get_str(&document, "atom_kind") {
+                Some(
+                    kind @ ("north_star" | "directional" | "invariant" | "decision" | "constraint"
+                    | "rationale"),
+                ) => kind.to_owned(),
+                _ => "claim".to_owned(),
+            };
+            record.disposition = crate::json::get_str(&document, "disposition")
+                .unwrap_or("proposed")
+                .to_owned();
+            record.provenance = match crate::json::get_str(&document, "author_kind") {
+                Some("human") => "human".to_owned(),
+                // A meeting transcript is human speech a machine wrote down; the
+                // summary of that meeting is the machine's own words. They are not
+                // the same evidence and do not carry the same weight.
+                Some("transcript") => "transcript".to_owned(),
+                Some("agent") => "ai_generated".to_owned(),
+                _ => "unknown".to_owned(),
+            };
+            record.asserted_at = crate::json::get_str(&document, "modified_at").map(str::to_owned);
+
+            let mut references = Vec::new();
+            if let Some(url) = crate::json::get_str(&document, "url") {
+                references.push(format!("document:{url}"));
+            }
+            for governed in document
+                .get("governs_paths")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(path_value) = governed.as_str() {
+                    references.push(format!("governs:{path_value}"));
+                }
+            }
+            record.attributes.insert(
+                "references".to_owned(),
+                Value::Array(references.into_iter().map(Value::String).collect()),
+            );
+            record.content = line.as_bytes().to_vec();
+            record.confidence = 7_000;
             scan.records.push(record);
         }
     }

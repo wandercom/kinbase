@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-pub const SOURCE_KINDS: [&str; 13] = [
+pub const SOURCE_KINDS: [&str; 14] = [
     "codex_jsonl",
     "claude_jsonl",
     "repo_code",
@@ -24,6 +24,10 @@ pub const SOURCE_KINDS: [&str; 13] = [
     // the most private material in a company also lives. It is ingested as
     // company-confidential and never as repository evidence.
     "chat_thread",
+    // Prose documents -- design docs, standards, handbooks. Distinct from docs_adr,
+    // which demands an ADR envelope no real document carries. This is where a
+    // company's north-star direction actually lives.
+    "document",
 ];
 
 /// Report the exact Kindex 0.36 seam this product reserves and supports.

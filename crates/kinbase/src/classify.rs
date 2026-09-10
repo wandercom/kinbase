@@ -20,6 +20,7 @@ pub fn source_kind_is_supported(source_kind: &str) -> bool {
             | "issue_tracker"
             | "pull_request"
             | "chat_thread"
+            | "document"
     )
 }
 
@@ -51,7 +52,7 @@ pub fn atomize(
         // Host-session bytes are Personal by provenance. A paraphrase is still
         // Personal even when no canary string matches; it is never a shared
         // candidate without a separately derived Codebase observation.
-        "codex_jsonl" | "claude_jsonl" | "chat_thread" => {
+        "codex_jsonl" | "claude_jsonl" | "chat_thread" | "document" => {
             destinations.push("personal".to_owned());
         }
         "company" | "authority_answer" => {
@@ -112,7 +113,9 @@ pub fn atomize(
 pub fn provenance_taint(source_kind: &str) -> Option<Taint> {
     match source_kind {
         "codex_jsonl" | "claude_jsonl" => Some(Taint::PersonalSession),
-        "company" | "authority_answer" | "chat_thread" => Some(Taint::CompanyConfidential),
+        "company" | "authority_answer" | "chat_thread" | "document" => {
+            Some(Taint::CompanyConfidential)
+        }
         "repo_code" | "repo_tests" | "git_history" | "docs_adr" | "github_export"
         | "runtime_evidence" | "kindex" | "issue_tracker" | "pull_request" => Some(Taint::Codebase),
         _ => None,
