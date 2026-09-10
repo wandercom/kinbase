@@ -3,13 +3,6 @@
 Kinbase is the company-memory member of a three-product Kindex system. Its site is
 [kinbase.tools](https://kinbase.tools) and it is a Wander project.
 
-The command is `kinbase`, and so is the protocol: every schema string, domain
-separator, request header, environment variable and on-disk path. The project was
-developed under the name Guildhall and renamed wholesale on 2026-09-09, which moved
-the specification manifest digest and both ratification receipts. Two references to
-the former name survive, in notes on the superseded receipts recording that the words
-spoken at the original ratification said "Guildhall".
-
 - **Kindex Personal** remembers private conversations and personal context.
 - **Kinbase / Kindex Company** carries organization-wide architectural
   and operational knowledge into every authorized coding task.

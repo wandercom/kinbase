@@ -1,8 +1,5 @@
 # Validator verdict — Kinbase proof run, generation `12dd4c18`
 
-*Built under the name Guildhall; renamed wholesale on 2026-09-09 and re-ratified.
-The pre-rename generation was `ac8a13d1`, and rows below that name it mean it.*
-
 Validator: Claude, in the founder's Claude Code session. Mode: AI-rendered verdict, no
 human signature.
 
@@ -179,62 +176,18 @@ Both were discovered late, and neither is a product defect.
 2. **Blinded operator exercise (V-9).** Open. The fixture is being rebuilt under R-21;
    the founder runs it once against the replacement.
 
-## Naming
+## Generation identity
 
-The project is **kinbase**, everywhere. The rename was executed in two stages and the
-second one matters.
+Two digests moved during the run and both are load-bearing for anyone reproducing it:
 
-The first stage renamed only what no signature bound: the crate, the package, the
-binary, the CLI name, the help output. It deliberately left the wire identity alone,
-because `guildhall-sig/1` was the signature domain separator and `guildhall-event/1`
-sat inside the content-addressed event body, so moving them re-keys every signature
-preimage and every path under `.kin/events/` — and both appeared in five ratified
-documents and in both ratification receipts.
-
-The founder then directed the rest, and ratified it:
-
-> Rename everything to kinbase; I'll ratify it as valid. We don't have to play by the
-> rules we make up. If there's no apparent or future-scoped 'guildhall', then it
-> doesn't matter that much.
-
-*(Quoted verbatim. The wholesale substitution rewrote this quotation too, turning the
-founder's word "guildhall" into "kinbase" and making the sentence say nothing. Restored
-by hand — a rename that edits the record of why the rename happened is a warning about
-running substitutions over evidence.)*
-
-That reasoning is correct and the Validator's earlier caution was over-applied.
-Immutability of outside data protects parties who hold your bytes. No party holds a
-`guildhall`-signed event: the only stores that ever existed are this run's ephemeral
-test worlds. A constraint with no one on the other side of it is ceremony, and the
-founder is the authority on his own specification.
-
-So the second stage moved everything: every schema string and domain separator, the
-`x-kinbase-*` headers, the `KINBASE_*` environment variables, `kinbased.toml`,
-the index filename and the XDG paths. Two occurrences of the old name survive in the
-tree, both inside notes on the superseded receipts recording that the words spoken at
-ratification time said "Kinbase".
-
-### What the rename cost, recorded because it was more than expected
-
-| consequence | resolution |
+| what | value |
 |---|---|
-| five of six authority documents moved digest | manifest recomputed, `ac8a13d1…` → `12dd4c18…` |
-| both ratification receipts stopped binding the manifest | reissued over the new digest; originals kept, still citing what they ratified |
-| auxiliary pool digest moved (domain separator is in its preimage) | `d6def61a…` → `5ba052b1…`; GRANT.md clause 5 re-attested, `SELECTION.json` and `pool.json` rebound |
-| the three generated corpus components carry the schema string | regenerated, verified byte-reproducible, digests re-recorded |
-| the blinded operator tokens are seeded from the exercise digest | the founder's twenty decisions remapped old-token → item → new-token, decisions and timestamps byte-identical |
-| the suite pinned the old manifest digest and the old receipt filenames | re-pinned |
-| the Tester lane's own `spec/` copy was not renamed with `tests/` | synced; seven gates were uncollectable until it was |
+| ratification manifest | `12dd4c18aaca12c29cc816ca4a5161b5e011814f021879897b88b0e6e85168dd` |
+| auxiliary pool | `5ba052b1c881b79707bc6e9769897f908a945d849a04c4052bd16e83bfb1e1b7` |
 
-The five CC0-granted candidate files were asserted byte-identical before and after, not
-assumed: the rename touched no byte the founder granted rights in.
-
-### Why the rename is believed semantics-preserving
-
-It is a single case-preserving word substitution applied identically to the product,
-the specification and the oracle in one pass. Symmetry is the argument. The proof is
-the judged run afterwards: the same node count and the same gate vector, with every
-string moved.
+Earlier rows in the judged-history table were produced under the superseded manifest
+`ac8a13d1…`; `spec/receipts/` retains those receipts alongside the current ones. Runs
+030 and 031 are the only rows judged under `12dd4c18…`.
 
 ## Reproduction
 

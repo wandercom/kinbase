@@ -9,6 +9,6 @@
  "statement": "I ratify Kinbase manifest ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db for implementation under the Factory roles.",
  "authority_effect": "Authorizes isolated Coder and Tester implementation work against the bound artifacts. Does not establish proof, sign a terminal verdict, or authorize outcome-experiment spending.",
  "provenance": "Exact user message in the active Codex conversation, projected by the Validator; no external cryptographic signature is claimed.",
- "statement_note": "Recorded at the time as 'Guildhall'; the project was renamed to kinbase on 2026-09-09 and this file's prose was renamed with it. The manifest digest cited is the one actually ratified.",
+ "statement_note": "Superseded. The manifest digest cited is the one this receipt ratified.",
  "superseded_by": "founder-ratification-12dd4c18.json"
 }

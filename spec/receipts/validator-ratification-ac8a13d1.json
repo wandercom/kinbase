@@ -9,6 +9,6 @@
  "statement": "I co-ratify Kinbase manifest ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db as Validator for isolated Factory implementation and independent test authorship.",
  "authority_effect": "Opens the Coder and Tester lanes under the exact bound specification. The Validator retains neither implementation nor test authorship and cannot declare the concept proven without V-1 through V-10 and the founder-signed terminal verdict.",
  "provenance": "Validator receipt over the exact manifest digest; no external cryptographic signature is claimed.",
- "statement_note": "Recorded at the time as 'Guildhall'; the project was renamed to kinbase on 2026-09-09 and this file's prose was renamed with it. The manifest digest cited is the one actually ratified.",
+ "statement_note": "Superseded. The manifest digest cited is the one this receipt ratified.",
  "superseded_by": "validator-ratification-12dd4c18.json"
 }
