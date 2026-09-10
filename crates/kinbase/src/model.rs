@@ -125,10 +125,15 @@ pub const STANDINGS: [&str; 7] = [
 /// files in one pattern, prevalence reports that pattern as the house style, the
 /// next agent reads that as direction and writes more of it. The signal stops
 /// measuring what the company decided and starts measuring what an agent guessed.
-pub const PROVENANCE: [&str; 5] = [
+pub const PROVENANCE: [&str; 6] = [
     "human",        // a person authored it deliberately
     "human_review", // an agent wrote it, a person reviewed and merged it
-    "ai_generated", // an agent wrote it; no independent human judgment recorded
+    // A person said it; a machine wrote it down. The words are human and the
+    // failure mode is mis-hearing a name or a piece of jargon, not inventing a
+    // conclusion. That is categorically different from a summary, and collapsing
+    // the two would throw away the richest record of what people actually decided.
+    "transcript",
+    "ai_generated", // an agent authored the words, including meeting summaries
     "bot",          // automation: dependabot, codegen, formatters
     "unknown",      // unlabelled history; most of any existing repository
 ];
@@ -157,6 +162,14 @@ pub fn provenance_ceiling(provenance: &str) -> &'static str {
     match provenance {
         "human" => "authoritative",
         "human_review" => "prevalent",
+        // A transcript can carry a named authority saying the thing that settles a
+        // question, which makes it far better evidence than a summary of the same
+        // meeting. It still stops below `ratified`, because speech in a meeting is
+        // not a considered ruling -- people think out loud, and half of what is said
+        // is discarded by the end of the hour. Its real value is as a high-quality
+        // *trigger*: "you said this on the 8th, is that a ruling?" is a question
+        // worth one minute of an architect's time, and the loop exists to ask it.
+        "transcript" => "prevalent",
         "ai_generated" | "bot" => "present",
         // Unlabelled history is the bulk of any real repository and cannot be
         // recovered retroactively. It counts as weak evidence, never as direction.
