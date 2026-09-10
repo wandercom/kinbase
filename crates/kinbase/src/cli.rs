@@ -160,6 +160,12 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             )
             .map_err(internal)?;
         }
+        Command::Corpus(CorpusCommand::Admit { store, repo, limit }) => {
+            let repo = repo
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            crate::corpus::admit(&launcher, &repo, store_to_kind(store), limit, json)
+                .map_err(internal)?;
+        }
         Command::Fsck { repo, full, as_of } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));

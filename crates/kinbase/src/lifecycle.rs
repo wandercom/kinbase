@@ -250,7 +250,7 @@ pub fn clean_value(value: &Value) -> Value {
 
 fn finish(scan: &mut SourceScan) {
     for record in &mut scan.records {
-        record.statement = clean_text(&record.statement);
+        record.statement = bounded_statement(&clean_text(&record.statement));
         let cleaned = clean_value(&Value::Object(record.attributes.clone()));
         if let Value::Object(map) = cleaned {
             record.attributes = map;
@@ -604,7 +604,7 @@ fn scan_repo_code(source: &Path, repo: &Repository) -> Result<SourceScan, Contra
         let text = String::from_utf8_lossy(&bytes).into_owned();
         let mut record = SourceRecord::new(&relpath, &relpath);
         record.logical_key = format!("repo_code:{relpath}");
-        record.statement = code_statement(&relpath, &text);
+        record.statement = bounded_statement(&code_statement(&relpath, &text));
         record.content = bytes;
         record.origin = repo.origin_trust(&path);
         record.revision = path_revision(repo, &relpath);
@@ -622,7 +622,7 @@ fn scan_repo_code(source: &Path, repo: &Repository) -> Result<SourceScan, Contra
             let text = String::from_utf8_lossy(&content).into_owned();
             let mut record = SourceRecord::new(&native_id, &native_id);
             record.logical_key = format!("repo_code:{path}");
-            record.statement = code_statement(&path, &text);
+            record.statement = bounded_statement(&code_statement(&path, &text));
             record.content = content;
             record.origin = "unreviewed-branch".to_owned();
             record.revision = Some(head.clone());
@@ -698,7 +698,7 @@ fn adr_record(native_id: &str, relpath: &str, bytes: Vec<u8>) -> Result<SourceRe
         .to_owned();
     let mut record = SourceRecord::new(native_id, native_id);
     record.logical_key = format!("docs_adr:{stem}");
-    record.statement = format!("# {}\n{}", adr.title, adr.body);
+    record.statement = bounded_statement(&format!("# {}\n{}", adr.title, adr.body));
     record.atom_kind = "decision".to_owned();
     record.disposition = match adr.status.as_str() {
         "accepted" => "accepted",
@@ -907,6 +907,47 @@ fn scan_envelopes(
 /// Envelope, one object per line:
 ///   id, title, body, state, team, creator, creator_kind, labels[],
 ///   links[{type,url,title}], comments[{author,body}], created_at, updated_at, url
+/// Normalise a vendor timestamp to the millisecond-precision RFC 3339 the store
+/// requires.
+///
+/// Linear returns `2026-02-12T06:20:11Z`, GitHub the same, Slack an epoch float.
+/// The store's demand for exactly three fractional digits is reasonable -- it is
+/// what makes event bytes canonical and comparable -- but no external system emits
+/// it, so every adapter must convert rather than pass a vendor string through and
+/// fail at admission with a digest error a long way from the cause.
+/// The store bounds a single statement at 16 KiB. A design document is far longer
+/// than that and is not one fact anyway, so the adapter carries a bounded excerpt
+/// and leaves the full bytes addressable through the observation's content digest.
+/// Truncating at a character boundary keeps the text valid UTF-8.
+fn bounded_statement(text: &str) -> String {
+    const LIMIT: usize = 15_000;
+    if text.len() <= LIMIT {
+        return text.to_owned();
+    }
+    let mut end = LIMIT;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}\n[excerpt; full source retained by content digest]",
+        &text[..end]
+    )
+}
+
+fn normalise_stamp(value: Option<&str>) -> Option<String> {
+    let raw = value?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let parsed = chrono::DateTime::parse_from_rfc3339(raw).ok()?;
+    Some(
+        parsed
+            .with_timezone(&chrono::Utc)
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string(),
+    )
+}
+
 fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, ContractError> {
     let mut scan = SourceScan::default();
     for path in source_files(source)? {
@@ -946,7 +987,7 @@ fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, C
                 &format!("issue_tracker:{id}"),
             );
             record.logical_key = format!("issue_tracker:{id}");
-            record.statement = format!("{id}: {title}\n{body}");
+            record.statement = bounded_statement(&format!("{id}: {title}\n{body}"));
             // A ticket states a problem and its resolution; it is not itself a ruling.
             // Whether it becomes one depends on who closed it and what they said, which
             // is a question for the authority loop, not a guess for the adapter.
@@ -964,7 +1005,7 @@ fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, C
                 Some("human") => "human".to_owned(),
                 _ => "unknown".to_owned(),
             };
-            record.asserted_at = crate::json::get_str(&document, "created_at").map(str::to_owned);
+            record.asserted_at = normalise_stamp(crate::json::get_str(&document, "created_at"));
 
             // Every outbound link is an edge in the association graph. Labels are the
             // subjects: `wandercom/app.wander.com` names a component, `Bug` names a
@@ -1065,10 +1106,10 @@ fn scan_pull_request(source: &Path, _repo: &Repository) -> Result<SourceScan, Co
             let mut record =
                 SourceRecord::new(&format!("pull_request:{id}"), &format!("pull_request:{id}"));
             record.logical_key = format!("pull_request:{id}");
-            record.statement = format!(
+            record.statement = bounded_statement(&format!(
                 "{id}: {title}\n{}",
                 crate::json::get_str(&document, "body").unwrap_or_default()
-            );
+            ));
             record.atom_kind = "claim".to_owned();
             // Only a merged pull request is evidence of anything. An open or closed
             // one is a proposal that may never have been accepted.
@@ -1086,7 +1127,7 @@ fn scan_pull_request(source: &Path, _repo: &Repository) -> Result<SourceScan, Co
                 (Some("bot"), _) => "bot".to_owned(),
                 _ => "unknown".to_owned(),
             };
-            record.asserted_at = crate::json::get_str(&document, "merged_at").map(str::to_owned);
+            record.asserted_at = normalise_stamp(crate::json::get_str(&document, "merged_at"));
             record.revision = revision.clone();
 
             let mut anchors = Vec::new();
@@ -1212,7 +1253,7 @@ fn scan_chat_thread(source: &Path, _repo: &Repository) -> Result<SourceScan, Con
             let mut record =
                 SourceRecord::new(&format!("chat_thread:{id}"), &format!("chat_thread:{id}"));
             record.logical_key = format!("chat_thread:{id}");
-            record.statement = format!("#{channel}\n{body}");
+            record.statement = bounded_statement(&format!("#{channel}\n{body}"));
             // A thread records that something was discussed. Whether it settled
             // anything is a question for the authority who was in it, not a
             // conclusion the adapter may draw from people talking.
@@ -1225,7 +1266,7 @@ fn scan_chat_thread(source: &Path, _repo: &Repository) -> Result<SourceScan, Con
             } else {
                 "unknown".to_owned()
             };
-            record.asserted_at = crate::json::get_str(&document, "started_at").map(str::to_owned);
+            record.asserted_at = normalise_stamp(crate::json::get_str(&document, "started_at"));
 
             let mut references = vec![format!("channel:{channel}")];
             if let Some(permalink) = crate::json::get_str(&document, "permalink") {
@@ -1300,10 +1341,10 @@ fn scan_document(source: &Path, _repo: &Repository) -> Result<SourceScan, Contra
             let mut record =
                 SourceRecord::new(&format!("document:{id}"), &format!("document:{id}"));
             record.logical_key = format!("document:{id}");
-            record.statement = format!(
+            record.statement = bounded_statement(&format!(
                 "{title}\n{}",
                 crate::json::get_str(&document, "body").unwrap_or_default()
-            );
+            ));
             // A document may declare what kind of claim it makes, but only from the
             // ruling vocabulary. Anything else is an ordinary claim: a doc does not
             // get to promote itself to `invariant` by saying so in its own metadata.
@@ -1326,7 +1367,7 @@ fn scan_document(source: &Path, _repo: &Repository) -> Result<SourceScan, Contra
                 Some("agent") => "ai_generated".to_owned(),
                 _ => "unknown".to_owned(),
             };
-            record.asserted_at = crate::json::get_str(&document, "modified_at").map(str::to_owned);
+            record.asserted_at = normalise_stamp(crate::json::get_str(&document, "modified_at"));
 
             let mut references = Vec::new();
             if let Some(url) = crate::json::get_str(&document, "url") {

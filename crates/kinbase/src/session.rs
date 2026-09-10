@@ -2832,10 +2832,31 @@ fn build_destination_event(
         signer: String::new(),
         signature: String::new(),
         raw: None,
-        standing: "present".to_owned(),
-        provenance: "unknown".to_owned(),
-        governs_paths: Vec::new(),
-        anchors: Vec::new(),
+        // A fact admitted from a candidate inherits the authorship the adapter
+        // established. Hard-coding `unknown` here is what made git trailers, ticket
+        // creators and Kindex `prov_who` all arrive at the store as anonymous, which
+        // leaves the provenance ceiling nothing to clamp.
+        standing: crate::json::get_str(record, "standing")
+            .unwrap_or("present")
+            .to_owned(),
+        provenance: crate::json::get_str(record, "provenance")
+            .unwrap_or("unknown")
+            .to_owned(),
+        governs_paths: record
+            .get("governs_paths")
+            .and_then(Value::as_array)
+            .map(|values| {
+                values
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        anchors: record
+            .get("anchors")
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+            .unwrap_or_default(),
     };
     let repo = repo()?;
     let (private_path, _) = crate::crypto::ensure_keypair(store, &repo)?;

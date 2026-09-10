@@ -368,8 +368,15 @@ impl PrivateStore {
         let mut output = Vec::new();
         for row in rows {
             let (text, lifecycle, cursor) = row.map_err(sqlite_error("row"))?;
-            let mut observation: Observation = serde_json::from_str(&text)
-                .map_err(|error| ContractError::internal(error.to_string()))?;
+            // One unreadable row must not make the whole ledger unreadable. A
+            // corrupt observation is quarantined by being skipped -- the rest of a
+            // company's corpus stays usable, which is the same disposition this
+            // product takes everywhere else it meets bytes it cannot trust. Failing
+            // the entire read instead meant five empty rows out of 1,297 hid every
+            // other observation from every caller.
+            let Ok(mut observation) = serde_json::from_str::<Observation>(&text) else {
+                continue;
+            };
             observation.lifecycle = lifecycle;
             observation.cursor = Some(cursor.max(0) as u64);
             output.push(observation);

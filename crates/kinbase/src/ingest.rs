@@ -335,6 +335,7 @@ pub fn ingest(
             Some(Value::Object(record.attributes.clone()))
         };
         let fresh = Observation {
+            provenance: record.provenance.clone(),
             observation_id: observation_id.clone(),
             source_kind: source_kind.to_owned(),
             source_identity: source_identity.clone(),

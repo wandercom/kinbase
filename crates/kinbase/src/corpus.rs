@@ -922,3 +922,163 @@ fn store_kind(name: &str) -> crate::StoreKind {
 
 #[allow(dead_code)]
 fn retained_type_marker(_: Option<CurrentFact>) {}
+
+/// Admit ingested observations into their destination store as signed facts.
+///
+/// `ingest` fills a private observation ledger; `session observe` admits what a
+/// coding session sees. Between them nothing turned a bulk source into queryable
+/// knowledge, so a corpus of a thousand tickets sat inert: the projector reads
+/// admitted events and there were none. This closes that gap.
+///
+/// Authorship comes from the observation, which is where the adapter recorded it.
+/// A ticket a person filed is `human`; a commit carrying an agent trailer is
+/// `human_review` or `ai_generated`; unmarked history stays `unknown`. Standing is
+/// deliberately not inferred here -- everything enters at `present`, because bulk
+/// evidence is evidence that something exists, never a ruling that it is right. A
+/// person raises it, and that is what the ruling loop is for.
+pub fn admit(
+    launcher: &crate::launcher::Launcher,
+    repo: &std::path::Path,
+    store: crate::StoreKind,
+    limit: Option<usize>,
+    json: bool,
+) -> Result<(), ContractError> {
+    let journal_root = crate::store::ensure_store_root(crate::StoreKind::Personal, repo)?;
+    let private = crate::private::PrivateStore::open_personal(&journal_root)?;
+    let observations = private.all_observations()?;
+    let destination_root = crate::store::ensure_store_root(store, repo)?;
+    let existing: std::collections::BTreeSet<String> =
+        crate::store::read_events(&destination_root)?
+            .into_iter()
+            .map(|event| event.logical_key)
+            .collect();
+
+    let (key_path, _) = crate::crypto::ensure_keypair(store, repo)?;
+    let key = crate::crypto::PrivateKey::load_or_generate(&key_path, "admission key")?;
+    let discovered = Repository::discover(repo)?;
+    let now = crate::repository::recorded_clock(launcher, &discovered)?;
+    let repository_id = discovered.uuid_hint().map(str::to_owned);
+
+    let mut admitted = 0usize;
+    let mut skipped_existing = 0usize;
+    let mut skipped_wrong_store = 0usize;
+    let mut by_provenance: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+
+    for observation in observations {
+        if limit.is_some_and(|cap| admitted >= cap) {
+            break;
+        }
+        // The source kind decides which store may hold it, exactly as it does on
+        // the session path. An adapter never routes across that boundary, so a
+        // Slack thread cannot land in Codebase and a commit cannot land in Company.
+        let permitted = match crate::classify::provenance_taint(&observation.source_kind) {
+            Some(crate::scanner::Taint::Codebase) => crate::StoreKind::Codebase,
+            Some(crate::scanner::Taint::CompanyConfidential) => crate::StoreKind::Company,
+            _ => crate::StoreKind::Personal,
+        };
+        if permitted != store {
+            skipped_wrong_store += 1;
+            continue;
+        }
+        let Some(logical_key) = observation.logical_key.clone() else {
+            continue;
+        };
+        if existing.contains(&logical_key) {
+            skipped_existing += 1;
+            continue;
+        }
+        let Some(mut statement) = observation.statement.clone() else {
+            // A Personal-taint observation withholds its statement by design; it is
+            // not admissible to a shared store and is not an error.
+            continue;
+        };
+        // The store bounds a statement at 16 KiB. Adapters bound their own output,
+        // but this path admits whatever is already in the ledger -- including
+        // observations recorded before that was true -- so it bounds again rather
+        // than failing the whole run on one oversized document.
+        const STATEMENT_LIMIT: usize = 15_000;
+        if statement.len() > STATEMENT_LIMIT {
+            let mut end = STATEMENT_LIMIT;
+            while end > 0 && !statement.is_char_boundary(end) {
+                end -= 1;
+            }
+            statement.truncate(end);
+            statement.push_str("\n[excerpt; full source retained by content digest]");
+        }
+        let mut event = crate::model::FactEvent {
+            schema: crate::model::EVENT_SCHEMA.to_owned(),
+            event_id: format!("event_{}", &observation.observation_id),
+            store_kind: store_name(store).to_owned(),
+            authority_id: observation.owner_id.clone().unwrap_or_default(),
+            authority_scope: observation.scope.clone().unwrap_or_default(),
+            repository_id: repository_id.clone(),
+            fact_id: format!("fact_{}", &observation.observation_id),
+            logical_key,
+            atom_kind: observation
+                .atom_kind
+                .clone()
+                .unwrap_or_else(|| "claim".to_owned()),
+            scope: observation.scope.clone().unwrap_or_default(),
+            statement,
+            evidence_refs: vec![format!("observation:{}", observation.observation_id)],
+            asserted_at: observation
+                .asserted_at
+                .clone()
+                .unwrap_or_else(|| now.clone()),
+            effective_from: observation
+                .effective_from
+                .clone()
+                .unwrap_or_else(|| now.clone()),
+            effective_until: observation.effective_until.clone(),
+            disposition: observation.disposition.clone(),
+            distortion: crate::model::Distortion {
+                trigger: format!("source:{}", observation.source_kind),
+                // Bulk evidence is worth having and is not, by itself, decisive.
+                loss_if_absent: 4_000,
+                rationale: "ingested source evidence, not a ruling".to_owned(),
+            },
+            parents: Vec::new(),
+            supersedes: Vec::new(),
+            redundancy_with: Vec::new(),
+            complements: Vec::new(),
+            company_refs: Vec::new(),
+            authority_snapshot_cursor: current_authority_cursor(),
+            confidence: crate::model::Bp(6_000),
+            standing: "present".to_owned(),
+            provenance: observation.provenance.clone(),
+            governs_paths: Vec::new(),
+            anchors: Vec::new(),
+            unresolved_uncertainty: None,
+            signer: String::new(),
+            signature: String::new(),
+            raw: None,
+        };
+        // Clamp before signing so the stored bytes already state the standing this
+        // evidence may actually carry, rather than leaving the ceiling to be
+        // reapplied by every reader.
+        event.standing = crate::model::effective_standing(&event.standing, &event.provenance);
+        let signed = key.sign_document("fact-event", &event.to_value())?;
+        crate::store::write_content_addressed_event(
+            &destination_root,
+            &serde_json::from_value(signed).map_err(|error| {
+                ContractError::invariant(format!("admitted event is not a fact event: {error}"))
+            })?,
+        )?;
+        *by_provenance.entry(event.provenance.clone()).or_insert(0) += 1;
+        admitted += 1;
+    }
+
+    crate::output::emit(
+        &serde_json::json!({
+            "status": "admitted",
+            "store": store_name(store),
+            "admitted": admitted,
+            "skipped_already_admitted": skipped_existing,
+            "skipped_other_store": skipped_wrong_store,
+            "by_provenance": by_provenance,
+        }),
+        json,
+    );
+    Ok(())
+}

@@ -123,6 +123,15 @@ pub enum CorpusCommand {
         #[arg(long)]
         authority_cursor: Option<u64>,
     },
+    /// Admit ingested observations into a store as signed facts.
+    Admit {
+        #[arg(long, value_enum)]
+        store: Store,
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        #[arg(long)]
+        limit: Option<usize>,
+    },
 }
 
 #[derive(Debug, Subcommand)]

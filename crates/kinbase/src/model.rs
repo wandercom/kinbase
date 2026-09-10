@@ -368,6 +368,14 @@ pub fn action_of(event: &FactEvent) -> Option<&str> {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Observation {
+    /// Authorship of the underlying evidence, carried from the adapter that read
+    /// it. Adapters were already computing this -- git trailers, ticket creators,
+    /// Kindex `prov_who` -- and ingest dropped it on the floor, so every fact
+    /// derived from a bulk source arrived as `unknown` however well the source
+    /// identified its author. Without it the provenance ceiling has nothing to
+    /// clamp and agent-written evidence can climb to `prevalent`.
+    #[serde(default = "default_provenance")]
+    pub provenance: String,
     pub observation_id: String,
     pub source_kind: String,
     pub source_identity: String,
