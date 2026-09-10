@@ -19,6 +19,24 @@ pub struct CompanyDb {
     pub connection: Connection,
 }
 
+/// Read-time annotations these readers attach to a stored certificate. They are
+/// not covered by the root signature, so any path that hands a certificate to a
+/// client for installation must strip them first: `unsigned_bytes` removes only
+/// `signature`, so a surviving annotation lands in the verification preimage and
+/// the signature fails.
+pub const CERTIFICATE_ANNOTATIONS: [&str; 3] = ["discovery_hint", "certificate_digest", "status"];
+
+/// Return the certificate exactly as it was signed.
+pub fn signed_certificate(document: &Value) -> Value {
+    let mut pristine = document.clone();
+    if let Some(map) = pristine.as_object_mut() {
+        for key in CERTIFICATE_ANNOTATIONS {
+            map.remove(key);
+        }
+    }
+    pristine
+}
+
 impl CompanyDb {
     pub fn open(path: &Path) -> Result<Self, ContractError> {
         if let Some(parent) = path.parent() {

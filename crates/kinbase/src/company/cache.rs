@@ -200,12 +200,7 @@ impl Cache {
             .unwrap_or_default()
         {
             if let Some(uuid) = crate::json::get_str(&certificate, "repository_uuid") {
-                let mut document = certificate.clone();
-                if let Some(map) = document.as_object_mut() {
-                    map.remove("discovery_hint");
-                    map.remove("certificate_digest");
-                    map.remove("status");
-                }
+                let document = super::db::signed_certificate(&certificate);
                 let digest = crate::json::digest(&document);
                 self.connection()?
                     .execute(

@@ -397,7 +397,9 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
             require_scope(&auth, "facts:read")?;
             let id = path.trim_start_matches("/certificates/");
             match db.certificate(id).map_err(|error| refuse(500, error))? {
-                Some(certificate) => Ok((200, certificate)),
+                // Hand back exactly what was signed; the read-time annotations
+                // would otherwise land in the caller's verification preimage.
+                Some(certificate) => Ok((200, super::db::signed_certificate(&certificate))),
                 None => Err(refuse(
                     404,
                     ContractError::invariant("certificate not found"),
@@ -2815,7 +2817,11 @@ fn issue_certificate(
             {
                 return Ok((
                     200,
-                    json!({"status": "existing", "certificate": certificate}),
+                    json!({
+                        "status": "existing",
+                        "certificate": super::db::signed_certificate(certificate),
+                        "certificate_digest": crate::json::digest(&super::db::signed_certificate(certificate)),
+                    }),
                 ));
             }
         }
