@@ -1,7 +1,7 @@
 {
   "calibration_namespace": "cal*",
   "corpus_path": "tests/fixtures/gold/calibration_corpus.json",
-  "corpus_sha256": "6cfe3b1462e89aa1cca09498baabb3438f791f6442f35b35ac7ec8235296226c",
+  "corpus_sha256": "870ec3ade2ce8d5a79d66cd4c366f9ed4bef5c0003f62a5100f845e9d3c4df8f",
   "frozen_before": "any classifier run; spec/verification.md V-2 requires the calibration corpus to gate expensive measurement",
   "generator": "tests/tools/freeze-calibration.py",
   "held_out_namespace": "m*",
