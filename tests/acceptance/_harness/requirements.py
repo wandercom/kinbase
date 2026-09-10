@@ -67,14 +67,14 @@ TRACE_ONLY_ARTIFACTS: tuple[str, ...] = (
     "spec/review-rubric.md",
     "spec/README.md",
     "spec/reviews/pre-ratification-disposition.md",
-    "spec/receipts/founder-ratification-ac8a13d1.json",
-    "spec/receipts/validator-ratification-ac8a13d1.json",
+    "spec/receipts/founder-ratification-12dd4c18.json",
+    "spec/receipts/validator-ratification-12dd4c18.json",
 )
 
 #: The two ratification receipts the Tester is permitted to read.
 RECEIPTS: tuple[str, ...] = (
-    "spec/receipts/founder-ratification-ac8a13d1.json",
-    "spec/receipts/validator-ratification-ac8a13d1.json",
+    "spec/receipts/founder-ratification-12dd4c18.json",
+    "spec/receipts/validator-ratification-12dd4c18.json",
 )
 
 GATES: tuple[str, ...] = (
