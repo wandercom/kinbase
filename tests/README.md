@@ -1,7 +1,7 @@
 # Kinbase black-box acceptance suite (Tester lane)
 
 Authored under the Factory **Tester** dispatch against ratification manifest
-`ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db` at repository
+`12dd4c18aaca12c29cc816ca4a5161b5e011814f021879897b88b0e6e85168dd` at repository
 baseline `e29f3fe03595d594c0546f9b0012b58f7c45bac1`.
 
 This suite is an **observation instrument**, not a verdict. `spec/verification.md`

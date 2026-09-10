@@ -44,7 +44,7 @@ from typing import Callable, Iterable, Sequence
 # --------------------------------------------------------------------------
 
 RATIFICATION_MANIFEST_SHA256 = (
-    "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db"
+    "12dd4c18aaca12c29cc816ca4a5161b5e011814f021879897b88b0e6e85168dd"
 )
 BASELINE_COMMIT = "e29f3fe03595d594c0546f9b0012b58f7c45bac1"
 
