@@ -65,5 +65,35 @@ overview, the proof conditions in plain words, the amendment register, and
 the separate Kinbase-Tools repository and are served at kinbase.tools; `docs/` links
 to them and never duplicates them.
 
-A green unit suite is necessary and insufficient. If the blinded brownfield
+## Status
+
+The frozen black-box acceptance suite passes in full: **371 nodes, 0 failures**, run
+2026-09-09 against product `f7696c5` and instrument `f571517`. Every product gate is
+green — V-1 through V-10, nonfunctional, and evidence.
+
+The brownfield outcome experiment has **not** run. The terminal verdict is therefore not
+`PROVEN`. A green suite is necessary and insufficient: it shows the system does what the
+specification says, not that it helps anyone ship code. If the blinded brownfield
 experiment does not meet its outcome threshold, the concept is not proven.
+
+Start with
+[`evidence/factory-run/validator-verdict-2026-09-09.md`](evidence/factory-run/validator-verdict-2026-09-09.md).
+It states what this run proves, what it does not, which gates the instrument itself
+fails, and where the independence between the building and certifying seats is real and
+where it is not.
+
+## Building and running
+
+```
+cargo build --release --offline --locked
+./target/release/kinbase --help
+```
+
+Dependencies are exact-pinned; `rust-version` is set in the workspace manifest. The
+build is offline and lockfile-exact. It is not byte-reproducible across directories,
+because the release profile keeps debug info and so embeds absolute source paths.
+
+[`tests/`](tests/) is the acceptance suite — the oracle. It was authored by a separate
+lane that never saw the implementation, and it is published so the claim above is
+checkable rather than asserted. It carries its own answer key, which is the cost of
+making it checkable.
