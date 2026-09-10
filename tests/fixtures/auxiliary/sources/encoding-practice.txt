@@ -1,0 +1,15 @@
+Encoding and normalisation notes.
+
+Text that survives a transformation is still the same text. Percent-encoding,
+base64, hexadecimal and JSON string escapes are reversible; case folding and
+Unicode normalisation are lossy in one direction but preserve identity for most
+practical comparison.
+
+A scanner that compares only literal bytes will miss every one of these forms. A
+scanner that decodes them will find the same content in each. Neither behaviour
+is a statement about meaning: a paraphrase of a sentence is not a transformation
+of it, and no decoder recovers one from the other.
+
+Composition matters. Base64 of a percent-encoded decomposed form requires three
+reversals to recover, and a decoder that applies only one will report a clean
+result on material it did not actually inspect.

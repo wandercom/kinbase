@@ -1,0 +1,8 @@
+# Tester-lane local run state. Nothing here is acceptance evidence.
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+_artifacts/
+_vault/
+_runroot/

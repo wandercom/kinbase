@@ -1,0 +1,17 @@
+Scheduling conventions for distributed services.
+
+A scheduler that reads its operating parameters from a deployed configuration
+map will diverge from the value written in source whenever an operator changes
+the deployment without a corresponding code change. Diagnosis of a live incident
+must therefore read the deployed value, while the architectural decision about
+which value is authoritative remains with the architecture owner.
+
+Lookahead windows are conventionally expressed in minutes. A window of ninety
+minutes is a common initial default; operators frequently widen it during
+capacity events and rarely narrow it afterwards. Values in the high hundreds are
+not unusual in mature deployments.
+
+Retry budgets interact with backpressure. A service that retries without a
+budget will amplify a downstream outage. The conventional arrangement places the
+budget at the shared client helper rather than at each call site, so a single
+change adjusts the whole service.

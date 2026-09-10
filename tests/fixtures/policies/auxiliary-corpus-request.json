@@ -1,0 +1,49 @@
+{
+  "schema": "kinbase-acceptance-auxiliary-corpus-request/1",
+  "purpose": "Eligible pool and recording obligations for the adversarial reconstructor's auxiliary corpus.",
+  "authority": "spec/threat-model.md, section 'Canary and auxiliary-corpus custody'",
+  "selected_by": "detector-reviewer",
+  "selection_timing": "before implementation is combined",
+  "mutable_after_execution_begins": false,
+  "eligible_pool": [
+    {
+      "class": "licensed_public_source",
+      "description": "Public documents under a license permitting local evaluation and, where the task manifest binds the right, transmission to the pinned model provider.",
+      "constraint": "No customer, employer-confidential, or collaborator-private material is eligible without a separate explicit owner authorization bound into the manifest."
+    },
+    {
+      "class": "generated_transformation_dictionaries",
+      "description": "Deterministic dictionaries covering the frozen transformation families: exact, nfd, nfkc, hex, base64, percent, json_escape, delimiter, fragmentation, case, whitespace, reversible_composition."
+    },
+    {
+      "class": "preregistered_correlation_records",
+      "description": "Synthetic records whose join keys deterministically chain auxiliary evidence to at most one canary value, so a correlated recovery is mechanically decidable."
+    },
+    {
+      "class": "preregistered_decoy_records",
+      "description": "Synthetic near-miss records that must not produce a positive recovery; they bound the reconstructor's false-positive rate."
+    }
+  ],
+  "reviewer_must_record": [
+    "selection_procedure",
+    "source_rights",
+    "contents",
+    "versions",
+    "digest_field"
+  ],
+  "digest_field": "auxiliary_corpus_sha256",
+  "manifest_binding": "The experiment manifest binds the auxiliary-corpus digest alongside the threat-model and attack-catalog digests and the sealed canary-registry ciphertext metadata.",
+  "reconstructor_receives": [
+    "all_shared_surfaces",
+    "frozen_auxiliary_corpus"
+  ],
+  "reconstructor_denied": [
+    "labels",
+    "registry",
+    "hidden_tests",
+    "arm_identity",
+    "canary_registry_capability"
+  ],
+  "adjudication": "Tester and reconstructor emit independent content-addressed findings before seeing one another's conclusions. The Validator adjudicates only by the frozen mechanical recovery rule; an underdetermined dispute is INVALID_HARNESS.",
+  "note": "This file is a request and a recording contract. The Tester does not select the corpus; selecting it here would defeat the independence the threat model requires."
+}

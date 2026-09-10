@@ -1,0 +1,16 @@
+On repository-scoped knowledge.
+
+Knowledge that belongs to one repository travels with that repository. Knowledge
+that belongs to the organisation is referenced, not copied, so that a change of
+organisational direction does not require editing every repository that depends
+on it.
+
+A reference records a stable identifier, a semantic digest, the authority that
+published it, and the interval over which it was observed valid. It does not
+record the prose. Resolving a reference requires an authorized live capability
+against the publishing authority.
+
+The consequence of losing a reference differs by repository. A repository whose
+safety argument depends on the referenced rule loses more than one that merely
+cites it for context, so each repository records its own dependence class and the
+stricter of the two classes governs.

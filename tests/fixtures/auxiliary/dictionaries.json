@@ -1,0 +1,1094 @@
+{
+ "entries": [
+  {
+   "forms": {
+    "base64": "R0hBVVgtT00wTlAyUTZIT0tXN1NYQVBYREgtw6k=",
+    "case": "ghaux-om0np2q6hokw7sxapxdh-\u00c9",
+    "delimiter": "G|H|A|U|X|-|O|M|0|N|P|2|Q|6|H|O|K|W|7|S|X|A|P|X|D|H|-|\u00e9",
+    "exact": "GHAUX-OM0NP2Q6HOKW7SXAPXDH-\u00e9",
+    "fragmentation": "GHAUX-OM0NP2Q6\n...\nHOKW7SXAPXDH-\u00e9",
+    "hex": "47484155582d4f4d304e50325136484f4b5737535841505844482dc3a9",
+    "json_escape": "GHAUX-OM0NP2Q6HOKW7SXAPXDH-\\u00e9",
+    "nfd": "GHAUX-OM0NP2Q6HOKW7SXAPXDH-e\u0301",
+    "nfkc": "GHAUX-OM0NP2Q6HOKW7SXAPXDH-\u00e9",
+    "percent": "GHAUX-OM0NP2Q6HOKW7SXAPXDH-%C3%A9",
+    "reversible_composition": "R0hBVVgtT00wTlAyUTZIT0tXN1NYQVBYREgtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  OM0NP2Q6HOKW7SXAPXDH  \u00e9"
+   },
+   "token": "GHAUX-OM0NP2Q6HOKW7SXAPXDH-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtQ0RBTEdaWUhCUUY5R05WS09VQzgtw6k=",
+    "case": "ghaux-cdalgzyhbqf9gnvkouc8-\u00c9",
+    "delimiter": "G|H|A|U|X|-|C|D|A|L|G|Z|Y|H|B|Q|F|9|G|N|V|K|O|U|C|8|-|\u00e9",
+    "exact": "GHAUX-CDALGZYHBQF9GNVKOUC8-\u00e9",
+    "fragmentation": "GHAUX-CDALGZYH\n...\nBQF9GNVKOUC8-\u00e9",
+    "hex": "47484155582d4344414c475a594842514639474e564b4f5543382dc3a9",
+    "json_escape": "GHAUX-CDALGZYHBQF9GNVKOUC8-\\u00e9",
+    "nfd": "GHAUX-CDALGZYHBQF9GNVKOUC8-e\u0301",
+    "nfkc": "GHAUX-CDALGZYHBQF9GNVKOUC8-\u00e9",
+    "percent": "GHAUX-CDALGZYHBQF9GNVKOUC8-%C3%A9",
+    "reversible_composition": "R0hBVVgtQ0RBTEdaWUhCUUY5R05WS09VQzgtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  CDALGZYHBQF9GNVKOUC8  \u00e9"
+   },
+   "token": "GHAUX-CDALGZYHBQF9GNVKOUC8-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtNVJHUzJaTE9OVUE4UjdXN0hYV0Ytw6k=",
+    "case": "ghaux-5rgs2zlonua8r7w7hxwf-\u00c9",
+    "delimiter": "G|H|A|U|X|-|5|R|G|S|2|Z|L|O|N|U|A|8|R|7|W|7|H|X|W|F|-|\u00e9",
+    "exact": "GHAUX-5RGS2ZLONUA8R7W7HXWF-\u00e9",
+    "fragmentation": "GHAUX-5RGS2ZLO\n...\nNUA8R7W7HXWF-\u00e9",
+    "hex": "47484155582d35524753325a4c4f4e55413852375737485857462dc3a9",
+    "json_escape": "GHAUX-5RGS2ZLONUA8R7W7HXWF-\\u00e9",
+    "nfd": "GHAUX-5RGS2ZLONUA8R7W7HXWF-e\u0301",
+    "nfkc": "GHAUX-5RGS2ZLONUA8R7W7HXWF-\u00e9",
+    "percent": "GHAUX-5RGS2ZLONUA8R7W7HXWF-%C3%A9",
+    "reversible_composition": "R0hBVVgtNVJHUzJaTE9OVUE4UjdXN0hYV0YtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  5RGS2ZLONUA8R7W7HXWF  \u00e9"
+   },
+   "token": "GHAUX-5RGS2ZLONUA8R7W7HXWF-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtRkEyRTVUTEtISzdWOUNCRzNJTlUtw6k=",
+    "case": "ghaux-fa2e5tlkhk7v9cbg3inu-\u00c9",
+    "delimiter": "G|H|A|U|X|-|F|A|2|E|5|T|L|K|H|K|7|V|9|C|B|G|3|I|N|U|-|\u00e9",
+    "exact": "GHAUX-FA2E5TLKHK7V9CBG3INU-\u00e9",
+    "fragmentation": "GHAUX-FA2E5TLK\n...\nHK7V9CBG3INU-\u00e9",
+    "hex": "47484155582d4641324535544c4b484b37563943424733494e552dc3a9",
+    "json_escape": "GHAUX-FA2E5TLKHK7V9CBG3INU-\\u00e9",
+    "nfd": "GHAUX-FA2E5TLKHK7V9CBG3INU-e\u0301",
+    "nfkc": "GHAUX-FA2E5TLKHK7V9CBG3INU-\u00e9",
+    "percent": "GHAUX-FA2E5TLKHK7V9CBG3INU-%C3%A9",
+    "reversible_composition": "R0hBVVgtRkEyRTVUTEtISzdWOUNCRzNJTlUtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  FA2E5TLKHK7V9CBG3INU  \u00e9"
+   },
+   "token": "GHAUX-FA2E5TLKHK7V9CBG3INU-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtN1VLRjNTV1JEV1IxQTVYRklXV1Etw6k=",
+    "case": "ghaux-7ukf3swrdwr1a5xfiwwq-\u00c9",
+    "delimiter": "G|H|A|U|X|-|7|U|K|F|3|S|W|R|D|W|R|1|A|5|X|F|I|W|W|Q|-|\u00e9",
+    "exact": "GHAUX-7UKF3SWRDWR1A5XFIWWQ-\u00e9",
+    "fragmentation": "GHAUX-7UKF3SWR\n...\nDWR1A5XFIWWQ-\u00e9",
+    "hex": "47484155582d37554b46335357524457523141355846495757512dc3a9",
+    "json_escape": "GHAUX-7UKF3SWRDWR1A5XFIWWQ-\\u00e9",
+    "nfd": "GHAUX-7UKF3SWRDWR1A5XFIWWQ-e\u0301",
+    "nfkc": "GHAUX-7UKF3SWRDWR1A5XFIWWQ-\u00e9",
+    "percent": "GHAUX-7UKF3SWRDWR1A5XFIWWQ-%C3%A9",
+    "reversible_composition": "R0hBVVgtN1VLRjNTV1JEV1IxQTVYRklXV1EtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  7UKF3SWRDWR1A5XFIWWQ  \u00e9"
+   },
+   "token": "GHAUX-7UKF3SWRDWR1A5XFIWWQ-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtRlExNUFNUThGQVlCS1ZHUzdDOTgtw6k=",
+    "case": "ghaux-fq15amq8faybkvgs7c98-\u00c9",
+    "delimiter": "G|H|A|U|X|-|F|Q|1|5|A|M|Q|8|F|A|Y|B|K|V|G|S|7|C|9|8|-|\u00e9",
+    "exact": "GHAUX-FQ15AMQ8FAYBKVGS7C98-\u00e9",
+    "fragmentation": "GHAUX-FQ15AMQ8\n...\nFAYBKVGS7C98-\u00e9",
+    "hex": "47484155582d46513135414d5138464159424b564753374339382dc3a9",
+    "json_escape": "GHAUX-FQ15AMQ8FAYBKVGS7C98-\\u00e9",
+    "nfd": "GHAUX-FQ15AMQ8FAYBKVGS7C98-e\u0301",
+    "nfkc": "GHAUX-FQ15AMQ8FAYBKVGS7C98-\u00e9",
+    "percent": "GHAUX-FQ15AMQ8FAYBKVGS7C98-%C3%A9",
+    "reversible_composition": "R0hBVVgtRlExNUFNUThGQVlCS1ZHUzdDOTgtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  FQ15AMQ8FAYBKVGS7C98  \u00e9"
+   },
+   "token": "GHAUX-FQ15AMQ8FAYBKVGS7C98-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtRURCVUNZTzU5VFNQOTRaNTFJWEotw6k=",
+    "case": "ghaux-edbucyo59tsp94z51ixj-\u00c9",
+    "delimiter": "G|H|A|U|X|-|E|D|B|U|C|Y|O|5|9|T|S|P|9|4|Z|5|1|I|X|J|-|\u00e9",
+    "exact": "GHAUX-EDBUCYO59TSP94Z51IXJ-\u00e9",
+    "fragmentation": "GHAUX-EDBUCYO5\n...\n9TSP94Z51IXJ-\u00e9",
+    "hex": "47484155582d4544425543594f353954535039345a353149584a2dc3a9",
+    "json_escape": "GHAUX-EDBUCYO59TSP94Z51IXJ-\\u00e9",
+    "nfd": "GHAUX-EDBUCYO59TSP94Z51IXJ-e\u0301",
+    "nfkc": "GHAUX-EDBUCYO59TSP94Z51IXJ-\u00e9",
+    "percent": "GHAUX-EDBUCYO59TSP94Z51IXJ-%C3%A9",
+    "reversible_composition": "R0hBVVgtRURCVUNZTzU5VFNQOTRaNTFJWEotZSVDQyU4MQ==",
+    "whitespace": "GHAUX  EDBUCYO59TSP94Z51IXJ  \u00e9"
+   },
+   "token": "GHAUX-EDBUCYO59TSP94Z51IXJ-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtTDkxNVNXTEoxS0g0RkU5NjBRVjEtw6k=",
+    "case": "ghaux-l915swlj1kh4fe960qv1-\u00c9",
+    "delimiter": "G|H|A|U|X|-|L|9|1|5|S|W|L|J|1|K|H|4|F|E|9|6|0|Q|V|1|-|\u00e9",
+    "exact": "GHAUX-L915SWLJ1KH4FE960QV1-\u00e9",
+    "fragmentation": "GHAUX-L915SWLJ\n...\n1KH4FE960QV1-\u00e9",
+    "hex": "47484155582d4c39313553574c4a314b483446453936305156312dc3a9",
+    "json_escape": "GHAUX-L915SWLJ1KH4FE960QV1-\\u00e9",
+    "nfd": "GHAUX-L915SWLJ1KH4FE960QV1-e\u0301",
+    "nfkc": "GHAUX-L915SWLJ1KH4FE960QV1-\u00e9",
+    "percent": "GHAUX-L915SWLJ1KH4FE960QV1-%C3%A9",
+    "reversible_composition": "R0hBVVgtTDkxNVNXTEoxS0g0RkU5NjBRVjEtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  L915SWLJ1KH4FE960QV1  \u00e9"
+   },
+   "token": "GHAUX-L915SWLJ1KH4FE960QV1-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtVEQ1NFMyM1U0OUxLVlgyV1ZFNkstw6k=",
+    "case": "ghaux-td54s23u49lkvx2wve6k-\u00c9",
+    "delimiter": "G|H|A|U|X|-|T|D|5|4|S|2|3|U|4|9|L|K|V|X|2|W|V|E|6|K|-|\u00e9",
+    "exact": "GHAUX-TD54S23U49LKVX2WVE6K-\u00e9",
+    "fragmentation": "GHAUX-TD54S23U\n...\n49LKVX2WVE6K-\u00e9",
+    "hex": "47484155582d544435345332335534394c4b565832575645364b2dc3a9",
+    "json_escape": "GHAUX-TD54S23U49LKVX2WVE6K-\\u00e9",
+    "nfd": "GHAUX-TD54S23U49LKVX2WVE6K-e\u0301",
+    "nfkc": "GHAUX-TD54S23U49LKVX2WVE6K-\u00e9",
+    "percent": "GHAUX-TD54S23U49LKVX2WVE6K-%C3%A9",
+    "reversible_composition": "R0hBVVgtVEQ1NFMyM1U0OUxLVlgyV1ZFNkstZSVDQyU4MQ==",
+    "whitespace": "GHAUX  TD54S23U49LKVX2WVE6K  \u00e9"
+   },
+   "token": "GHAUX-TD54S23U49LKVX2WVE6K-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtRU8xUllNMlpNT1NDWUxHMjZGNUUtw6k=",
+    "case": "ghaux-eo1rym2zmoscylg26f5e-\u00c9",
+    "delimiter": "G|H|A|U|X|-|E|O|1|R|Y|M|2|Z|M|O|S|C|Y|L|G|2|6|F|5|E|-|\u00e9",
+    "exact": "GHAUX-EO1RYM2ZMOSCYLG26F5E-\u00e9",
+    "fragmentation": "GHAUX-EO1RYM2Z\n...\nMOSCYLG26F5E-\u00e9",
+    "hex": "47484155582d454f3152594d325a4d4f5343594c4732364635452dc3a9",
+    "json_escape": "GHAUX-EO1RYM2ZMOSCYLG26F5E-\\u00e9",
+    "nfd": "GHAUX-EO1RYM2ZMOSCYLG26F5E-e\u0301",
+    "nfkc": "GHAUX-EO1RYM2ZMOSCYLG26F5E-\u00e9",
+    "percent": "GHAUX-EO1RYM2ZMOSCYLG26F5E-%C3%A9",
+    "reversible_composition": "R0hBVVgtRU8xUllNMlpNT1NDWUxHMjZGNUUtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  EO1RYM2ZMOSCYLG26F5E  \u00e9"
+   },
+   "token": "GHAUX-EO1RYM2ZMOSCYLG26F5E-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtUzBVVEpGNDZTNUU4TVhPV1VVOEktw6k=",
+    "case": "ghaux-s0utjf46s5e8mxowuu8i-\u00c9",
+    "delimiter": "G|H|A|U|X|-|S|0|U|T|J|F|4|6|S|5|E|8|M|X|O|W|U|U|8|I|-|\u00e9",
+    "exact": "GHAUX-S0UTJF46S5E8MXOWUU8I-\u00e9",
+    "fragmentation": "GHAUX-S0UTJF46\n...\nS5E8MXOWUU8I-\u00e9",
+    "hex": "47484155582d533055544a463436533545384d584f57555538492dc3a9",
+    "json_escape": "GHAUX-S0UTJF46S5E8MXOWUU8I-\\u00e9",
+    "nfd": "GHAUX-S0UTJF46S5E8MXOWUU8I-e\u0301",
+    "nfkc": "GHAUX-S0UTJF46S5E8MXOWUU8I-\u00e9",
+    "percent": "GHAUX-S0UTJF46S5E8MXOWUU8I-%C3%A9",
+    "reversible_composition": "R0hBVVgtUzBVVEpGNDZTNUU4TVhPV1VVOEktZSVDQyU4MQ==",
+    "whitespace": "GHAUX  S0UTJF46S5E8MXOWUU8I  \u00e9"
+   },
+   "token": "GHAUX-S0UTJF46S5E8MXOWUU8I-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtWVRHUU4yQ1RVTERHUk9UOThXN1Atw6k=",
+    "case": "ghaux-ytgqn2ctuldgrot98w7p-\u00c9",
+    "delimiter": "G|H|A|U|X|-|Y|T|G|Q|N|2|C|T|U|L|D|G|R|O|T|9|8|W|7|P|-|\u00e9",
+    "exact": "GHAUX-YTGQN2CTULDGROT98W7P-\u00e9",
+    "fragmentation": "GHAUX-YTGQN2CT\n...\nULDGROT98W7P-\u00e9",
+    "hex": "47484155582d595447514e324354554c4447524f5439385737502dc3a9",
+    "json_escape": "GHAUX-YTGQN2CTULDGROT98W7P-\\u00e9",
+    "nfd": "GHAUX-YTGQN2CTULDGROT98W7P-e\u0301",
+    "nfkc": "GHAUX-YTGQN2CTULDGROT98W7P-\u00e9",
+    "percent": "GHAUX-YTGQN2CTULDGROT98W7P-%C3%A9",
+    "reversible_composition": "R0hBVVgtWVRHUU4yQ1RVTERHUk9UOThXN1AtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  YTGQN2CTULDGROT98W7P  \u00e9"
+   },
+   "token": "GHAUX-YTGQN2CTULDGROT98W7P-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtTFZDS0lCNzZVSEFVUVJGMzNBNzctw6k=",
+    "case": "ghaux-lvckib76uhauqrf33a77-\u00c9",
+    "delimiter": "G|H|A|U|X|-|L|V|C|K|I|B|7|6|U|H|A|U|Q|R|F|3|3|A|7|7|-|\u00e9",
+    "exact": "GHAUX-LVCKIB76UHAUQRF33A77-\u00e9",
+    "fragmentation": "GHAUX-LVCKIB76\n...\nUHAUQRF33A77-\u00e9",
+    "hex": "47484155582d4c56434b494237365548415551524633334137372dc3a9",
+    "json_escape": "GHAUX-LVCKIB76UHAUQRF33A77-\\u00e9",
+    "nfd": "GHAUX-LVCKIB76UHAUQRF33A77-e\u0301",
+    "nfkc": "GHAUX-LVCKIB76UHAUQRF33A77-\u00e9",
+    "percent": "GHAUX-LVCKIB76UHAUQRF33A77-%C3%A9",
+    "reversible_composition": "R0hBVVgtTFZDS0lCNzZVSEFVUVJGMzNBNzctZSVDQyU4MQ==",
+    "whitespace": "GHAUX  LVCKIB76UHAUQRF33A77  \u00e9"
+   },
+   "token": "GHAUX-LVCKIB76UHAUQRF33A77-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtMUVMNTQ1MU41RU41STREUzFRUU4tw6k=",
+    "case": "ghaux-1el5451n5en5i4ds1qqn-\u00c9",
+    "delimiter": "G|H|A|U|X|-|1|E|L|5|4|5|1|N|5|E|N|5|I|4|D|S|1|Q|Q|N|-|\u00e9",
+    "exact": "GHAUX-1EL5451N5EN5I4DS1QQN-\u00e9",
+    "fragmentation": "GHAUX-1EL5451N\n...\n5EN5I4DS1QQN-\u00e9",
+    "hex": "47484155582d31454c353435314e35454e35493444533151514e2dc3a9",
+    "json_escape": "GHAUX-1EL5451N5EN5I4DS1QQN-\\u00e9",
+    "nfd": "GHAUX-1EL5451N5EN5I4DS1QQN-e\u0301",
+    "nfkc": "GHAUX-1EL5451N5EN5I4DS1QQN-\u00e9",
+    "percent": "GHAUX-1EL5451N5EN5I4DS1QQN-%C3%A9",
+    "reversible_composition": "R0hBVVgtMUVMNTQ1MU41RU41STREUzFRUU4tZSVDQyU4MQ==",
+    "whitespace": "GHAUX  1EL5451N5EN5I4DS1QQN  \u00e9"
+   },
+   "token": "GHAUX-1EL5451N5EN5I4DS1QQN-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtSUJZVFQ1UlhHN1JNMUZQT0UyQ1otw6k=",
+    "case": "ghaux-ibytt5rxg7rm1fpoe2cz-\u00c9",
+    "delimiter": "G|H|A|U|X|-|I|B|Y|T|T|5|R|X|G|7|R|M|1|F|P|O|E|2|C|Z|-|\u00e9",
+    "exact": "GHAUX-IBYTT5RXG7RM1FPOE2CZ-\u00e9",
+    "fragmentation": "GHAUX-IBYTT5RX\n...\nG7RM1FPOE2CZ-\u00e9",
+    "hex": "47484155582d49425954543552584737524d3146504f4532435a2dc3a9",
+    "json_escape": "GHAUX-IBYTT5RXG7RM1FPOE2CZ-\\u00e9",
+    "nfd": "GHAUX-IBYTT5RXG7RM1FPOE2CZ-e\u0301",
+    "nfkc": "GHAUX-IBYTT5RXG7RM1FPOE2CZ-\u00e9",
+    "percent": "GHAUX-IBYTT5RXG7RM1FPOE2CZ-%C3%A9",
+    "reversible_composition": "R0hBVVgtSUJZVFQ1UlhHN1JNMUZQT0UyQ1otZSVDQyU4MQ==",
+    "whitespace": "GHAUX  IBYTT5RXG7RM1FPOE2CZ  \u00e9"
+   },
+   "token": "GHAUX-IBYTT5RXG7RM1FPOE2CZ-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtN1I5WlpMTjMwRU41S1FFTkRWODQtw6k=",
+    "case": "ghaux-7r9zzln30en5kqendv84-\u00c9",
+    "delimiter": "G|H|A|U|X|-|7|R|9|Z|Z|L|N|3|0|E|N|5|K|Q|E|N|D|V|8|4|-|\u00e9",
+    "exact": "GHAUX-7R9ZZLN30EN5KQENDV84-\u00e9",
+    "fragmentation": "GHAUX-7R9ZZLN3\n...\n0EN5KQENDV84-\u00e9",
+    "hex": "47484155582d3752395a5a4c4e3330454e354b51454e445638342dc3a9",
+    "json_escape": "GHAUX-7R9ZZLN30EN5KQENDV84-\\u00e9",
+    "nfd": "GHAUX-7R9ZZLN30EN5KQENDV84-e\u0301",
+    "nfkc": "GHAUX-7R9ZZLN30EN5KQENDV84-\u00e9",
+    "percent": "GHAUX-7R9ZZLN30EN5KQENDV84-%C3%A9",
+    "reversible_composition": "R0hBVVgtN1I5WlpMTjMwRU41S1FFTkRWODQtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  7R9ZZLN30EN5KQENDV84  \u00e9"
+   },
+   "token": "GHAUX-7R9ZZLN30EN5KQENDV84-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtMVhYVk9TNUE3VzlBS1I1VkIwU1Ytw6k=",
+    "case": "ghaux-1xxvos5a7w9akr5vb0sv-\u00c9",
+    "delimiter": "G|H|A|U|X|-|1|X|X|V|O|S|5|A|7|W|9|A|K|R|5|V|B|0|S|V|-|\u00e9",
+    "exact": "GHAUX-1XXVOS5A7W9AKR5VB0SV-\u00e9",
+    "fragmentation": "GHAUX-1XXVOS5A\n...\n7W9AKR5VB0SV-\u00e9",
+    "hex": "47484155582d315858564f533541375739414b523556423053562dc3a9",
+    "json_escape": "GHAUX-1XXVOS5A7W9AKR5VB0SV-\\u00e9",
+    "nfd": "GHAUX-1XXVOS5A7W9AKR5VB0SV-e\u0301",
+    "nfkc": "GHAUX-1XXVOS5A7W9AKR5VB0SV-\u00e9",
+    "percent": "GHAUX-1XXVOS5A7W9AKR5VB0SV-%C3%A9",
+    "reversible_composition": "R0hBVVgtMVhYVk9TNUE3VzlBS1I1VkIwU1YtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  1XXVOS5A7W9AKR5VB0SV  \u00e9"
+   },
+   "token": "GHAUX-1XXVOS5A7W9AKR5VB0SV-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtQlcwS1EyWE80U0ZYS0pJN0lLVEYtw6k=",
+    "case": "ghaux-bw0kq2xo4sfxkji7iktf-\u00c9",
+    "delimiter": "G|H|A|U|X|-|B|W|0|K|Q|2|X|O|4|S|F|X|K|J|I|7|I|K|T|F|-|\u00e9",
+    "exact": "GHAUX-BW0KQ2XO4SFXKJI7IKTF-\u00e9",
+    "fragmentation": "GHAUX-BW0KQ2XO\n...\n4SFXKJI7IKTF-\u00e9",
+    "hex": "47484155582d4257304b5132584f345346584b4a4937494b54462dc3a9",
+    "json_escape": "GHAUX-BW0KQ2XO4SFXKJI7IKTF-\\u00e9",
+    "nfd": "GHAUX-BW0KQ2XO4SFXKJI7IKTF-e\u0301",
+    "nfkc": "GHAUX-BW0KQ2XO4SFXKJI7IKTF-\u00e9",
+    "percent": "GHAUX-BW0KQ2XO4SFXKJI7IKTF-%C3%A9",
+    "reversible_composition": "R0hBVVgtQlcwS1EyWE80U0ZYS0pJN0lLVEYtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  BW0KQ2XO4SFXKJI7IKTF  \u00e9"
+   },
+   "token": "GHAUX-BW0KQ2XO4SFXKJI7IKTF-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtUlE3Tk1PSEI5Nk81OExaRDkyVkEtw6k=",
+    "case": "ghaux-rq7nmohb96o58lzd92va-\u00c9",
+    "delimiter": "G|H|A|U|X|-|R|Q|7|N|M|O|H|B|9|6|O|5|8|L|Z|D|9|2|V|A|-|\u00e9",
+    "exact": "GHAUX-RQ7NMOHB96O58LZD92VA-\u00e9",
+    "fragmentation": "GHAUX-RQ7NMOHB\n...\n96O58LZD92VA-\u00e9",
+    "hex": "47484155582d5251374e4d4f484239364f35384c5a44393256412dc3a9",
+    "json_escape": "GHAUX-RQ7NMOHB96O58LZD92VA-\\u00e9",
+    "nfd": "GHAUX-RQ7NMOHB96O58LZD92VA-e\u0301",
+    "nfkc": "GHAUX-RQ7NMOHB96O58LZD92VA-\u00e9",
+    "percent": "GHAUX-RQ7NMOHB96O58LZD92VA-%C3%A9",
+    "reversible_composition": "R0hBVVgtUlE3Tk1PSEI5Nk81OExaRDkyVkEtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  RQ7NMOHB96O58LZD92VA  \u00e9"
+   },
+   "token": "GHAUX-RQ7NMOHB96O58LZD92VA-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtMFlIQ0FTMzJNTFlLOVdMRkdFQUItw6k=",
+    "case": "ghaux-0yhcas32mlyk9wlfgeab-\u00c9",
+    "delimiter": "G|H|A|U|X|-|0|Y|H|C|A|S|3|2|M|L|Y|K|9|W|L|F|G|E|A|B|-|\u00e9",
+    "exact": "GHAUX-0YHCAS32MLYK9WLFGEAB-\u00e9",
+    "fragmentation": "GHAUX-0YHCAS32\n...\nMLYK9WLFGEAB-\u00e9",
+    "hex": "47484155582d30594843415333324d4c594b39574c46474541422dc3a9",
+    "json_escape": "GHAUX-0YHCAS32MLYK9WLFGEAB-\\u00e9",
+    "nfd": "GHAUX-0YHCAS32MLYK9WLFGEAB-e\u0301",
+    "nfkc": "GHAUX-0YHCAS32MLYK9WLFGEAB-\u00e9",
+    "percent": "GHAUX-0YHCAS32MLYK9WLFGEAB-%C3%A9",
+    "reversible_composition": "R0hBVVgtMFlIQ0FTMzJNTFlLOVdMRkdFQUItZSVDQyU4MQ==",
+    "whitespace": "GHAUX  0YHCAS32MLYK9WLFGEAB  \u00e9"
+   },
+   "token": "GHAUX-0YHCAS32MLYK9WLFGEAB-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtUEZRMkw5WUM2Q1JFRk1DNlJETTUtw6k=",
+    "case": "ghaux-pfq2l9yc6crefmc6rdm5-\u00c9",
+    "delimiter": "G|H|A|U|X|-|P|F|Q|2|L|9|Y|C|6|C|R|E|F|M|C|6|R|D|M|5|-|\u00e9",
+    "exact": "GHAUX-PFQ2L9YC6CREFMC6RDM5-\u00e9",
+    "fragmentation": "GHAUX-PFQ2L9YC\n...\n6CREFMC6RDM5-\u00e9",
+    "hex": "47484155582d504651324c39594336435245464d433652444d352dc3a9",
+    "json_escape": "GHAUX-PFQ2L9YC6CREFMC6RDM5-\\u00e9",
+    "nfd": "GHAUX-PFQ2L9YC6CREFMC6RDM5-e\u0301",
+    "nfkc": "GHAUX-PFQ2L9YC6CREFMC6RDM5-\u00e9",
+    "percent": "GHAUX-PFQ2L9YC6CREFMC6RDM5-%C3%A9",
+    "reversible_composition": "R0hBVVgtUEZRMkw5WUM2Q1JFRk1DNlJETTUtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  PFQ2L9YC6CREFMC6RDM5  \u00e9"
+   },
+   "token": "GHAUX-PFQ2L9YC6CREFMC6RDM5-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtUTVDTkFJTlJYTFRJTDZRQks0WlQtw6k=",
+    "case": "ghaux-q5cnainrxltil6qbk4zt-\u00c9",
+    "delimiter": "G|H|A|U|X|-|Q|5|C|N|A|I|N|R|X|L|T|I|L|6|Q|B|K|4|Z|T|-|\u00e9",
+    "exact": "GHAUX-Q5CNAINRXLTIL6QBK4ZT-\u00e9",
+    "fragmentation": "GHAUX-Q5CNAINR\n...\nXLTIL6QBK4ZT-\u00e9",
+    "hex": "47484155582d5135434e41494e52584c54494c3651424b345a542dc3a9",
+    "json_escape": "GHAUX-Q5CNAINRXLTIL6QBK4ZT-\\u00e9",
+    "nfd": "GHAUX-Q5CNAINRXLTIL6QBK4ZT-e\u0301",
+    "nfkc": "GHAUX-Q5CNAINRXLTIL6QBK4ZT-\u00e9",
+    "percent": "GHAUX-Q5CNAINRXLTIL6QBK4ZT-%C3%A9",
+    "reversible_composition": "R0hBVVgtUTVDTkFJTlJYTFRJTDZRQks0WlQtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  Q5CNAINRXLTIL6QBK4ZT  \u00e9"
+   },
+   "token": "GHAUX-Q5CNAINRXLTIL6QBK4ZT-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtR1lHOEFJMUU5STJWWUlXWDRYS0otw6k=",
+    "case": "ghaux-gyg8ai1e9i2vyiwx4xkj-\u00c9",
+    "delimiter": "G|H|A|U|X|-|G|Y|G|8|A|I|1|E|9|I|2|V|Y|I|W|X|4|X|K|J|-|\u00e9",
+    "exact": "GHAUX-GYG8AI1E9I2VYIWX4XKJ-\u00e9",
+    "fragmentation": "GHAUX-GYG8AI1E\n...\n9I2VYIWX4XKJ-\u00e9",
+    "hex": "47484155582d4759473841493145394932565949575834584b4a2dc3a9",
+    "json_escape": "GHAUX-GYG8AI1E9I2VYIWX4XKJ-\\u00e9",
+    "nfd": "GHAUX-GYG8AI1E9I2VYIWX4XKJ-e\u0301",
+    "nfkc": "GHAUX-GYG8AI1E9I2VYIWX4XKJ-\u00e9",
+    "percent": "GHAUX-GYG8AI1E9I2VYIWX4XKJ-%C3%A9",
+    "reversible_composition": "R0hBVVgtR1lHOEFJMUU5STJWWUlXWDRYS0otZSVDQyU4MQ==",
+    "whitespace": "GHAUX  GYG8AI1E9I2VYIWX4XKJ  \u00e9"
+   },
+   "token": "GHAUX-GYG8AI1E9I2VYIWX4XKJ-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtMU5DWTAzMVgyRkdCTDk2VDBBODctw6k=",
+    "case": "ghaux-1ncy031x2fgbl96t0a87-\u00c9",
+    "delimiter": "G|H|A|U|X|-|1|N|C|Y|0|3|1|X|2|F|G|B|L|9|6|T|0|A|8|7|-|\u00e9",
+    "exact": "GHAUX-1NCY031X2FGBL96T0A87-\u00e9",
+    "fragmentation": "GHAUX-1NCY031X\n...\n2FGBL96T0A87-\u00e9",
+    "hex": "47484155582d314e435930333158324647424c393654304138372dc3a9",
+    "json_escape": "GHAUX-1NCY031X2FGBL96T0A87-\\u00e9",
+    "nfd": "GHAUX-1NCY031X2FGBL96T0A87-e\u0301",
+    "nfkc": "GHAUX-1NCY031X2FGBL96T0A87-\u00e9",
+    "percent": "GHAUX-1NCY031X2FGBL96T0A87-%C3%A9",
+    "reversible_composition": "R0hBVVgtMU5DWTAzMVgyRkdCTDk2VDBBODctZSVDQyU4MQ==",
+    "whitespace": "GHAUX  1NCY031X2FGBL96T0A87  \u00e9"
+   },
+   "token": "GHAUX-1NCY031X2FGBL96T0A87-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtTDA0M1UwVVBYNTdDNERJRkE4MjMtw6k=",
+    "case": "ghaux-l043u0upx57c4difa823-\u00c9",
+    "delimiter": "G|H|A|U|X|-|L|0|4|3|U|0|U|P|X|5|7|C|4|D|I|F|A|8|2|3|-|\u00e9",
+    "exact": "GHAUX-L043U0UPX57C4DIFA823-\u00e9",
+    "fragmentation": "GHAUX-L043U0UP\n...\nX57C4DIFA823-\u00e9",
+    "hex": "47484155582d4c303433553055505835374334444946413832332dc3a9",
+    "json_escape": "GHAUX-L043U0UPX57C4DIFA823-\\u00e9",
+    "nfd": "GHAUX-L043U0UPX57C4DIFA823-e\u0301",
+    "nfkc": "GHAUX-L043U0UPX57C4DIFA823-\u00e9",
+    "percent": "GHAUX-L043U0UPX57C4DIFA823-%C3%A9",
+    "reversible_composition": "R0hBVVgtTDA0M1UwVVBYNTdDNERJRkE4MjMtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  L043U0UPX57C4DIFA823  \u00e9"
+   },
+   "token": "GHAUX-L043U0UPX57C4DIFA823-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtUFBYVjFSWjdXWEQ1UkJPQkZEN1Mtw6k=",
+    "case": "ghaux-ppxv1rz7wxd5rbobfd7s-\u00c9",
+    "delimiter": "G|H|A|U|X|-|P|P|X|V|1|R|Z|7|W|X|D|5|R|B|O|B|F|D|7|S|-|\u00e9",
+    "exact": "GHAUX-PPXV1RZ7WXD5RBOBFD7S-\u00e9",
+    "fragmentation": "GHAUX-PPXV1RZ7\n...\nWXD5RBOBFD7S-\u00e9",
+    "hex": "47484155582d5050585631525a375758443552424f42464437532dc3a9",
+    "json_escape": "GHAUX-PPXV1RZ7WXD5RBOBFD7S-\\u00e9",
+    "nfd": "GHAUX-PPXV1RZ7WXD5RBOBFD7S-e\u0301",
+    "nfkc": "GHAUX-PPXV1RZ7WXD5RBOBFD7S-\u00e9",
+    "percent": "GHAUX-PPXV1RZ7WXD5RBOBFD7S-%C3%A9",
+    "reversible_composition": "R0hBVVgtUFBYVjFSWjdXWEQ1UkJPQkZEN1MtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  PPXV1RZ7WXD5RBOBFD7S  \u00e9"
+   },
+   "token": "GHAUX-PPXV1RZ7WXD5RBOBFD7S-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtWlY5NEJRUEdHUDJTWVFHNlg0UjAtw6k=",
+    "case": "ghaux-zv94bqpggp2syqg6x4r0-\u00c9",
+    "delimiter": "G|H|A|U|X|-|Z|V|9|4|B|Q|P|G|G|P|2|S|Y|Q|G|6|X|4|R|0|-|\u00e9",
+    "exact": "GHAUX-ZV94BQPGGP2SYQG6X4R0-\u00e9",
+    "fragmentation": "GHAUX-ZV94BQPG\n...\nGP2SYQG6X4R0-\u00e9",
+    "hex": "47484155582d5a563934425150474750325359514736583452302dc3a9",
+    "json_escape": "GHAUX-ZV94BQPGGP2SYQG6X4R0-\\u00e9",
+    "nfd": "GHAUX-ZV94BQPGGP2SYQG6X4R0-e\u0301",
+    "nfkc": "GHAUX-ZV94BQPGGP2SYQG6X4R0-\u00e9",
+    "percent": "GHAUX-ZV94BQPGGP2SYQG6X4R0-%C3%A9",
+    "reversible_composition": "R0hBVVgtWlY5NEJRUEdHUDJTWVFHNlg0UjAtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  ZV94BQPGGP2SYQG6X4R0  \u00e9"
+   },
+   "token": "GHAUX-ZV94BQPGGP2SYQG6X4R0-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtSk9JUklUNDg3NERaUFNJMUxKSkEtw6k=",
+    "case": "ghaux-joirit4874dzpsi1ljja-\u00c9",
+    "delimiter": "G|H|A|U|X|-|J|O|I|R|I|T|4|8|7|4|D|Z|P|S|I|1|L|J|J|A|-|\u00e9",
+    "exact": "GHAUX-JOIRIT4874DZPSI1LJJA-\u00e9",
+    "fragmentation": "GHAUX-JOIRIT48\n...\n74DZPSI1LJJA-\u00e9",
+    "hex": "47484155582d4a4f4952495434383734445a505349314c4a4a412dc3a9",
+    "json_escape": "GHAUX-JOIRIT4874DZPSI1LJJA-\\u00e9",
+    "nfd": "GHAUX-JOIRIT4874DZPSI1LJJA-e\u0301",
+    "nfkc": "GHAUX-JOIRIT4874DZPSI1LJJA-\u00e9",
+    "percent": "GHAUX-JOIRIT4874DZPSI1LJJA-%C3%A9",
+    "reversible_composition": "R0hBVVgtSk9JUklUNDg3NERaUFNJMUxKSkEtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  JOIRIT4874DZPSI1LJJA  \u00e9"
+   },
+   "token": "GHAUX-JOIRIT4874DZPSI1LJJA-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtVkxXTENXUkFYUzU3VDNLV1BQSVQtw6k=",
+    "case": "ghaux-vlwlcwraxs57t3kwppit-\u00c9",
+    "delimiter": "G|H|A|U|X|-|V|L|W|L|C|W|R|A|X|S|5|7|T|3|K|W|P|P|I|T|-|\u00e9",
+    "exact": "GHAUX-VLWLCWRAXS57T3KWPPIT-\u00e9",
+    "fragmentation": "GHAUX-VLWLCWRA\n...\nXS57T3KWPPIT-\u00e9",
+    "hex": "47484155582d564c574c435752415853353754334b57505049542dc3a9",
+    "json_escape": "GHAUX-VLWLCWRAXS57T3KWPPIT-\\u00e9",
+    "nfd": "GHAUX-VLWLCWRAXS57T3KWPPIT-e\u0301",
+    "nfkc": "GHAUX-VLWLCWRAXS57T3KWPPIT-\u00e9",
+    "percent": "GHAUX-VLWLCWRAXS57T3KWPPIT-%C3%A9",
+    "reversible_composition": "R0hBVVgtVkxXTENXUkFYUzU3VDNLV1BQSVQtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  VLWLCWRAXS57T3KWPPIT  \u00e9"
+   },
+   "token": "GHAUX-VLWLCWRAXS57T3KWPPIT-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtR1VDMlhHSExLSDY3NFROVFpPRkotw6k=",
+    "case": "ghaux-guc2xghlkh674tntzofj-\u00c9",
+    "delimiter": "G|H|A|U|X|-|G|U|C|2|X|G|H|L|K|H|6|7|4|T|N|T|Z|O|F|J|-|\u00e9",
+    "exact": "GHAUX-GUC2XGHLKH674TNTZOFJ-\u00e9",
+    "fragmentation": "GHAUX-GUC2XGHL\n...\nKH674TNTZOFJ-\u00e9",
+    "hex": "47484155582d475543325847484c4b48363734544e545a4f464a2dc3a9",
+    "json_escape": "GHAUX-GUC2XGHLKH674TNTZOFJ-\\u00e9",
+    "nfd": "GHAUX-GUC2XGHLKH674TNTZOFJ-e\u0301",
+    "nfkc": "GHAUX-GUC2XGHLKH674TNTZOFJ-\u00e9",
+    "percent": "GHAUX-GUC2XGHLKH674TNTZOFJ-%C3%A9",
+    "reversible_composition": "R0hBVVgtR1VDMlhHSExLSDY3NFROVFpPRkotZSVDQyU4MQ==",
+    "whitespace": "GHAUX  GUC2XGHLKH674TNTZOFJ  \u00e9"
+   },
+   "token": "GHAUX-GUC2XGHLKH674TNTZOFJ-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtNlo5SVFNMVJBOVBPQk41TzFWQ00tw6k=",
+    "case": "ghaux-6z9iqm1ra9pobn5o1vcm-\u00c9",
+    "delimiter": "G|H|A|U|X|-|6|Z|9|I|Q|M|1|R|A|9|P|O|B|N|5|O|1|V|C|M|-|\u00e9",
+    "exact": "GHAUX-6Z9IQM1RA9POBN5O1VCM-\u00e9",
+    "fragmentation": "GHAUX-6Z9IQM1R\n...\nA9POBN5O1VCM-\u00e9",
+    "hex": "47484155582d365a3949514d31524139504f424e354f3156434d2dc3a9",
+    "json_escape": "GHAUX-6Z9IQM1RA9POBN5O1VCM-\\u00e9",
+    "nfd": "GHAUX-6Z9IQM1RA9POBN5O1VCM-e\u0301",
+    "nfkc": "GHAUX-6Z9IQM1RA9POBN5O1VCM-\u00e9",
+    "percent": "GHAUX-6Z9IQM1RA9POBN5O1VCM-%C3%A9",
+    "reversible_composition": "R0hBVVgtNlo5SVFNMVJBOVBPQk41TzFWQ00tZSVDQyU4MQ==",
+    "whitespace": "GHAUX  6Z9IQM1RA9POBN5O1VCM  \u00e9"
+   },
+   "token": "GHAUX-6Z9IQM1RA9POBN5O1VCM-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtQVdQQTFTWFpLVVFTQ0dZSVNWWE4tw6k=",
+    "case": "ghaux-awpa1sxzkuqscgyisvxn-\u00c9",
+    "delimiter": "G|H|A|U|X|-|A|W|P|A|1|S|X|Z|K|U|Q|S|C|G|Y|I|S|V|X|N|-|\u00e9",
+    "exact": "GHAUX-AWPA1SXZKUQSCGYISVXN-\u00e9",
+    "fragmentation": "GHAUX-AWPA1SXZ\n...\nKUQSCGYISVXN-\u00e9",
+    "hex": "47484155582d415750413153585a4b555153434759495356584e2dc3a9",
+    "json_escape": "GHAUX-AWPA1SXZKUQSCGYISVXN-\\u00e9",
+    "nfd": "GHAUX-AWPA1SXZKUQSCGYISVXN-e\u0301",
+    "nfkc": "GHAUX-AWPA1SXZKUQSCGYISVXN-\u00e9",
+    "percent": "GHAUX-AWPA1SXZKUQSCGYISVXN-%C3%A9",
+    "reversible_composition": "R0hBVVgtQVdQQTFTWFpLVVFTQ0dZSVNWWE4tZSVDQyU4MQ==",
+    "whitespace": "GHAUX  AWPA1SXZKUQSCGYISVXN  \u00e9"
+   },
+   "token": "GHAUX-AWPA1SXZKUQSCGYISVXN-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtR0pTSEpGT01DRktBM1dSV1VPUTUtw6k=",
+    "case": "ghaux-gjshjfomcfka3wrwuoq5-\u00c9",
+    "delimiter": "G|H|A|U|X|-|G|J|S|H|J|F|O|M|C|F|K|A|3|W|R|W|U|O|Q|5|-|\u00e9",
+    "exact": "GHAUX-GJSHJFOMCFKA3WRWUOQ5-\u00e9",
+    "fragmentation": "GHAUX-GJSHJFOM\n...\nCFKA3WRWUOQ5-\u00e9",
+    "hex": "47484155582d474a53484a464f4d43464b4133575257554f51352dc3a9",
+    "json_escape": "GHAUX-GJSHJFOMCFKA3WRWUOQ5-\\u00e9",
+    "nfd": "GHAUX-GJSHJFOMCFKA3WRWUOQ5-e\u0301",
+    "nfkc": "GHAUX-GJSHJFOMCFKA3WRWUOQ5-\u00e9",
+    "percent": "GHAUX-GJSHJFOMCFKA3WRWUOQ5-%C3%A9",
+    "reversible_composition": "R0hBVVgtR0pTSEpGT01DRktBM1dSV1VPUTUtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  GJSHJFOMCFKA3WRWUOQ5  \u00e9"
+   },
+   "token": "GHAUX-GJSHJFOMCFKA3WRWUOQ5-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtU1RUMldWRVRJUFVORFdRRzRYSVktw6k=",
+    "case": "ghaux-stt2wvetipundwqg4xiy-\u00c9",
+    "delimiter": "G|H|A|U|X|-|S|T|T|2|W|V|E|T|I|P|U|N|D|W|Q|G|4|X|I|Y|-|\u00e9",
+    "exact": "GHAUX-STT2WVETIPUNDWQG4XIY-\u00e9",
+    "fragmentation": "GHAUX-STT2WVET\n...\nIPUNDWQG4XIY-\u00e9",
+    "hex": "47484155582d53545432575645544950554e44575147345849592dc3a9",
+    "json_escape": "GHAUX-STT2WVETIPUNDWQG4XIY-\\u00e9",
+    "nfd": "GHAUX-STT2WVETIPUNDWQG4XIY-e\u0301",
+    "nfkc": "GHAUX-STT2WVETIPUNDWQG4XIY-\u00e9",
+    "percent": "GHAUX-STT2WVETIPUNDWQG4XIY-%C3%A9",
+    "reversible_composition": "R0hBVVgtU1RUMldWRVRJUFVORFdRRzRYSVktZSVDQyU4MQ==",
+    "whitespace": "GHAUX  STT2WVETIPUNDWQG4XIY  \u00e9"
+   },
+   "token": "GHAUX-STT2WVETIPUNDWQG4XIY-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtV1NQN09YTk1BVFlXVEY4VzZTMFotw6k=",
+    "case": "ghaux-wsp7oxnmatywtf8w6s0z-\u00c9",
+    "delimiter": "G|H|A|U|X|-|W|S|P|7|O|X|N|M|A|T|Y|W|T|F|8|W|6|S|0|Z|-|\u00e9",
+    "exact": "GHAUX-WSP7OXNMATYWTF8W6S0Z-\u00e9",
+    "fragmentation": "GHAUX-WSP7OXNM\n...\nATYWTF8W6S0Z-\u00e9",
+    "hex": "47484155582d575350374f584e4d41545957544638573653305a2dc3a9",
+    "json_escape": "GHAUX-WSP7OXNMATYWTF8W6S0Z-\\u00e9",
+    "nfd": "GHAUX-WSP7OXNMATYWTF8W6S0Z-e\u0301",
+    "nfkc": "GHAUX-WSP7OXNMATYWTF8W6S0Z-\u00e9",
+    "percent": "GHAUX-WSP7OXNMATYWTF8W6S0Z-%C3%A9",
+    "reversible_composition": "R0hBVVgtV1NQN09YTk1BVFlXVEY4VzZTMFotZSVDQyU4MQ==",
+    "whitespace": "GHAUX  WSP7OXNMATYWTF8W6S0Z  \u00e9"
+   },
+   "token": "GHAUX-WSP7OXNMATYWTF8W6S0Z-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtVlpMQkZTSDg0TUhTVTFMMEVaTkotw6k=",
+    "case": "ghaux-vzlbfsh84mhsu1l0eznj-\u00c9",
+    "delimiter": "G|H|A|U|X|-|V|Z|L|B|F|S|H|8|4|M|H|S|U|1|L|0|E|Z|N|J|-|\u00e9",
+    "exact": "GHAUX-VZLBFSH84MHSU1L0EZNJ-\u00e9",
+    "fragmentation": "GHAUX-VZLBFSH8\n...\n4MHSU1L0EZNJ-\u00e9",
+    "hex": "47484155582d565a4c4246534838344d485355314c30455a4e4a2dc3a9",
+    "json_escape": "GHAUX-VZLBFSH84MHSU1L0EZNJ-\\u00e9",
+    "nfd": "GHAUX-VZLBFSH84MHSU1L0EZNJ-e\u0301",
+    "nfkc": "GHAUX-VZLBFSH84MHSU1L0EZNJ-\u00e9",
+    "percent": "GHAUX-VZLBFSH84MHSU1L0EZNJ-%C3%A9",
+    "reversible_composition": "R0hBVVgtVlpMQkZTSDg0TUhTVTFMMEVaTkotZSVDQyU4MQ==",
+    "whitespace": "GHAUX  VZLBFSH84MHSU1L0EZNJ  \u00e9"
+   },
+   "token": "GHAUX-VZLBFSH84MHSU1L0EZNJ-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtUFcySklFWktYQ0tVSVBGSDVPSVQtw6k=",
+    "case": "ghaux-pw2jiezkxckuipfh5oit-\u00c9",
+    "delimiter": "G|H|A|U|X|-|P|W|2|J|I|E|Z|K|X|C|K|U|I|P|F|H|5|O|I|T|-|\u00e9",
+    "exact": "GHAUX-PW2JIEZKXCKUIPFH5OIT-\u00e9",
+    "fragmentation": "GHAUX-PW2JIEZK\n...\nXCKUIPFH5OIT-\u00e9",
+    "hex": "47484155582d5057324a49455a4b58434b5549504648354f49542dc3a9",
+    "json_escape": "GHAUX-PW2JIEZKXCKUIPFH5OIT-\\u00e9",
+    "nfd": "GHAUX-PW2JIEZKXCKUIPFH5OIT-e\u0301",
+    "nfkc": "GHAUX-PW2JIEZKXCKUIPFH5OIT-\u00e9",
+    "percent": "GHAUX-PW2JIEZKXCKUIPFH5OIT-%C3%A9",
+    "reversible_composition": "R0hBVVgtUFcySklFWktYQ0tVSVBGSDVPSVQtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  PW2JIEZKXCKUIPFH5OIT  \u00e9"
+   },
+   "token": "GHAUX-PW2JIEZKXCKUIPFH5OIT-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtWjVMNTVTMlo4UTJJSjNYMUhLRkUtw6k=",
+    "case": "ghaux-z5l55s2z8q2ij3x1hkfe-\u00c9",
+    "delimiter": "G|H|A|U|X|-|Z|5|L|5|5|S|2|Z|8|Q|2|I|J|3|X|1|H|K|F|E|-|\u00e9",
+    "exact": "GHAUX-Z5L55S2Z8Q2IJ3X1HKFE-\u00e9",
+    "fragmentation": "GHAUX-Z5L55S2Z\n...\n8Q2IJ3X1HKFE-\u00e9",
+    "hex": "47484155582d5a354c353553325a385132494a335831484b46452dc3a9",
+    "json_escape": "GHAUX-Z5L55S2Z8Q2IJ3X1HKFE-\\u00e9",
+    "nfd": "GHAUX-Z5L55S2Z8Q2IJ3X1HKFE-e\u0301",
+    "nfkc": "GHAUX-Z5L55S2Z8Q2IJ3X1HKFE-\u00e9",
+    "percent": "GHAUX-Z5L55S2Z8Q2IJ3X1HKFE-%C3%A9",
+    "reversible_composition": "R0hBVVgtWjVMNTVTMlo4UTJJSjNYMUhLRkUtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  Z5L55S2Z8Q2IJ3X1HKFE  \u00e9"
+   },
+   "token": "GHAUX-Z5L55S2Z8Q2IJ3X1HKFE-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtUTVBSlpTVlRDQUQ1R05DNVZDT0ktw6k=",
+    "case": "ghaux-q5ajzsvtcad5gnc5vcoi-\u00c9",
+    "delimiter": "G|H|A|U|X|-|Q|5|A|J|Z|S|V|T|C|A|D|5|G|N|C|5|V|C|O|I|-|\u00e9",
+    "exact": "GHAUX-Q5AJZSVTCAD5GNC5VCOI-\u00e9",
+    "fragmentation": "GHAUX-Q5AJZSVT\n...\nCAD5GNC5VCOI-\u00e9",
+    "hex": "47484155582d5135414a5a53565443414435474e433556434f492dc3a9",
+    "json_escape": "GHAUX-Q5AJZSVTCAD5GNC5VCOI-\\u00e9",
+    "nfd": "GHAUX-Q5AJZSVTCAD5GNC5VCOI-e\u0301",
+    "nfkc": "GHAUX-Q5AJZSVTCAD5GNC5VCOI-\u00e9",
+    "percent": "GHAUX-Q5AJZSVTCAD5GNC5VCOI-%C3%A9",
+    "reversible_composition": "R0hBVVgtUTVBSlpTVlRDQUQ1R05DNVZDT0ktZSVDQyU4MQ==",
+    "whitespace": "GHAUX  Q5AJZSVTCAD5GNC5VCOI  \u00e9"
+   },
+   "token": "GHAUX-Q5AJZSVTCAD5GNC5VCOI-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtSjNLU0tMRVlQUjczMldJWUhaUkktw6k=",
+    "case": "ghaux-j3kskleypr732wiyhzri-\u00c9",
+    "delimiter": "G|H|A|U|X|-|J|3|K|S|K|L|E|Y|P|R|7|3|2|W|I|Y|H|Z|R|I|-|\u00e9",
+    "exact": "GHAUX-J3KSKLEYPR732WIYHZRI-\u00e9",
+    "fragmentation": "GHAUX-J3KSKLEY\n...\nPR732WIYHZRI-\u00e9",
+    "hex": "47484155582d4a334b534b4c45595052373332574959485a52492dc3a9",
+    "json_escape": "GHAUX-J3KSKLEYPR732WIYHZRI-\\u00e9",
+    "nfd": "GHAUX-J3KSKLEYPR732WIYHZRI-e\u0301",
+    "nfkc": "GHAUX-J3KSKLEYPR732WIYHZRI-\u00e9",
+    "percent": "GHAUX-J3KSKLEYPR732WIYHZRI-%C3%A9",
+    "reversible_composition": "R0hBVVgtSjNLU0tMRVlQUjczMldJWUhaUkktZSVDQyU4MQ==",
+    "whitespace": "GHAUX  J3KSKLEYPR732WIYHZRI  \u00e9"
+   },
+   "token": "GHAUX-J3KSKLEYPR732WIYHZRI-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtS1c2SFRFTENCNVFUSDkwUDI0NzItw6k=",
+    "case": "ghaux-kw6htelcb5qth90p2472-\u00c9",
+    "delimiter": "G|H|A|U|X|-|K|W|6|H|T|E|L|C|B|5|Q|T|H|9|0|P|2|4|7|2|-|\u00e9",
+    "exact": "GHAUX-KW6HTELCB5QTH90P2472-\u00e9",
+    "fragmentation": "GHAUX-KW6HTELC\n...\nB5QTH90P2472-\u00e9",
+    "hex": "47484155582d4b57364854454c434235515448393050323437322dc3a9",
+    "json_escape": "GHAUX-KW6HTELCB5QTH90P2472-\\u00e9",
+    "nfd": "GHAUX-KW6HTELCB5QTH90P2472-e\u0301",
+    "nfkc": "GHAUX-KW6HTELCB5QTH90P2472-\u00e9",
+    "percent": "GHAUX-KW6HTELCB5QTH90P2472-%C3%A9",
+    "reversible_composition": "R0hBVVgtS1c2SFRFTENCNVFUSDkwUDI0NzItZSVDQyU4MQ==",
+    "whitespace": "GHAUX  KW6HTELCB5QTH90P2472  \u00e9"
+   },
+   "token": "GHAUX-KW6HTELCB5QTH90P2472-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtQ0lVRlRKR1JHSlk2Q1U1SlNQUFUtw6k=",
+    "case": "ghaux-ciuftjgrgjy6cu5jsppu-\u00c9",
+    "delimiter": "G|H|A|U|X|-|C|I|U|F|T|J|G|R|G|J|Y|6|C|U|5|J|S|P|P|U|-|\u00e9",
+    "exact": "GHAUX-CIUFTJGRGJY6CU5JSPPU-\u00e9",
+    "fragmentation": "GHAUX-CIUFTJGR\n...\nGJY6CU5JSPPU-\u00e9",
+    "hex": "47484155582d43495546544a4752474a59364355354a535050552dc3a9",
+    "json_escape": "GHAUX-CIUFTJGRGJY6CU5JSPPU-\\u00e9",
+    "nfd": "GHAUX-CIUFTJGRGJY6CU5JSPPU-e\u0301",
+    "nfkc": "GHAUX-CIUFTJGRGJY6CU5JSPPU-\u00e9",
+    "percent": "GHAUX-CIUFTJGRGJY6CU5JSPPU-%C3%A9",
+    "reversible_composition": "R0hBVVgtQ0lVRlRKR1JHSlk2Q1U1SlNQUFUtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  CIUFTJGRGJY6CU5JSPPU  \u00e9"
+   },
+   "token": "GHAUX-CIUFTJGRGJY6CU5JSPPU-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtOFBQOUFHTEdSNUZCRjJGTE9ESkctw6k=",
+    "case": "ghaux-8pp9aglgr5fbf2flodjg-\u00c9",
+    "delimiter": "G|H|A|U|X|-|8|P|P|9|A|G|L|G|R|5|F|B|F|2|F|L|O|D|J|G|-|\u00e9",
+    "exact": "GHAUX-8PP9AGLGR5FBF2FLODJG-\u00e9",
+    "fragmentation": "GHAUX-8PP9AGLG\n...\nR5FBF2FLODJG-\u00e9",
+    "hex": "47484155582d3850503941474c47523546424632464c4f444a472dc3a9",
+    "json_escape": "GHAUX-8PP9AGLGR5FBF2FLODJG-\\u00e9",
+    "nfd": "GHAUX-8PP9AGLGR5FBF2FLODJG-e\u0301",
+    "nfkc": "GHAUX-8PP9AGLGR5FBF2FLODJG-\u00e9",
+    "percent": "GHAUX-8PP9AGLGR5FBF2FLODJG-%C3%A9",
+    "reversible_composition": "R0hBVVgtOFBQOUFHTEdSNUZCRjJGTE9ESkctZSVDQyU4MQ==",
+    "whitespace": "GHAUX  8PP9AGLGR5FBF2FLODJG  \u00e9"
+   },
+   "token": "GHAUX-8PP9AGLGR5FBF2FLODJG-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtV0UwWFNDUUpFODNURFhNQkJaV1gtw6k=",
+    "case": "ghaux-we0xscqje83tdxmbbzwx-\u00c9",
+    "delimiter": "G|H|A|U|X|-|W|E|0|X|S|C|Q|J|E|8|3|T|D|X|M|B|B|Z|W|X|-|\u00e9",
+    "exact": "GHAUX-WE0XSCQJE83TDXMBBZWX-\u00e9",
+    "fragmentation": "GHAUX-WE0XSCQJ\n...\nE83TDXMBBZWX-\u00e9",
+    "hex": "47484155582d574530585343514a4538335444584d42425a57582dc3a9",
+    "json_escape": "GHAUX-WE0XSCQJE83TDXMBBZWX-\\u00e9",
+    "nfd": "GHAUX-WE0XSCQJE83TDXMBBZWX-e\u0301",
+    "nfkc": "GHAUX-WE0XSCQJE83TDXMBBZWX-\u00e9",
+    "percent": "GHAUX-WE0XSCQJE83TDXMBBZWX-%C3%A9",
+    "reversible_composition": "R0hBVVgtV0UwWFNDUUpFODNURFhNQkJaV1gtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  WE0XSCQJE83TDXMBBZWX  \u00e9"
+   },
+   "token": "GHAUX-WE0XSCQJE83TDXMBBZWX-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtRUNTRjEzMzk3S0hIUDNGNEZFS1gtw6k=",
+    "case": "ghaux-ecsf13397khhp3f4fekx-\u00c9",
+    "delimiter": "G|H|A|U|X|-|E|C|S|F|1|3|3|9|7|K|H|H|P|3|F|4|F|E|K|X|-|\u00e9",
+    "exact": "GHAUX-ECSF13397KHHP3F4FEKX-\u00e9",
+    "fragmentation": "GHAUX-ECSF1339\n...\n7KHHP3F4FEKX-\u00e9",
+    "hex": "47484155582d4543534631333339374b48485033463446454b582dc3a9",
+    "json_escape": "GHAUX-ECSF13397KHHP3F4FEKX-\\u00e9",
+    "nfd": "GHAUX-ECSF13397KHHP3F4FEKX-e\u0301",
+    "nfkc": "GHAUX-ECSF13397KHHP3F4FEKX-\u00e9",
+    "percent": "GHAUX-ECSF13397KHHP3F4FEKX-%C3%A9",
+    "reversible_composition": "R0hBVVgtRUNTRjEzMzk3S0hIUDNGNEZFS1gtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  ECSF13397KHHP3F4FEKX  \u00e9"
+   },
+   "token": "GHAUX-ECSF13397KHHP3F4FEKX-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtMkFCNDNQVzZEQlhRVFJKSVlNSDEtw6k=",
+    "case": "ghaux-2ab43pw6dbxqtrjiymh1-\u00c9",
+    "delimiter": "G|H|A|U|X|-|2|A|B|4|3|P|W|6|D|B|X|Q|T|R|J|I|Y|M|H|1|-|\u00e9",
+    "exact": "GHAUX-2AB43PW6DBXQTRJIYMH1-\u00e9",
+    "fragmentation": "GHAUX-2AB43PW6\n...\nDBXQTRJIYMH1-\u00e9",
+    "hex": "47484155582d32414234335057364442585154524a49594d48312dc3a9",
+    "json_escape": "GHAUX-2AB43PW6DBXQTRJIYMH1-\\u00e9",
+    "nfd": "GHAUX-2AB43PW6DBXQTRJIYMH1-e\u0301",
+    "nfkc": "GHAUX-2AB43PW6DBXQTRJIYMH1-\u00e9",
+    "percent": "GHAUX-2AB43PW6DBXQTRJIYMH1-%C3%A9",
+    "reversible_composition": "R0hBVVgtMkFCNDNQVzZEQlhRVFJKSVlNSDEtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  2AB43PW6DBXQTRJIYMH1  \u00e9"
+   },
+   "token": "GHAUX-2AB43PW6DBXQTRJIYMH1-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtQjlUTTMxMFk5WkRaUEJEUkJXV00tw6k=",
+    "case": "ghaux-b9tm310y9zdzpbdrbwwm-\u00c9",
+    "delimiter": "G|H|A|U|X|-|B|9|T|M|3|1|0|Y|9|Z|D|Z|P|B|D|R|B|W|W|M|-|\u00e9",
+    "exact": "GHAUX-B9TM310Y9ZDZPBDRBWWM-\u00e9",
+    "fragmentation": "GHAUX-B9TM310Y\n...\n9ZDZPBDRBWWM-\u00e9",
+    "hex": "47484155582d4239544d33313059395a445a504244524257574d2dc3a9",
+    "json_escape": "GHAUX-B9TM310Y9ZDZPBDRBWWM-\\u00e9",
+    "nfd": "GHAUX-B9TM310Y9ZDZPBDRBWWM-e\u0301",
+    "nfkc": "GHAUX-B9TM310Y9ZDZPBDRBWWM-\u00e9",
+    "percent": "GHAUX-B9TM310Y9ZDZPBDRBWWM-%C3%A9",
+    "reversible_composition": "R0hBVVgtQjlUTTMxMFk5WkRaUEJEUkJXV00tZSVDQyU4MQ==",
+    "whitespace": "GHAUX  B9TM310Y9ZDZPBDRBWWM  \u00e9"
+   },
+   "token": "GHAUX-B9TM310Y9ZDZPBDRBWWM-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtSDVYOFVIVEJQUVNFWFZYWkNSMjktw6k=",
+    "case": "ghaux-h5x8uhtbpqsexvxzcr29-\u00c9",
+    "delimiter": "G|H|A|U|X|-|H|5|X|8|U|H|T|B|P|Q|S|E|X|V|X|Z|C|R|2|9|-|\u00e9",
+    "exact": "GHAUX-H5X8UHTBPQSEXVXZCR29-\u00e9",
+    "fragmentation": "GHAUX-H5X8UHTB\n...\nPQSEXVXZCR29-\u00e9",
+    "hex": "47484155582d4835583855485442505153455856585a435232392dc3a9",
+    "json_escape": "GHAUX-H5X8UHTBPQSEXVXZCR29-\\u00e9",
+    "nfd": "GHAUX-H5X8UHTBPQSEXVXZCR29-e\u0301",
+    "nfkc": "GHAUX-H5X8UHTBPQSEXVXZCR29-\u00e9",
+    "percent": "GHAUX-H5X8UHTBPQSEXVXZCR29-%C3%A9",
+    "reversible_composition": "R0hBVVgtSDVYOFVIVEJQUVNFWFZYWkNSMjktZSVDQyU4MQ==",
+    "whitespace": "GHAUX  H5X8UHTBPQSEXVXZCR29  \u00e9"
+   },
+   "token": "GHAUX-H5X8UHTBPQSEXVXZCR29-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtQVhQVEJWTlU0NVlaMUk0WUNMWDMtw6k=",
+    "case": "ghaux-axptbvnu45yz1i4yclx3-\u00c9",
+    "delimiter": "G|H|A|U|X|-|A|X|P|T|B|V|N|U|4|5|Y|Z|1|I|4|Y|C|L|X|3|-|\u00e9",
+    "exact": "GHAUX-AXPTBVNU45YZ1I4YCLX3-\u00e9",
+    "fragmentation": "GHAUX-AXPTBVNU\n...\n45YZ1I4YCLX3-\u00e9",
+    "hex": "47484155582d4158505442564e553435595a31493459434c58332dc3a9",
+    "json_escape": "GHAUX-AXPTBVNU45YZ1I4YCLX3-\\u00e9",
+    "nfd": "GHAUX-AXPTBVNU45YZ1I4YCLX3-e\u0301",
+    "nfkc": "GHAUX-AXPTBVNU45YZ1I4YCLX3-\u00e9",
+    "percent": "GHAUX-AXPTBVNU45YZ1I4YCLX3-%C3%A9",
+    "reversible_composition": "R0hBVVgtQVhQVEJWTlU0NVlaMUk0WUNMWDMtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  AXPTBVNU45YZ1I4YCLX3  \u00e9"
+   },
+   "token": "GHAUX-AXPTBVNU45YZ1I4YCLX3-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtWVBSR0g0U0FOR1A4NjBOWk1CV1Utw6k=",
+    "case": "ghaux-yprgh4sangp860nzmbwu-\u00c9",
+    "delimiter": "G|H|A|U|X|-|Y|P|R|G|H|4|S|A|N|G|P|8|6|0|N|Z|M|B|W|U|-|\u00e9",
+    "exact": "GHAUX-YPRGH4SANGP860NZMBWU-\u00e9",
+    "fragmentation": "GHAUX-YPRGH4SA\n...\nNGP860NZMBWU-\u00e9",
+    "hex": "47484155582d59505247483453414e47503836304e5a4d4257552dc3a9",
+    "json_escape": "GHAUX-YPRGH4SANGP860NZMBWU-\\u00e9",
+    "nfd": "GHAUX-YPRGH4SANGP860NZMBWU-e\u0301",
+    "nfkc": "GHAUX-YPRGH4SANGP860NZMBWU-\u00e9",
+    "percent": "GHAUX-YPRGH4SANGP860NZMBWU-%C3%A9",
+    "reversible_composition": "R0hBVVgtWVBSR0g0U0FOR1A4NjBOWk1CV1UtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  YPRGH4SANGP860NZMBWU  \u00e9"
+   },
+   "token": "GHAUX-YPRGH4SANGP860NZMBWU-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtUjQxNkNOR1NDSkszTkZDQUNRSzYtw6k=",
+    "case": "ghaux-r416cngscjk3nfcacqk6-\u00c9",
+    "delimiter": "G|H|A|U|X|-|R|4|1|6|C|N|G|S|C|J|K|3|N|F|C|A|C|Q|K|6|-|\u00e9",
+    "exact": "GHAUX-R416CNGSCJK3NFCACQK6-\u00e9",
+    "fragmentation": "GHAUX-R416CNGS\n...\nCJK3NFCACQK6-\u00e9",
+    "hex": "47484155582d52343136434e4753434a4b334e46434143514b362dc3a9",
+    "json_escape": "GHAUX-R416CNGSCJK3NFCACQK6-\\u00e9",
+    "nfd": "GHAUX-R416CNGSCJK3NFCACQK6-e\u0301",
+    "nfkc": "GHAUX-R416CNGSCJK3NFCACQK6-\u00e9",
+    "percent": "GHAUX-R416CNGSCJK3NFCACQK6-%C3%A9",
+    "reversible_composition": "R0hBVVgtUjQxNkNOR1NDSkszTkZDQUNRSzYtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  R416CNGSCJK3NFCACQK6  \u00e9"
+   },
+   "token": "GHAUX-R416CNGSCJK3NFCACQK6-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtQ1dUMDBWQjdVMzlTV0RUWlUwMUotw6k=",
+    "case": "ghaux-cwt00vb7u39swdtzu01j-\u00c9",
+    "delimiter": "G|H|A|U|X|-|C|W|T|0|0|V|B|7|U|3|9|S|W|D|T|Z|U|0|1|J|-|\u00e9",
+    "exact": "GHAUX-CWT00VB7U39SWDTZU01J-\u00e9",
+    "fragmentation": "GHAUX-CWT00VB7\n...\nU39SWDTZU01J-\u00e9",
+    "hex": "47484155582d4357543030564237553339535744545a5530314a2dc3a9",
+    "json_escape": "GHAUX-CWT00VB7U39SWDTZU01J-\\u00e9",
+    "nfd": "GHAUX-CWT00VB7U39SWDTZU01J-e\u0301",
+    "nfkc": "GHAUX-CWT00VB7U39SWDTZU01J-\u00e9",
+    "percent": "GHAUX-CWT00VB7U39SWDTZU01J-%C3%A9",
+    "reversible_composition": "R0hBVVgtQ1dUMDBWQjdVMzlTV0RUWlUwMUotZSVDQyU4MQ==",
+    "whitespace": "GHAUX  CWT00VB7U39SWDTZU01J  \u00e9"
+   },
+   "token": "GHAUX-CWT00VB7U39SWDTZU01J-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtSU43SVI5OURIQVBVNkVPTFBSRVEtw6k=",
+    "case": "ghaux-in7ir99dhapu6eolpreq-\u00c9",
+    "delimiter": "G|H|A|U|X|-|I|N|7|I|R|9|9|D|H|A|P|U|6|E|O|L|P|R|E|Q|-|\u00e9",
+    "exact": "GHAUX-IN7IR99DHAPU6EOLPREQ-\u00e9",
+    "fragmentation": "GHAUX-IN7IR99D\n...\nHAPU6EOLPREQ-\u00e9",
+    "hex": "47484155582d494e3749523939444841505536454f4c505245512dc3a9",
+    "json_escape": "GHAUX-IN7IR99DHAPU6EOLPREQ-\\u00e9",
+    "nfd": "GHAUX-IN7IR99DHAPU6EOLPREQ-e\u0301",
+    "nfkc": "GHAUX-IN7IR99DHAPU6EOLPREQ-\u00e9",
+    "percent": "GHAUX-IN7IR99DHAPU6EOLPREQ-%C3%A9",
+    "reversible_composition": "R0hBVVgtSU43SVI5OURIQVBVNkVPTFBSRVEtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  IN7IR99DHAPU6EOLPREQ  \u00e9"
+   },
+   "token": "GHAUX-IN7IR99DHAPU6EOLPREQ-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtTFhWUzUzM1lCMUxCVEM3V0xITUstw6k=",
+    "case": "ghaux-lxvs533yb1lbtc7wlhmk-\u00c9",
+    "delimiter": "G|H|A|U|X|-|L|X|V|S|5|3|3|Y|B|1|L|B|T|C|7|W|L|H|M|K|-|\u00e9",
+    "exact": "GHAUX-LXVS533YB1LBTC7WLHMK-\u00e9",
+    "fragmentation": "GHAUX-LXVS533Y\n...\nB1LBTC7WLHMK-\u00e9",
+    "hex": "47484155582d4c5856533533335942314c42544337574c484d4b2dc3a9",
+    "json_escape": "GHAUX-LXVS533YB1LBTC7WLHMK-\\u00e9",
+    "nfd": "GHAUX-LXVS533YB1LBTC7WLHMK-e\u0301",
+    "nfkc": "GHAUX-LXVS533YB1LBTC7WLHMK-\u00e9",
+    "percent": "GHAUX-LXVS533YB1LBTC7WLHMK-%C3%A9",
+    "reversible_composition": "R0hBVVgtTFhWUzUzM1lCMUxCVEM3V0xITUstZSVDQyU4MQ==",
+    "whitespace": "GHAUX  LXVS533YB1LBTC7WLHMK  \u00e9"
+   },
+   "token": "GHAUX-LXVS533YB1LBTC7WLHMK-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtMkJTRFhVQUhUODRXU0k1VlY3T1Qtw6k=",
+    "case": "ghaux-2bsdxuaht84wsi5vv7ot-\u00c9",
+    "delimiter": "G|H|A|U|X|-|2|B|S|D|X|U|A|H|T|8|4|W|S|I|5|V|V|7|O|T|-|\u00e9",
+    "exact": "GHAUX-2BSDXUAHT84WSI5VV7OT-\u00e9",
+    "fragmentation": "GHAUX-2BSDXUAH\n...\nT84WSI5VV7OT-\u00e9",
+    "hex": "47484155582d3242534458554148543834575349355656374f542dc3a9",
+    "json_escape": "GHAUX-2BSDXUAHT84WSI5VV7OT-\\u00e9",
+    "nfd": "GHAUX-2BSDXUAHT84WSI5VV7OT-e\u0301",
+    "nfkc": "GHAUX-2BSDXUAHT84WSI5VV7OT-\u00e9",
+    "percent": "GHAUX-2BSDXUAHT84WSI5VV7OT-%C3%A9",
+    "reversible_composition": "R0hBVVgtMkJTRFhVQUhUODRXU0k1VlY3T1QtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  2BSDXUAHT84WSI5VV7OT  \u00e9"
+   },
+   "token": "GHAUX-2BSDXUAHT84WSI5VV7OT-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtRERDS0JXMUtWUTVYSDFFMExHVk0tw6k=",
+    "case": "ghaux-ddckbw1kvq5xh1e0lgvm-\u00c9",
+    "delimiter": "G|H|A|U|X|-|D|D|C|K|B|W|1|K|V|Q|5|X|H|1|E|0|L|G|V|M|-|\u00e9",
+    "exact": "GHAUX-DDCKBW1KVQ5XH1E0LGVM-\u00e9",
+    "fragmentation": "GHAUX-DDCKBW1K\n...\nVQ5XH1E0LGVM-\u00e9",
+    "hex": "47484155582d4444434b4257314b56513558483145304c47564d2dc3a9",
+    "json_escape": "GHAUX-DDCKBW1KVQ5XH1E0LGVM-\\u00e9",
+    "nfd": "GHAUX-DDCKBW1KVQ5XH1E0LGVM-e\u0301",
+    "nfkc": "GHAUX-DDCKBW1KVQ5XH1E0LGVM-\u00e9",
+    "percent": "GHAUX-DDCKBW1KVQ5XH1E0LGVM-%C3%A9",
+    "reversible_composition": "R0hBVVgtRERDS0JXMUtWUTVYSDFFMExHVk0tZSVDQyU4MQ==",
+    "whitespace": "GHAUX  DDCKBW1KVQ5XH1E0LGVM  \u00e9"
+   },
+   "token": "GHAUX-DDCKBW1KVQ5XH1E0LGVM-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtUDBBSkhNSlVQTzVWOExOVUdSTlUtw6k=",
+    "case": "ghaux-p0ajhmjupo5v8lnugrnu-\u00c9",
+    "delimiter": "G|H|A|U|X|-|P|0|A|J|H|M|J|U|P|O|5|V|8|L|N|U|G|R|N|U|-|\u00e9",
+    "exact": "GHAUX-P0AJHMJUPO5V8LNUGRNU-\u00e9",
+    "fragmentation": "GHAUX-P0AJHMJU\n...\nPO5V8LNUGRNU-\u00e9",
+    "hex": "47484155582d5030414a484d4a55504f3556384c4e5547524e552dc3a9",
+    "json_escape": "GHAUX-P0AJHMJUPO5V8LNUGRNU-\\u00e9",
+    "nfd": "GHAUX-P0AJHMJUPO5V8LNUGRNU-e\u0301",
+    "nfkc": "GHAUX-P0AJHMJUPO5V8LNUGRNU-\u00e9",
+    "percent": "GHAUX-P0AJHMJUPO5V8LNUGRNU-%C3%A9",
+    "reversible_composition": "R0hBVVgtUDBBSkhNSlVQTzVWOExOVUdSTlUtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  P0AJHMJUPO5V8LNUGRNU  \u00e9"
+   },
+   "token": "GHAUX-P0AJHMJUPO5V8LNUGRNU-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtMFRURTBJMzJORFBGSjBEWFhSTlUtw6k=",
+    "case": "ghaux-0tte0i32ndpfj0dxxrnu-\u00c9",
+    "delimiter": "G|H|A|U|X|-|0|T|T|E|0|I|3|2|N|D|P|F|J|0|D|X|X|R|N|U|-|\u00e9",
+    "exact": "GHAUX-0TTE0I32NDPFJ0DXXRNU-\u00e9",
+    "fragmentation": "GHAUX-0TTE0I32\n...\nNDPFJ0DXXRNU-\u00e9",
+    "hex": "47484155582d30545445304933324e4450464a30445858524e552dc3a9",
+    "json_escape": "GHAUX-0TTE0I32NDPFJ0DXXRNU-\\u00e9",
+    "nfd": "GHAUX-0TTE0I32NDPFJ0DXXRNU-e\u0301",
+    "nfkc": "GHAUX-0TTE0I32NDPFJ0DXXRNU-\u00e9",
+    "percent": "GHAUX-0TTE0I32NDPFJ0DXXRNU-%C3%A9",
+    "reversible_composition": "R0hBVVgtMFRURTBJMzJORFBGSjBEWFhSTlUtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  0TTE0I32NDPFJ0DXXRNU  \u00e9"
+   },
+   "token": "GHAUX-0TTE0I32NDPFJ0DXXRNU-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtQjJCQUEyQUkxOElXWTBNNldDRDItw6k=",
+    "case": "ghaux-b2baa2ai18iwy0m6wcd2-\u00c9",
+    "delimiter": "G|H|A|U|X|-|B|2|B|A|A|2|A|I|1|8|I|W|Y|0|M|6|W|C|D|2|-|\u00e9",
+    "exact": "GHAUX-B2BAA2AI18IWY0M6WCD2-\u00e9",
+    "fragmentation": "GHAUX-B2BAA2AI\n...\n18IWY0M6WCD2-\u00e9",
+    "hex": "47484155582d42324241413241493138495759304d36574344322dc3a9",
+    "json_escape": "GHAUX-B2BAA2AI18IWY0M6WCD2-\\u00e9",
+    "nfd": "GHAUX-B2BAA2AI18IWY0M6WCD2-e\u0301",
+    "nfkc": "GHAUX-B2BAA2AI18IWY0M6WCD2-\u00e9",
+    "percent": "GHAUX-B2BAA2AI18IWY0M6WCD2-%C3%A9",
+    "reversible_composition": "R0hBVVgtQjJCQUEyQUkxOElXWTBNNldDRDItZSVDQyU4MQ==",
+    "whitespace": "GHAUX  B2BAA2AI18IWY0M6WCD2  \u00e9"
+   },
+   "token": "GHAUX-B2BAA2AI18IWY0M6WCD2-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtUFZYVEVJMDVEMU5LODA0TzVGWlktw6k=",
+    "case": "ghaux-pvxtei05d1nk804o5fzy-\u00c9",
+    "delimiter": "G|H|A|U|X|-|P|V|X|T|E|I|0|5|D|1|N|K|8|0|4|O|5|F|Z|Y|-|\u00e9",
+    "exact": "GHAUX-PVXTEI05D1NK804O5FZY-\u00e9",
+    "fragmentation": "GHAUX-PVXTEI05\n...\nD1NK804O5FZY-\u00e9",
+    "hex": "47484155582d505658544549303544314e4b3830344f35465a592dc3a9",
+    "json_escape": "GHAUX-PVXTEI05D1NK804O5FZY-\\u00e9",
+    "nfd": "GHAUX-PVXTEI05D1NK804O5FZY-e\u0301",
+    "nfkc": "GHAUX-PVXTEI05D1NK804O5FZY-\u00e9",
+    "percent": "GHAUX-PVXTEI05D1NK804O5FZY-%C3%A9",
+    "reversible_composition": "R0hBVVgtUFZYVEVJMDVEMU5LODA0TzVGWlktZSVDQyU4MQ==",
+    "whitespace": "GHAUX  PVXTEI05D1NK804O5FZY  \u00e9"
+   },
+   "token": "GHAUX-PVXTEI05D1NK804O5FZY-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtVFJFV1BFOU5aTkhTTVNKSTJEWUQtw6k=",
+    "case": "ghaux-trewpe9nznhsmsji2dyd-\u00c9",
+    "delimiter": "G|H|A|U|X|-|T|R|E|W|P|E|9|N|Z|N|H|S|M|S|J|I|2|D|Y|D|-|\u00e9",
+    "exact": "GHAUX-TREWPE9NZNHSMSJI2DYD-\u00e9",
+    "fragmentation": "GHAUX-TREWPE9N\n...\nZNHSMSJI2DYD-\u00e9",
+    "hex": "47484155582d545245575045394e5a4e48534d534a49324459442dc3a9",
+    "json_escape": "GHAUX-TREWPE9NZNHSMSJI2DYD-\\u00e9",
+    "nfd": "GHAUX-TREWPE9NZNHSMSJI2DYD-e\u0301",
+    "nfkc": "GHAUX-TREWPE9NZNHSMSJI2DYD-\u00e9",
+    "percent": "GHAUX-TREWPE9NZNHSMSJI2DYD-%C3%A9",
+    "reversible_composition": "R0hBVVgtVFJFV1BFOU5aTkhTTVNKSTJEWUQtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  TREWPE9NZNHSMSJI2DYD  \u00e9"
+   },
+   "token": "GHAUX-TREWPE9NZNHSMSJI2DYD-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtNjEzR1BOMFA3WlhOOUdXTjhHOVctw6k=",
+    "case": "ghaux-613gpn0p7zxn9gwn8g9w-\u00c9",
+    "delimiter": "G|H|A|U|X|-|6|1|3|G|P|N|0|P|7|Z|X|N|9|G|W|N|8|G|9|W|-|\u00e9",
+    "exact": "GHAUX-613GPN0P7ZXN9GWN8G9W-\u00e9",
+    "fragmentation": "GHAUX-613GPN0P\n...\n7ZXN9GWN8G9W-\u00e9",
+    "hex": "47484155582d36313347504e3050375a584e3947574e384739572dc3a9",
+    "json_escape": "GHAUX-613GPN0P7ZXN9GWN8G9W-\\u00e9",
+    "nfd": "GHAUX-613GPN0P7ZXN9GWN8G9W-e\u0301",
+    "nfkc": "GHAUX-613GPN0P7ZXN9GWN8G9W-\u00e9",
+    "percent": "GHAUX-613GPN0P7ZXN9GWN8G9W-%C3%A9",
+    "reversible_composition": "R0hBVVgtNjEzR1BOMFA3WlhOOUdXTjhHOVctZSVDQyU4MQ==",
+    "whitespace": "GHAUX  613GPN0P7ZXN9GWN8G9W  \u00e9"
+   },
+   "token": "GHAUX-613GPN0P7ZXN9GWN8G9W-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtVzEwR04ySUlYUjRGVVpaM0k2RkEtw6k=",
+    "case": "ghaux-w10gn2iixr4fuzz3i6fa-\u00c9",
+    "delimiter": "G|H|A|U|X|-|W|1|0|G|N|2|I|I|X|R|4|F|U|Z|Z|3|I|6|F|A|-|\u00e9",
+    "exact": "GHAUX-W10GN2IIXR4FUZZ3I6FA-\u00e9",
+    "fragmentation": "GHAUX-W10GN2II\n...\nXR4FUZZ3I6FA-\u00e9",
+    "hex": "47484155582d573130474e32494958523446555a5a33493646412dc3a9",
+    "json_escape": "GHAUX-W10GN2IIXR4FUZZ3I6FA-\\u00e9",
+    "nfd": "GHAUX-W10GN2IIXR4FUZZ3I6FA-e\u0301",
+    "nfkc": "GHAUX-W10GN2IIXR4FUZZ3I6FA-\u00e9",
+    "percent": "GHAUX-W10GN2IIXR4FUZZ3I6FA-%C3%A9",
+    "reversible_composition": "R0hBVVgtVzEwR04ySUlYUjRGVVpaM0k2RkEtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  W10GN2IIXR4FUZZ3I6FA  \u00e9"
+   },
+   "token": "GHAUX-W10GN2IIXR4FUZZ3I6FA-\u00e9"
+  },
+  {
+   "forms": {
+    "base64": "R0hBVVgtV0U3Wjc4QlJQNlUyMjNJN0gwRlQtw6k=",
+    "case": "ghaux-we7z78brp6u223i7h0ft-\u00c9",
+    "delimiter": "G|H|A|U|X|-|W|E|7|Z|7|8|B|R|P|6|U|2|2|3|I|7|H|0|F|T|-|\u00e9",
+    "exact": "GHAUX-WE7Z78BRP6U223I7H0FT-\u00e9",
+    "fragmentation": "GHAUX-WE7Z78BR\n...\nP6U223I7H0FT-\u00e9",
+    "hex": "47484155582d5745375a373842525036553232334937483046542dc3a9",
+    "json_escape": "GHAUX-WE7Z78BRP6U223I7H0FT-\\u00e9",
+    "nfd": "GHAUX-WE7Z78BRP6U223I7H0FT-e\u0301",
+    "nfkc": "GHAUX-WE7Z78BRP6U223I7H0FT-\u00e9",
+    "percent": "GHAUX-WE7Z78BRP6U223I7H0FT-%C3%A9",
+    "reversible_composition": "R0hBVVgtV0U3Wjc4QlJQNlUyMjNJN0gwRlQtZSVDQyU4MQ==",
+    "whitespace": "GHAUX  WE7Z78BRP6U223I7H0FT  \u00e9"
+   },
+   "token": "GHAUX-WE7Z78BRP6U223I7H0FT-\u00e9"
+  }
+ ],
+ "purpose": "Deterministic reversible forms for the twelve frozen families.",
+ "schema": "kinbase-acceptance-transformation-dictionary/1"
+}

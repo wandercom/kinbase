@@ -7,7 +7,8 @@
  "manifest_sha256": "12dd4c18aaca12c29cc816ca4a5161b5e011814f021879897b88b0e6e85168dd",
  "supersedes_manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
  "observed_at": "2026-09-10T00:40:05Z",
- "statement": "Rename everything to kinbase; I'll ratify it as valid. We don't have to play by the rules we make up. If there's no apparent or future-scoped 'kinbase', then it doesn't matter that much.",
- "authority_effect": "Ratifies the specification as renamed. The rename moved every schema string, domain separator, HTTP header, environment variable and on-disk path from kinbase-* to kinbase-*, which re-keys every signature preimage and every content-addressed event path. The founder holds that nothing outside this repository holds a kinbase-signed event, so there is nothing to migrate. Does not establish proof, sign a terminal verdict, or authorize outcome-experiment spending.",
- "provenance": "Exact user message in the active Claude Code conversation, projected by the Validator; no external cryptographic signature is claimed. This matches the provenance of the receipt it supersedes."
+ "statement": "Rename everything to kinbase; I'll ratify it as valid. We don't have to play by the rules we make up. If there's no apparent or future-scoped 'guildhall', then it doesn't matter that much.",
+ "authority_effect": "Ratifies the specification as renamed. The rename moved every schema string, domain separator, HTTP header, environment variable and on-disk path from guildhall-* to kinbase-*, which re-keys every signature preimage and every content-addressed event path. The founder holds that nothing outside this repository holds a guildhall-signed event, so there is nothing to migrate. Does not establish proof, sign a terminal verdict, or authorize outcome-experiment spending.",
+ "provenance": "Exact user message in the active Claude Code conversation, projected by the Validator; no external cryptographic signature is claimed. This matches the provenance of the receipt it supersedes.",
+ "transcription_note": "The wholesale substitution was applied to this file after it was written and rewrote the founder's own word 'guildhall' inside the quotation. Restored by hand; the statement above is verbatim."
 }

@@ -1,0 +1,312 @@
+{
+  "closed": 22,
+  "entries": [
+    {
+      "current_effect": "the attestation states its own scope and unreadable paths",
+      "finding": 1,
+      "gates": [
+        "INSTRUMENT"
+      ],
+      "required_work": "tools/attest-clean.sh enumerates untracked paths, records the exact commit and tree, and names each inaccessible path explicitly rather than silently scoping it away.",
+      "status": "CLOSED",
+      "title": "Full clean-worktree attestation unavailable",
+      "why_blocking": "Git cannot stat tracked paths under .kin/** and evidence/**, so untracked or modified material there cannot be excluded."
+    },
+    {
+      "current_effect": "V-10 reports instrument=PASS product=NOT_RUN",
+      "finding": 2,
+      "gates": [
+        "V-10"
+      ],
+      "required_work": "Nodes carry an origin; a selftest-marked node is instrument-only and can never resolve the product channel.",
+      "status": "CLOSED",
+      "title": "V-10 reported product PASS with no product",
+      "why_blocking": "Two static selftest assertions resolved both channels to PASS."
+    },
+    {
+      "current_effect": "a skipped parameter keeps its function NOT_RUN",
+      "finding": 3,
+      "gates": [
+        "V-9"
+      ],
+      "required_work": "The census folds every collected parameter instance, keeping the worst outcome, and never discards an instance.",
+      "status": "CLOSED",
+      "title": "Parameterised nodes collapsed into one census record",
+      "why_blocking": "f[codex] skipped and f[claude] passing folded to one key; the later record overwrote the earlier."
+    },
+    {
+      "current_effect": "a loosened clause no longer rejects its own frozen negative, so the ledger reports a survivor",
+      "finding": 4,
+      "gates": [
+        "V-1",
+        "V-2",
+        "V-3",
+        "V-4",
+        "V-5",
+        "V-6",
+        "V-7",
+        "V-8",
+        "V-9"
+      ],
+      "required_work": "tests/tools/freeze-controls.py derives the positive, negative and benign controls once and commits them with a digest; rawcontrols.py reads those frozen bytes at run time and never regenerates them, and every row names the executable pre-execution planters bound to its own nodes.",
+      "status": "CLOSED",
+      "title": "Controls and mutations are circular synthetic artifacts",
+      "why_blocking": "conforming(), violating(), the blinded checker and the judge all derived from one clause object, so the ledger could only restate the clause to itself and could not establish sensitivity to product behaviour."
+    },
+    {
+      "current_effect": "an executed row with no evaluation record makes its gate INVALID_HARNESS",
+      "finding": 5,
+      "gates": [
+        "V-1",
+        "V-2",
+        "V-3",
+        "V-4",
+        "V-5",
+        "V-6",
+        "V-7",
+        "V-8",
+        "V-9"
+      ],
+      "required_work": "test_no_green_paths.py rejects any catalog row whose declared node does not literally call its checker for that exact OID, and consumption.py records a content-addressed evaluation per row at run time.",
+      "status": "CLOSED",
+      "title": "Obligations lack executable checker coupling",
+      "why_blocking": "66 of 92 obligations were named by a test that never called their checker, so a weak test satisfied the census without consuming its row."
+    },
+    {
+      "current_effect": "all fifteen gate modules report zero findings",
+      "finding": 6,
+      "gates": [
+        "V-1",
+        "V-2",
+        "V-3",
+        "V-4",
+        "V-5",
+        "V-6",
+        "V-7",
+        "V-8",
+        "V-9"
+      ],
+      "required_work": "greenpath.py analyses every test function individually for bare return, untyped assert, permissive default, collection fallback, tautology, swallowed failure, unproved loop domain, optional guard and missing catalog consumption.",
+      "status": "CLOSED",
+      "title": "Static green-path audit missed the patterns it forbids",
+      "why_blocking": "The linter checked three literal defaults and accepted a module if one total-quantifier name appeared anywhere; 24 collection defaults, 17 optional loops and 41 guarded assertion blocks survived it."
+    },
+    {
+      "current_effect": "a mutation changes what the product reads, not what it printed",
+      "finding": 7,
+      "gates": [
+        "V-1",
+        "V-2",
+        "V-3",
+        "V-4",
+        "V-5",
+        "V-6",
+        "V-7",
+        "V-8",
+        "V-9"
+      ],
+      "required_work": "planters.py applies all 35 catalogued mutations to raw state at a declared seam before the product starts --- event body and bytes, certificate, external root, published registry, native source, user and service config, corpus record, host envelope, fault schedule --- and records an independent read-back witness.",
+      "status": "CLOSED",
+      "title": "Planters rewrite the result after execution",
+      "why_blocking": "The interposer ran the real product first and then edited stdout and exit status, mutating observation rather than causal behaviour."
+    },
+    {
+      "current_effect": "a partial or infrastructure failure is not a kill",
+      "finding": 8,
+      "gates": [
+        "V-1",
+        "V-2",
+        "V-3",
+        "V-4",
+        "V-5",
+        "V-6",
+        "V-7",
+        "V-8",
+        "V-9"
+      ],
+      "required_work": "mutation-run.sh parses per-node call-phase reports, requires every named node to fail in the planter's declared channel, and rejects a run whose planter never reached its seam.",
+      "status": "CLOSED",
+      "title": "Mutation runner counts infrastructure failure as a kill",
+      "why_blocking": "Any nonzero pytest status marked the whole mutation KILLED, and the interposer's own configuration was dropped by the driver's env scrub."
+    },
+    {
+      "current_effect": "all six mutations demonstrate escape and gate rejection",
+      "finding": 9,
+      "gates": [
+        "V-3"
+      ],
+      "required_work": "detectorprobe.py plants one positive control per detector mutation on the exact surface it disables; conftest.py rejects V-3 while any detector mutation is active; detector-mutation-run.sh requires both halves per isolated run.",
+      "status": "CLOSED",
+      "title": "Detector mutations never demonstrate gate invalidation",
+      "why_blocking": "One unit selftest confirmed local blindness; nothing activated a mutation, executed its gate and required INVALID_HARNESS."
+    },
+    {
+      "current_effect": "a missing fixture, right, binary, service or gold record never accuses the product",
+      "finding": 10,
+      "gates": [
+        "V-1",
+        "V-2",
+        "V-3",
+        "V-4",
+        "V-5",
+        "V-6",
+        "V-7",
+        "V-8",
+        "V-9"
+      ],
+      "required_work": "prereq.py types every instrument-owned prerequisite and raises HarnessInvalid; gate modules may not contain a bare assert, so a bare AssertionError can only originate in instrument code.",
+      "status": "CLOSED",
+      "title": "Assertion classification conflates instrument and product",
+      "why_blocking": "Every non-selftest AssertionError became PRODUCT_FAILURE, including assertions about Tester fixture counts and absent prerequisites."
+    },
+    {
+      "current_effect": "V-1 reports the exact ratified table, natively executed",
+      "finding": 11,
+      "gates": [
+        "V-1"
+      ],
+      "required_work": "lifecycle.py declares all 64 ratified cells with their native format, three frozen expected states and a per-cell negative mutation, and executes each transition in the adapter's own source format with before/after raw source digests.",
+      "status": "CLOSED",
+      "title": "V-1 lifecycle matrix is neither exact nor natively executed",
+      "why_blocking": "The ratified table sums to 64 cells; the catalog required 61. Transitions wrote generic JSON outside the adapter's native source and all cells shared one receipt mutation."
+    },
+    {
+      "current_effect": "V-2 measures the product rather than quoting it",
+      "finding": 12,
+      "gates": [
+        "V-2"
+      ],
+      "required_work": "The excluded 60-message calibration corpus and its manifest are committed and digest bound; metrics.py computes macro-F1, per-label metrics, pooled shared precision, atomisation and abstention in the harness from raw predictions joined to gold on the opaque token; each crash seam is killed at a witnessed artefact and recovery is read back from the store.",
+      "status": "CLOSED",
+      "title": "V-2 lacks calibration, gold-derived metrics and real sagas",
+      "why_blocking": "The calibration manifest was absent yet a refusal passed; metrics were product-reported; mixed-message lookups used pre-opaque IDs; crash seams were sleep-duration labels with a hardcoded recovery flag."
+    },
+    {
+      "current_effect": "V-3 coverage is executed rather than named",
+      "finding": 13,
+      "gates": [
+        "V-3"
+      ],
+      "required_work": "matrix.py writes native bytes onto each of the twelve declared surfaces across the full surface x encoding cross product and returns an exact receipt per cell; all nineteen threat-model families execute a real probe with control, decoy and detector blinding; the fourteen lifecycle stages are driven through the ratified CLI.",
+      "status": "CLOSED",
+      "title": "V-3 coverage is not total over surfaces and encodings",
+      "why_blocking": "Family coverage checked anchor names; qualification labelled in-memory payloads with surface names without planting through them; the lifecycle stage list was reported rather than executed."
+    },
+    {
+      "current_effect": "positive controls are worlds a conforming product may admit",
+      "finding": 14,
+      "gates": [
+        "V-4",
+        "V-5",
+        "V-7",
+        "V-8",
+        "V-9"
+      ],
+      "required_work": "trust.py establishes a live Company, the external root outside the work tree, a steward-signed repository certificate and a published AuthorityRegistry before any fixture is planted, and every gate fixture uses it.",
+      "status": "CLOSED",
+      "title": "Signed worlds lack the ratified external trust prerequisites",
+      "why_blocking": "SignedWorld wrote a worktree hint and local signers with no external Company root, repository certificate or signed AuthorityRegistry, so a conforming product should have refused the intended positive fixtures."
+    },
+    {
+      "current_effect": "V-4 constructs the state it reports",
+      "finding": 15,
+      "gates": [
+        "V-4"
+      ],
+      "required_work": "Each of the thirteen incremental stages digests the store before and after; the conflict resolves through a real parent-bound event; all four manifest relations are constructed; scale.py builds the 100,000-event ceiling corpus and the 10,000-event dense graph with cross-checked signatures; replay and a two-worktree lock witness are executed.",
+      "status": "CLOSED",
+      "title": "V-4 substitutes labels for transitions, scale, replay and locking",
+      "why_blocking": "Rebuild and restart marked themselves changed; conflict planted no authorized resolution; three of four manifest relations existed; there was no 10x corpus, no 10,000-event revocation graph, no replay and no lock witness."
+    },
+    {
+      "current_effect": "the product must resolve and use a registered channel",
+      "finding": 16,
+      "gates": [
+        "V-6"
+      ],
+      "required_work": "authority.py runs an independent signed answering process whose key, scope and channel are published through the live registry; delivery is evidenced by the process's own append-only log and the digest of the exact request bytes it received.",
+      "status": "CLOSED",
+      "title": "V-6 has no registered live authority round trip",
+      "why_blocking": "The fixture never registered the helper key, scope or channel; the test invoked the helper directly, so the product never delivered a question through a registered channel."
+    },
+    {
+      "current_effect": "V-8 ranges over a Company that holds the referenced fact",
+      "finding": 17,
+      "gates": [
+        "V-8"
+      ],
+      "required_work": "Every V-8 fixture installs the certificate and admits the referenced fact plus a superseding version through Company's own admission surface; each cache-table row is constructed by really expiring or revoking state and reading the result back.",
+      "status": "CLOSED",
+      "title": "V-8's live service holds no fact history, cache or revocation",
+      "why_blocking": "Company started but no referenced fact version was inserted, the certificate was not installed, and cache rows hardcoded state_constructed."
+    },
+    {
+      "current_effect": "V-9 exercises the real host lifecycle",
+      "finding": 18,
+      "gates": [
+        "V-9"
+      ],
+      "required_work": "The real host executables are typed prerequisites behind an invocation recorder; plan, denied install and approved install are compared by filesystem digest; the 250 ms Company connect budget is asserted at its ratified value; the fsck and soak corpora are built at the 10,000-event ceiling; a real submodule and nested repository are created.",
+      "status": "CLOSED",
+      "title": "V-9 performs no approved install or native host invocation",
+      "why_blocking": "Setup tests only dry-ran and refused; envelopes were synthetic; the invocation assertion was conditional; the 250 ms bound was asserted as 5 s; fsck used eight events; no submodule was created."
+    },
+    {
+      "current_effect": "absence of operator work is INVALID_HARNESS, never a pass",
+      "finding": 19,
+      "gates": [
+        "V-9"
+      ],
+      "required_work": "The blinded operator responses are a typed prerequisite and every one of the twenty decisions is scored and timed by the harness against gold the operator never saw; adequacy sends distinct per-window arrivals and counts slots and admitted facts from the receipts.",
+      "status": "CLOSED",
+      "title": "V-9 permits zero operator work and trusts reported adequacy",
+      "why_blocking": "The blinded file was never driven; absence of a result passed; adequacy sent the same file five times and trusted product-reported slots."
+    },
+    {
+      "current_effect": "semantic identity no longer reaches the product on any inspected channel",
+      "finding": 20,
+      "gates": [
+        "V-1",
+        "V-2",
+        "V-3",
+        "V-4",
+        "V-5",
+        "V-6",
+        "V-7",
+        "V-8",
+        "V-9"
+      ],
+      "required_work": "The policy inspects argv, cwd, stdin, extra_env, base_env overrides and committed paths, and the three named leaks use opaque harness-mapped identifiers.",
+      "status": "CLOSED",
+      "title": "Control inspection incomplete; case identity leaks",
+      "why_blocking": "The policy read only literal env= keys, missing argv, cwd, stdin, extra_env and committed history; the V-4 scenario, V-8 digest case and V-9 start state crossed those channels."
+    },
+    {
+      "current_effect": "human-grant absence closed; qualification still requires Validator's founder re-attestation over the current digest and Detector Reviewer's signed selection",
+      "finding": 21,
+      "gates": [
+        "V-3"
+      ],
+      "required_work": "Supplied tests/fixtures/auxiliary/GRANT.md, signed Jeremy McEntire of Wander at 2026-09-09T20:42:31Z, clauses 1-4, supplies the named rightsholder, asserted VP of Engineering authority, CC0 legal-code digest and both permissions. pool.json records the grant digest as closure evidence; auxsel verifies the reproducible pool. Tester did not author or modify the grant.",
+      "status": "CLOSED",
+      "title": "Auxiliary corpus human rights grant",
+      "why_blocking": "A Tester assertion of authorship cannot independently prove authority to grant CC0."
+    },
+    {
+      "current_effect": "a missing timeout plugin stops the run",
+      "finding": 22,
+      "gates": [
+        "INSTRUMENT"
+      ],
+      "required_work": "The suite refuses to start when a declared plugin is missing unless an explicitly recorded untimed run is requested.",
+      "status": "CLOSED",
+      "title": "Reviewer environment did not enforce pytest timeouts",
+      "why_blocking": "pytest_timeout was unavailable and the strict run still exited zero."
+    }
+  ],
+  "gates_with_open_debt": [],
+  "open": 0,
+  "review": "detector-reviewer dispatch 003",
+  "schema": "kinbase-acceptance-instrument-debt/1",
+  "total_findings": 22
+}

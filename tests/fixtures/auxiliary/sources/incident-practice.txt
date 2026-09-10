@@ -1,0 +1,15 @@
+Incident practice notes.
+
+Workarounds applied during an incident are temporary by construction. Recording
+one without an expiry produces a rule that outlives the condition it addressed.
+The convention is to record the workaround with an explicit validity interval and
+to let it expire rather than to remember to remove it.
+
+A revert is evidence. A proposal that was raised and rejected tells you something
+the absence of a proposal does not: that the alternative was considered and
+declined. Discarding rejected proposals loses that information and invites the
+same proposal again.
+
+Repetition is not corroboration. Ten restatements of one prior are one piece of
+evidence repeated, and counting them as ten independent supports will move a
+decision that a single independent observation should not have moved.

@@ -1,0 +1,561 @@
+{
+  "applications": [],
+  "planters": [
+    {
+      "applies_before_product_execution": true,
+      "description": "the adapter receipt carries a source count and an empty observation list",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-1",
+      "kind": "world_defect",
+      "must_fail_nodes": [
+        "test_v1_ingestion.py::test_adapter_receipt_reports_observations_not_counts",
+        "test_v1_ingestion.py::test_end_to_end_build_uses_at_least_seven_source_classes"
+      ],
+      "mutation_id": "v1.adapter_count_without_observations",
+      "point": "world.event_body",
+      "point_meaning": "the claim inside a fact event, before it is signed",
+      "requirement": "Mutation: make one adapter return a source count without observations; V-1 fails.",
+      "semantics": "One adapter's receipt reports a source count while emitting an empty observation batch."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the semantic withdrawal is signed under an approver scope rather than the steward/maintainer scope the requirement names",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-1",
+      "kind": "world_defect",
+      "must_fail_nodes": [
+        "test_v1_ingestion.py::test_misextraction_notice_is_approver_owned_and_withholds_only",
+        "test_v1_ingestion.py::test_never_true_requires_subject_matter_authority"
+      ],
+      "mutation_id": "v1.approver_mints_never_true",
+      "point": "world.event_body",
+      "point_meaning": "the claim inside a fact event, before it is signed",
+      "requirement": "A distinct steward/maintainer `never_true` event performs semantic withdrawal; mutation that lets the approver mint it must fail.",
+      "semantics": "The approver principal is permitted to sign a `never_true` semantic withdrawal instead of only a `misextraction` notice."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the message arrives pre-collapsed to one label, so per-atom destinations cannot be recovered from the raw record",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-2",
+      "kind": "corpus_defect",
+      "must_fail_nodes": [
+        "test_v2_classification.py::test_mixed_messages_atomise_rather_than_take_one_label",
+        "test_v2_classification.py::test_exact_match_atomization_and_per_label_metrics"
+      ],
+      "mutation_id": "v2.whole_message_single_label",
+      "point": "corpus.record",
+      "point_meaning": "one product-bound corpus record, before it is emitted",
+      "requirement": "Mutations: whole-message single label; shared-by-default under low confidence; common fan-out transaction; remove nonce uniqueness/recovery. Each must fail.",
+      "semantics": "Classification assigns one destination label to the entire message instead of atomising mixed scope."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the record declares a shared default at low confidence",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-2",
+      "kind": "corpus_defect",
+      "must_fail_nodes": [
+        "test_v2_classification.py::test_low_confidence_shared_label_demotes_to_none_or_unknown"
+      ],
+      "mutation_id": "v2.shared_by_default_low_confidence",
+      "point": "corpus.record",
+      "point_meaning": "one product-bound corpus record, before it is emitted",
+      "requirement": "Mutations: whole-message single label; shared-by-default under low confidence; common fan-out transaction; remove nonce uniqueness/recovery. Each must fail.",
+      "semantics": "A low-confidence shared label is emitted as a shared candidate instead of being demoted to `none`/Unknown."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the service is configured with one fan-out transaction across destinations",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-2",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v2_classification.py::test_partial_fanout_failure_does_not_roll_back_committed_destination",
+        "test_v2_classification.py::test_no_cross_store_transaction_exists"
+      ],
+      "mutation_id": "v2.common_fanout_transaction",
+      "point": "config.service",
+      "point_meaning": "the Company service configuration",
+      "requirement": "Mutations: whole-message single label; shared-by-default under low confidence; common fan-out transaction; remove nonce uniqueness/recovery. Each must fail.",
+      "semantics": "Fan-out uses one cross-destination transaction with global rollback instead of per-destination sagas."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "nonce retention is shorter than candidate lifetime plus clock skew",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-2",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v2_classification.py::test_kill_at_every_transition_then_concurrent_retry",
+        "test_v2_classification.py::test_retry_returns_original_receipt_without_duplication"
+      ],
+      "mutation_id": "v2.remove_nonce_uniqueness_recovery",
+      "point": "config.service",
+      "point_meaning": "the Company service configuration",
+      "requirement": "Mutations: whole-message single label; shared-by-default under low confidence; common fan-out transaction; remove nonce uniqueness/recovery. Each must fail.",
+      "semantics": "The `(destination, nonce)` uniqueness constraint and the recoverable destination journal are removed."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "a raw transcript digest is bound into a durable shared record",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "world_defect",
+      "must_fail_nodes": [
+        "test_v3_privacy.py::test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle"
+      ],
+      "mutation_id": "v3.transcript_digest_in_receipt",
+      "point": "world.event_body",
+      "point_meaning": "the claim inside a fact event, before it is signed",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "The destination receipt carries the raw transcript content digest."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the shared projection root list includes the Personal root",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v3_privacy.py::test_shared_writer_has_no_personal_capability",
+        "test_v3_privacy.py::test_sandbox_denies_personal_root_for_shared_processes"
+      ],
+      "mutation_id": "v3.mount_personal_in_coding_query",
+      "point": "config.user",
+      "point_meaning": "the user configuration the shared processes load",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "The coding projection process is given a Personal store handle."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the trust root is redirected to a worktree-local file",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe"
+      ],
+      "mutation_id": "v3.trust_kin_trust_json",
+      "point": "config.user",
+      "point_meaning": "the user configuration the shared processes load",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "A worktree `.kin/trust.json` is accepted as a trust root."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the record arrives with its taint list cleared and a de-identification flag set",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "corpus_defect",
+      "must_fail_nodes": [
+        "test_v3_privacy.py::test_hard_blocking_taint_is_never_cleared_by_deidentification",
+        "test_v3_privacy.py::test_paraphrase_only_output_stays_private_by_taint_policy"
+      ],
+      "mutation_id": "v3.clear_taint_after_deidentification",
+      "point": "corpus.record",
+      "point_meaning": "one product-bound corpus record, before it is emitted",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "`deidentify` clears provenance taint on the candidate record."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the candidate path names different bytes than the approved buffer",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "corpus_defect",
+      "must_fail_nodes": [
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe"
+      ],
+      "mutation_id": "v3.reread_candidate_path_after_approval",
+      "point": "corpus.record",
+      "point_meaning": "one product-bound corpus record, before it is emitted",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "The destination writer resolves and re-reads the candidate pathname instead of committing the inline approved buffer."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the event is signed by an authority the published registry does not contain",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "world_defect",
+      "must_fail_nodes": [
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe"
+      ],
+      "mutation_id": "v3.worktree_only_key_admission",
+      "point": "world.event_body",
+      "point_meaning": "the claim inside a fact event, before it is signed",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "An event signed by a key present only inside the worktree is admitted."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the message type is rewritten after signing, so one signature is presented for a different type",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "world_defect",
+      "must_fail_nodes": [
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe"
+      ],
+      "mutation_id": "v3.signature_reuse_across_message_types",
+      "point": "world.event_bytes",
+      "point_meaning": "the signed event's canonical bytes, before they are written",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "Domain separation is dropped so one signature verifies under a different `message_type`."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the canonical bytes carry a shadow statement after the signed digest",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "world_defect",
+      "must_fail_nodes": [
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe"
+      ],
+      "mutation_id": "v3.verify_one_parse_apply_another",
+      "point": "world.event_bytes",
+      "point_meaning": "the signed event's canonical bytes, before they are written",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "Verification and semantic use read two different parses of the buffer."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "every published authority scope becomes a wildcard",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "trust_defect",
+      "must_fail_nodes": [
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe"
+      ],
+      "mutation_id": "v3.wildcard_authority_scope",
+      "point": "trust.registry",
+      "point_meaning": "the published AuthorityRegistry document",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "Authority scope matching accepts a wildcard, prefix or glob instead of canonical exact byte equality."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "a logical key carries a statement-terminating SQL fragment",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "corpus_defect",
+      "must_fail_nodes": [
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe"
+      ],
+      "mutation_id": "v3.sql_interpolation",
+      "point": "corpus.record",
+      "point_meaning": "one product-bound corpus record, before it is emitted",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "A scope or logical key is interpolated into SQL rather than bound."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the Personal root is written into the shared configuration and the classifier argument vector",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v3_privacy.py::test_process_artifacts_contain_no_personal_root_canary"
+      ],
+      "mutation_id": "v3.personal_path_in_shared_argv_config",
+      "point": "config.user",
+      "point_meaning": "the user configuration the shared processes load",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "The shared process configuration or argv carries the Personal root."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the facts token is issued with a wildcard scope set",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe",
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe"
+      ],
+      "mutation_id": "v3.remove_scoped_token_enforcement",
+      "point": "config.service",
+      "point_meaning": "the Company service configuration",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "Capability-scope enforcement on service tokens is removed."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "nonce retention is set to zero",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe"
+      ],
+      "mutation_id": "v3.remove_nonce_uniqueness",
+      "point": "config.service",
+      "point_meaning": "the Company service configuration",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "The unique `(destination, nonce)` constraint is dropped."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "two approvals are released simultaneously between the slot check and the commit",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "fault_schedule",
+      "must_fail_nodes": [
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe"
+      ],
+      "mutation_id": "v3.race_concurrent_approvals",
+      "point": "fault.schedule",
+      "point_meaning": "an ordering, interleave or crash schedule at a real seam",
+      "requirement": "Mutations: add transcript digest to receipt; mount Personal in coding query; trust `.kin/trust.json`; clear taint after de-identification; re-read candidate path after approval; accept an event from a worktree-only key; reuse a signature across message types; verify one parse and apply another; wildcard an authority scope; interpolate SQL; expose the Personal path in shared argv/config; remove scoped-token enforcement; remove nonce uniqueness; race concurrent approvals. Each must fail.",
+      "semantics": "Concurrent approvals for one candidate are not serialised."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the preview record requests raw terminal rendering of a control payload",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-3",
+      "kind": "corpus_defect",
+      "must_fail_nodes": [
+        "test_v3_attacks.py::test_every_frozen_attack_family_has_a_probe"
+      ],
+      "mutation_id": "v3.raw_terminal_output",
+      "point": "corpus.record",
+      "point_meaning": "one product-bound corpus record, before it is emitted",
+      "requirement": "Mutation to raw terminal output must fail.",
+      "semantics": "The approval preview emits raw terminal bytes instead of the frozen bijective escaped form."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "conflict resolution is configured to take the greatest timestamp",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-4",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v4_maintenance.py::test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event",
+        "test_v5_temporal.py::test_newest_wins_is_not_the_rule"
+      ],
+      "mutation_id": "v4.greatest_timestamp_wins",
+      "point": "config.user",
+      "point_meaning": "the user configuration the shared processes load",
+      "requirement": "Mutation: choose the greatest timestamp/latest file on conflict, omit `as_of`, or treat a stale Company head observation as Git authority; V-4 fails.",
+      "semantics": "Conflicting heads are resolved by greatest timestamp or newest file."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the rebuild inputs omit as_of entirely",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-4",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v4_maintenance.py::test_rebuild_is_deterministic_over_frozen_inputs",
+        "test_v4_maintenance.py::test_omitting_as_of_breaks_determinism_and_is_refused"
+      ],
+      "mutation_id": "v4.omit_as_of",
+      "point": "config.user",
+      "point_meaning": "the user configuration the shared processes load",
+      "requirement": "Mutation: choose the greatest timestamp/latest file on conflict, omit `as_of`, or treat a stale Company head observation as Git authority; V-4 fails.",
+      "semantics": "The reducer reads an ambient wall clock instead of an explicit `as_of`."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "a stale Company head observation is configured as the manifest authority",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-4",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v4_maintenance.py::test_manifest_comparison_classifies_lag_incomplete_and_expiry"
+      ],
+      "mutation_id": "v4.stale_company_head_as_git_authority",
+      "point": "config.user",
+      "point_meaning": "the user configuration the shared processes load",
+      "requirement": "Mutation: choose the greatest timestamp/latest file on conflict, omit `as_of`, or treat a stale Company head observation as Git authority; V-4 fails.",
+      "semantics": "An expired Company manifest observation is treated as repository authority rather than dated maintainer testimony."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the admission lock is placed in a worktree-local directory rather than Git's common directory",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-4",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v4_maintenance.py::test_linked_worktrees_serialize_on_one_common_dir_lock"
+      ],
+      "mutation_id": "v4.worktree_local_lock",
+      "point": "config.user",
+      "point_meaning": "the user configuration the shared processes load",
+      "requirement": "A worktree-local lock mutation must fail.",
+      "semantics": "The admission lock lives in the per-worktree directory instead of Git's common directory."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "admission checks the content path before authority and revocation",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-4",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v4_maintenance.py::test_pre_revocation_replay_returns_history_without_readmission"
+      ],
+      "mutation_id": "v4.content_path_before_revocation",
+      "point": "config.user",
+      "point_meaning": "the user configuration the shared processes load",
+      "requirement": "Mutation that checks content path before authority/ revocation admission fails.",
+      "semantics": "The path-exists fast path runs before authority and revocation admission, so a revoked event is re-admitted."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the reducer policy is newest-wins",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-5",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v5_temporal.py::test_newest_wins_is_not_the_rule",
+        "test_v5_temporal.py::test_rejected_pr_does_not_displace_current_adr"
+      ],
+      "mutation_id": "v5.newest_wins",
+      "point": "config.user",
+      "point_meaning": "the user configuration the shared processes load",
+      "requirement": "Mutations newest-wins, highest-authority-always-wins, and repetition-as-independence must each fail.",
+      "semantics": "The reducer selects the newest event for a logical key."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the reducer policy is highest-authority-always-wins",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-5",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v5_temporal.py::test_scope_bounds_authority_rather_than_prestige"
+      ],
+      "mutation_id": "v5.highest_authority_always_wins",
+      "point": "config.user",
+      "point_meaning": "the user configuration the shared processes load",
+      "requirement": "Mutations newest-wins, highest-authority-always-wins, and repetition-as-independence must each fail.",
+      "semantics": "The reducer selects by authority rank regardless of scope, validity or supersession."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "each copied comment is relabelled as an independent source",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-5",
+      "kind": "corpus_defect",
+      "must_fail_nodes": [
+        "test_v5_temporal.py::test_copied_chorus_does_not_outweigh_one_independent_decision"
+      ],
+      "mutation_id": "v5.repetition_as_independence",
+      "point": "corpus.record",
+      "point_meaning": "one product-bound corpus record, before it is emitted",
+      "requirement": "Mutations newest-wins, highest-authority-always-wins, and repetition-as-independence must each fail.",
+      "semantics": "Repeated copies of one prior are counted as independent corroboration."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the authority channel is redirected to a local model prior",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-6",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v6_authority.py::test_signed_answer_from_a_separate_process_materially_changes_the_decision",
+        "test_v6_authority.py::test_unavailable_authority_yields_declared_degraded_policy"
+      ],
+      "mutation_id": "v6.synthesize_answer_from_model_prior",
+      "point": "config.user",
+      "point_meaning": "the user configuration the shared processes load",
+      "requirement": "Mutation: locally synthesize an answer from model prior; V-6 fails.",
+      "semantics": "An unresolved authority Unknown is closed from the model prior instead of a signed in-scope answer."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the selection policy becomes an independent scalar top-k",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-7",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v7_projection.py::test_duplicates_do_not_crowd_out_the_high_distortion_invariant",
+        "test_v7_projection.py::test_marginal_value_is_recomputed_against_the_current_set"
+      ],
+      "mutation_id": "v7.independent_scalar_topk",
+      "point": "config.user",
+      "point_meaning": "the user configuration the shared processes load",
+      "requirement": "Mutation: independent scalar rank/top-k; V-7 fails because duplicates crowd out the invariant.",
+      "semantics": "The projector ranks candidates independently by scalar score and takes the top k, with no set-conditional recomputation."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the exception_to relation is asserted by a Codebase-scoped event",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-8",
+      "kind": "world_defect",
+      "must_fail_nodes": [
+        "test_v8_company_refs.py::test_only_company_steward_may_sign_a_relaxation",
+        "test_v8_company_refs.py::test_maintainer_may_request_but_not_mint_an_exception"
+      ],
+      "mutation_id": "v8.codebase_authorizes_exception_to",
+      "point": "world.event_body",
+      "point_meaning": "the claim inside a fact event, before it is signed",
+      "requirement": "Mutation: let Codebase authorize `exception_to`; V-8 fails.",
+      "semantics": "A Codebase maintainer signature is accepted for a Company exception."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the delivered host payload disables mid-session capture while leaving SessionStart enabled",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-9",
+      "kind": "config_defect",
+      "must_fail_nodes": [
+        "test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal",
+        "test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal"
+      ],
+      "mutation_id": "v9.disable_mid_session_capture",
+      "point": "host.envelope",
+      "point_meaning": "a native host lifecycle payload, before it is delivered",
+      "requirement": "Mutation: disable mid-session capture while keeping SessionStart green; V-9 fails.",
+      "semantics": "Prompt/observation and pre-edit events stop capturing while SessionStart still returns a healthy payload."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the reservation increment is scheduled after the render",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-9",
+      "kind": "fault_schedule",
+      "must_fail_nodes": [
+        "test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window"
+      ],
+      "mutation_id": "v9.reservation_after_render",
+      "point": "fault.schedule",
+      "point_meaning": "an ordering, interleave or crash schedule at a real seam",
+      "requirement": "Moving the reservation increment after render must produce more than four prompts and make the mutation fail",
+      "semantics": "The prompt-slot reservation increments after the prompt renders."
+    },
+    {
+      "applies_before_product_execution": true,
+      "description": "the reissue eligibility check is scheduled outside BEGIN IMMEDIATE",
+      "expected_channel": "PRODUCT_FAILURE",
+      "gate": "V-9",
+      "kind": "fault_schedule",
+      "must_fail_nodes": [
+        "test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction"
+      ],
+      "mutation_id": "v9.check_outside_transaction",
+      "point": "fault.schedule",
+      "point_meaning": "an ordering, interleave or crash schedule at a real seam",
+      "requirement": "moving any check outside the transaction must produce a failing duplicate/starvation mutation",
+      "semantics": "Reissue eligibility, digest lock, slot reservation or consecutive count is checked outside the single `BEGIN IMMEDIATE`."
+    }
+  ],
+  "points": {
+    "config.service": "the Company service configuration",
+    "config.user": "the user configuration the shared processes load",
+    "corpus.record": "one product-bound corpus record, before it is emitted",
+    "fault.schedule": "an ordering, interleave or crash schedule at a real seam",
+    "host.envelope": "a native host lifecycle payload, before it is delivered",
+    "native.source": "a native adapter source file produced by a lifecycle cell",
+    "trust.certificate": "the steward-signed repository certificate",
+    "trust.registry": "the published AuthorityRegistry document",
+    "trust.root_key": "the external Company root public key and its location",
+    "world.event_body": "the claim inside a fact event, before it is signed",
+    "world.event_bytes": "the signed event's canonical bytes, before they are written",
+    "world.unknown": "an Unknown record, before it is written"
+  },
+  "schema": "kinbase-preexecution-planters/1"
+}

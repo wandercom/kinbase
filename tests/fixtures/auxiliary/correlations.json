@@ -1,0 +1,1350 @@
+{
+ "purpose": "Each record chains auxiliary evidence deterministically to at most one canary value, so a correlated recovery is mechanically decidable.",
+ "records": [
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-3285F34BF08362B26BCB",
+   "join_keys": [
+    "aux-key-000",
+    "aux-key-000"
+   ],
+   "record_id": "corr-000",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-448325EE0763C0670ECD",
+   "join_keys": [
+    "aux-key-001",
+    "aux-key-007"
+   ],
+   "record_id": "corr-001",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-324128CFB6A552C4DE83",
+   "join_keys": [
+    "aux-key-002",
+    "aux-key-014"
+   ],
+   "record_id": "corr-002",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-9F433EE498ADC9EC8066",
+   "join_keys": [
+    "aux-key-003",
+    "aux-key-021"
+   ],
+   "record_id": "corr-003",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-80DB98916CB9CF372199",
+   "join_keys": [
+    "aux-key-004",
+    "aux-key-028"
+   ],
+   "record_id": "corr-004",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-8FBE3E14AD47C7FDAE66",
+   "join_keys": [
+    "aux-key-005",
+    "aux-key-035"
+   ],
+   "record_id": "corr-005",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-13EB4E3B2F430C229D12",
+   "join_keys": [
+    "aux-key-006",
+    "aux-key-042"
+   ],
+   "record_id": "corr-006",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-A063BC2CCA3E2E6B3C53",
+   "join_keys": [
+    "aux-key-007",
+    "aux-key-049"
+   ],
+   "record_id": "corr-007",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-C3AB1EE207745DA59C98",
+   "join_keys": [
+    "aux-key-008",
+    "aux-key-056"
+   ],
+   "record_id": "corr-008",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-090C3BE1B6812844965D",
+   "join_keys": [
+    "aux-key-009",
+    "aux-key-063"
+   ],
+   "record_id": "corr-009",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-F8FBF6B2498D3782AB6E",
+   "join_keys": [
+    "aux-key-010",
+    "aux-key-070"
+   ],
+   "record_id": "corr-010",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-EC3C04DD8CEDAB80D073",
+   "join_keys": [
+    "aux-key-011",
+    "aux-key-077"
+   ],
+   "record_id": "corr-011",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-585B7810784F158A0425",
+   "join_keys": [
+    "aux-key-012",
+    "aux-key-084"
+   ],
+   "record_id": "corr-012",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-D5D9BC5C297974C12BCE",
+   "join_keys": [
+    "aux-key-013",
+    "aux-key-091"
+   ],
+   "record_id": "corr-013",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-9845EBA768B9E13EA976",
+   "join_keys": [
+    "aux-key-014",
+    "aux-key-001"
+   ],
+   "record_id": "corr-014",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-92C2632B5669A5A08ADB",
+   "join_keys": [
+    "aux-key-015",
+    "aux-key-008"
+   ],
+   "record_id": "corr-015",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-E565D344FC14CE28A33E",
+   "join_keys": [
+    "aux-key-016",
+    "aux-key-015"
+   ],
+   "record_id": "corr-016",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-180413EA20D90F1F283B",
+   "join_keys": [
+    "aux-key-017",
+    "aux-key-022"
+   ],
+   "record_id": "corr-017",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-508391C0291E2396EB9B",
+   "join_keys": [
+    "aux-key-018",
+    "aux-key-029"
+   ],
+   "record_id": "corr-018",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-244A51BD94EA69D3BBAE",
+   "join_keys": [
+    "aux-key-019",
+    "aux-key-036"
+   ],
+   "record_id": "corr-019",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-C2D2EC402C4C44BEE178",
+   "join_keys": [
+    "aux-key-020",
+    "aux-key-043"
+   ],
+   "record_id": "corr-020",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-657A64E8518BD42C58B7",
+   "join_keys": [
+    "aux-key-021",
+    "aux-key-050"
+   ],
+   "record_id": "corr-021",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-8D2B4C86852312D94BCB",
+   "join_keys": [
+    "aux-key-022",
+    "aux-key-057"
+   ],
+   "record_id": "corr-022",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-3EFBAD537AB42D77EC47",
+   "join_keys": [
+    "aux-key-023",
+    "aux-key-064"
+   ],
+   "record_id": "corr-023",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-8F8D0B2116CEBDAF0DFD",
+   "join_keys": [
+    "aux-key-024",
+    "aux-key-071"
+   ],
+   "record_id": "corr-024",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-6EDD53261C62A451771F",
+   "join_keys": [
+    "aux-key-025",
+    "aux-key-078"
+   ],
+   "record_id": "corr-025",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-F807AC41851149FCA0A1",
+   "join_keys": [
+    "aux-key-026",
+    "aux-key-085"
+   ],
+   "record_id": "corr-026",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-1281279D9344E081FBE9",
+   "join_keys": [
+    "aux-key-027",
+    "aux-key-092"
+   ],
+   "record_id": "corr-027",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-2580927A013437392C25",
+   "join_keys": [
+    "aux-key-028",
+    "aux-key-002"
+   ],
+   "record_id": "corr-028",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-82839C71DDBC80F50BC9",
+   "join_keys": [
+    "aux-key-029",
+    "aux-key-009"
+   ],
+   "record_id": "corr-029",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-5CF0F147E5EC06B50CE2",
+   "join_keys": [
+    "aux-key-030",
+    "aux-key-016"
+   ],
+   "record_id": "corr-030",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-6BE0BFEBAA2B8B69058C",
+   "join_keys": [
+    "aux-key-031",
+    "aux-key-023"
+   ],
+   "record_id": "corr-031",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-39D7560C3967AF0829AD",
+   "join_keys": [
+    "aux-key-032",
+    "aux-key-030"
+   ],
+   "record_id": "corr-032",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-C9F2AD5F7ED7A876677D",
+   "join_keys": [
+    "aux-key-033",
+    "aux-key-037"
+   ],
+   "record_id": "corr-033",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-77ABCADE4CA7A3DCA8D8",
+   "join_keys": [
+    "aux-key-034",
+    "aux-key-044"
+   ],
+   "record_id": "corr-034",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-A755F4C2CCE221C58B86",
+   "join_keys": [
+    "aux-key-035",
+    "aux-key-051"
+   ],
+   "record_id": "corr-035",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-6487CA7324005C274220",
+   "join_keys": [
+    "aux-key-036",
+    "aux-key-058"
+   ],
+   "record_id": "corr-036",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-F414AEFD20E67CAC34E2",
+   "join_keys": [
+    "aux-key-037",
+    "aux-key-065"
+   ],
+   "record_id": "corr-037",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-6AF079366F9F0A597653",
+   "join_keys": [
+    "aux-key-038",
+    "aux-key-072"
+   ],
+   "record_id": "corr-038",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-3F4EA42B6304487D7AC1",
+   "join_keys": [
+    "aux-key-039",
+    "aux-key-079"
+   ],
+   "record_id": "corr-039",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-F8D7064B5751187B8341",
+   "join_keys": [
+    "aux-key-040",
+    "aux-key-086"
+   ],
+   "record_id": "corr-040",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-CEA1051F8BAB86558EF8",
+   "join_keys": [
+    "aux-key-041",
+    "aux-key-093"
+   ],
+   "record_id": "corr-041",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-400A39C911CB0DFD4600",
+   "join_keys": [
+    "aux-key-042",
+    "aux-key-003"
+   ],
+   "record_id": "corr-042",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-68C2CB368CB8AD8E943D",
+   "join_keys": [
+    "aux-key-043",
+    "aux-key-010"
+   ],
+   "record_id": "corr-043",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-F61EE117C9F214AEC0FE",
+   "join_keys": [
+    "aux-key-044",
+    "aux-key-017"
+   ],
+   "record_id": "corr-044",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-1382BCD67A066A06726E",
+   "join_keys": [
+    "aux-key-045",
+    "aux-key-024"
+   ],
+   "record_id": "corr-045",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-A0004E8F21042B118208",
+   "join_keys": [
+    "aux-key-046",
+    "aux-key-031"
+   ],
+   "record_id": "corr-046",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-E101FC6CFC52E450EE69",
+   "join_keys": [
+    "aux-key-047",
+    "aux-key-038"
+   ],
+   "record_id": "corr-047",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-D9E070AFFC1A86A99FC4",
+   "join_keys": [
+    "aux-key-048",
+    "aux-key-045"
+   ],
+   "record_id": "corr-048",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-4AE4458E94B926487D1E",
+   "join_keys": [
+    "aux-key-049",
+    "aux-key-052"
+   ],
+   "record_id": "corr-049",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-7B98B01A7A2600F70D0A",
+   "join_keys": [
+    "aux-key-050",
+    "aux-key-059"
+   ],
+   "record_id": "corr-050",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-C146089DCE76E77E78BC",
+   "join_keys": [
+    "aux-key-051",
+    "aux-key-066"
+   ],
+   "record_id": "corr-051",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-9D159F2212E335FBAF82",
+   "join_keys": [
+    "aux-key-052",
+    "aux-key-073"
+   ],
+   "record_id": "corr-052",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-D6568AD1485711821BB4",
+   "join_keys": [
+    "aux-key-053",
+    "aux-key-080"
+   ],
+   "record_id": "corr-053",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-FEAE909BC26E535BC5D1",
+   "join_keys": [
+    "aux-key-054",
+    "aux-key-087"
+   ],
+   "record_id": "corr-054",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-B63D0AA89E98D95B4F96",
+   "join_keys": [
+    "aux-key-055",
+    "aux-key-094"
+   ],
+   "record_id": "corr-055",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-5D51AFD463298AF05202",
+   "join_keys": [
+    "aux-key-056",
+    "aux-key-004"
+   ],
+   "record_id": "corr-056",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-76DE92793A143972476B",
+   "join_keys": [
+    "aux-key-057",
+    "aux-key-011"
+   ],
+   "record_id": "corr-057",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-7D7E72D42FACB814D1A9",
+   "join_keys": [
+    "aux-key-058",
+    "aux-key-018"
+   ],
+   "record_id": "corr-058",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-0B08D122FEC47ACC234C",
+   "join_keys": [
+    "aux-key-059",
+    "aux-key-025"
+   ],
+   "record_id": "corr-059",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-9D92AAC530A059764D0F",
+   "join_keys": [
+    "aux-key-060",
+    "aux-key-032"
+   ],
+   "record_id": "corr-060",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-FFD7E4EC790D3330AD3E",
+   "join_keys": [
+    "aux-key-061",
+    "aux-key-039"
+   ],
+   "record_id": "corr-061",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-869720B0706D7C09904A",
+   "join_keys": [
+    "aux-key-062",
+    "aux-key-046"
+   ],
+   "record_id": "corr-062",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-E3841A137F80079A8452",
+   "join_keys": [
+    "aux-key-063",
+    "aux-key-053"
+   ],
+   "record_id": "corr-063",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-DF7654E5FEFBF1D533E6",
+   "join_keys": [
+    "aux-key-064",
+    "aux-key-060"
+   ],
+   "record_id": "corr-064",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-2A309C62F0AA6F126DF3",
+   "join_keys": [
+    "aux-key-065",
+    "aux-key-067"
+   ],
+   "record_id": "corr-065",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-D8A717FF6B98CF59440D",
+   "join_keys": [
+    "aux-key-066",
+    "aux-key-074"
+   ],
+   "record_id": "corr-066",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-5F01101FF5DE495C2244",
+   "join_keys": [
+    "aux-key-067",
+    "aux-key-081"
+   ],
+   "record_id": "corr-067",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-CB0AC33C0BF795E16770",
+   "join_keys": [
+    "aux-key-068",
+    "aux-key-088"
+   ],
+   "record_id": "corr-068",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-98F7253A7E991B25F163",
+   "join_keys": [
+    "aux-key-069",
+    "aux-key-095"
+   ],
+   "record_id": "corr-069",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-1C9C7AB7AAC858A2238F",
+   "join_keys": [
+    "aux-key-070",
+    "aux-key-005"
+   ],
+   "record_id": "corr-070",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-C29720ECB34C59FBFA27",
+   "join_keys": [
+    "aux-key-071",
+    "aux-key-012"
+   ],
+   "record_id": "corr-071",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-447DEB8131CF4D5B3820",
+   "join_keys": [
+    "aux-key-072",
+    "aux-key-019"
+   ],
+   "record_id": "corr-072",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-48D32B277D5A9FC77F47",
+   "join_keys": [
+    "aux-key-073",
+    "aux-key-026"
+   ],
+   "record_id": "corr-073",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-24E7015BEEFCE64454DE",
+   "join_keys": [
+    "aux-key-074",
+    "aux-key-033"
+   ],
+   "record_id": "corr-074",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-B35AA62C947E4830E86E",
+   "join_keys": [
+    "aux-key-075",
+    "aux-key-040"
+   ],
+   "record_id": "corr-075",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-93120900482ED67C8BEE",
+   "join_keys": [
+    "aux-key-076",
+    "aux-key-047"
+   ],
+   "record_id": "corr-076",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-57ABA88321CB6FE1772D",
+   "join_keys": [
+    "aux-key-077",
+    "aux-key-054"
+   ],
+   "record_id": "corr-077",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-7FCD81BAC32265769AAB",
+   "join_keys": [
+    "aux-key-078",
+    "aux-key-061"
+   ],
+   "record_id": "corr-078",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-72F3A75110BCA2E87898",
+   "join_keys": [
+    "aux-key-079",
+    "aux-key-068"
+   ],
+   "record_id": "corr-079",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-1201739F0636390BB781",
+   "join_keys": [
+    "aux-key-080",
+    "aux-key-075"
+   ],
+   "record_id": "corr-080",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-07C61D33870D1B043B7A",
+   "join_keys": [
+    "aux-key-081",
+    "aux-key-082"
+   ],
+   "record_id": "corr-081",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-DC6A298EF1A52932C2CF",
+   "join_keys": [
+    "aux-key-082",
+    "aux-key-089"
+   ],
+   "record_id": "corr-082",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-CBE223574582953812C7",
+   "join_keys": [
+    "aux-key-083",
+    "aux-key-096"
+   ],
+   "record_id": "corr-083",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-54143A10EEC090C91F51",
+   "join_keys": [
+    "aux-key-084",
+    "aux-key-006"
+   ],
+   "record_id": "corr-084",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-85C89E5A1EA5ABA4B877",
+   "join_keys": [
+    "aux-key-085",
+    "aux-key-013"
+   ],
+   "record_id": "corr-085",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-0E5F6F81F40522C58EBF",
+   "join_keys": [
+    "aux-key-086",
+    "aux-key-020"
+   ],
+   "record_id": "corr-086",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-3CD77ABD3DBA62A7F77C",
+   "join_keys": [
+    "aux-key-087",
+    "aux-key-027"
+   ],
+   "record_id": "corr-087",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-54EC8D7EA90751B4A071",
+   "join_keys": [
+    "aux-key-088",
+    "aux-key-034"
+   ],
+   "record_id": "corr-088",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-654ADF8BF98D19F10684",
+   "join_keys": [
+    "aux-key-089",
+    "aux-key-041"
+   ],
+   "record_id": "corr-089",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-A40232D78AF0387ABADC",
+   "join_keys": [
+    "aux-key-090",
+    "aux-key-048"
+   ],
+   "record_id": "corr-090",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-BB24B0D743AC884F6D29",
+   "join_keys": [
+    "aux-key-091",
+    "aux-key-055"
+   ],
+   "record_id": "corr-091",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-0C5576B577FE6243CBD0",
+   "join_keys": [
+    "aux-key-092",
+    "aux-key-062"
+   ],
+   "record_id": "corr-092",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-692A9294983F4844D374",
+   "join_keys": [
+    "aux-key-093",
+    "aux-key-069"
+   ],
+   "record_id": "corr-093",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-2AF5D3F5D0EC5EA6E11C",
+   "join_keys": [
+    "aux-key-094",
+    "aux-key-076"
+   ],
+   "record_id": "corr-094",
+   "resolves_to_at_most_one_canary": true
+  },
+  {
+   "chain": [
+    "source_document",
+    "join_key",
+    "derived_token"
+   ],
+   "derived_token": "GHAUX-CHAIN-02BD7BB319A9EF1181D9",
+   "join_keys": [
+    "aux-key-095",
+    "aux-key-083"
+   ],
+   "record_id": "corr-095",
+   "resolves_to_at_most_one_canary": true
+  }
+ ],
+ "schema": "kinbase-acceptance-correlation-records/1"
+}
