@@ -5,7 +5,7 @@ Date: 2026-09-05
 ## Claim reviewed
 
 The Validator proposed categorically rejecting every unratified
-`GUILDHALL_ACCEPTANCE_*` input because scenario labels, synthetic counts, and
+`KINBASE_ACCEPTANCE_*` input because scenario labels, synthetic counts, and
 optional evidence assertions can let a proof-shaped implementation pass without
 doing the measured work.
 

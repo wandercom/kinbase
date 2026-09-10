@@ -1,4 +1,4 @@
-# Advocate disposition — Guildhall acceptance no-vacuity
+# Advocate disposition — Kinbase acceptance no-vacuity
 
 Review artifact:
 `evidence/reviews/advocate-acceptance-no-vacuity-018.json`

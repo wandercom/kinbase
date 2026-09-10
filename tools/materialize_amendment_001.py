@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Materialize Guildhall amendment 001 from its frozen base artifacts."""
+"""Materialize Kinbase amendment 001 from its frozen base artifacts."""
 
 from __future__ import annotations
 
@@ -317,7 +317,7 @@ def exercise_section_case(case: dict[str, object]) -> str:
 def run_self_test_corpus(path: Path) -> dict[str, object]:
     corpus_bytes = path.read_bytes()
     corpus = json.loads(corpus_bytes)
-    if corpus.get("schema") != "guildhall-materializer-adversarial-corpus/1":
+    if corpus.get("schema") != "kinbase-materializer-adversarial-corpus/1":
         raise ValueError("wrong self-test corpus schema")
     results: list[dict[str, str]] = []
     for raw_case in corpus["cases"]:
@@ -389,7 +389,7 @@ def run_self_test_corpus(path: Path) -> dict[str, object]:
             raise ValueError(f"{case_id}: missing expected error fragment in {error!r}")
         results.append({"id": case_id, "status": status})
     return {
-        "schema": "guildhall-materializer-adversarial-result/1",
+        "schema": "kinbase-materializer-adversarial-result/1",
         "corpus_sha256": sha256(corpus_bytes),
         "case_count": len(results),
         "cases": results,
@@ -595,7 +595,7 @@ def materialize(
             f"authority bundle count {len(artifact_rows)} != table count {len(bundle_members)}"
         )
     root_bytes = (
-        f"guildhall-authority-bundle-v1\nartifact-count\t{len(artifact_rows)}\n"
+        f"kinbase-authority-bundle-v1\nartifact-count\t{len(artifact_rows)}\n"
         + "".join(
         f"{row['path']}\t{row['sha256']}\n" for row in artifact_rows
         )
@@ -604,7 +604,7 @@ def materialize(
         row.pop("new_body")
 
     receipt: dict[str, object] = {
-        "schema": "guildhall-amendment-overlay/1",
+        "schema": "kinbase-amendment-overlay/1",
         "algorithm": "raw UTF-8/LF base offsets; declaration IDs; ascending-offset stream",
         "amendment_path": str(amendment_path.relative_to(root)),
         "amendment_sha256": sha256(amendment),
@@ -618,7 +618,7 @@ def materialize(
         "bundle_members": bundle_members,
         "markdown_authority_links": markdown_links,
         "artifacts": artifact_rows,
-        "bundle_root_method": "sha256(guildhall-authority-bundle-v1 LF, artifact-count TAB N LF, then path TAB artifact_sha256 LF; NFC-safe paths sorted by raw UTF-8 bytes)",
+        "bundle_root_method": "sha256(kinbase-authority-bundle-v1 LF, artifact-count TAB N LF, then path TAB artifact_sha256 LF; NFC-safe paths sorted by raw UTF-8 bytes)",
         "bundle_root_sha256": sha256(root_bytes),
     }
     return effective, receipt

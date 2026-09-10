@@ -26,7 +26,7 @@ exposing any product/Coder/Validator/Detector-execution path to Claude.
   project/user workflow instructions.
 
 The exact Detector report reaches Claude on inherited stdin. The OS profile
-denies reads of Coder, Validator, Detector Reviewer, run control, main Guildhall,
+denies reads of Coder, Validator, Detector Reviewer, run control, main Kinbase,
 Codex memories, and Kindex data. It hides contents of Tester-clone `evidence/**`
 and `.kin/**`. It permits Tester `spec/**`/`tests/**` and Git metadata.
 

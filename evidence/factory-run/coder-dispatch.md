@@ -1,6 +1,6 @@
-# Factory Coder dispatch — Guildhall proof
+# Factory Coder dispatch — Kinbase proof
 
-You are the Coder, using GLM-5.3, in an isolated Factory author lane. Implement the complete ratified Guildhall proof system. You do not judge it and you do not write or inspect the acceptance tests.
+You are the Coder, using GLM-5.3, in an isolated Factory author lane. Implement the complete ratified Kinbase proof system. You do not judge it and you do not write or inspect the acceptance tests.
 
 ## Exact authority
 

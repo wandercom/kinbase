@@ -1,5 +1,5 @@
 {
-  "schema_version": "guildhall-factory-coder-failure/1",
+  "schema_version": "kinbase-factory-coder-failure/1",
   "recorded_at": "2026-09-05T21:32:55Z",
   "attempt": 6,
   "role": "Coder",
@@ -25,7 +25,7 @@
     "head_tree": "0a4cffe95304735ab68f6817f0fb97aeccb1ed77",
     "status_sha256": "d69f62bc2fe1ea230089e43d928661c459fe005e7480c21aefffdcff2b46bafe",
     "untracked_product_paths": [
-      "guildhall/",
+      "kinbase/",
       "pyproject.toml"
     ],
     "python_file_count": 29,

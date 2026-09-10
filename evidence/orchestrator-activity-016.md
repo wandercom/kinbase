@@ -1,6 +1,6 @@
 # Orchestrator activity delta — cursor 16
 
-Fresh GLM-5.3 Coder attempt 004 terminated after the Ollama account reached its session usage limit. The provider directed the account owner to add extra usage. The lane has no Coder commit, its 29 implementation modules are syntactically valid, and changes remain confined to `guildhall/` and `pyproject.toml`.
+Fresh GLM-5.3 Coder attempt 004 terminated after the Ollama account reached its session usage limit. The provider directed the account owner to add extra usage. The lane has no Coder commit, its 29 implementation modules are syntactically valid, and changes remain confined to `kinbase/` and `pyproject.toml`.
 
 No alternate configured provider exposes GLM-5.3. The available alternatives are to purchase additional Ollama usage, wait for an unknown reset, or change the Coder model. The Validator will not spend money without authority and rejects Claude as replacement because the completed Tester used Claude Opus.
 

@@ -4,7 +4,7 @@ Status: **candidate; not authority; no Coder dispatch permitted from these bytes
 
 ## Reader summary
 
-This candidate makes four changes to one still-unproven Guildhall generation:
+This candidate makes four changes to one still-unproven Kinbase generation:
 
 1. implement the complete P-1 through P-10 Product in Rust rather than Python;
 2. run the isolated GLM-5.3 Coder through local Codex against the pinned Vast/vLLM
@@ -169,7 +169,7 @@ read-only, content-addressed candidate bundle. Authority paths must be at most 2
 UTF-8 bytes, be NFC UTF-8,
 match `spec/[A-Za-z0-9._/-]+`, contain no empty, `.` or `..` segment, and contain no
 TAB, LF, CR, NUL, C0, or C1 byte. The bundle-root preimage is the exact bytes
-`guildhall-authority-bundle-v1<LF>artifact-count<TAB><decimal-count><LF>` followed by rows
+`kinbase-authority-bundle-v1<LF>artifact-count<TAB><decimal-count><LF>` followed by rows
 `authority-path<TAB>artifact-sha256<LF>` sorted by raw UTF-8 path bytes; its SHA-256
 is the bundle root. Decimal count has no sign or leading zero and must equal the row
 count; it must also equal the row count derived from the bundle-member table. The first materializer
@@ -235,7 +235,7 @@ implementation language and Coder runtime is recoverable only through a new buil
 new independent evidence, and coordinated reratification. Once a repository byte
 is transmitted to a marketplace host, that disclosure cannot be proven erased even
 if the instance is destroyed. Therefore public model staging may precede
-ratification, but no byte sourced from the Guildhall repository, its
+ratification, but no byte sourced from the Kinbase repository, its
 specifications, its lane artifacts, a Personal/Company/Codebase store, a test or
 oracle, a secret, or customer data may reach the Vast host before this amendment
 is exactly ratified. Only the exhaustive, byte-manifested synthetic probe envelope
@@ -255,7 +255,7 @@ leaves only local unadmitted prior art. Founder ratification accepts that first-
 availability risk; only a separately funded and ratified allowance could change it.
 
 Pre-ratification inference is allowed only from an isolated scratch directory with
-no Guildhall ancestry, a fixed synthetic prompt and fixed synthetic tool schema
+no Kinbase ancestry, a fixed synthetic prompt and fixed synthetic tool schema
 whose exact bytes are listed and digested in the qualification receipt, a scrubbed
 environment, and no inherited repository descriptor. A local deny-by-default egress
 proxy accepts only those digests while ratification state is absent. It records the
@@ -300,7 +300,7 @@ In `spec/architecture.md` section 1 replace this exact old block:
 with this exact new block:
 
 > The implementation is a Rust 1.98.1 workspace, edition 2024, producing one
-> `guildhall` executable with CLI and local-loopback-service modes. It uses one
+> `kinbase` executable with CLI and local-loopback-service modes. It uses one
 > canonical event/projection protocol but never one universal graph.
 
 The workspace is deliberately one deployable package with internal modules, not a
@@ -371,7 +371,7 @@ fails even if no module is named "router."
 All first-party Rust crates set `#![forbid(unsafe_code)]`. Maintained, version- and
 checksum-pinned syscall crates may encapsulate platform `fstat`, descriptor closing,
 `fexecve`/`execveat`, Landlock, and macOS sandbox primitives behind narrow
-Guildhall-owned interfaces. The dependency source/function inventory and audit are
+Kinbase-owned interfaces. The dependency source/function inventory and audit are
 part of the build receipt; a dependency may not define protocol bytes, trust policy,
 or authority. If the platform boundary cannot be met through audited safe APIs, the
 Coder returns `FACTORY_QUESTION` and stops. It may not weaken the boundary, add
@@ -399,7 +399,7 @@ manifest retrieval and local-toolchain limitation. The official channel manifest
 the run receipt additionally records the exact target component archive checksums,
 `rustc -Vv`, Cargo version, host target, `Cargo.lock` digest, and vendored-source
 digest. Dependency acquisition is a separately logged bootstrap step. Every proof
-build thereafter runs offline with `--locked`. The Guildhall workspace and binary
+build thereafter runs offline with `--locked`. The Kinbase workspace and binary
 contain no Python interpreter or Python package dependency; the separately installed,
 manifest-pinned `kin` compatibility executable remains an external process and may
 itself be implemented in Python.
@@ -410,12 +410,12 @@ archive against that manifest, compiles and runs an edition-2024 hello-world onc
 then repeats the build offline with `--locked` and records `rustc -Vv`, Cargo, target,
 archive, and output digests. A missing/mismatched toolchain is
 `AUTHORITY_MISMATCH` before Vast spend, not a G-9 discovery. This preflight verifies
-toolchain existence only; it is not Guildhall Product evidence.
+toolchain existence only; it is not Kinbase Product evidence.
 
 In `spec/architecture.md` section 1 replace this exact old block:
 
 > The existing Kindex package is integrated behind `PersonalKindexAdapter` and
-> `CodebaseKindexAdapter`; Guildhall does not fork its generic graph/search code.
+> `CodebaseKindexAdapter`; Kinbase does not fork its generic graph/search code.
 > Adapters use public Store/export/import surfaces or subprocess JSON contracts. Any
 > missing public seam is isolated in the adapter and recorded rather than answered by
 > writing Kindex SQLite tables directly.
@@ -423,11 +423,11 @@ In `spec/architecture.md` section 1 replace this exact old block:
 with this exact new block:
 
 > The existing Kindex package is integrated behind `PersonalKindexAdapter` and
-> `CodebaseKindexAdapter`; Guildhall does not fork its generic graph/search code.
+> `CodebaseKindexAdapter`; Kinbase does not fork its generic graph/search code.
 > In the Rust implementation those adapters invoke the absolute, startup-verified,
 > manifest-pinned `kin` executable through its public JSON/JSONL subprocess contracts.
 > They do not embed Python, import Kindex internals, or write Kindex SQLite tables.
-> Guildhall's Company store and signed `.kin/` protocol remain native Rust-owned
+> Kinbase's Company store and signed `.kin/` protocol remain native Rust-owned
 > components. Any missing public Kindex seam is isolated in an adapter and recorded.
 
 In `spec/architecture.md` section 4 replace this exact old bullet:
@@ -559,7 +559,7 @@ infrastructure evidence only and does not inherit across a changed host/configur
   appends and fsyncs `forwarded`. A `spent` row without `forwarded`, or interruption
   during the write, is permanently **potentially sent** and is never replayed or
   narrowed by missing provider evidence. The wrapper owns the local-forwarded list;
-  Vast owns actual provider receipt, which Guildhall cannot observe. Prepared, spent,
+  Vast owns actual provider receipt, which Kinbase cannot observe. Prepared, spent,
   forwarded, and diagnostic SSH counts must follow that prefix order; any unexpected
   delta halts and expands the potentially-sent notice superset rather than being forced
   to equality. Observer/journal failure therefore holds the body before SSH rather
@@ -663,7 +663,7 @@ infrastructure evidence only and does not inherit across a changed host/configur
   boundary after ratification because it materially reduces repeated-prefill cost.
   The Validator owns only the configuration assertion that persistent request/prefix
   caches are disabled and binds the exact argv/environment/inventory evidence. The
-  in-process prefix state itself is provider-owned derived data with no Guildhall
+  in-process prefix state itself is provider-owned derived data with no Kinbase
   lifecycle authority. Repo-derived prefix state is provider-accessible custody, not an erasure, privacy,
   durability, or recovery claim. The custody-memory record names this exposure class,
   the corresponding request digest list, and observer-owned input byte counts. Any
@@ -976,7 +976,7 @@ this new text:
 >
 > For the amended Coder generation, Vast.ai account 413964 and the exact launch-
 > receipt host are the named model-compute processor for only the Coder projection
-> of the synthetic Guildhall proving repository. The host operator can technically
+> of the synthetic Kinbase proving repository. The host operator can technically
 > access host files and memory; container isolation is not a confidentiality proof.
 > Personal-store history, Company bodies, customer data, credentials, test/oracle
 > bytes, and unrelated repositories remain prohibited. Codex runs locally and sends
@@ -989,7 +989,7 @@ this new text:
 > rather than merely stopped. Vast's deletion assertion is operational evidence, not
 > proof that a provider never retained bytes.
 
-Run-control receipts do not enter an unproven Guildhall Company store. They live in
+Run-control receipts do not enter an unproven Kinbase Company store. They live in
 the Validator-owned, append-only Factory run ledger outside author lanes, contain no
 raw protected payload, and are committed as sanitized evidence when safe. Each
 record has stable identity `(run_generation, record_type, monotonic_sequence,
@@ -1005,7 +1005,7 @@ destroy records. It also appends a permanent `provider_custody_memory` after the
 repository-bearing send. Policy owns its authorized byte-class and request inventory;
 the capability-separated observer owns exact `prepared` request-body digests/counts/
 byte counts; the SSH wrapper owns exact `spent` and locally `forwarded` inventories;
-Vast owns the fact of actual provider receipt, which no Guildhall component can
+Vast owns the fact of actual provider receipt, which no Kinbase component can
 observe. Proxy/SSH connection and byte counters are diagnostic cross-checks: an excess
 raises suspected custody, while a deficit cannot delete any prepared, spent,
 forwarded, or potentially-sent row. Retries are separate request rows, so no duplicate
@@ -1063,7 +1063,7 @@ wrong notice receives a separately owned incident/apology record naming cause,
 affected parties, repair, and closing authority.
 
 Founder ratification of the exact amendment digest and effective bundle root is also
-the explicit acceptance that authorized Guildhall repository prompt/tool bytes and
+the explicit acceptance that authorized Kinbase repository prompt/tool bytes and
 their derived prefix state enter Vast custody, that provider/operator access cannot be
 excluded, that first-contact SSH identity has continuity but no independent
 attestation, and that destroy does not prove erasure. It also accepts that a provider-
@@ -1235,7 +1235,7 @@ already observed for the proposed open segment. Define:
   the route emits `UNCONFIRMED_DESTROY` and enters `UNRESOLVED_CUSTODY`. From the
   attempted-destroy timestamp until a trustworthy terminal provider observation,
   the greatest observed running rate times elapsed time accumulates without bound in
-  `authorization_uncertainty`; no Guildhall action waits on or treats the provider
+  `authorization_uncertainty`; no Kinbase action waits on or treats the provider
   timeout as successful cleanup. G-2 and G-11 cannot close, and no terminal monetary,
   custody, or proof claim may be issued until a trustworthy provider terminal
   observation plus billing reconciliation or account closure resolves the exposure.
@@ -1291,7 +1291,7 @@ only if remaining warm seconds cover the measured cold-prefill seconds, one 1,80
 second work slot, and the still-unspent portion of the 1,800-second control reserve.
 Five hours is a
 founder-authorized allocation only upon ratification, not a duration calibrated from prior complete Rust
-Guildhall runs; no completion probability is claimed. Completion is the G-6 predicate:
+Kinbase runs; no completion probability is claimed. Completion is the G-6 predicate:
 one clean final Rust HEAD whose reachable Coder series maps every effective P-1 through
 P-10 obligation to implemented paths and implementation-owned checks. Anything less
 is an incomplete attempt, even if its Validator-custodied checkpoint is useful later.
@@ -1543,7 +1543,7 @@ with this exact new definition:
 
 The Oracle Curator freezes those questions, response bytes, scope handling, call
 order, and `NO_KNOWLEDGE_AVAILABLE` behavior before candidates while seeing no
-Guildhall design or candidate. The arm uses the same coding model, system prompt,
+Kinbase design or candidate. The arm uses the same coding model, system prompt,
 repository, tools, latency, and wall/tool/token budgets as baseline/full-system; only
 the preregistered arm difference remains. At least one independently sourced,
 load-bearing oracle fact must be absent from the authority replies and available only
@@ -1948,11 +1948,11 @@ cross-store correlation ID, secret, raw canary, HMAC key, or reversible mapping.
   coherent build, not a maximum-context serving benchmark.
 - The Coder's 262K serving context is a Factory input unrelated to the unchanged
   Product projection ceiling of 32 facts / 128 KiB.
-- No production data migration exists because no Python Guildhall product or user
+- No production data migration exists because no Python Kinbase product or user
   corpus has been admitted. Migration tooling remains outside this amendment.
 - The Rust binary still depends operationally on the separately installed, pinned
   Kindex `kin` CLI for Personal/legacy Codebase compatibility; it does not make the
-  Python Kindex implementation part of Guildhall's production binary.
+  Python Kindex implementation part of Kinbase's production binary.
 - The already completed model download, BF16 load, tool smoke, and tunnel-loss drill
   qualify infrastructure only. They neither pass a Product gate nor guarantee the
   expanded pre-dispatch controls.
@@ -1987,7 +1987,7 @@ cross-store correlation ID, secret, raw canary, HMAC key, or reversible mapping.
    safe wrappers may preserve the stricter boundary. If implementation proves that
    false, the question returns for explicit review rather than arriving as a hidden
    exception.
-9. Put Factory launch/usage/destroy receipts into the Guildhall Company store:
+9. Put Factory launch/usage/destroy receipts into the Kinbase Company store:
    rejected as circular proof. The Validator ledger exists before the Product and
    cannot be made trustworthy by the component it is judging.
 10. Reuse the old Tester and change only Python launch plumbing: rejected because the

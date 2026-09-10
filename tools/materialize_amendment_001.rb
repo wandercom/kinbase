@@ -1,5 +1,5 @@
 #!/usr/bin/env ruby
-# Independently parse, resolve, and materialize Guildhall amendment 001.
+# Independently parse, resolve, and materialize Kinbase amendment 001.
 
 require "base64"
 require "digest"
@@ -286,7 +286,7 @@ end
 def run_self_test_corpus(path)
   corpus_bytes = File.binread(path)
   corpus = JSON.parse(corpus_bytes)
-  unless corpus.fetch("schema") == "guildhall-materializer-adversarial-corpus/1"
+  unless corpus.fetch("schema") == "kinbase-materializer-adversarial-corpus/1"
     raise "wrong self-test corpus schema"
   end
   results = corpus.fetch("cases").map do |test_case|
@@ -355,7 +355,7 @@ def run_self_test_corpus(path)
     { "id" => case_id, "status" => status }
   end
   {
-    "schema" => "guildhall-materializer-adversarial-result/1",
+    "schema" => "kinbase-materializer-adversarial-result/1",
     "corpus_sha256" => digest(corpus_bytes),
     "case_count" => results.length,
     "cases" => results
@@ -391,7 +391,7 @@ amendment = File.binread(amendment_path)
 manifest_bytes = File.binread(manifest_path)
 plan_bytes = File.binread(options.fetch(:plan))
 plan = JSON.parse(plan_bytes)
-raise "wrong plan schema" unless plan.fetch("schema") == "guildhall-amendment-overlay/1"
+raise "wrong plan schema" unless plan.fetch("schema") == "kinbase-amendment-overlay/1"
 
 manifest = JSON.parse(manifest_bytes)
 expected = manifest.fetch("artifacts").to_h { |row| [row.fetch("path"), row.fetch("sha256")] }
@@ -563,7 +563,7 @@ end
 unless artifacts.length == bundle_members.length
   raise "authority bundle count #{artifacts.length} != table count #{bundle_members.length}"
 end
-root_bytes = "guildhall-authority-bundle-v1\nartifact-count\t#{artifacts.length}\n" +
+root_bytes = "kinbase-authority-bundle-v1\nartifact-count\t#{artifacts.length}\n" +
   artifacts.map { |row| "#{row.fetch('path')}\t#{row.fetch('sha256')}\n" }.join
 bundle_root = digest(root_bytes)
 raise "artifact census disagrees with parsed plan" unless artifacts == plan.fetch("artifacts")
@@ -576,7 +576,7 @@ raise "Markdown link census disagrees with parsed plan" unless markdown_links ==
 raise "bundle root disagrees with parsed plan" unless bundle_root == plan.fetch("bundle_root_sha256")
 
 receipt = {
-  schema: "guildhall-amendment-independent-crosscheck/1",
+  schema: "kinbase-amendment-independent-crosscheck/1",
   algorithm: "independent amendment/table parse, unique raw-base search, heading check, and ascending-offset splice",
   compared_plan_sha256: digest(plan_bytes),
   amendment_sha256: digest(amendment),
@@ -587,7 +587,7 @@ receipt = {
   bundle_members: bundle_members,
   markdown_authority_links: markdown_links,
   artifacts: artifacts,
-  bundle_root_method: "sha256(guildhall-authority-bundle-v1 LF, artifact-count TAB N LF, then path TAB artifact_sha256 LF; NFC-safe paths sorted by raw UTF-8 bytes)",
+  bundle_root_method: "sha256(kinbase-authority-bundle-v1 LF, artifact-count TAB N LF, then path TAB artifact_sha256 LF; NFC-safe paths sorted by raw UTF-8 bytes)",
   bundle_root_sha256: bundle_root
 }
 

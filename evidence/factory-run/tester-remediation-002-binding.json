@@ -1,9 +1,9 @@
 {
-  "schema_version": "guildhall-factory-tester-remediation-binding/1",
+  "schema_version": "kinbase-factory-tester-remediation-binding/1",
   "bound_at": "2026-09-05T19:56:57Z",
   "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
   "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
-  "tester_repository": "/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/tester",
+  "tester_repository": "/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/tester",
   "tester_branch": "factory/tester-ac8a13d1",
   "tester_parent_commit": "244184e631695cc331d64667bd20cfae7f286526",
   "tester_parent_tree": "893a6ba3bbc464762d479aa13305d3761adc07b4",
@@ -31,14 +31,14 @@
     "Validator repository",
     "Detector Reviewer repository",
     "run-control directory",
-    "main Guildhall repository",
+    "main Kinbase repository",
     "Codex memories",
     "Kindex configuration and data paths",
     "contents of Tester-clone evidence/** and .kin/**"
   ],
   "os_denied_writes": [
     "Tester-clone spec/**, evidence/**, .kin/**, root metadata, product/package paths",
-    "Coder, Validator, Detector Reviewer, control, and main Guildhall repositories",
+    "Coder, Validator, Detector Reviewer, control, and main Kinbase repositories",
     "Codex memories and Kindex paths"
   ],
   "os_allowed_writes": [

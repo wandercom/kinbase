@@ -8,7 +8,7 @@ under `--json`; human output includes the same IDs, state, and remediation.
 ## Configuration
 
 Launcher-only user config is
-`${XDG_CONFIG_HOME:-~/.config}/guildhall/config.toml` (0600). Only the launcher reads
+`${XDG_CONFIG_HOME:-~/.config}/kinbase/config.toml` (0600). Only the launcher reads
 the whole file. It opens the Personal root for the Personal worker, then constructs a
 separate shared-process configuration that contains no Personal path, descriptor,
 environment variable, or serialized parent config. Every process reports its granted
@@ -24,9 +24,9 @@ data_root = "/private/example/kindex" # required; launcher and Personal worker o
 
 [company]
 url = "http://127.0.0.1:8421"
-facts_token_file = "/private/example/guildhall/facts.token"
-root_public_key_file = "/private/example/guildhall/company-root.pub"
-cache_root = "/private/example/guildhall/cache"
+facts_token_file = "/private/example/kinbase/facts.token"
+root_public_key_file = "/private/example/kinbase/company-root.pub"
+cache_root = "/private/example/kinbase/cache"
 
 [classifier]
 executable = "/opt/example/bin/local-classifier"
@@ -43,21 +43,21 @@ Directory and administrative token files are optional, separate capabilities and
 are never forwarded to the ordinary coding process. Missing config selects
 Codebase-only mode: without an out-of-tree certificate, `status`/`fsck` show counts
 and `UNVERIFIED`, but event bodies never enter a host/model projection. A repository
-without `.kin/` starts with no Codebase facts and offers `guildhall repo init`;
+without `.kin/` starts with no Codebase facts and offers `kinbase repo init`;
 ordinary coding remains available.
 
-Service config is an explicit `guildhalld.toml` (0600) naming Company ID, SQLite
+Service config is an explicit `kinbased.toml` (0600) naming Company ID, SQLite
 path, bind address (loopback only in the PoC), bearer-token file, root key file,
 retention, freshness, and rate ceilings. Malformed or unsafe config fails startup.
 
 ```toml
 schema_version = "1"
 company_id = "company-demo"
-sqlite_path = "/private/example/guildhall/company.sqlite3"
+sqlite_path = "/private/example/kinbase/company.sqlite3"
 bind = "127.0.0.1:8421"
-root_key_file = "/private/example/guildhall/company-root.key"
-facts_token_file = "/private/example/guildhall/facts.token"
-directory_token_file = "/private/example/guildhall/directory.token"
+root_key_file = "/private/example/kinbase/company-root.key"
+facts_token_file = "/private/example/kinbase/facts.token"
+directory_token_file = "/private/example/kinbase/directory.token"
 auth_failures_per_minute = 10
 default_fact_freshness_seconds = 3600
 candidate_lifetime_seconds = 900
@@ -75,7 +75,7 @@ endpoints. `.kin/manifests/` and `.kin/events/` are signed shared state;
 `.kin/local/` is ignored private/cache state.
 
 ```toml
-schema_version = "guildhall-repo/1"
+schema_version = "kinbase-repo/1"
 repository_uuid_hint = "018f0000-0000-7000-8000-000000000001"
 safe_name = "example-service"
 domains = ["scheduling", "api"]
@@ -93,13 +93,13 @@ group/other. `doctor --json` reports path/digest/processor scope, never input by
 ## Initialization and service
 
 ```text
-guildhall company init --config guildhalld.toml
-guildhall company serve --config guildhalld.toml
-guildhall repo issue --repo PATH --company URL
-guildhall repo init --repo PATH --certificate FILE
-guildhall repo publish-manifest --repo PATH
-guildhall status [--repo PATH]
-guildhall doctor [--host codex|claude] [--repo PATH]
+kinbase company init --config kinbased.toml
+kinbase company serve --config kinbased.toml
+kinbase repo issue --repo PATH --company URL
+kinbase repo init --repo PATH --certificate FILE
+kinbase repo publish-manifest --repo PATH
+kinbase status [--repo PATH]
+kinbase doctor [--host codex|claude] [--repo PATH]
 ```
 
 Initialization previews every created path and certificate subject before requiring
@@ -113,32 +113,32 @@ The Company steward performs steps 1–3 once; a repository maintainer performs 
 the developer performs 6–9:
 
 1. Preview and initialize the loopback Company service:
-   `guildhall company init --config guildhalld.toml`, then
-   `guildhall company serve --config guildhalld.toml`.
-2. Verify `guildhall status --json` reports the Company ID, cursor, token scopes, and
+   `kinbase company init --config kinbased.toml`, then
+   `kinbase company serve --config kinbased.toml`.
+2. Verify `kinbase status --json` reports the Company ID, cursor, token scopes, and
    no raw key values.
 3. Register authorities, including an exact `architecture:<scope>` Chief Architect
    and any `environment:<id>` deploy owner, through the signed authority commands.
-4. In the repository, run `guildhall repo issue --repo . --company
+4. In the repository, run `kinbase repo issue --repo . --company
    http://127.0.0.1:8421`; inspect and sign the displayed repository UUID certificate.
-5. Run `guildhall repo init --repo . --certificate <outside-worktree-file>` and
+5. Run `kinbase repo init --repo . --certificate <outside-worktree-file>` and
    commit only `.kin/config`, `.kin/events/`, `.kin/manifests/`, and the required
    `.gitattributes`. Then publish the signed branch observation with
-   `guildhall repo publish-manifest --repo .`.
-6. Create the launcher-only user config and run `guildhall doctor --host codex
+   `kinbase repo publish-manifest --repo .`.
+6. Create the launcher-only user config and run `kinbase doctor --host codex
    --repo .` (then Claude). The doctor must show that shared processes lack Personal.
    It also attests the classifier's descriptor-backed executable digest, the closed
    child-fd allowlist, and absence of any descriptor under the Personal root; a
    pathname-only check does not pass.
-7. Run `guildhall hooks plan codex`; review the exact host file/command/permission
-   diff. Run `guildhall hooks install codex` only after the host presents its native
+7. Run `kinbase hooks plan codex`; review the exact host file/command/permission
+   diff. Run `kinbase hooks install codex` only after the host presents its native
    approval. Repeat for Claude. Refusal leaves config untouched and doctor explains
    the missing hook.
 8. Start a real host session in the repository. SessionStart prints verified Company
    and Codebase fact IDs/Unknowns; prompt, pre-edit, PreCompact, and Stop events are
    captured without querying Personal history.
-9. Inspect one proposal with `guildhall proposals show`, approve only its displayed
-   destination/digest, run `guildhall fsck --repo .`, and commit the new signed
+9. Inspect one proposal with `kinbase proposals show`, approve only its displayed
+   destination/digest, run `kinbase fsck --repo .`, and commit the new signed
    `.kin` event/manifest together with the codebase knowledge it records.
 
 At every step, a missing dependency returns the typed safe state below. No command
@@ -147,11 +147,11 @@ silently invents a root, owner, or approval.
 ## Corpus and inspection
 
 ```text
-guildhall ingest SOURCE_KIND SOURCE [--repo PATH] [--checkpoint ID]
-guildhall corpus rebuild --store personal|company|codebase --repo PATH
-guildhall fsck --repo PATH [--full]
-guildhall explain LOGICAL_KEY --repo PATH --decision TEXT
-guildhall project --repo PATH --task TEXT --decision TEXT --working-set ID...
+kinbase ingest SOURCE_KIND SOURCE [--repo PATH] [--checkpoint ID]
+kinbase corpus rebuild --store personal|company|codebase --repo PATH
+kinbase fsck --repo PATH [--full]
+kinbase explain LOGICAL_KEY --repo PATH --decision TEXT
+kinbase project --repo PATH --task TEXT --decision TEXT --working-set ID...
 ```
 
 `ingest` returns adapter receipt and observation/fact counts, never success by count
@@ -161,16 +161,16 @@ and evidence that would change it. Ceiling breaches return omitted/refused count
 ## Session, candidates, and approval
 
 ```text
-guildhall session start --host codex|claude --repo PATH
-guildhall session observe SESSION --event FILE
-guildhall session checkpoint SESSION
-guildhall session end SESSION
-guildhall proposals list --session SESSION
-guildhall proposals show CANDIDATE --destination DESTINATION
-guildhall proposals decide CANDIDATE --destination DESTINATION \
+kinbase session start --host codex|claude --repo PATH
+kinbase session observe SESSION --event FILE
+kinbase session checkpoint SESSION
+kinbase session end SESSION
+kinbase proposals list --session SESSION
+kinbase proposals show CANDIDATE --destination DESTINATION
+kinbase proposals decide CANDIDATE --destination DESTINATION \
   --approve-digest SHA256|--reject|--defer|--escalate
-guildhall proposals reissue CANDIDATE
-guildhall proposals reset --after-primary-event EVENT_ID \
+kinbase proposals reissue CANDIDATE
+kinbase proposals reset --after-primary-event EVENT_ID \
   --reason-code new-primary-task|operator-recovery|host-restart
 ```
 
@@ -190,7 +190,7 @@ Authority required: repository-maintainer:maint_2a...
 Canonical UTF-8 (exact): {"atom_kind":"constraint","scope":"scheduler/diagnosis","statement":"Scheduler diagnosis must use deployed lookahead, not the source default."}
 SHA-256: 8f2c...91a0
 Approve only these bytes:
-  guildhall proposals decide cand_7f... --destination codebase:018f... --approve-digest 8f2c...91a0
+  kinbase proposals decide cand_7f... --destination codebase:018f... --approve-digest 8f2c...91a0
 ```
 
 `approve-digest` is accepted only when it matches the inline immutable bytes bound to
@@ -216,10 +216,10 @@ and their count is shown. No accept-all command exists.
 ## Questions and authorities
 
 ```text
-guildhall questions list [--owner SELF]
-guildhall questions ask QUESTION_ID
-guildhall questions answer QUESTION_ID --answer-file FILE --key-file FILE
-guildhall questions status QUESTION_ID
+kinbase questions list [--owner SELF]
+kinbase questions ask QUESTION_ID
+kinbase questions answer QUESTION_ID --answer-file FILE --key-file FILE
+kinbase questions status QUESTION_ID
 ```
 
 `ask` delivers through the registry channel and records a receipt. Only the resolved
@@ -229,16 +229,16 @@ timeout executes the recorded degraded policy.
 ## Hosts and experiments
 
 ```text
-guildhall hooks plan codex|claude
-guildhall hooks install codex|claude
-guildhall hooks dispatch codex|claude EVENT
-guildhall experiment census MANIFEST
-guildhall experiment pilot MANIFEST
-guildhall experiment calibrate MANIFEST
-guildhall experiment freeze MANIFEST --budget FILE
-guildhall experiment run FROZEN_MANIFEST
-guildhall experiment score RUN
-guildhall experiment verdict RUN
+kinbase hooks plan codex|claude
+kinbase hooks install codex|claude
+kinbase hooks dispatch codex|claude EVENT
+kinbase experiment census MANIFEST
+kinbase experiment pilot MANIFEST
+kinbase experiment calibrate MANIFEST
+kinbase experiment freeze MANIFEST --budget FILE
+kinbase experiment run FROZEN_MANIFEST
+kinbase experiment score RUN
+kinbase experiment verdict RUN
 ```
 
 `hooks plan` is read-only. `install` invokes the host's normal user approval path and
@@ -288,7 +288,7 @@ may grow only through a new schema version.
 | `UNKNOWN_OWNER_UNRESOLVED` | no exact person/closing authority can be resolved | 3 | yes | Company steward repairs the registry entry before guidance is trusted. |
 | `PERSONAL_TAINT_BLOCKED` | hard-blocking secret/canary/private identifier reaches shared admission | 5 | no | Keep source private; create a new safe source rather than clearing taint. |
 | `HOOK_APPROVAL_REQUIRED` | host has not approved planned hook/config changes | 2 | no | Review `hooks plan` and use the host's native approval flow. |
-| `UNSUPPORTED_HOST_VERSION` | native Codex/Claude envelope is outside tested range | 3 | no | Upgrade Guildhall adapter or use a supported host; do not guess the envelope. |
+| `UNSUPPORTED_HOST_VERSION` | native Codex/Claude envelope is outside tested range | 3 | no | Upgrade Kinbase adapter or use a supported host; do not guess the envelope. |
 | `UNSUPPORTED_KINDEX_VERSION` | Personal/legacy adapter seam conformance fails | 3 | no | Install pinned Kindex 0.36.0 or add and ratify a compatibility adapter. |
 | `PROCESSOR_UNAUTHORIZED` | model/network request exceeds named processor scope | 5 | no | Use a local/current authorized processor or keep the input private. |
 | `MODEL_FINGERPRINT_CHANGED` | paired experimental block observes a different model fingerprint | 70 | no | Before launch admission, consume only a preregistered reserve; after admission, preserve and invalidate the run without replacement. |

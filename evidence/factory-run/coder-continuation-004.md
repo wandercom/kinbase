@@ -1,4 +1,4 @@
-# Factory Coder continuation dispatch 004 — Guildhall proof
+# Factory Coder continuation dispatch 004 — Kinbase proof
 
 You are a fresh GLM-5.3 Coder instance continuing the same isolated Factory author lane after the original thread became transport-unstable. You inherit the existing uncommitted product state in this repository. You do not judge it and you do not write or inspect acceptance tests.
 
@@ -15,9 +15,9 @@ Source `~/.profile`, verify the manifest and named artifact digests, resume or s
 ## Existing author state
 
 - The branch is `factory/coder-ac8a13d1`; `HEAD` is still the ratified baseline and no Coder commit exists.
-- Existing untracked product work is confined to `guildhall/` and `pyproject.toml`.
+- Existing untracked product work is confined to `kinbase/` and `pyproject.toml`.
 - There are 29 implementation Python files.
-- `guildhall/experiment.py` currently has an indentation error at line 971 left by an interrupted edit. Repair that first.
+- `kinbase/experiment.py` currently has an indentation error at line 971 left by an interrupted edit. Repair that first.
 - `apply_patch` is not installed in the lane. Do not search outside this repository for it. Use your native file-change tool, a valid standard unified diff with `git apply`, or a narrowly scoped Python/perl editor.
 
 The prior Coder implemented substantial real paths but had not completed its self-audit. Inspect the current implementation and the frozen authority directly; do not trust this summary as proof. Its own outstanding-work analysis included shared-process enforcement, source-body atomization and minimization, exact-byte approval saga recovery, host capture, and full V-10 census/randomization/signature/blinding integrity.

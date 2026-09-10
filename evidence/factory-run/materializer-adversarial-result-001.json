@@ -1,5 +1,5 @@
 {
-  "schema": "guildhall-materializer-adversarial-crosscheck/1",
+  "schema": "kinbase-materializer-adversarial-crosscheck/1",
   "observed_at": "2026-09-06T05:08:37Z",
   "corpus_path": "evidence/factory-run/materializer-adversarial-corpus-001.json",
   "corpus_sha256": "07a7e9a9817fafcdcd837c4ae1c68734c0f45b75dfb5c8f9f8e868a7ce0e9f62",

@@ -1,4 +1,4 @@
-# Guildhall Factory Tester remediation continuation 003
+# Kinbase Factory Tester remediation continuation 003
 
 Resume the same implementation-blind Claude Tester identity and continue the
 authorized remediation after the provider returned `API Error: Connection lost

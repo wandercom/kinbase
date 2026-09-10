@@ -1,9 +1,9 @@
-# Guildhall acceptance no-vacuity review packet
+# Kinbase acceptance no-vacuity review packet
 
 ## Review question
 
 Would the current independently authored acceptance suite establish the ratified
-Guildhall concept if it went green, or can a proof-shaped implementation satisfy
+Kinbase concept if it went green, or can a proof-shaped implementation satisfy
 it without performing the claimed work? Identify fatal gaps, admissible versus
 inadmissible test controls, and the minimum repair that makes the evidence
 decision-worthy. Do not optimize for milestone appearance or delivery speed.
@@ -31,7 +31,7 @@ self-repair alone would be enough. It would not address the observations below.
 
 ## Oracle and work-substitution surfaces
 
-The suite passes 40 distinct `GUILDHALL_ACCEPTANCE_*` variables into the product.
+The suite passes 40 distinct `KINBASE_ACCEPTANCE_*` variables into the product.
 None is in the ratified specification. Lack of ratification is not by itself the
 epistemic objection; the question is whether the control supplies an expected
 answer or replaces the measured work.
@@ -40,15 +40,15 @@ Concrete examples from the admitted Validator copy:
 
 1. `tests/acceptance/test_v5_temporal.py:154` creates only an empty initialized
    repository. At line 174 every temporal case passes its semantic case ID as
-   `GUILDHALL_ACCEPTANCE_TEMPORAL_CASE`, then asserts the answer associated with
+   `KINBASE_ACCEPTANCE_TEMPORAL_CASE`, then asserts the answer associated with
    that same ID. No event history constructs the DST, rollback, supersession,
    conflict, or unregistered-environment state.
 2. `tests/acceptance/test_v7_projection.py:69` also creates only an empty
-   repository. At line 105 it sends `GUILDHALL_ACCEPTANCE_V7_FIXTURE=1`; the
+   repository. At line 105 it sends `KINBASE_ACCEPTANCE_V7_FIXTURE=1`; the
    product is expected to emit the exact candidate roles, selection trace,
    complementarity, redundancy, distortion, and stopping answer the test asserts.
 3. `tests/acceptance/test_v4_maintenance.py:450` and line 466 send only
-   `GUILDHALL_ACCEPTANCE_SYNTHETIC_EVENT_COUNT` instead of creating the population
+   `KINBASE_ACCEPTANCE_SYNTHETIC_EVENT_COUNT` instead of creating the population
    whose intake and diagnosis cost is claimed. The oversized intake is permitted
    to return success at lines 454-457, so a product that accepts 10x the admission
    ceiling can pass that part of the test.

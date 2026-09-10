@@ -1,6 +1,6 @@
-# Guildhall Factory Tester remediation 001
+# Kinbase Factory Tester remediation 001
 
-You remain the independent **Tester** for the Guildhall proof ratified by manifest
+You remain the independent **Tester** for the Kinbase proof ratified by manifest
 `ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db`.
 This is a continuation of Tester session
 `7b88a154-cc04-48b3-854f-08902f264c66` from exact Tester commit

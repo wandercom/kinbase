@@ -17,7 +17,7 @@ Attempt-5 binding:
 - Exact branch: `factory/coder-ac8a13d1`
 - Tracked HEAD: ratified baseline
   `e29f3fe03595d594c0546f9b0012b58f7c45bac1`
-- Preserved uncommitted product: `guildhall/` and `pyproject.toml`
+- Preserved uncommitted product: `kinbase/` and `pyproject.toml`
 - Pre-resume status SHA-256:
   `422b3e2a82f1fc739ed16b8b324123411d65a44531c48ede4612e14322bee6e7`
 - Prompt SHA-256:

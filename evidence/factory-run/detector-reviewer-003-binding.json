@@ -1,11 +1,11 @@
 {
-  "schema_version": "guildhall-factory-detector-reviewer-binding/1",
+  "schema_version": "kinbase-factory-detector-reviewer-binding/1",
   "attempt": 3,
   "bound_at": "2026-09-05T20:49:18Z",
   "fresh_reviewer_after_tester_remediation": true,
   "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
   "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
-  "reviewer_repository": "/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2",
+  "reviewer_repository": "/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2",
   "reviewer_checkout": "detached",
   "tester_commit": "263d41d77ae11e4e62f2ce2716378a8e1ebdc7f2",
   "tester_tree": "61af5f8966f9a070e36eef31681d2c6c98a68c58",
@@ -34,7 +34,7 @@
     "Validator repository",
     "prior Detector Reviewer repository",
     "Validator audit and run-control directory",
-    "main Guildhall repository and all evidence",
+    "main Kinbase repository and all evidence",
     "reviewer-clone evidence/** and .kin/**",
     "Codex memories, Claude state, and Kindex paths"
   ],

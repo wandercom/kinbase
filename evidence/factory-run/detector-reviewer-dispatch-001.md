@@ -1,7 +1,7 @@
-# Guildhall Factory Detector Reviewer dispatch 001
+# Kinbase Factory Detector Reviewer dispatch 001
 
 You are the fresh, implementation-blind **Detector Reviewer** for the ratified
-Guildhall Factory run. You are not the Validator, Coder, Tester, Orchestrator, or
+Kinbase Factory run. You are not the Validator, Coder, Tester, Orchestrator, or
 product judge. Your only authority is to review the independently authored
 acceptance instrument before any product snapshot is combined.
 
@@ -78,7 +78,7 @@ the measured work is an oracle leak.
    assertion, empty-loop success, permissive parser, absent-key default,
    default-zero counter, preinitialized PASS, or product self-attestation that
    can make missing evidence green.
-3. Inventory **every** `GUILDHALL_ACCEPTANCE_*` environment variable or analogous
+3. Inventory **every** `KINBASE_ACCEPTANCE_*` environment variable or analogous
    out-of-band test control. For each, report exact path and line, consuming
    assertion/gate, classification (`raw_input`, `environment`,
    `fault_schedule`, `result_selector`, or `work_substitute`), whether it conveys
@@ -127,4 +127,4 @@ Only if every required item is positively established may the final line be:
 `DETECTOR_REVIEW_STATUS: CLEAR 0`
 
 Do not use a narrative synonym for the terminal line. Do not report a product
-verdict or claim the Guildhall concept proven.
+verdict or claim the Kinbase concept proven.

@@ -13,7 +13,7 @@ The full failure receipt is
 `evidence/factory-run/coder-attempt-007-failure.json`.
 
 The Coder did not commit. Its lane remains at the ratified baseline commit
-`e29f3fe03595d594c0546f9b0012b58f7c45bac1`, with `guildhall/` and
+`e29f3fe03595d594c0546f9b0012b58f7c45bac1`, with `kinbase/` and
 `pyproject.toml` preserved as untracked product. The current non-pycache
 path/content digest is
 `5b483e1f85a9a5f762ee85494b2081a92241f9f1204a06fda12fe333d2fe222e`.

@@ -15,7 +15,7 @@ The exact failure receipt is
 `8052ea06ccc2f9167f3257f2609b18d87f3d9cb9dbff760b5f4152b70e92c349`.
 
 No Coder commit or terminal Factory status exists. HEAD remains the ratified
-baseline. The lane contains only the untracked assigned `guildhall/` product and
+baseline. The lane contains only the untracked assigned `kinbase/` product and
 `pyproject.toml`; 29 Python files compile, and the command trace names no Tester,
 Validator, Detector Reviewer, main-product, or tests path. No artifact is
 admitted and no gate advanced.

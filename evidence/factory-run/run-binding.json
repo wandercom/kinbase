@@ -1,6 +1,6 @@
 {
-  "schema": "guildhall-factory-run/1",
-  "run_id": "guildhall-proof",
+  "schema": "kinbase-factory-run/1",
+  "run_id": "kinbase-proof",
   "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
   "baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
   "criticality": "Critical",
@@ -8,7 +8,7 @@
   "orchestrator": {
     "agent": "agy",
     "version": "1.1.26",
-    "tmux_window": "guildhall-proof:orchestrator",
+    "tmux_window": "kinbase-proof:orchestrator",
     "effects": [
       "block",
       "no-op"

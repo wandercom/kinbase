@@ -4,7 +4,7 @@
 - Orchestrator: Agy remains resident and non-authoring
 - Rust: material architecture change; requires amended exact-byte authority
 - Vast: provider, custody, runtime, and harness change; requires amended authority
-- Pre-staging: public GLM-5.3 weights only; no Guildhall repository bytes before ratification
+- Pre-staging: public GLM-5.3 weights only; no Kinbase repository bytes before ratification
 - Existing Python: preserved as unadmitted historical evidence
 - Gate effect: none
 

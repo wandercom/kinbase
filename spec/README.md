@@ -1,6 +1,6 @@
-# Guildhall specification map
+# Kinbase specification map
 
-Guildhall is the Company-memory service in a three-product Kindex system. In plain
+Kinbase is the Company-memory service in a three-product Kindex system. In plain
 terms: `personal` is your private conversational memory, `company` is organization-
 wide direction owned by named authorities, and `codebase` is repository-specific
 knowledge shared in Git under `.kin/`. A coding session may compose authorized

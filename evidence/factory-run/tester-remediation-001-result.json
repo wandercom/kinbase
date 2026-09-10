@@ -1,5 +1,5 @@
 {
-  "schema_version": "guildhall-factory-tester-remediation-result/1",
+  "schema_version": "kinbase-factory-tester-remediation-result/1",
   "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
   "session_id": "7b88a154-cc04-48b3-854f-08902f264c66",
   "model": "claude-opus-5",

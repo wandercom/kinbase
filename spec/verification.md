@@ -43,7 +43,7 @@ tmux and an interactive Claude Tester, so Factory method evidence is labeled
 
 Verdict consequences are fixed in advance. `PROVEN` authorizes only founder review
 of a new production design and private soak decision; it never authorizes deployment
-or shared-remote use. `NOT_PROVEN` stops Guildhall's current product/value claim and
+or shared-remote use. `NOT_PROVEN` stops Kinbase's current product/value claim and
 preserves the gate vector for founder-authorized redesign. It does not reopen the
 separate Type-1 rule that Personal, Company, and Codebase remain physically distinct.
 Only a documented pre-unblinding harness defect permits one founder-authorized
@@ -87,10 +87,10 @@ Unimplementable or unaffordable obligations cannot be silently edited mid-run.
   and a clean test lane; authors acceptance/benchmark tests and fixtures only;
   cannot read implementation or Coder work or issue a verdict.
 - **Oracle Curator (fresh isolated agent):** sees the frozen repository-history
-  population and judging-only post-change ground truth, but no Guildhall schema,
+  population and judging-only post-change ground truth, but no Kinbase schema,
   retrieval design, candidates, arms, or scores; authors the eligible-task census,
   neutral pre-change fact-only oracle, frozen authority replies, and load-bearing
-  labels. It does not write tests or judge Guildhall.
+  labels. It does not write tests or judge Kinbase.
 - **Corpus Builder (fresh isolated agent):** sees only the full candidate-parent
   revision list, frozen adapters/reducer, and evidence available at each revision;
   seals every historical Company/Codebase snapshot and the generic static prior before
@@ -105,7 +105,7 @@ Unimplementable or unaffordable obligations cannot be silently edited mid-run.
   before unblinding.
 - **Rubric Gold Annotators (two implementation-blind human domain experts):** label
   only the excluded calibration set before measurement freeze; they see no arm labels,
-  measurement candidates, or Guildhall implementation and never interact with a V-10
+  measurement candidates, or Kinbase implementation and never interact with a V-10
   run after freeze.
 - **Reconstructor and two automated scorers:** receive only their blinded packets,
   run under separately frozen model/prompt/parser identities, seal outputs
@@ -238,7 +238,7 @@ performs semantic withdrawal; mutation that lets the approver mint it must fail.
 
 The gate executes [`threat-model.md`](threat-model.md) exactly. Its public claim is
 limited to “zero observed unauthorized durable disclosure outside the authorized
-processor boundary under Acceptance Threat Model `guildhall-atm/1`, digest
+processor boundary under Acceptance Threat Model `kinbase-atm/1`, digest
 `<sha256>`, across execution census `<digest>`.” An unqualified “zero leakage” claim
 is a reporting failure.
 
@@ -363,7 +363,7 @@ is a reporting failure.
   must fail.
 - Initialize against a fully populated real pinned-Kindex `.kin/` inventory and prove
   byte preservation; inject a collision between an enumerated Kindex path and a
-  Guildhall reserved path and require typed no-write refusal.
+  Kinbase reserved path and require typed no-write refusal.
 - Mutation: choose the greatest timestamp/latest file on conflict, omit `as_of`, or
   treat a stale Company head observation as Git authority; V-4 fails.
 
@@ -389,7 +389,7 @@ highest-authority-always-wins, and repetition-as-independence must each fail.
 
 ### V-6 — real authority round trip (`P-6`, Critical)
 
-- Start `guildhalld` and register a named Chief Architect with a test signing key and
+- Start `kinbased` and register a named Chief Architect with a test signing key and
   a live channel endpoint/process separate from the caller.
 - Present an architectural ambiguity whose decision has high distortion and whose
   corpus tiers are exhausted.
@@ -611,7 +611,7 @@ N or the run ends `UNFUNDED_OR_UNDERPOWERED`. No one may discover the scale only
 pilot results or quietly power stratum endpoints with total N.
 - Give an Oracle Curator a date-bounded census of every merged change in at least two
   repositories, judging-only accepted outcomes, and the ratified selection program,
-  but no Guildhall schema/design, candidate, arm, or score. The program uses only
+  but no Kinbase schema/design, candidate, arm, or score. The program uses only
   repository history: reproducible parent, issue/request, post-change functional
   oracle, at least three pre-change evidence classes, and at least two independently
   owned nonredundant pre-change sources absent from the issue/direct edit surface,
@@ -782,7 +782,7 @@ pass.
 - `fsck`, `doctor`, corpus status, question status, and experiment status are
   executable and useful after restart. `explain <logical-key>` shows each reducer
   admission/rejection step and the evidence needed to flip the result.
-- Guildhall HTTP rejects unauthenticated reads, non-loopback Host, Origin-bearing
+- Kinbase HTTP rejects unauthenticated reads, non-loopback Host, Origin-bearing
   requests, and non-JSON writes; all receive typed remediation-safe errors.
 - Static analysis, formatting, type checks, dependency audit, and full test suite run
   without undeclared network access.

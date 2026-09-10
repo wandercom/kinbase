@@ -1,5 +1,5 @@
 {
-  "schema": "guildhall-materializer-adversarial-corpus/1",
+  "schema": "kinbase-materializer-adversarial-corpus/1",
   "cases": [
     {"id": "quote-empty", "kind": "quoted", "lines": [">"], "expected_status": "ok", "expected_value": "0a"},
     {"id": "quote-nested", "kind": "quoted", "lines": ["> >"], "expected_status": "ok", "expected_value": "3e0a"},

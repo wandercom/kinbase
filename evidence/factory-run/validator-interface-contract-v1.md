@@ -1,4 +1,4 @@
-# Guildhall interface contract — generation ac8a13d1, Rust product
+# Kinbase interface contract — generation ac8a13d1, Rust product
 
 Issued by the Validator. This document fixes the interface shapes the ratified spec leaves open. Where it conflicts with spec text, the spec wins and the conflict is a spec-defect to raise. Section 7 contains the Validator rulings that resolve known conflicts; they are binding for this generation.
 
@@ -13,15 +13,15 @@ Conventions in this document:
 
 ## 0. Process-level contract (applies to every CLI invocation)
 
-**Entry point resolution** : `GUILDHALL_BIN` (shell-split argv prefix) → `guildhall` on `PATH` → `sys.executable -m guildhall` (the tests' own venv interpreter; `import guildhall` must succeed there). None resolving = product failure, not instrument failure.
+**Entry point resolution** : `KINBASE_BIN` (shell-split argv prefix) → `kinbase` on `PATH` → `sys.executable -m kinbase` (the tests' own venv interpreter; `import kinbase` must succeed there). None resolving = product failure, not instrument failure.
 
 **Environment the product receives** . Everything else is scrubbed.
 - Passed through from the Tester shell if set: `PATH LANG LC_ALL TZ TMPDIR SYSTEMROOT PYTHONHASHSEED` (`run-acceptance.sh` sets `PYTHONHASHSEED=0` by default).
 - Always set: `HOME=<base>/home`, `XDG_CONFIG_HOME=<base>/config`, `XDG_DATA_HOME=$HOME/.local/share`, `XDG_STATE_HOME=$HOME/.local/state`, `XDG_CACHE_HOME=$HOME/.cache`, `GIT_CONFIG_GLOBAL=$HOME/.gitconfig`, `GIT_CONFIG_SYSTEM=/dev/null`, `GIT_TERMINAL_PROMPT=0`, `GIT_AUTHOR_NAME/EMAIL`, `GIT_COMMITTER_NAME/EMAIL` (fixture identity), `NO_COLOR=1`, `TERM=dumb`, `PYTHONIOENCODING=utf-8`.
 - Per-test overrides (the only semantic env inputs, ):
-  - `GUILDHALL_COMPANY_URL=http://127.0.0.1:<port>` — Company endpoint override .
-  - `GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS=<int>` — advance the product's proof clock by N seconds for that invocation . Values used: `0`, `3600*k`, `86400`, `604800`, `900+60`.
-- Never present: any `GUILDHALL_ACCEPTANCE_*`, `GUILDHALL_HOST_*`, `GUILDHALL_BIN`, vault/mutation vars .
+  - `KINBASE_COMPANY_URL=http://127.0.0.1:<port>` — Company endpoint override .
+  - `KINBASE_PROOF_CLOCK_OFFSET_SECONDS=<int>` — advance the product's proof clock by N seconds for that invocation . Values used: `0`, `3600*k`, `86400`, `604800`, `900+60`.
+- Never present: any `KINBASE_ACCEPTANCE_*`, `KINBASE_HOST_*`, `KINBASE_BIN`, vault/mutation vars .
 
 **cwd**: always the repository root under test (or a clone/worktree/submodule path), except `experiment *` calls which run from the fixture repo root without `--repo`.
 
@@ -46,7 +46,7 @@ Conventions in this document:
 
 Positional/flag order below is the order the instrument uses; `--json` is always last.
 
-### 1.1 `company serve --config <company_root>/guildhalld.toml`
+### 1.1 `company serve --config <company_root>/kinbased.toml`
 Long-lived (`popen`, new session group; SIGTERM then SIGKILL after 30 s). Must accept a loopback TCP connection on the configured bind within 30 s . Also probed: the port must not accept a connection on the host's non-loopback IP . No `--json` output is read. `company init` is **never** invoked.
 
 ### 1.2 `status [--repo PATH] --json`
@@ -67,9 +67,9 @@ Invoked as `status --repo <repo> --json` (also on clones, linked worktrees, subm
 - `exceptions: list[obj{signed_by: <authority_id>, accepted: bool, refusal_code?}]`, `exception_request_accepted: bool`, `effective_criticality: str` ().
 - `events: list[obj{atom_kind, statement?, unresponsive_closing_authority?, signature?, fact_state?}]` — filtered for `atom_kind == "orphan_abandoned"` () and `atom_kind == "observation_expired"` (); `observation_status: "historical-only"` (), `pending_orphans: int` ().
 - `query_log | query_traces: list[obj{requested, returned, selected_ids, working_set, resident_at_dependent_edit, declared_use, marginal_gain, stopping_reason, outcome, cost}]` .
-- `privacy_claim: str` — must contain verbatim `Zero observed unauthorized durable disclosure outside the authorized processor boundary under Acceptance Threat Model` and name `guildhall-atm/1`; must not contain `privacy proved` / `zero leakage`; `execution_census_digest: str` .
+- `privacy_claim: str` — must contain verbatim `Zero observed unauthorized durable disclosure outside the authorized processor boundary under Acceptance Threat Model` and name `kinbase-atm/1`; must not contain `privacy proved` / `zero leakage`; `execution_census_digest: str` .
 - `shared_work_performed: bool` (read when an inherited Personal fd forces a refusal; ), plus `error.code`.
-- Refusals read from `status`: `error.code` / `error.retryable` (`PROCESSOR_UNAUTHORIZED`, `retryable:false` when `GUILDHALL_COMPANY_URL` names an unauthorised endpoint — and zero bytes must be sent to it, ); hostile `.kin/config` → exit 5 with typed error ; broad-mode token file → exit 4 with `chmod` in the message, token bytes never echoed .
+- Refusals read from `status`: `error.code` / `error.retryable` (`PROCESSOR_UNAUTHORIZED`, `retryable:false` when `KINBASE_COMPANY_URL` names an unauthorised endpoint — and zero bytes must be sent to it, ); hostile `.kin/config` → exit 5 with typed error ; broad-mode token file → exit 4 with `chmod` in the message, token bytes never echoed .
 
 ### 1.3 `doctor [--host codex|claude] --repo PATH --json`
 Only `doctor --repo <repo> --json` is invoked. Keys:
@@ -78,7 +78,7 @@ Only `doctor --repo <repo> --json` is invoked. Keys:
 - Process artefact dump: the instrument inspects `ps -o command= -p`, `ps -E`, `lsof -p` of live `status`/`doctor` processes; the Personal root path and canaries must not appear in argv/env/fd tables .
 
 ### 1.4 `fsck --repo PATH [--full] --json`
-Keys: `store_digest: str` (), `manifest_comparison: obj{classification}`, `manifest_relations: obj{superset: "normal_lag", missing_head: "INCOMPLETE", expired_owner: "company-steward"}` (), `admitted_paths: list[obj{path}]` (lowercase digest paths only), `ineffective_git_attributes: bool` (), `cascade_state ∈ {"complete","REVOCATION_CASCADE_INCOMPLETE"}`, `unchecked_facts_withheld: bool` (, `--full`), `admission_lock_path: str` (absolute; must lie inside `git rev-parse --git-common-dir`; no `<worktree>/.git/guildhall.lock` may exist), `manifest_lineage_count: int` (), `digest_attribution: obj{owner_role ∈ {"company-steward","client","none"}}`, `company_query_attempted: bool` (), `unknowns: list[obj{kind, owner_role}]` (). Two certificates in `.kin/` → nonzero exit (). Hostile event bytes at a correct content path → typed exit in table, never 1 .
+Keys: `store_digest: str` (), `manifest_comparison: obj{classification}`, `manifest_relations: obj{superset: "normal_lag", missing_head: "INCOMPLETE", expired_owner: "company-steward"}` (), `admitted_paths: list[obj{path}]` (lowercase digest paths only), `ineffective_git_attributes: bool` (), `cascade_state ∈ {"complete","REVOCATION_CASCADE_INCOMPLETE"}`, `unchecked_facts_withheld: bool` (, `--full`), `admission_lock_path: str` (absolute; must lie inside `git rev-parse --git-common-dir`; no `<worktree>/.git/kinbase.lock` may exist), `manifest_lineage_count: int` (), `digest_attribution: obj{owner_role ∈ {"company-steward","client","none"}}`, `company_query_attempted: bool` (), `unknowns: list[obj{kind, owner_role}]` (). Two certificates in `.kin/` → nonzero exit (). Hostile event bytes at a correct content path → typed exit in table, never 1 .
 
 ### 1.5 `ingest SOURCE_KIND SOURCE --repo PATH --json`
 `SOURCE_KIND` ∈ {codex_jsonl, claude_jsonl, repo_code, repo_tests, git_history, docs_adr, github_export, runtime_evidence, kindex, authority_answer}. `SOURCE` paths used: `<repo>/sources/<codex|claude|src|tests|adr|github|runtime|kindex|answers>` (directories), `<repo>` for git_history, `<repo>/.kin` for kindex (the dominant path: planted signed events are admitted via `ingest kindex <repo>/.kin`), `<repo>/docs/adr`, a single oversized file for repo_code, a symlink and an escaping path for repo_code (must refuse). Exit 0 or 3 both treated as "processed" where noted; exit 1 always fails. Keys:
@@ -132,23 +132,23 @@ Exit must be 0 or 3 for a planted history . Keys: `state` (vocab used: `current`
 - `experiment freeze MANIFEST --budget FILE --json` → refuse (nonzero, typed) when `census|power|calibration|budget` is missing from the manifest; success payload `ceiling_reserved_atomically: true`; a second freeze with a raised budget must refuse and must not echo `aggregate_usd: 5000`.
 - `experiment run FROZEN_MANIFEST [--smoke] --json` → `RUN_CENSUS_MISSING` exit 70 when `run_census` is null; `--smoke` must not exempt; `evaluation_principal ∈ {administrative, broad-service-reader}` refused (typed); `task-scoped-agent` with `authority_scopes` must not exit 4.
 - `experiment census MANIFEST --json` → `human_bytes_after_freeze: int`.
-- `experiment verdict RUN --json` (RUN = a JSON file or an empty directory) → `published_conclusion: str` (must contain the P-10 licensed template verbatim: `On the digest-identified task population, repositories, model/provider fingerprint, budgets, authority service, and finite threat model in this run, Guildhall met P-1 through P-9 and raised blinded brownfield quality to the preregistered P-10 equivalence band.`; must not contain `Kindex works`, `privacy is proved`, `all brownfield coding reaches greenfield quality`), `run_digest`, `terminal_product_verdict ∈ {PROVEN, NOT_PROVEN, INCONCLUSIVE_NO_HEADROOM, INCONCLUSIVE_CEILING, INVALID_RUN}`, `gate_result ∈ {PASS, PRODUCT_FAILURE, INVALID_HARNESS}`, `measurement_result ∈ {PROVEN, NOT_PROVEN, INCONCLUSIVE_NO_HEADROOM, INCONCLUSIVE_CEILING, NOT_RUN}`, `independent_product_failure`, `headroom_condition`, `ceiling_condition`, `gate_vector` (required non-null); composition must follow . Rendering `INVALID_RUN` when `human_bytes_after_freeze ≠ 0`.
+- `experiment verdict RUN --json` (RUN = a JSON file or an empty directory) → `published_conclusion: str` (must contain the P-10 licensed template verbatim: `On the digest-identified task population, repositories, model/provider fingerprint, budgets, authority service, and finite threat model in this run, Kinbase met P-1 through P-9 and raised blinded brownfield quality to the preregistered P-10 equivalence band.`; must not contain `Kindex works`, `privacy is proved`, `all brownfield coding reaches greenfield quality`), `run_digest`, `terminal_product_verdict ∈ {PROVEN, NOT_PROVEN, INCONCLUSIVE_NO_HEADROOM, INCONCLUSIVE_CEILING, INVALID_RUN}`, `gate_result ∈ {PASS, PRODUCT_FAILURE, INVALID_HARNESS}`, `measurement_result ∈ {PROVEN, NOT_PROVEN, INCONCLUSIVE_NO_HEADROOM, INCONCLUSIVE_CEILING, NOT_RUN}`, `independent_product_failure`, `headroom_condition`, `ceiling_condition`, `gate_vector` (required non-null); composition must follow . Rendering `INVALID_RUN` when `human_bytes_after_freeze ≠ 0`.
 - `experiment pilot|calibrate|score` never invoked.
 
 ---
 
-## 2. HTTP service (`guildhalld`) as the instrument speaks it 
+## 2. HTTP service (`kinbased`) as the instrument speaks it 
 
 Transport: `http.client.HTTPConnection("127.0.0.1", port)`, 30 s timeout, body sent only when non-empty.
 
 **Headers on every request** :
 - `Authorization: Bearer <token>` (omitted when token is empty),
-- `Host: 127.0.0.1:<port>` (probe: `guildhall.example`),
+- `Host: 127.0.0.1:<port>` (probe: `kinbase.example`),
 - `Content-Type: application/json` (probe: `text/plain`; may be omitted),
 - `Origin:` never sent except the probe `https://evil.example`,
-- when signed (default): `X-Guildhall-Nonce: <decimal, starts at "1", +1 per request per client>`, `X-Guildhall-Expires-At: <RFC3339 ms Z, now+60 s>`, `X-Guildhall-Client-Key: <hex 32-byte Ed25519 public key>`, `X-Guildhall-Signature: <hex 64-byte Ed25519 signature>`.
+- when signed (default): `X-Kinbase-Nonce: <decimal, starts at "1", +1 per request per client>`, `X-Kinbase-Expires-At: <RFC3339 ms Z, now+60 s>`, `X-Kinbase-Client-Key: <hex 32-byte Ed25519 public key>`, `X-Kinbase-Signature: <hex 64-byte Ed25519 signature>`.
 
-**Request signature** : `sig = Ed25519.sign(client_seed, SHA-256("guildhall-sig/1" || 0x00 || "receipt" || 0x00 || JCS({"body_sha256": sha256hex(body bytes), "expires_at": <hdr>, "method": "GET"|"POST", "nonce": <hdr>, "path": <request path>})))`. `body_sha256` of an empty body is `sha256(b"")`. Domain `message_type` is literally `"receipt"` (conflict C5). The client key is a fresh random 32-byte seed per `ServiceClient`; it is never registered with the service (conflict C5).
+**Request signature** : `sig = Ed25519.sign(client_seed, SHA-256("kinbase-sig/1" || 0x00 || "receipt" || 0x00 || JCS({"body_sha256": sha256hex(body bytes), "expires_at": <hdr>, "method": "GET"|"POST", "nonce": <hdr>, "path": <request path>})))`. `body_sha256` of an empty body is `sha256(b"")`. Domain `message_type` is literally `"receipt"` (conflict C5). The client key is a fresh random 32-byte seed per `ServiceClient`; it is never registered with the service (conflict C5).
 
 **Bodies** are JCS bytes (RFC 8785 after NFC, sorted keys, no whitespace, `ensure_ascii=False`).
 
@@ -158,7 +158,7 @@ Transport: `http.client.HTTPConnection("127.0.0.1", port)`, 30 s timeout, body s
 | `POST /v1/authority-registry` | registry document §3.4 | 200/201/202; JSON body read as `registry_receipt` (any dict) |  |
 | `POST /v1/facts` → `POST /facts` → `POST /v1/company/facts` (tried in order, first 200/201/202 wins) | Company fact document §3.5 | 200/201/202 |  |
 | `GET /questions` | — | status recorded only |  |
-| `POST /questions` | `{"probe": <name>}` | refusal probes only: `token=""`+unsigned, `Host: guildhall.example`, `Origin: https://evil.example`, `Content-Type: text/plain` + `b"not json"` — each must answer status ≥ 400 with body ≤ 4096 bytes |  |
+| `POST /questions` | `{"probe": <name>}` | refusal probes only: `token=""`+unsigned, `Host: kinbase.example`, `Origin: https://evil.example`, `Content-Type: text/plain` + `b"not json"` — each must answer status ≥ 400 with body ≤ 4096 bytes |  |
 | `POST /answers`, `GET /questions/{id}` | never called directly | | |
 
 All service calls use the **facts** bearer token . Refusal statuses accepted: `400,401,403,404,429` .
@@ -171,7 +171,7 @@ All service calls use the **facts** bearer token . Refusal statuses accepted: `4
 
 ### 3.1 Canonical bytes and signatures 
 - JCS: `json.dumps(nfc(value), sort_keys=True, separators=(",",":"), ensure_ascii=False).encode()`; ints within ±(2^53−1); no floats; NFC applied to keys and strings; duplicate-after-NFC keys rejected.
-- `signing_digest(mt, jcs) = SHA-256(b"guildhall-sig/1" + 0x00 + mt + 0x00 + jcs)`; `mt ∈ {fact-event, unknown-event, manifest, approval-token, repo-certificate, authority-registry-entry, rotation, revocation, tombstone, question, answer, receipt}`.
+- `signing_digest(mt, jcs) = SHA-256(b"kinbase-sig/1" + 0x00 + mt + 0x00 + jcs)`; `mt ∈ {fact-event, unknown-event, manifest, approval-token, repo-certificate, authority-registry-entry, rotation, revocation, tombstone, question, answer, receipt}`.
 - Keys: Ed25519 (RFC 8032); seed = 32 bytes; `signer` = hex(32-byte public key); `signature` = hex(64 bytes).
 - **Convention A (dominant; events, certificate, registry, lifecycle answers)** `synth.Signer.sign_message`: body := payload minus `signature`; `digest = signing_digest(mt, JCS(body))` where body does **not** contain `signer`; then `signer` and `signature` are added. Verified the same way in  (pops `signature`, pops `signer`, then digests).
 - **Convention B (authority helper answers)** : body includes `"signer"` before digesting; `digest = signing_digest("answer", JCS(body ∪ {signer}))`; then `signature` added. Verified in  the same way (only `signature` removed).
@@ -179,7 +179,7 @@ All service calls use the **facts** bearer token . Refusal statuses accepted: `4
   → A verifier must try A, and also B/C (see conflict C4).
 - Content digest for paths: `sha256(JCS(signed doc))` hex; event path `.kin/events/<h[0:2]>/<h[2:4]>/<h[4:]>.json` ; bytes on disk are exactly the JCS bytes, no trailing newline.
 
-### 3.2 FactEvent  — `schema: "guildhall-event/1"`
+### 3.2 FactEvent  — `schema: "kinbase-event/1"`
 Keys always present: `schema, event_id ("evt_" + 12 digits; derived from hash(logical_key, statement) → NOT unique across distinct events), store_kind ∈ {personal, company, codebase}, authority_id, authority_scope, fact_id ("fact_" + 12 digits, from hash(logical_key)), logical_key, atom_kind, scope (= authority_scope), statement, evidence_refs: list[str], asserted_at, effective_from, disposition, distortion: obj, parents: list[event_id], supersedes: list[event_id], redundancy_with: [], complements: [], company_refs: list[CompanyReference], authority_snapshot_cursor: str (decimal, e.g. "1000","1001","1002","2000","2100"), confidence: "high", unresolved_uncertainty: ""`, plus `signer`, `signature`. Optional: `repository_id` (present iff store_kind == codebase; value = certified UUID), `effective_until`.
 - `atom_kind` values planted: `constraint, claim, decision, observation, rationale, question` (spec) **and** `misextraction, never_true, revocation, unknown, dependence, exception_request, exception_to, rollback_exception, task_event`; expected in output: `orphan_abandoned, observation_expired`.
 - `disposition` values planted: `accepted, rejected, proposed, retracted, notice, open`.
@@ -188,26 +188,26 @@ Keys always present: `schema, event_id ("evt_" + 12 digits; derived from hash(lo
 - Authority scopes seen: `company:root` (steward), `codebase:<uuid>` (maintainer), `architecture:scheduling` (architect), `environment:prod-eu`, `environment:staging-xx` (unregistered), `approver:local`, `codebase:example` (impostor).
 - Events of every `store_kind` (including `company` and `personal`) are planted **in the repository `.kin/events/`** and admitted via `ingest kindex <repo>/.kin` (conflict C7).
 
-### 3.3 UnknownEvent  — `schema: "guildhall-unknown/1"`: `event_id ("unk_…"), store_kind, logical_key, decision_blocked, owner_role, owner_identity, question, closure_evidence, status ("open"), response_due_at, expiry_policy ("block")`.
+### 3.3 UnknownEvent  — `schema: "kinbase-unknown/1"`: `event_id ("unk_…"), store_kind, logical_key, decision_blocked, owner_role, owner_identity, question, closure_evidence, status ("open"), response_due_at, expiry_policy ("block")`.
 
 ### 3.4 Repository certificate & authority registry 
-- Certificate: `{"schema":"guildhall-repo-certificate/1","repository_uuid":<uuid>,"issued_at":<ts>,"company_id":"company-demo",["lineage_parent_uuid":<uuid>],"signer","signature"}` signed `repo-certificate` (convention A) by the steward; written as JCS to **`<repo>/.kin/certificate.json`** and committed (conflict C2). A forged one is signed by an `attacker-steward` key with scope `company:root`; a second certificate may appear at `.kin/certificate-second.json`.
+- Certificate: `{"schema":"kinbase-repo-certificate/1","repository_uuid":<uuid>,"issued_at":<ts>,"company_id":"company-demo",["lineage_parent_uuid":<uuid>],"signer","signature"}` signed `repo-certificate` (convention A) by the steward; written as JCS to **`<repo>/.kin/certificate.json`** and committed (conflict C2). A forged one is signed by an `attacker-steward` key with scope `company:root`; a second certificate may appear at `.kin/certificate-second.json`.
 - Root key: `<company_root>/company-root.pub` = steward public hex + `"\n"`; `<company_root>/company-root.key` = 32 raw seed bytes (0600) — the same seed as the steward signer, so the service's root key **is** the steward key.
-- Registry document: `{"schema":"guildhall-authority-registry/1","authority_cursor":"1000","entries":[{"authority_id","scope","public_key"(hex),"channel","capabilities":[...]}],"signer","signature"}` signed as one document with message_type `authority-registry-entry` (convention A). Entries always registered: steward `company:root` channel `company:root` caps `["publish"]`; maintainer `codebase:<uuid>` channel `codebase:<uuid>` caps `["request","publish-manifest"]`; architect `architecture:scheduling` channel `process:architecture-answer` caps `["answer","supersede"]`; V-6 adds the same architect key again with channel `http://127.0.0.1:<port>/questions` caps `["answer"]`. Mirrored to `<company_root>/authority-registry.json` and POSTed to `/v1/authority-registry`. Registry entries must not expose `email` or `private_key`.
+- Registry document: `{"schema":"kinbase-authority-registry/1","authority_cursor":"1000","entries":[{"authority_id","scope","public_key"(hex),"channel","capabilities":[...]}],"signer","signature"}` signed as one document with message_type `authority-registry-entry` (convention A). Entries always registered: steward `company:root` channel `company:root` caps `["publish"]`; maintainer `codebase:<uuid>` channel `codebase:<uuid>` caps `["request","publish-manifest"]`; architect `architecture:scheduling` channel `process:architecture-answer` caps `["answer","supersede"]`; V-6 adds the same architect key again with channel `http://127.0.0.1:<port>/questions` caps `["answer"]`. Mirrored to `<company_root>/authority-registry.json` and POSTed to `/v1/authority-registry`. Registry entries must not expose `email` or `private_key`.
 
 ### 3.5 Company fact document (V-8)
-`{"company_id":"company-demo","fact_id":<str>,"version":<int>,"statement":<str>,"company_criticality":"safety_critical"|"advisory","valid_from":<ts>,"valid_until":<ts>,"digest_alg_version":"guildhall-digest/1","semantic_digest":sha256hex(JCS({"statement":<statement>})),"signer","signature"}` signed **`fact-event`** (convention A) by the steward; multiple versions of one `fact_id` are admitted and must all be retained (historical digest lookup by version).
+`{"company_id":"company-demo","fact_id":<str>,"version":<int>,"statement":<str>,"company_criticality":"safety_critical"|"advisory","valid_from":<ts>,"valid_until":<ts>,"digest_alg_version":"kinbase-digest/1","semantic_digest":sha256hex(JCS({"statement":<statement>})),"signer","signature"}` signed **`fact-event`** (convention A) by the steward; multiple versions of one `fact_id` are admitted and must all be retained (historical digest lookup by version).
 
 ### 3.6 CompanyReference  inside `company_refs[]`
-`{company_id, fact_id, semantic_digest, digest_alg_version ("guildhall-digest/1"), authority (= steward authority_id), valid_from, valid_until, company_criticality, relation ∈ {applies, specializes, implements, contradicts, exception_request}}`; **never** `local_dependence_class` or `statement`. Local dependence is a separate codebase event with `atom_kind: "dependence"`, statement `"the local dependence class is <safety_critical|advisory>"`, `parents=[reference event]`.
+`{company_id, fact_id, semantic_digest, digest_alg_version ("kinbase-digest/1"), authority (= steward authority_id), valid_from, valid_until, company_criticality, relation ∈ {applies, specializes, implements, contradicts, exception_request}}`; **never** `local_dependence_class` or `statement`. Local dependence is a separate codebase event with `atom_kind: "dependence"`, statement `"the local dependence class is <safety_critical|advisory>"`, `parents=[reference event]`.
 
 ### 3.7 Authority answer
-- Lifecycle/impostor form : `{"schema":"guildhall-answer/1","question_id","authority_id","authority_scope","answer","rationale","answered_at","signer","signature"}`; variants add `parents: ["<qid>#1"]`, `revocation: {authority_id, cursor}`, `asserted_at`.
+- Lifecycle/impostor form : `{"schema":"kinbase-answer/1","question_id","authority_id","authority_scope","answer","rationale","answered_at","signer","signature"}`; variants add `parents: ["<qid>#1"]`, `revocation: {authority_id, cursor}`, `asserted_at`.
 - Live helper form , which is what `questions answer --answer-file` receives in V-6: `{"message_type":"answer","question_id","answer","rationale","contains_code":false,"signer","signature"}`. The helper responds `200` to `POST <channel>` with JSON body `{"task_id","question_id"}`; a third call for one `task_id` returns `429 {"error":{"code":"LIMIT_EXCEEDED","retryable":false}}`. Helper logs `{task_id, question_id, request_digest, request_bytes, call_index, peer}` per delivery.
 
 ### 3.8 `.kin/config` (TOML, )
 ```
-schema_version = "guildhall-repo/1"
+schema_version = "kinbase-repo/1"
 repository_uuid_hint = "018f0000-0000-7000-8000-000000000001"
 safe_name = "example-service"
 domains = ["scheduling"]
@@ -227,15 +227,15 @@ JSONL, one object per line, **only** keys `id` (opaque token), `role` ("user"|"a
 ### 3.11 Native source formats 
 - Codex JSONL: line 1 `{"type":"session_meta","id","timestamp","cwd","originator":"codex_cli_rs","cli_version"}`; then `{"type":"response_item","id","timestamp","payload":{"type","role","content":[{"type":"input_text","text"}]}}`; appended lines `{"type":"message","role","ts","content":[{"type":"text","text"}]}`, duplicated/edited lines (`"edited":true`), terminal `{"type":"session_end","ts","session_id"}`; restart file `<session>-rNN.jsonl`; a `.jsonl.retention` sidecar `{"private_retention_seconds","raw_mtime"}` with mtime pushed past 24 h.
 - Claude JSONL: `{"parentUuid","isSidechain":false,"userType":"external","cwd","sessionId","version","type","message":{"role","content":[{"type":"text","text"}]},"uuid","timestamp"}` chained by `parentUuid`; terminal marker `{"type":"stop",...}`.
-- Command-result envelope (`repo_tests`, `runtime_evidence`), JCS file: `{"schema":"guildhall-command-result/1","command":[...],"exit_code":int,"stdout":str,"observed_at":ts,["environment_id","effective_until","environment_owner"]}`.
+- Command-result envelope (`repo_tests`, `runtime_evidence`), JCS file: `{"schema":"kinbase-command-result/1","command":[...],"exit_code":int,"stdout":str,"observed_at":ts,["environment_id","effective_until","environment_owner"]}`.
 - ADR Markdown: front matter `---\nadr: NNNN\ntitle: …\nstatus: Proposed|Accepted|Rejected|Superseded\n[supersedes: NNNN]\n---\n\n# title\n\nbody`.
 - GitHub export JSON: `{"schema":"gh-export/1","issues":[{number,title,state,body,edited?,reopened?}],"pullRequests":[{number,title,state,merged,body,reviews:[{state: APPROVED|CHANGES_REQUESTED, author}],updatedAt}]}`.
 - Kindex SQLite export: tables `nodes(id TEXT PK, node_type, title, content, payload BLOB, created_at)` and `edges(src,dst,relationship,reason)` ; lifecycle cells instead address columns `node_id, kind, body, version` .
 - Repo code: Python and TypeScript modules under `src/scheduler/`; test under `tests/.
 
 ### 3.12 User / service configuration
-- **User config is never written by any test** (`roots.write_user_config` has no caller; conflict C1). If it were, it would be `$XDG_CONFIG_HOME/guildhall/config.toml` 0600 exactly as `spec/cli.md:19-40` with `[personal] data_root`, `[company] url/facts_token_file/root_public_key_file/cache_root`, `[classifier] executable/executable_sha256/args/timeout_seconds`, `[hosts] codex_version/claude_version`.
-- Service config `<company_root>/guildhalld.toml` 0600 : `schema_version="1", company_id="company-demo", sqlite_path=<company_root>/company.sqlite3, bind="127.0.0.1:<port>", root_key_file=<company_root>/company-root.key, facts_token_file=<company_root>/facts.token, directory_token_file=<company_root>/directory.token, auth_failures_per_minute=10, default_fact_freshness_seconds=3600, candidate_lifetime_seconds=900, clock_skew_seconds=300, nonce_retention_seconds=604800`.
+- **User config is never written by any test** (`roots.write_user_config` has no caller; conflict C1). If it were, it would be `$XDG_CONFIG_HOME/kinbase/config.toml` 0600 exactly as `spec/cli.md:19-40` with `[personal] data_root`, `[company] url/facts_token_file/root_public_key_file/cache_root`, `[classifier] executable/executable_sha256/args/timeout_seconds`, `[hosts] codex_version/claude_version`.
+- Service config `<company_root>/kinbased.toml` 0600 : `schema_version="1", company_id="company-demo", sqlite_path=<company_root>/company.sqlite3, bind="127.0.0.1:<port>", root_key_file=<company_root>/company-root.key, facts_token_file=<company_root>/facts.token, directory_token_file=<company_root>/directory.token, auth_failures_per_minute=10, default_fact_freshness_seconds=3600, candidate_lifetime_seconds=900, clock_skew_seconds=300, nonce_retention_seconds=604800`.
 - Token files: raw bytes, no newline, 0600: `facts.token` = `"facts-" + 40 hex`, `directory.token` = `"dir-" + 40 hex`. No scope list is encoded anywhere (the harness-side `authority_scopes` tuple is never transmitted).
 
 ### 3.13 Host hook envelopes 
@@ -245,14 +245,14 @@ Codex: `{"hook_event_name":<EVENT>,"session_id","cwd","transcript_path":"<cwd>/.
 Manifest JSON: `{"census":{"digest":<64hex>,"signed":true},"power":{"n":int,"mde":number,"cost_usd":int},"calibration":{"digest","valid":true},"budget":{"aggregate_usd":int,"human_ratified":true}}` with one section removed per probe; frozen manifests `{"frozen":true,"run_census":null}`, `{"frozen":true,"evaluation_principal":<str>,["authority_scopes":["company:architecture:scheduling"]]}`, `{"frozen":true}`; budget file `{"aggregate_usd":int,"human_ratified":true}`; `experiment verdict` also receives an empty directory.
 
 ### 3.15 Blinded operator responses (harness-only, )
-JSONL `{item_id (opaque token), decision ∈ {approve,reject,defer,escalate}, decided_at (RFC3339 µs Z)}` at `$GUILDHALL_OPERATOR_RESPONSES`; never reaches the product.
+JSONL `{item_id (opaque token), decision ∈ {approve,reject,defer,escalate}, decided_at (RFC3339 µs Z)}` at `$KINBASE_OPERATOR_RESPONSES`; never reaches the product.
 
 ---
 
 ## 4. Filesystem layout and modes 
 
 `<base>` = pytest tmp_path/`proof`:
-- `home/` (HOME; hooks install writes here; scanned for `*.json` config files), `config/` (XDG_CONFIG_HOME), `private/kindex-personal/` **0700** (Personal root; canary files planted here; never a parent of any shared root), `company/` (service root: `guildhalld.toml`, `company.sqlite3`, `facts.token`, `directory.token`, `company-root.key`, `company-root.pub`, `authority-registry.json`, `native/`), `company-cache/` **0700** (the `cache_root`; the instrument deletes all files here to construct "cold"/"stale revocation", writes `facts-cache.sqlite3` = `b"not a database"` for "invalid cache", and scans it: `facts-cache.sqlite3` is opened read-only and every table/column/BLOB is scanned; `entries/*.bin` and every other file is byte-scanned), `workspace/example-service/` (the repo; `docs/**` and `.git` objects/packs are scanned), `run/` **0700** (corpora under `run/corpus/`, `run/workload/`, `run/operator/`, authority helper under `run/authority/`, `run/state/` is the "logs"/"host_projection"/"process_artifacts"/"service_response" scan root, `run/raw/` is checked to be absent after retention), `evidence/` **0700**.
+- `home/` (HOME; hooks install writes here; scanned for `*.json` config files), `config/` (XDG_CONFIG_HOME), `private/kindex-personal/` **0700** (Personal root; canary files planted here; never a parent of any shared root), `company/` (service root: `kinbased.toml`, `company.sqlite3`, `facts.token`, `directory.token`, `company-root.key`, `company-root.pub`, `authority-registry.json`, `native/`), `company-cache/` **0700** (the `cache_root`; the instrument deletes all files here to construct "cold"/"stale revocation", writes `facts-cache.sqlite3` = `b"not a database"` for "invalid cache", and scans it: `facts-cache.sqlite3` is opened read-only and every table/column/BLOB is scanned; `entries/*.bin` and every other file is byte-scanned), `workspace/example-service/` (the repo; `docs/**` and `.git` objects/packs are scanned), `run/` **0700** (corpora under `run/corpus/`, `run/workload/`, `run/operator/`, authority helper under `run/authority/`, `run/state/` is the "logs"/"host_projection"/"process_artifacts"/"service_response" scan root, `run/raw/` is checked to be absent after retention), `evidence/` **0700**.
 - Mode expectations checked on the product: personal/run/company-cache must remain ≤ 0700 ; token/key files 0600; a 0644 `facts.token` must be refused with exit 4 and `chmod` remediation.
 - Symlinks: a symlink inside the repo pointing outside (`<repo>/escape-link`) passed to `ingest repo_code` must refuse; a path escaping the repo (`<tmp>/../escape`) must refuse; any symlink the product leaves under a scanned root is itself a finding surface .
 - Scan surfaces the product must keep canary-free in every encoding (exact, NFD/NFKC, base64, hex, percent, JSON-escape, fragmentation, archives `.gz/.tgz/.zip/.tar/.xz/.bz2`, SQLite BLOB/TEXT columns, packed Git objects): `company-cache/**`, `<repo>/docs/**`, `<repo>/.git` objects, `<repo>/.kin/events/**`, `<repo>/.kin/outbox/**`, `<repo>/.kin/receipts/**`, `run/state/**`, `evidence/**`, and the `ps`/`lsof` argv/env/fd dumps of `status`/`doctor` .
@@ -285,7 +285,7 @@ JSONL `{item_id (opaque token), decision ∈ {approve,reject,defer,escalate}, de
 ## 7. Validator rulings (binding)
 
 - **C1 — user config never written. INSTRUMENT + PRODUCT.** The instrument must write the
-  launcher user config at `${XDG_CONFIG_HOME:-$HOME/.config}/guildhall/config.toml`
+  launcher user config at `${XDG_CONFIG_HOME:-$HOME/.config}/kinbase/config.toml`
   (0600) with exactly the cli.md keys, using an isolated `HOME`/`XDG_CONFIG_HOME` per
   world, before any command that needs Company, cache, certificate, or Personal. The
   product resolves config only from that path (honouring both variables) and never from
@@ -303,7 +303,7 @@ JSONL `{item_id (opaque token), decision ∈ {approve,reject,defer,escalate}, de
 - **C4 — signing convention. BOTH.** One convention: the signed bytes are the JCS of the
   document with `signature` removed and `signer` (64-hex Ed25519 public key) present;
   `signature` is 128-hex over `signing_digest(message_type, jcs_bytes)`. The authority
-  registry is one document `{"schema":"guildhall-authority-registry/1","authority_cursor",
+  registry is one document `{"schema":"kinbase-authority-registry/1","authority_cursor",
   "entries":[...]}` signed by the steward root key as message type
   `authority-registry-entry`. The Tester converges all three conventions to this one.
 - **C5 — request signature type and client key. PRODUCT (ruling R-4 stands).** Request
@@ -376,7 +376,7 @@ JSONL `{item_id (opaque token), decision ∈ {approve,reject,defer,escalate}, de
   `kindex` adapter's native schema is Kindex 0.36.0's export (`nodes(id, node_type, title,
   content, payload, created_at)` plus `edges`).
 - **C22 — Company fact admission body. INSTRUMENT.** `POST /facts` bodies are FactEvents
-  (architecture §3 field set, `schema: "guildhall-event/1"`) signed as `fact-event`.
+  (architecture §3 field set, `schema: "kinbase-event/1"`) signed as `fact-event`.
 - **C23 — single-line `--json`. PRODUCT.** Every stdout line and every stderr line under
   `--json` is one complete JSON document.
 - **C24 — foreign artefacts under `.kin/`. PRODUCT.** `fsck`/`ingest`/`status` count
@@ -388,7 +388,7 @@ JSONL `{item_id (opaque token), decision ∈ {approve,reject,defer,escalate}, de
 - **C26 — `--key-file`. PRODUCT.** Informational; refusal of an impostor is by registry
   lookup (`AUTHORITY_WRONG_SCOPE`).
 - **C27 — p95 includes process start. PRODUCT.** Accepted; the binary is native.
-- **C28 — `GUILDHALL_COMPANY_URL`. INSTRUMENT + PRODUCT.** The product never reads a Company
+- **C28 — `KINBASE_COMPANY_URL`. INSTRUMENT + PRODUCT.** The product never reads a Company
   endpoint from the environment; an env-supplied endpoint yields `PROCESSOR_UNAUTHORIZED`
   with zero connections. The blackhole/timeout probe configures its endpoint through the
   user config.

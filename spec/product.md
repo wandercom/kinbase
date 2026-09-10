@@ -40,7 +40,7 @@ travel with that repository under `.kin/`.
 - The **projector** chooses among already admitted facts but cannot widen admission.
 - Codex and Claude host adapters present the same protocol and possess no knowledge
   publication authority.
-- An **Oracle Curator**, isolated from Guildhall's schemas, retrieval design, and all
+- An **Oracle Curator**, isolated from Kinbase's schemas, retrieval design, and all
   candidate outputs, inventories the historical task population and extracts neutral
   fact-only judging artifacts from repository evidence and accepted post-change
   ground truth. The role has no product or verdict authority.
@@ -325,7 +325,7 @@ new founder-ratified comparator design, never task filtering or predicate tighte
 against observed scores.
 
 The Oracle Curator receives a date-bounded census of every merged change in the two
-declared repositories and no Guildhall schema, retrieval design, candidate, or arm
+declared repositories and no Kinbase schema, retrieval design, candidate, or arm
 output. A ratified program applies the structural pre-outcome predicate using only
 repository history: the change has a reproducible parent revision, issue/request,
 held-out post-change functional oracle, at least three pre-change evidence classes,
@@ -339,7 +339,7 @@ task's neutral fact-only oracle and load-bearing labels, and seals them before a
 pilot or candidate execution. Every oracle sentence must cite a pre-change source;
 no accepted-patch line, solution step, hidden-test assertion, or identifier introduced
 only by the change may appear. The accepted change is judging evidence, never agent
-context. No Guildhall result or baseline score controls eligibility.
+context. No Kinbase result or baseline score controls eligibility.
 
 Task-conditioned corpus curation is forbidden. Only after V-1 through V-9 pass and the
 adapter/reducer digest freezes, but before the Oracle Curator receives
@@ -376,7 +376,7 @@ wall/tool/token budget, frozen `as_of`, Company authority cursor, authority-answ
 service, and measurement seeds, compare:
 
 - `baseline`: issue plus ordinary repository tools;
-- `null-system`: the full Guildhall host adapter, hooks, observation path, tool schema,
+- `null-system`: the full Kinbase host adapter, hooks, observation path, tool schema,
   permission policy, timing envelope, and telemetry, but an empty corpus and selector;
   projection returns no facts and the authority endpoint returns only the typed
   `NO_KNOWLEDGE_AVAILABLE` result. It is the control for benefit caused by integration
@@ -563,12 +563,12 @@ execution census.
 
 The exact claim licensed by `PROVEN` is: “On the digest-identified task population,
 repositories, model/provider fingerprint, budgets, authority service, and finite
-threat model in this run, Guildhall met P-1 through P-9 and raised blinded brownfield
+threat model in this run, Kinbase met P-1 through P-9 and raised blinded brownfield
 quality to the preregistered P-10 equivalence band.” It does not license the
 unqualified statements “Kindex works,” “privacy is proved,” or “all brownfield coding
 reaches greenfield quality.”
 
-`NOT_PROVEN` rejects Guildhall's current product/value thesis and sends any mechanism
+`NOT_PROVEN` rejects Kinbase's current product/value thesis and sends any mechanism
 redesign back to the founder. It does not reopen the independently ratified safety
 rule that Personal, Company, and Codebase must remain physically distinct. P-10
 tests this complete design's causal usefulness, not the unsafe unified-store

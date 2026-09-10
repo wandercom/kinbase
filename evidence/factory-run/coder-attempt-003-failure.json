@@ -1,5 +1,5 @@
 {
-  "schema_version": "guildhall-factory-author-attempt/1",
+  "schema_version": "kinbase-factory-author-attempt/1",
   "role": "Coder",
   "attempt": 3,
   "ratification_manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
@@ -16,7 +16,7 @@
   "model_actions_after_resume": 0,
   "reasoning_fragments_after_resume": 5,
   "git_state_unchanged": true,
-  "known_syntax_error_unchanged": "guildhall/experiment.py line 971",
+  "known_syntax_error_unchanged": "kinbase/experiment.py line 971",
   "disposition": "RECOVERABLE_TRANSPORT_ONLY_FAILURE",
   "gate_effect": "NONE"
 }

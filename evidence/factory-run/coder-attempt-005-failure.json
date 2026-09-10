@@ -1,5 +1,5 @@
 {
-  "schema_version": "guildhall-factory-author-attempt/1",
+  "schema_version": "kinbase-factory-author-attempt/1",
   "role": "Coder",
   "attempt": 5,
   "failed_at": "2026-09-05T20:08:52Z",
@@ -21,7 +21,7 @@
     "commits_authored": 0,
     "status_sha256": "422b3e2a82f1fc739ed16b8b324123411d65a44531c48ede4612e14322bee6e7",
     "untracked_product_paths": [
-      "guildhall/",
+      "kinbase/",
       "pyproject.toml"
     ],
     "changed_paths_outside_assignment": [],

@@ -1,7 +1,7 @@
 # Kinbase overview
 
 Status: specification ratified; proof of concept not yet run. Public name Kinbase;
-developed in this repository as Guildhall. A Wander project. The pitch and the
+developed in this repository as Kinbase. A Wander project. The pitch and the
 proof condition live at [kinbase.tools](https://kinbase.tools); this document is the
 technical summary, and the [specification](../spec/README.md) is the authority for
 every claim in it.
@@ -70,6 +70,6 @@ words in [proof.md](proof.md). Until it passes, everything above describes inten
 
 ## Names
 
-Guildhall is the development name and appears throughout the specification, the
+Kinbase is the development name and appears throughout the specification, the
 CLI contract, and every ratified artifact; renaming ratified bytes would change
 their digests. Kinbase is the public name. They are one thing.

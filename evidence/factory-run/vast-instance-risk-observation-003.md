@@ -14,7 +14,7 @@ The exact JSON line above, without its displayed trailing LF, has SHA-256
 `93b6bf34f56f5324269d9347183021dfc370581e2f13d179239f7f34cad5baee`.
 
 `is_bid=false` is evidence that this is not a bid-priced interruptible instance.
-`reliability2=0.9992037` is a provider-reported marketplace field; Guildhall does not
+`reliability2=0.9992037` is a provider-reported marketplace field; Kinbase does not
 interpret it as an SLA or as the probability of five uninterrupted hours. Host loss,
 provider intervention, and ordinary hardware/network failure remain possible, and
 the implementation attempt remains non-guaranteed.

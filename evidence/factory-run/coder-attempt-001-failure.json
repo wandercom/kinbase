@@ -1,5 +1,5 @@
 {
-  "schema_version": "guildhall-factory-author-attempt/1",
+  "schema_version": "kinbase-factory-author-attempt/1",
   "role": "Coder",
   "attempt": 1,
   "ratification_manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
@@ -20,7 +20,7 @@
     "branch": "factory/coder-ac8a13d1",
     "commits_authored": 0,
     "untracked_product_paths": [
-      "guildhall/",
+      "kinbase/",
       "pyproject.toml"
     ],
     "changed_paths_outside_assignment": [],
@@ -32,7 +32,7 @@
     "python_files": 29,
     "syntax_errors": [
       {
-        "path": "guildhall/experiment.py",
+        "path": "kinbase/experiment.py",
         "error": "expected an indented block after 'for' statement on line 970"
       }
     ]

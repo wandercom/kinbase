@@ -36,7 +36,7 @@ nested sandboxes with one outer macOS Seatbelt profile:
   subprocesses inherit the already-applied outer OS sandbox.
 - The outer profile retains every prior denied read.
 - It now also denies writes to the reviewer repository (including Git metadata),
-  Coder, Tester, Validator, control, main Guildhall, Codex-memory, Claude-state,
+  Coder, Tester, Validator, control, main Kinbase, Codex-memory, Claude-state,
   and Kindex paths.
 - Preflight proved exact Git binding reads succeed, a disallowed sibling read
   fails, and a write probe beneath the Reviewer repository fails without creating

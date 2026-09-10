@@ -2,7 +2,7 @@
 
 ## Frame submitted
 
-GLM-5.3 authored substantial uncommitted Guildhall product code, its Ollama quota is exhausted, and the implementation-blind Claude Tester is complete. The proposed alternative was a recorded routing amendment to a fresh GPT-5.6 Coder in the same isolated lane and state, rather than correlating the Coder with Claude or purchasing unapproved usage.
+GLM-5.3 authored substantial uncommitted Kinbase product code, its Ollama quota is exhausted, and the implementation-blind Claude Tester is complete. The proposed alternative was a recorded routing amendment to a fresh GPT-5.6 Coder in the same isolated lane and state, rather than correlating the Coder with Claude or purchasing unapproved usage.
 
 ## Disposition
 
@@ -16,4 +16,4 @@ It further identified quota exhaustion as a result rather than mere inconvenienc
 
 ## Validator application
 
-Guildhall's outcome claim is about a functioning three-store knowledge system and its brownfield effect, not GLM capability. However, frozen `spec/source-request.md` SRC-6 expressly names GLM-5.3 as the Coder. Mid-run model substitution is not declared in the ratified pipeline. Therefore a different Coder requires a founder-ratified routing amendment; Agy can block or decline to block but cannot supply that authority.
+Kinbase's outcome claim is about a functioning three-store knowledge system and its brownfield effect, not GLM capability. However, frozen `spec/source-request.md` SRC-6 expressly names GLM-5.3 as the Coder. Mid-run model substitution is not declared in the ratified pipeline. Therefore a different Coder requires a founder-ratified routing amendment; Agy can block or decline to block but cannot supply that authority.

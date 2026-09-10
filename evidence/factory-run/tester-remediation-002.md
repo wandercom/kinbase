@@ -1,4 +1,4 @@
-# Guildhall Factory Tester remediation 002
+# Kinbase Factory Tester remediation 002
 
 Resume the same implementation-blind Claude Tester role against your exact clean
 tests-only commit `244184e631695cc331d64667bd20cfae7f286526` (tree

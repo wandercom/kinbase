@@ -26,7 +26,7 @@ The candidate:
   before any repository byte reaches Vast;
 - treats the existing Tester rights grant and Detector Review as still blocked.
 
-The public model is staging on Vast instance 50012413. No Guildhall repository byte
+The public model is staging on Vast instance 50012413. No Kinbase repository byte
 has been transmitted to it. The live rate including 1 TB storage is USD 34.0022 per
 hour. The old Python Coder tree remains isolated and unadmitted.
 

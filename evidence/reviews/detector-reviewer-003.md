@@ -11,10 +11,10 @@ The acceptance instrument is blocked from exposure to a product snapshot. This i
 | HEAD | `263d41d77ae11e4e62f2ce2716378a8e1ebdc7f2` — exact match |
 | HEAD tree | `61af5f8966f9a070e36eef31681d2c6c98a68c58` — exact match |
 | Manifest SHA-256 | `ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db` — exact match |
-| Founder receipt | Binds the exact manifest at [founder-ratification-ac8a13d1.json:7](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/receipts/founder-ratification-ac8a13d1.json:7) |
-| Validator receipt | Binds the exact manifest at [validator-ratification-ac8a13d1.json:7](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/receipts/validator-ratification-ac8a13d1.json:7) |
+| Founder receipt | Binds the exact manifest at [founder-ratification-ac8a13d1.json:7](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/receipts/founder-ratification-ac8a13d1.json:7) |
+| Validator receipt | Binds the exact manifest at [validator-ratification-ac8a13d1.json:7](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/receipts/validator-ratification-ac8a13d1.json:7) |
 
-All six authority-artifact digests were recomputed and matched [ratification-manifest.json:13](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/ratification-manifest.json:13):
+All six authority-artifact digests were recomputed and matched [ratification-manifest.json:13](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/ratification-manifest.json:13):
 
 - `source-request.md`: `1b2548e7025d00a8e06ab2e1445e89fdabf9f27833885c9f7953a8a0da354350`
 - `product.md`: `452c81e1c59bd96b59239939f1cb485a0016cd6e82f2dd627d853e448cf4c090`
@@ -286,7 +286,7 @@ Those results do not establish semantic mutation sensitivity because the expecte
 | Stdin | Codex/Claude hook envelopes and authority-process question JSON | Raw host/service input in principle; host envelopes are dispatched through the product rather than through installed hosts |
 | Services | Company URLs, loopback Company service, closed-port and blackhole endpoints | Environment/fault state; V-6/V-8 services are not populated with the required registries or facts |
 | Environment | HOME/XDG roots, PATH, locale, timezone, temp, Git identity/config, terminal settings, Company URL | Declared environment controls |
-| Explicit clock control | `GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS` | Fault schedule; several witnesses record only that the harness requested an offset, not the resulting native state |
+| Explicit clock control | `KINBASE_PROOF_CLOCK_OFFSET_SECONDS` | Fault schedule; several witnesses record only that the harness requested an offset, not the resulting native state |
 | Other faults | chmod, deletion/corruption, endpoint blackhole, process kill, races, descriptors | Legitimate only when the targeted seam and postcondition are independently observed; several tests do not do so |
 | Harness-held gold | V-2 opaque-ID map, V-5 expected cases, V-7 role map, V-9 labels | Explicit keys are generally stripped, but V-2 metrics never join predictions back to gold and V-9 trusts product-reported results |
 
@@ -315,17 +315,17 @@ The combined digest recomputes to:
 994cbc35abcac4c33f9a5bdf6386a3bca1d88503dc073a03c7e34282b4955677
 ```
 
-The selection record remains unfilled at [pool.json:93](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/fixtures/auxiliary/pool.json:93), as required before an independent selection.
+The selection record remains unfilled at [pool.json:93](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/fixtures/auxiliary/pool.json:93), as required before an independent selection.
 
 The pool cannot be selected:
 
-- [RIGHTS.md:3](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/fixtures/auxiliary/RIGHTS.md:3) and [pool.json:81](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/fixtures/auxiliary/pool.json:81) contain only Tester assertions of authorship, rightsholder identity, and CC0 dedication.
+- [RIGHTS.md:3](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/fixtures/auxiliary/RIGHTS.md:3) and [pool.json:81](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/fixtures/auxiliary/pool.json:81) contain only Tester assertions of authorship, rightsholder identity, and CC0 dedication.
 - The source bytes contain no author/rightsholder identity, signature, publication record, or independently verifiable provenance.
 - The exact CC0 grant/legal bytes are not included.
 - No generator, seed, or derivation recipe explains the dictionaries, correlations, or decoys.
 - The combined digest hashes only the component content hashes; it does not bind `pool.json`, `RIGHTS.md`, rights metadata, versions, ordering, or the eventual selection record.
 
-This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/threat-model.md:198).
+This does not meet [threat-model.md:198](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/threat-model.md:198).
 
 ## Numbered blocking findings
 
@@ -333,7 +333,7 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 **Path/line:** Git metadata for `.kin/.gitignore`, `.kin/config`, `.kin/index.json`, and 14 named `evidence/**` paths; source line not applicable.
 
-**Spec:** Detector isolation and pre-combination review at [verification.md:99](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:99).
+**Spec:** Detector isolation and pre-combination review at [verification.md:99](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:99).
 
 **Counterexample:** A modified or untracked product artifact beneath an inaccessible directory would not appear in the scoped `spec tests` status.
 
@@ -341,9 +341,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 2. V-10 reports product PASS with no product — BLOCKING
 
-**Path/line:** [conftest.py:51](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/conftest.py:51), [census.py:100](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/census.py:100), [test_v10_protocol.py:319](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v10_protocol.py:319).
+**Path/line:** [conftest.py:51](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/conftest.py:51), [census.py:100](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/census.py:100), [test_v10_protocol.py:319](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v10_protocol.py:319).
 
-**Spec:** `NOT_RUN` cannot become proof at [verification.md:12](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:12).
+**Spec:** `NOT_RUN` cannot become proof at [verification.md:12](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:12).
 
 **Counterexample:** The two catalogued V-10 functions read static tables/spec bytes. Their successful selftest calls cause both the instrument and product channels to resolve `PASS`.
 
@@ -351,9 +351,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 3. Parameterized nodes collapse into one census record — BLOCKING
 
-**Path/line:** [census.py:210](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/census.py:210), [census.py:255](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/census.py:255).
+**Path/line:** [census.py:210](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/census.py:210), [census.py:255](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/census.py:255).
 
-**Spec:** Every unexecuted or skipped obligation must remain non-green under [verification.md:118](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:118).
+**Spec:** Every unexecuted or skipped obligation must remain non-green under [verification.md:118](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:118).
 
 **Counterexample:** `function[codex]` can be skipped while `function[claude]` passes; normalization maps both to one key, and the later record overwrites the former.
 
@@ -361,9 +361,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 4. The 401 controls and mutations are circular synthetic artifacts — BLOCKING
 
-**Path/line:** [catalog.py:85](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/catalog.py:85), [clauses.py:145](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/clauses.py:145), [killledger.py:124](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/killledger.py:124).
+**Path/line:** [catalog.py:85](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/catalog.py:85), [clauses.py:145](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/clauses.py:145), [killledger.py:124](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/killledger.py:124).
 
-**Spec:** Independent controls and detector mutations are required at [verification.md:120](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:120).
+**Spec:** Independent controls and detector mutations are required at [verification.md:120](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:120).
 
 **Counterexample:** `conforming()` manufactures the expected green object, `violating()` changes one field, `blind=tag` skips the same clause, and the same checker judges all four. No product state or independent detector behavior is involved. “Positive control” means accepting a shaped expected artifact, not catching a planted positive.
 
@@ -371,9 +371,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 5. Sixty-six obligations lack their claimed executable checker coupling — BLOCKING
 
-**Path/line:** Coupling is claimed at [obligations.py:1](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/obligations.py:1); the catalog selftest checks only text/function existence at [test_catalog_and_kill_ledger.py:135](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_catalog_and_kill_ledger.py:135). V-4’s malformed vector is at [catalog.py:1018](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/catalog.py:1018).
+**Path/line:** Coupling is claimed at [obligations.py:1](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/obligations.py:1); the catalog selftest checks only text/function existence at [test_catalog_and_kill_ledger.py:135](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_catalog_and_kill_ledger.py:135). V-4’s malformed vector is at [catalog.py:1018](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/catalog.py:1018).
 
-**Spec:** Complete catalog/consumer reconciliation at [verification.md:120](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:120).
+**Spec:** Complete catalog/consumer reconciliation at [verification.md:120](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:120).
 
 **Counterexample:** A weak named test can pass and satisfy the census even though it never calls the row’s checker. `V-4.conflict` passes a string rather than a singleton tuple, causing the vector to become individual characters.
 
@@ -381,9 +381,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 6. The no-green static audit misses the patterns it claims to forbid — BLOCKING
 
-**Path/line:** [test_no_green_paths.py:91](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_no_green_paths.py:91), [test_no_green_paths.py:159](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_no_green_paths.py:159).
+**Path/line:** [test_no_green_paths.py:91](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_no_green_paths.py:91), [test_no_green_paths.py:159](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_no_green_paths.py:159).
 
-**Spec:** Absence, empty iteration, refusal, and defaults cannot become green under [verification.md:118](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:118).
+**Spec:** Absence, empty iteration, refusal, and defaults cannot become green under [verification.md:118](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:118).
 
 **Counterexample:** The linter checks only constant defaults `0`, `""`, and `False`; it misses `[]`, `{}`, `None`, truthy defaults, and `or []`. It considers an entire module safe if one total-quantifier name appears anywhere. Independent AST inspection found zero bare returns/skips, but 24 collection defaults, 17 loops over optional collections, and 41 assertion blocks guarded by return code/output/payload conditions.
 
@@ -391,9 +391,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 7. Every product planter rewrites the result after execution — BLOCKING
 
-**Path/line:** [planters.py:7](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/planters.py:7), [planters.py:259](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/planters.py:259).
+**Path/line:** [planters.py:7](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/planters.py:7), [planters.py:259](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/planters.py:259).
 
-**Spec:** Product and detector mutations at [verification.md:123](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:123).
+**Spec:** Product and detector mutations at [verification.md:123](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:123).
 
 **Counterexample:** The wrapper runs the real product first, then changes stdout/exit status. `echo_success` converts any refusal to `{}` and exit zero. That mutates observation, not the product’s causal behavior.
 
@@ -401,19 +401,19 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 8. The mutation runner can record infrastructure or partial failure as a kill — BLOCKING
 
-**Path/line:** [mutation-run.sh:39](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/mutation-run.sh:39), [mutation-run.sh:47](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/mutation-run.sh:47), [cli.py:291](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/cli.py:291).
+**Path/line:** [mutation-run.sh:39](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/mutation-run.sh:39), [mutation-run.sh:47](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/mutation-run.sh:47), [cli.py:291](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/cli.py:291).
 
-**Spec:** Each planted mutation must be killed for its intended reason under [verification.md:120](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:120).
+**Spec:** Each planted mutation must be killed for its intended reason under [verification.md:120](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:120).
 
-**Counterexample:** Any nonzero pytest process status marks the entire mutation `KILLED`, even if only one of two nodes fails or collection/setup/environment fails. Additionally, `Guildhall.base_env()` drops `GUILDHALL_PLANTER_SPEC` and `GUILDHALL_PLANTER_REAL`; the interposer requires them at `planters.py:201–202`, so it can fail before invoking the product and still be counted as a kill.
+**Counterexample:** Any nonzero pytest process status marks the entire mutation `KILLED`, even if only one of two nodes fails or collection/setup/environment fails. Additionally, `Kinbase.base_env()` drops `KINBASE_PLANTER_SPEC` and `KINBASE_PLANTER_REAL`; the interposer requires them at `planters.py:201–202`, so it can fail before invoking the product and still be counted as a kill.
 
 **Remediation:** Parse per-node call-phase reports, require every named node to fail for the expected semantic reason, and classify collection/setup/environment failures as `INVALID_HARNESS`. Wire interposer configuration to the wrapper without forwarding it to the real product.
 
 ### 9. Detector mutations never demonstrate gate-level invalidation — BLOCKING
 
-**Path/line:** [detectors.py:18](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/detectors.py:18), [test_harness_selftest.py:400](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_harness_selftest.py:400).
+**Path/line:** [detectors.py:18](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/detectors.py:18), [test_harness_selftest.py:400](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_harness_selftest.py:400).
 
-**Spec:** A detector mutation must escape its positive control and cause gate rejection at [verification.md:123](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:123).
+**Spec:** A detector mutation must escape its positive control and cause gate rejection at [verification.md:123](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:123).
 
 **Counterexample:** One unit selftest constructs six mutant detector objects and confirms local blindness. No runner activates each mutation, executes its affected gate, and verifies `INVALID_HARNESS`. The 401 clause-blinding mutations are unrelated to these six semantic detector mutations.
 
@@ -421,9 +421,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 10. Assertion classification conflates instrument failure with product failure — BLOCKING
 
-**Path/line:** [conftest.py:141](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/conftest.py:141).
+**Path/line:** [conftest.py:141](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/conftest.py:141).
 
-**Spec:** Instrument/environment inability must remain distinct from product failure under [verification.md:19](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:19).
+**Spec:** Instrument/environment inability must remain distinct from product failure under [verification.md:19](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:19).
 
 **Counterexample:** Every non-selftest `AssertionError` is classified `PRODUCT_FAILURE`, including assertions about Tester fixture counts, absent calibration bytes, malformed gold, or unconstructed prerequisites. For example, the V-9 operator fixture-count assertion at `test_v9_fatigue.py:464` would accuse the product if the Tester fixture were wrong.
 
@@ -431,7 +431,7 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 11. V-1’s 64-cell lifecycle matrix is neither exact nor natively executed — BLOCKING
 
-**Path/line:** [verification.md:170](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:170), [catalog.py:280](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/catalog.py:280), [test_v1_ingestion.py:528](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v1_ingestion.py:528).
+**Path/line:** [verification.md:170](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:170), [catalog.py:280](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/catalog.py:280), [test_v1_ingestion.py:528](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v1_ingestion.py:528).
 
 **Counterexample:** The ratified table sums to 64 cells, while the catalog requires only 61. “Create” may rewrite identical bytes, append/edit writes an empty string, and expiry/reconciliation/revocation/end/restart often create generic JSON under `run_root`, outside the adapter’s native source. Observed state comes solely from whatever the product reports, with no held expected state per cell. All cells reuse one generic receipt mutation.
 
@@ -439,9 +439,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 12. V-2 lacks independent calibration, gold-derived metrics, and real saga transitions — BLOCKING
 
-**Path/line:** [test_v2_classification.py:250](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v2_classification.py:250), [test_v2_classification.py:311](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v2_classification.py:311), [routing_corpus.json:1601](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/fixtures/gold/routing_corpus.json:1601).
+**Path/line:** [test_v2_classification.py:250](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v2_classification.py:250), [test_v2_classification.py:311](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v2_classification.py:311), [routing_corpus.json:1601](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/fixtures/gold/routing_corpus.json:1601).
 
-**Spec:** [verification.md:197](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:197).
+**Spec:** [verification.md:197](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:197).
 
 **Counterexample:** `tests/fixtures/gold/calibration-manifest.json` is absent; a typed product refusal still makes the calibration test pass. Five-run bounds are product-reported. The only recomputation uses product-reported TP/FP/FN, not raw predictions joined to Tester gold. The opaque-ID binder is correct, but mixed-message tests look up original `m###` IDs, so a conforming opaque result appears empty. Several fan-out/retry/expiry tests run in fresh function-scoped roots without seeding the saga. Crash “seams” are labels assigned according to sleep duration, with `"recovered": True` hardcoded.
 
@@ -449,9 +449,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 13. V-3 does not execute total attack, surface, encoding, and lifecycle coverage — BLOCKING
 
-**Path/line:** [test_v3_attacks.py:94](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v3_attacks.py:94), [test_v3_qualification.py:86](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v3_qualification.py:86), [test_v3_privacy.py:237](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v3_privacy.py:237).
+**Path/line:** [test_v3_attacks.py:94](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v3_attacks.py:94), [test_v3_qualification.py:86](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v3_qualification.py:86), [test_v3_privacy.py:237](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v3_privacy.py:237).
 
-**Spec:** [threat-model.md:110](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/threat-model.md:110), [threat-model.md:157](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/threat-model.md:157).
+**Spec:** [threat-model.md:110](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/threat-model.md:110), [threat-model.md:157](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/threat-model.md:157).
 
 **Counterexample:** Attack-family coverage verifies only that `spec_ref` anchor names exist. Qualification labels in-memory payloads with surface names and calls `detector.detects(payload)` without planting through those surfaces. The positive control requires receipts for only SQLite and Git objects. The lifecycle test executes a small command subset but reports the complete `LIFECYCLE_STAGES` constant. Empty candidate loops can pass.
 
@@ -459,7 +459,7 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 14. Shared signed worlds lack the ratified external trust prerequisites — BLOCKING
 
-**Path/line:** [worldbuilder.py:103](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/worldbuilder.py:103), [architecture.md:143](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/architecture.md:143), [architecture.md:285](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/architecture.md:285).
+**Path/line:** [worldbuilder.py:103](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/_harness/worldbuilder.py:103), [architecture.md:143](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/architecture.md:143), [architecture.md:285](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/architecture.md:285).
 
 **Counterexample:** `SignedWorld.create()` writes only a worktree `.kin/config` hint and generates local test signers. It provides no externally configured Company root, repository certificate, signed AuthorityRegistry, or environment registration. The architecture requires all such events to remain unverified without those inputs. A conforming product should therefore refuse the intended positive fixtures, while a product that improperly trusts worktree material could satisfy them.
 
@@ -467,9 +467,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 15. V-4 substitutes labels or self-reports for real transitions, scale, replay, and locking — BLOCKING
 
-**Path/line:** [test_v4_maintenance.py:86](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v4_maintenance.py:86), [test_v4_maintenance.py:571](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v4_maintenance.py:571), [test_v4_maintenance.py:686](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v4_maintenance.py:686), [test_v4_maintenance.py:726](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v4_maintenance.py:726).
+**Path/line:** [test_v4_maintenance.py:86](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v4_maintenance.py:86), [test_v4_maintenance.py:571](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v4_maintenance.py:571), [test_v4_maintenance.py:686](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v4_maintenance.py:686), [test_v4_maintenance.py:726](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v4_maintenance.py:726).
 
-**Spec:** [verification.md:331](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:331).
+**Spec:** [verification.md:331](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:331).
 
 **Counterexample:** Rebuild/restart perform no transition but are marked changed; conflict never plants the required authorized parent-bound resolution; manifest comparison constructs three rather than four set relations and makes classification optional; ceiling tests do not build 10× input; cascade has no 10,000-event graph or real key revocation; replay constructs no replay; the lock test requires neither a common-dir lock file nor successful serialized lineage.
 
@@ -477,9 +477,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 16. V-6 has no registered live Chief Architect round trip — BLOCKING
 
-**Path/line:** [test_v6_authority.py:111](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v6_authority.py:111), [test_v6_authority.py:149](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v6_authority.py:149), [test_v6_authority.py:343](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v6_authority.py:343).
+**Path/line:** [test_v6_authority.py:111](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v6_authority.py:111), [test_v6_authority.py:149](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v6_authority.py:149), [test_v6_authority.py:343](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v6_authority.py:343).
 
-**Spec:** [verification.md:390](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:390), [architecture.md:614](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/architecture.md:614).
+**Spec:** [verification.md:390](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:390), [architecture.md:614](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/architecture.md:614).
 
 **Counterexample:** The fixture starts Company but never registers the helper path, public key, authority ID, scope, or channel. The test directly invokes the helper subprocess, then separately ingests its output; the product never delivers a question through a registered channel. Wrong-role and contradictory tests use fresh state without the required question/prior answer. Degraded mode does not create an expired cache. The two-call ceiling uses three different question IDs without establishing a common task.
 
@@ -487,9 +487,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 17. V-8’s live service contains no authoritative fact history, cache, or revocation state — BLOCKING
 
-**Path/line:** [test_v8_company_refs.py:84](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v8_company_refs.py:84), [test_v8_company_refs.py:100](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v8_company_refs.py:100), [test_v8_company_refs.py:580](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v8_company_refs.py:580), [test_v8_company_refs.py:895](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v8_company_refs.py:895).
+**Path/line:** [test_v8_company_refs.py:84](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v8_company_refs.py:84), [test_v8_company_refs.py:100](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v8_company_refs.py:100), [test_v8_company_refs.py:580](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v8_company_refs.py:580), [test_v8_company_refs.py:895](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v8_company_refs.py:895).
 
-**Spec:** [verification.md:438](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:438).
+**Spec:** [verification.md:438](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:438).
 
 **Counterexample:** Company is started but no referenced fact/version/history is inserted. The repository reference uses fabricated IDs/digests. A certificate is written but not installed or supplied to the fresh clone. Digest cases therefore have no historical/current Company versions. Expiry does not request the running Company fixture and passes when no expiry event exists. Cache truth-table rows create no revocation snapshot/cache or revocation event and hardcode `state_constructed=True`.
 
@@ -497,19 +497,19 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 18. V-9 does not perform real approved install, native host invocation, or required timing/topology work — BLOCKING
 
-**Path/line:** [test_v9_host_lifecycle.py:129](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_host_lifecycle.py:129), [test_v9_host_lifecycle.py:217](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_host_lifecycle.py:217), [test_v9_host_lifecycle.py:505](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_host_lifecycle.py:505), [test_v9_host_lifecycle.py:642](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_host_lifecycle.py:642).
+**Path/line:** [test_v9_host_lifecycle.py:129](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_host_lifecycle.py:129), [test_v9_host_lifecycle.py:217](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_host_lifecycle.py:217), [test_v9_host_lifecycle.py:505](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_host_lifecycle.py:505), [test_v9_host_lifecycle.py:642](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_host_lifecycle.py:642).
 
-**Spec:** [verification.md:476](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:476).
+**Spec:** [verification.md:476](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:476).
 
-**Counterexample:** Setup tests only dry-run and refusal; they never perform approved install or verify installed files. “Native events” are synthetic envelopes sent to `guildhall hooks dispatch`; the real host executable need not run because the invocation assertion is conditional. Parity passes if either host produces no canonical result. Warm state is a shaped `{"state":"verified"}` file. The session ID discloses the expected start state. The 250 ms connection requirement is asserted as `<5.0s`; full fsck uses eight events, not 10,000; CPU/RAM/filesystem are not reported; topology never creates a submodule.
+**Counterexample:** Setup tests only dry-run and refusal; they never perform approved install or verify installed files. “Native events” are synthetic envelopes sent to `kinbase hooks dispatch`; the real host executable need not run because the invocation assertion is conditional. Parity passes if either host produces no canonical result. Warm state is a shaped `{"state":"verified"}` file. The session ID discloses the expected start state. The 250 ms connection requirement is asserted as `<5.0s`; full fsck uses eight events, not 10,000; CPU/RAM/filesystem are not reported; topology never creates a submodule.
 
 **Remediation:** Exercise the host’s actual approval/install flow, inspect installed configuration, invoke Codex and Claude themselves, require nonempty invocation records, use opaque session IDs, build real certified cache/event state, enforce 250 ms, record machine metadata, run the 10,000-event ceiling, and include a real submodule.
 
 ### 19. V-9 permits zero operator work and trusts product-reported adequacy — BLOCKING
 
-**Path/line:** [test_v9_fatigue.py:384](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_fatigue.py:384), [test_v9_fatigue.py:457](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_fatigue.py:457), [test_v9_fatigue.py:515](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_fatigue.py:515).
+**Path/line:** [test_v9_fatigue.py:384](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_fatigue.py:384), [test_v9_fatigue.py:457](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_fatigue.py:457), [test_v9_fatigue.py:515](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_fatigue.py:515).
 
-**Spec:** [verification.md:505](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:505).
+**Spec:** [verification.md:505](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:505).
 
 **Counterexample:** The 20-item blinded file is never sent to an operator or product; absence of `operator_exercise` makes the test pass. The adequacy test sends the full 100-record file five times, makes no decisions, and trusts product-reported slots/correct admissions; missing displacement is accepted as clean. The interleave “barrier” records timestamps only after calls return, rendered zero passes, and crash handling does not establish that reservation occurred.
 
@@ -517,9 +517,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 20. Product-bound control inspection is incomplete and case identity leaks — BLOCKING
 
-**Path/line:** [test_control_policy.py:42](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_control_policy.py:42), [test_v4_maintenance.py:179](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v4_maintenance.py:179), [test_v8_company_refs.py:597](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v8_company_refs.py:597), [test_v9_host_lifecycle.py:515](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_host_lifecycle.py:515).
+**Path/line:** [test_control_policy.py:42](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_control_policy.py:42), [test_v4_maintenance.py:179](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v4_maintenance.py:179), [test_v8_company_refs.py:597](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v8_company_refs.py:597), [test_v9_host_lifecycle.py:515](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v9_host_lifecycle.py:515).
 
-**Spec:** Oracle privacy review at [verification.md:128](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:128).
+**Spec:** Oracle privacy review at [verification.md:128](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:128).
 
 **Counterexample:** The policy recognizes only literal keys inside literal `env={...}` arguments. It does not inspect variable environment maps, constructor `extra_env`, argv, cwd/path names, stdin, prompts, fixture/service payloads, or committed Git history. The V-4 scenario, V-8 digest case, and V-9 expected start state cross those unchecked channels.
 
@@ -527,9 +527,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 21. Auxiliary-corpus rights, provenance, freeze, and selection are unresolved — BLOCKING
 
-**Path/line:** [RIGHTS.md:3](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/fixtures/auxiliary/RIGHTS.md:3), [pool.json:81](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/fixtures/auxiliary/pool.json:81), [test_v3_qualification.py:626](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v3_qualification.py:626).
+**Path/line:** [RIGHTS.md:3](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/fixtures/auxiliary/RIGHTS.md:3), [pool.json:81](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/fixtures/auxiliary/pool.json:81), [test_v3_qualification.py:626](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/acceptance/test_v3_qualification.py:626).
 
-**Spec:** [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/threat-model.md:198).
+**Spec:** [threat-model.md:198](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/threat-model.md:198).
 
 **Counterexample:** A Tester-authored statement saying the Tester owns and dedicates the prose cannot independently prove authorship or authority to grant CC0. The combined digest omits the rights/selection metadata, generated components have no reproducible derivation, and the auxiliary test explicitly requires the selection to remain unfilled rather than verifying a completed Reviewer record.
 
@@ -537,9 +537,9 @@ This does not meet [threat-model.md:198](/Users/jmcentire/Code/guildhall-proof-l
 
 ### 22. The Reviewer environment did not enforce pytest timeouts — BLOCKING
 
-**Path/line:** [pytest.ini:42](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/pytest.ini:42), [requirements.txt:9](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/tests/requirements.txt:9).
+**Path/line:** [pytest.ini:42](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/pytest.ini:42), [requirements.txt:9](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/tests/requirements.txt:9).
 
-**Spec:** Every external/process call must have a timeout under [verification.md:780](/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:780).
+**Spec:** Every external/process call must have a timeout under [verification.md:780](/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer-2/spec/verification.md:780).
 
 **Counterexample:** `pytest_timeout` is unavailable. Pytest warned that `timeout`, `timeout_method`, and `cache_dir` were unknown, yet the supposedly strict Reviewer-safe run exited zero. Global test timeouts were therefore not active.
 

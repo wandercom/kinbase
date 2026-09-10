@@ -1,9 +1,9 @@
 {
-  "schema_version": "guildhall-validator-instrument-selftest/1",
+  "schema_version": "kinbase-validator-instrument-selftest/1",
   "executed_at": "2026-09-05T20:49:18Z",
   "tester_commit": "263d41d77ae11e4e62f2ce2716378a8e1ebdc7f2",
   "tester_tree": "61af5f8966f9a070e36eef31681d2c6c98a68c58",
-  "audit_repository": "/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/control/validator-tester-audit-263d41d",
+  "audit_repository": "/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/control/validator-tester-audit-263d41d",
   "clone_mode": "git clone --no-local --no-hardlinks; detached exact commit",
   "alternates_file_present": false,
   "pre_and_post_status_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",

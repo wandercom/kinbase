@@ -8,10 +8,12 @@ __pycache__/
 dist/
 build/
 *.egg-info/
-.guildhall/
+.kinbase/
 .factory/
 .constrain/
 evidence/private/
 evidence/runs/
 evidence/launch-orchestrator.sh
 evidence/orchestrator-brief.md
+
+/target/

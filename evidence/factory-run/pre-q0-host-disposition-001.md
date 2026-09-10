@@ -6,7 +6,7 @@ Instance `50012413` received synthetic qualification traffic before the Q-0 loca
 pre-send observer existed. The dedicated local Codex session remains at:
 
 ```text
-/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/control/vast-codex-home/sessions/2026/09/05/rollout-2026-09-05T19-52-47-01a07434-1c07-7d01-8662-6b7354ad8665.jsonl
+/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/control/vast-codex-home/sessions/2026/09/05/rollout-2026-09-05T19-52-47-01a07434-1c07-7d01-8662-6b7354ad8665.jsonl
 ```
 
 That transcript records Codex events and request-construction activity, but it is not

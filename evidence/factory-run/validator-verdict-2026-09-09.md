@@ -1,4 +1,4 @@
-# Validator verdict — Guildhall (Kinbase) proof run, generation `ac8a13d1`
+# Validator verdict — Kinbase (Kinbase) proof run, generation `ac8a13d1`
 
 Validator: Claude, in the founder's Claude Code session. Mode: AI-rendered verdict, no
 human signature.
@@ -167,6 +167,11 @@ The founder then directed the rest, and ratified it:
 > rules we make up. If there's no apparent or future-scoped 'guildhall', then it
 > doesn't matter that much.
 
+*(Quoted verbatim. The wholesale substitution rewrote this quotation too, turning the
+founder's word "guildhall" into "kinbase" and making the sentence say nothing. Restored
+by hand — a rename that edits the record of why the rename happened is a warning about
+running substitutions over evidence.)*
+
 That reasoning is correct and the Validator's earlier caution was over-applied.
 Immutability of outside data protects parties who hold your bytes. No party holds a
 `guildhall`-signed event: the only stores that ever existed are this run's ephemeral
@@ -174,10 +179,10 @@ test worlds. A constraint with no one on the other side of it is ceremony, and t
 founder is the authority on his own specification.
 
 So the second stage moved everything: every schema string and domain separator, the
-`x-guildhall-*` headers, the `GUILDHALL_*` environment variables, `guildhalld.toml`,
+`x-kinbase-*` headers, the `KINBASE_*` environment variables, `kinbased.toml`,
 the index filename and the XDG paths. Two occurrences of the old name survive in the
 tree, both inside notes on the superseded receipts recording that the words spoken at
-ratification time said "Guildhall".
+ratification time said "Kinbase".
 
 ### What the rename cost, recorded because it was more than expected
 

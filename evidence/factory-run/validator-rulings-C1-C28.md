@@ -7,7 +7,7 @@ instrument is defective and the Tester repairs it. Each ruling names who acts:
 **PRODUCT** (Coder implements), **INSTRUMENT** (Tester repairs), or **BOTH**.
 
 - **C1 — user config never written. INSTRUMENT + PRODUCT.** The instrument must write the
-  launcher user config at `${XDG_CONFIG_HOME:-$HOME/.config}/guildhall/config.toml`
+  launcher user config at `${XDG_CONFIG_HOME:-$HOME/.config}/kinbase/config.toml`
   (0600) with exactly the cli.md keys, using an isolated `HOME`/`XDG_CONFIG_HOME` per
   world, before any command that needs Company, cache, certificate, or Personal. The
   product resolves config only from that path (honouring both variables) and never from
@@ -25,7 +25,7 @@ instrument is defective and the Tester repairs it. Each ruling names who acts:
 - **C4 — signing convention. BOTH.** One convention: the signed bytes are the JCS of the
   document with `signature` removed and `signer` (64-hex Ed25519 public key) present;
   `signature` is 128-hex over `signing_digest(message_type, jcs_bytes)`. The authority
-  registry is one document `{"schema":"guildhall-authority-registry/1","authority_cursor",
+  registry is one document `{"schema":"kinbase-authority-registry/1","authority_cursor",
   "entries":[...]}` signed by the steward root key as message type
   `authority-registry-entry`. The Tester converges all three conventions to this one.
 - **C5 — request signature type and client key. PRODUCT (ruling R-4 stands).** Request
@@ -98,7 +98,7 @@ instrument is defective and the Tester repairs it. Each ruling names who acts:
   `kindex` adapter's native schema is Kindex 0.36.0's export (`nodes(id, node_type, title,
   content, payload, created_at)` plus `edges`).
 - **C22 — Company fact admission body. INSTRUMENT.** `POST /facts` bodies are FactEvents
-  (architecture §3 field set, `schema: "guildhall-event/1"`) signed as `fact-event`.
+  (architecture §3 field set, `schema: "kinbase-event/1"`) signed as `fact-event`.
 - **C23 — single-line `--json`. PRODUCT.** Every stdout line and every stderr line under
   `--json` is one complete JSON document.
 - **C24 — foreign artefacts under `.kin/`. PRODUCT.** `fsck`/`ingest`/`status` count
@@ -110,7 +110,7 @@ instrument is defective and the Tester repairs it. Each ruling names who acts:
 - **C26 — `--key-file`. PRODUCT.** Informational; refusal of an impostor is by registry
   lookup (`AUTHORITY_WRONG_SCOPE`).
 - **C27 — p95 includes process start. PRODUCT.** Accepted; the binary is native.
-- **C28 — `GUILDHALL_COMPANY_URL`. INSTRUMENT + PRODUCT.** The product never reads a Company
+- **C28 — `KINBASE_COMPANY_URL`. INSTRUMENT + PRODUCT.** The product never reads a Company
   endpoint from the environment; an env-supplied endpoint yields `PROCESSOR_UNAUTHORIZED`
   with zero connections. The blackhole/timeout probe configures its endpoint through the
   user config.

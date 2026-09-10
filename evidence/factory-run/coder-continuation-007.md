@@ -1,4 +1,4 @@
-# Factory Coder continuation dispatch 007 — Guildhall proof
+# Factory Coder continuation dispatch 007 — Kinbase proof
 
 Resume the same bound GLM-5.3 Coder thread and exact isolated author lane after
 attempt 006 ended solely because the provider reported that extra-usage
@@ -14,7 +14,7 @@ role, requirement, or proof change.
 - Branch: `factory/coder-ac8a13d1`
 - Same Coder thread: `01a072d7-a9e2-7190-8b96-6f8abf42355b`
 - No Coder commit exists. The preserved worktree still has only untracked
-  assigned product roots `guildhall/` and `pyproject.toml`, totaling 415,213
+  assigned product roots `kinbase/` and `pyproject.toml`, totaling 415,213
   bytes across 29 Python files plus packaging.
 - Preserved flat path/content digest:
   `b54b89e486ea7bcb8552a85ebce0a901fec379359bb2e4a53b194b678243e3b2`.

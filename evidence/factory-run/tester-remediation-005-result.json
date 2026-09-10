@@ -1,5 +1,5 @@
 {
-  "schema_version": "guildhall-factory-tester-remediation-result/1",
+  "schema_version": "kinbase-factory-tester-remediation-result/1",
   "completed_at": "2026-09-05T23:32:05Z",
   "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
   "role": "Tester",

@@ -18,7 +18,7 @@
   runs the architecture §3 cascade from it. A separate `POST /revocations` endpoint is not
   required this generation.
 - **R-11 (classifier contract).** The product ships its classifier as
-  `guildhall classifier --json` (same binary): stdin is one JSON object
+  `kinbase classifier --json` (same binary): stdin is one JSON object
   `{"observations":[Observation...]}`; stdout is one JSON object
   `{"atoms":[{"text","atom_kind","scope","confidence","proposed_destinations":[...],
   "taint":[...],"provenance":{...},"unresolved_uncertainty"}], "classifier_version","provider"}`.
@@ -42,7 +42,7 @@
   approval-token issue/expiry, and manifest `observed_at`. It does not apply to
   `asserted_at`, `effective_from`, `effective_until`, `issued_at`, or `answered_at`, which
   are historical validity claims and may be arbitrarily far in the past. Every command
-  and the service compare against the proof clock (`GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS`
+  and the service compare against the proof clock (`KINBASE_PROOF_CLOCK_OFFSET_SECONDS`
   applies to it).
 - **R-15 (`--json` error stream).** Under `--json`, every typed error object is written to
   stdout as one line (stderr may repeat it). Empty stdout under `--json` is a defect

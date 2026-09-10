@@ -19,7 +19,7 @@ Direction: **loosen** = made a node easier for the product to pass; **tighten** 
 | R-8 criticality in `distortion.loss_if_absent` | failure-observed (Tester raised) | arch §3 FactEvent (silent) | shape | both | ~6 |
 | R-9 local_dependence_class as constraint fact | failure-observed (Tester raised) | arch §3 (silent) | shape | both | ~3 |
 | R-10 revocation as registry republication | failure-observed (Tester raised) | arch §3 rotation/revocation (no endpoint) | shape | both | ~4 |
-| R-11 classifier as `guildhall classifier --json` | failure-observed | cli.md `[classifier]`, arch §5 | shape | both | 22 |
+| R-11 classifier as `kinbase classifier --json` | failure-observed | cli.md `[classifier]`, arch §5 | shape | both | 22 |
 | R-12 `hooks dispatch --json` framing | failure-observed (Coder raised) | arch §9 envelope vs cli.md JSON | shape | Coder | ~8 |
 | R-13 product never computes macro-F1 | failure-observed (Coder raised) | P-2 thresholds are the instrument's | loosen (product) | Coder | 1 |
 | R-14 skew applies to receipt-time claims only | failure-observed | arch §6 "event times … proof clock" | loosen (product) | both | ~12 |

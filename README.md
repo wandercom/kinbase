@@ -1,14 +1,17 @@
-# Kinbase (developed as Guildhall)
+# Kinbase
 
-Kinbase is the company-memory member of a three-product Kindex system. Its public
-name is Kinbase, its site is [kinbase.tools](https://kinbase.tools), and it is a
-Wander project. Inside this repository it is still called Guildhall: the
-specification, the CLI contract, and every ratified artifact use that name, and
-renaming ratified bytes would change their digests. The two names refer to one
-thing.
+Kinbase is the company-memory member of a three-product Kindex system. Its site is
+[kinbase.tools](https://kinbase.tools) and it is a Wander project.
+
+The command is `kinbase`, and so is the protocol: every schema string, domain
+separator, request header, environment variable and on-disk path. The project was
+developed under the name Guildhall and renamed wholesale on 2026-09-09, which moved
+the specification manifest digest and both ratification receipts. Two references to
+the former name survive, in notes on the superseded receipts recording that the words
+spoken at the original ratification said "Guildhall".
 
 - **Kindex Personal** remembers private conversations and personal context.
-- **Kinbase / Guildhall / Kindex Company** carries organization-wide architectural
+- **Kinbase / Kindex Company** carries organization-wide architectural
   and operational knowledge into every authorized coding task.
 - **Kindex Codebase** carries repository-specific knowledge in Git under `.kin/`.
 

@@ -19,7 +19,7 @@ has_billing=True
 No API credential or unrelated account field was retained. The observation says that
 the provider represented the account as credit-only and exposed no configured
 automatic-billing amount or threshold at that instant. It is not an SLA, does not
-prove a bound on stopped-storage or delayed charges, and does not turn Guildhall's USD
+prove a bound on stopped-storage or delayed charges, and does not turn Kinbase's USD
 400 local authorization ceiling into a provider-liability ceiling. G-2 must sample the
 same fields again before launch and close admission if credit-only mode or the absence
 of automatic billing changes.

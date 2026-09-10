@@ -1,5 +1,5 @@
 {
-  "schema_version": "guildhall-factory-coder-failure/1",
+  "schema_version": "kinbase-factory-coder-failure/1",
   "recorded_at": "2026-09-05T23:20:09Z",
   "attempt": 7,
   "role": "Coder",
@@ -25,13 +25,13 @@
     "head_tree": "0a4cffe95304735ab68f6817f0fb97aeccb1ed77",
     "status_sha256": "422b3e2a82f1fc739ed16b8b324123411d65a44531c48ede4612e14322bee6e7",
     "untracked_product_paths": [
-      "guildhall/",
+      "kinbase/",
       "pyproject.toml"
     ],
     "python_file_count": 29,
     "product_python_bytes": 471463,
     "flat_path_content_digest_sha256": "5b483e1f85a9a5f762ee85494b2081a92241f9f1204a06fda12fe333d2fe222e",
-    "flat_path_content_digest_method": "sha256 of sorted relative-path TAB sha256 rows for non-pycache guildhall files plus pyproject.toml",
+    "flat_path_content_digest_method": "sha256 of sorted relative-path TAB sha256 rows for non-pycache kinbase files plus pyproject.toml",
     "symlinks": false,
     "executable_product_files": false
   },
@@ -46,7 +46,7 @@
     "local_kindex_attempted": true,
     "global_plugin_resource_metadata_listed": true
   },
-  "last_uncompleted_intent": "Complete staged-file wiring, then exercise the shared sandbox directly after finding an unused unsafe source set in guildhall/cli.py.",
+  "last_uncompleted_intent": "Complete staged-file wiring, then exercise the shared sandbox directly after finding an unused unsafe source set in kinbase/cli.py.",
   "admission": "NONE",
   "disposition": "QUARANTINED_UNCOMMITTED_PRODUCT; preserve exact lane bytes, do not combine, and resume only after GLM provider capacity is restored under the founder's standing same-thread continuation authority.",
   "product_or_proof_verdict": "none"

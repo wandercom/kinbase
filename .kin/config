@@ -1,11 +1,11 @@
-name: guildhall
+name: kinbase
 description: >-
   Company knowledge and three-store Kindex proving ground. Repository facts must
   remain codebase-scoped; global architecture is referenced from Company authority.
 audience: team
 domains:
   - kindex
-  - guildhall
+  - kinbase
   - knowledge-systems
   - brownfield-engineering
 data_dir: .kin/local

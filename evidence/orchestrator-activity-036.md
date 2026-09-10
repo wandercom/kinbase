@@ -17,7 +17,7 @@ Factory role, cross-author boundary, gate, or verdict.
 The exact GLM-5.3 Coder lane remains at ratified baseline commit/tree
 `e29f3fe03595d594c0546f9b0012b58f7c45bac1` /
 `0a4cffe95304735ab68f6817f0fb97aeccb1ed77`, with untracked assigned roots
-`guildhall/` and `pyproject.toml`. The 415,213-byte preserved product has flat
+`kinbase/` and `pyproject.toml`. The 415,213-byte preserved product has flat
 path/content digest
 `b54b89e486ea7bcb8552a85ebce0a901fec379359bb2e4a53b194b678243e3b2`.
 

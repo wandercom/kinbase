@@ -13,7 +13,7 @@ and remain an unratified candidate. No Coder dispatch occurred.
 ## Custody boundary exercised
 
 Only generated synthetic prompt text and generic Codex harness metadata crossed
-the SSH tunnel. No file content from the Guildhall repository or its specifications,
+the SSH tunnel. No file content from the Kinbase repository or its specifications,
 no Coder or Tester lane artifact, no Kindex graph, no credential, no Personal or
 Company body, no customer data, and no test/oracle content was sent.
 
@@ -156,6 +156,6 @@ ceiling remain unchanged.
 
 This qualifies the pinned serving/harness configuration, BF16 capacity, long-prefix
 reuse, local tool loop, and recovery from provider-path loss. It does **not** prove
-the Guildhall Product, authorize repository transmission, admit a Coder artifact,
+the Kinbase Product, authorize repository transmission, admit a Coder artifact,
 resolve the Tester rights grant, or satisfy any P-1 through P-10 or V-1 through V-10
 Product gate.

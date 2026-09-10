@@ -10,7 +10,7 @@ provider-issued Stripe credit row for exactly USD 100.00 beginning at
 approximately USD 0.4519 difference is consistent with the already observed stopped
 storage rate over the intervening time. The credit is therefore attributed account
 funding rather than an unexplained balance movement. It still does not expand the
-Guildhall route ceiling until the founder ratifies the exact amendment proposing that
+Kinbase route ceiling until the founder ratifies the exact amendment proposing that
 authorization.
 
 At the same observation, instance `50012413` remained

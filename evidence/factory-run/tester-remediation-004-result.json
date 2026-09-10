@@ -1,5 +1,5 @@
 {
-  "schema_version": "guildhall-factory-tester-remediation-result/1",
+  "schema_version": "kinbase-factory-tester-remediation-result/1",
   "completed_at": "2026-09-05T21:41:28Z",
   "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
   "role": "Tester",
@@ -33,7 +33,7 @@
     "Write": 1,
     "forbidden_delegation_or_web_calls": 0,
     "absolute_path_tool_inputs": [
-      "/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/tester/tests/acceptance/_harness/debt.py"
+      "/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/tester/tests/acceptance/_harness/debt.py"
     ],
     "tool_inputs_naming_coder_validator_detector_control_main_product_or_kindex_paths": 0
   },

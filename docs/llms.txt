@@ -1,6 +1,6 @@
 # Kinbase (technical documentation)
 
-> Kinbase is the Company product of the three-store Kindex system (Personal, Codebase, Company) over one engine and protocol: a store of what a company has decided, and why, that engineers and coding agents read before they change a line. Developed in this repository under the name Guildhall. A Wander project.
+> Kinbase is the Company product of the three-store Kindex system (Personal, Codebase, Company) over one engine and protocol: a store of what a company has decided, and why, that engineers and coding agents read before they change a line. Developed in this repository under the name Kinbase. A Wander project.
 
 Status: specification ratified; proof of concept not yet run; two candidate amendments in review. Until the pre-registered experiment passes, everything here describes intent, not an installable product.
 

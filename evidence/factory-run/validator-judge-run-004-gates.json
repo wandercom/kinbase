@@ -4587,7 +4587,7 @@
         ]
       }
     ],
-    "schema": "guildhall-obligation-consumption/1",
+    "schema": "kinbase-obligation-consumption/1",
     "unconsumed": [
       [
         "NF.http",
@@ -4934,5 +4934,5 @@
   },
   "open_instrument_debt": 1,
   "planter_applications": [],
-  "schema": "guildhall-acceptance-census/1"
+  "schema": "kinbase-acceptance-census/1"
 }

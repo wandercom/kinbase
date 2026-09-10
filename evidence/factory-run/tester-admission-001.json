@@ -1,5 +1,5 @@
 {
-  "schema_version": "guildhall-factory-author-admission/1",
+  "schema_version": "kinbase-factory-author-admission/1",
   "role": "Tester",
   "ratification_manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
   "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
@@ -58,7 +58,7 @@
   },
   "tester_disclosures": [
     "The suite was not executed against an implementation.",
-    "Several probes propose GUILDHALL_ACCEPTANCE_* state levers that are not ratified CLI commands; Validator must audit them for vacuity and authority before interpreting failures.",
+    "Several probes propose KINBASE_ACCEPTANCE_* state levers that are not ratified CLI commands; Validator must audit them for vacuity and authority before interpreting failures.",
     "The suite reports observations and a gate vector, not a verdict."
   ],
   "validator_disposition": "ADMITTED_FOR_LATER_COMBINATION_ONLY",

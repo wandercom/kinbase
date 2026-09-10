@@ -22,7 +22,7 @@ in the safe direction. Any later change that admits served-but-not-recorded, suc
 batching or asynchronous acknowledgment of emissions, is outside this design; any
 change that admits recorded-but-not-served is a tuning.
 
-Concretely, in one still-unproven Guildhall generation it:
+Concretely, in one still-unproven Kinbase generation it:
 
 1. requires every projection served to a coding session to leave an acknowledged
    **emission record** before it is returned: references to the atoms served by
@@ -102,12 +102,12 @@ investigation you were trying to run.
 The founder's ruling on this question (2026-09-08) was: bookend the taint check at
 proposal and at commit, collect every open and self-answered question for
 transparency, and build the containment on the pattern of the Event service and its
-story builders. This candidate is that pattern applied to Guildhall's one irreversible
+story builders. This candidate is that pattern applied to Kinbase's one irreversible
 failure.
 
 ## 1. Problem statement
 
-Guildhall records what it admitted (immutable events), what it asked (Unknowns), and
+Kinbase records what it admitted (immutable events), what it asked (Unknowns), and
 what it decided to project (decision traces with the authority-snapshot cursor, per
 architecture section 6). It does not yet record, as a first-class acknowledged fact,
 **what it handed to whom**: which admitted atoms were served into which session, on
@@ -133,8 +133,8 @@ ledger can.
 
 The Event service distinguishes an **observation path** (high volume, permissive,
 best effort, many writers, ephemeral) from a **record path** (low volume, governed,
-acknowledged, single writer, durable). Guildhall already has the record path: the
-append-only event table behind `guildhalld`, with the authority cursor. This
+acknowledged, single writer, durable). Kinbase already has the record path: the
+append-only event table behind `kinbased`, with the authority cursor. This
 candidate places a small closed set of new event kinds on it and states what stays
 off it.
 
@@ -206,7 +206,7 @@ counts, confirmed and unconfirmed, with `withdrawn` reported beside them.
 Emission records contain no fact bodies, no transcript bytes, and nothing from
 Personal, and the emission table is included in every shared-surface byte scan named
 in P-3. Availability: the record path in the proof is the existing single-node,
-fsync-on-commit SQLite behind `guildhalld`; its unavailability is a total outage of
+fsync-on-commit SQLite behind `kinbased`; its unavailability is a total outage of
 shared projection, which is accepted and ratified rather than degraded around. Per
 principal and per session write ceilings bound the record path; `EMISSION_UNRECORDED`
 is retried by idempotency key with bounded backoff, and a sustained refusal rate is a
@@ -713,7 +713,7 @@ this exact new block:
 
 ## 6. Limitations
 
-- The ledger covers what Guildhall served. It does not cover what a person copied out
+- The ledger covers what Kinbase served. It does not cover what a person copied out
   of a session, what Git distributed, or what a model retained in context after a
   notice; the runbook's erasure caveat stands.
 - Detection recall is not improved by this candidate. It improves response, not

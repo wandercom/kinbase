@@ -19,4 +19,4 @@ unproven. The bounded result is that Agy found no specific goal-substitution,
 dropped-proof-functionality, remote-custody, or role-collapse reason to block
 submitting these exact candidate bytes for Constrain, Simulacrum, Advocate, and
 founder decision. The receipt qualifies only the synthetic infrastructure behavior
-it records; no Guildhall Product behavior has been exercised.
+it records; no Kinbase Product behavior has been exercised.

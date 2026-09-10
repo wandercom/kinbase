@@ -2,7 +2,7 @@
 
 The original GLM-5.3 Coder thread became transport-unstable after more than an hour of implementation work.
 
-- Attempt 1 ended after five reconnect failures. It left recoverable uncommitted work under `guildhall/` and `pyproject.toml`, no Coder commit, no out-of-role path changes, and one known indentation error in `guildhall/experiment.py`.
+- Attempt 1 ended after five reconnect failures. It left recoverable uncommitted work under `kinbase/` and `pyproject.toml`, no Coder commit, no out-of-role path changes, and one known indentation error in `kinbase/experiment.py`.
 - Attempts 2 and 3 resumed the exact same thread and model. Both ended in exhausted response-stream reconnects before any file-changing model action; Git and syntax state remained unchanged.
 - The exact failure records are `evidence/factory-run/coder-attempt-001-failure.json`, `coder-attempt-002-failure.json`, and `coder-attempt-003-failure.json`.
 

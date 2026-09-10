@@ -1,17 +1,17 @@
 {
-  "schema_version": "guildhall-factory-coder-continuation-binding/1",
+  "schema_version": "kinbase-factory-coder-continuation-binding/1",
   "attempt": 5,
   "bound_at": "2026-09-05T19:46:33Z",
   "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
   "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
   "ratified_baseline_tree": "0a4cffe95304735ab68f6817f0fb97aeccb1ed77",
-  "coder_repository": "/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/coder",
+  "coder_repository": "/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/coder",
   "coder_branch": "factory/coder-ac8a13d1",
   "coder_thread_id": "01a072d7-a9e2-7190-8b96-6f8abf42355b",
   "pre_resume_status_sha256": "422b3e2a82f1fc739ed16b8b324123411d65a44531c48ede4612e14322bee6e7",
   "pre_resume_tracked_head": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
   "pre_resume_untracked_product_paths": [
-    "guildhall/",
+    "kinbase/",
     "pyproject.toml"
   ],
   "continuation_prompt": "evidence/factory-run/coder-continuation-005.md",

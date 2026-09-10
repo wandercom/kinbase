@@ -24,7 +24,7 @@ The founder then increased available Vast credit:
 
 Live read-only checks establish:
 
-- Agy remains alive in `guildhall-proof:orchestrator` and remains the resident,
+- Agy remains alive in `kinbase-proof:orchestrator` and remains the resident,
   non-authoring strategic Orchestrator.
 - The current ratified Architecture says at `spec/architecture.md:12` that the
   implementation is a Python 3.12 package.
@@ -57,7 +57,7 @@ Proposed disposition:
    repository material.
 4. It is permissible to rent the founder-authorized Vast node and download only
    the public GLM-5.3 weights while the amendment is reviewed. Do not transmit
-   Guildhall repository bytes or dispatch the Coder until ratification.
+   Kinbase repository bytes or dispatch the Coder until ratification.
 5. After ratification, dispatch a fresh GLM-5.3 Coder context against the same
    functional specification with Rust as the implementation target. It may use
    the old Coder's unadmitted Python product only if the amendment explicitly

@@ -1,10 +1,10 @@
 {
-  "schema_version": "guildhall-factory-tester-remediation-continuation-binding/1",
+  "schema_version": "kinbase-factory-tester-remediation-continuation-binding/1",
   "bound_at": "2026-09-05T20:06:18Z",
   "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
   "failed_attempt_receipt": "evidence/factory-run/tester-remediation-002-failure.json",
   "failed_attempt_receipt_sha256": "8555e24765df0d49623194847f306da289d6561be8d5bf4b1b70e71c09955047",
-  "tester_repository": "/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/tester",
+  "tester_repository": "/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/tester",
   "tester_branch": "factory/tester-ac8a13d1",
   "tester_parent_commit": "244184e631695cc331d64667bd20cfae7f286526",
   "tester_parent_tree": "893a6ba3bbc464762d479aa13305d3761adc07b4",

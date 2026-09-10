@@ -3,7 +3,7 @@
 Status: **Validator feasibility observation; not dependency admission, code, or Product evidence**
 
 Observed locally on `2026-09-05` after `source ~/.profile`. No Vast inference or
-Guildhall Coder lane was used.
+Kinbase Coder lane was used.
 
 The strict first-party `#![forbid(unsafe_code)]` constraint is feasible in principle
 on the Linux proof path through public safe wrapper APIs whose dependencies contain

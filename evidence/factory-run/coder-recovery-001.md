@@ -1,4 +1,4 @@
-# Guildhall Coder recovery dispatch 001
+# Kinbase Coder recovery dispatch 001
 
 Resume Coder thread `01a0728b-d872-7df3-8a5d-e4e7450145eb` in the same standalone Coder repository and continue from its existing uncommitted product state.
 
@@ -7,9 +7,9 @@ This is a procedural recovery only. The ratified authority remains manifest `ac8
 Your previous turn failed because the model transport disconnected after five reconnect attempts. Immediately before that failure:
 
 - `apply_patch` was unavailable in the lane;
-- the attempted edit left `guildhall/experiment.py` with an indentation error at line 971;
+- the attempted edit left `kinbase/experiment.py` with an indentation error at line 971;
 - no Coder commit existed;
-- the only untracked product paths were `guildhall/` and `pyproject.toml`;
+- the only untracked product paths were `kinbase/` and `pyproject.toml`;
 - no `tests/**`, `spec/**`, or `evidence/**` path was changed.
 
 Continue under the original Coder constraints:

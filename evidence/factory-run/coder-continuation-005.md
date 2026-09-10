@@ -1,4 +1,4 @@
-# Factory Coder continuation dispatch 005 — Guildhall proof
+# Factory Coder continuation dispatch 005 — Kinbase proof
 
 Resume the same bound GLM-5.3 Coder thread and isolated author lane. The founder
 has added usage buffer after the provider quota stop. That stop was external and
@@ -12,9 +12,9 @@ claim, or authority byte.
   `ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db`
 - Branch: `factory/coder-ac8a13d1`
 - No Coder commit exists yet; the substantial uncommitted product work under
-  `guildhall/` and `pyproject.toml` is yours from the preceding turns.
+  `kinbase/` and `pyproject.toml` is yours from the preceding turns.
 - The last successful operation before quota exhaustion inspected four
-  checkpoint filters in `guildhall/adapters.py`. This is only a transport
+  checkpoint filters in `kinbase/adapters.py`. This is only a transport
   checkpoint, not an instruction to accept the preceding reasoning. Reinspect
   the actual implementation and ratified authority and make your own changes.
 

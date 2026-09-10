@@ -31,7 +31,7 @@ web search, edits, test authorship, product selection, and verdicts.
 
 The OS sandbox profile was independently probed. It permits the reviewer clone's
 `spec/**` and returns `Operation not permitted` for the Coder, original Tester,
-Validator, run-control directory, main Guildhall repository/evidence, reviewer
+Validator, run-control directory, main Kinbase repository/evidence, reviewer
 clone `evidence/**`, reviewer clone `.kin/**`, and Codex memory paths. The clone
 has no object alternates and begins clean.
 

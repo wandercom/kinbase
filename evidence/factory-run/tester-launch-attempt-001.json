@@ -1,6 +1,6 @@
 {
-  "schema": "guildhall-lane-launch-observation/1",
-  "run_id": "guildhall-proof",
+  "schema": "kinbase-lane-launch-observation/1",
+  "run_id": "kinbase-proof",
   "role": "tester",
   "attempt": 1,
   "agent": "claude-code",

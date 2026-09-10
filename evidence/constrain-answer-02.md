@@ -1,7 +1,7 @@
 The three-product safety boundary is already a founder-ratified Type-1 decision: no
 P-10 outcome licenses collapsing the stores. P-10 does test the product/architecture
 thesis that the complete three-product mechanism improves brownfield work. A
-NOT_PROVEN result stops Guildhall as a product claim and sends any future mechanism
+NOT_PROVEN result stops Kinbase as a product claim and sends any future mechanism
 redesign back to the founder; it does not invalidate the rule that any future design
 must keep Personal physically separate.
 

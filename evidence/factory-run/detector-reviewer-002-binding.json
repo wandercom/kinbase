@@ -1,5 +1,5 @@
 {
-  "schema_version": "guildhall-factory-detector-reviewer-binding/1",
+  "schema_version": "kinbase-factory-detector-reviewer-binding/1",
   "attempt": 2,
   "bound_at": "2026-09-05T19:19:43Z",
   "supersedes_attempt": 1,
@@ -7,7 +7,7 @@
   "attempt_001_failure_sha256": "ba88fbe66f62f06b155d852fe9030cee11ce9e15ad40bc0165dea24f0e66d24d",
   "manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
   "ratified_baseline_commit": "e29f3fe03595d594c0546f9b0012b58f7c45bac1",
-  "reviewer_repository": "/Users/jmcentire/Code/guildhall-proof-lanes-ac8a13d1/detector-reviewer",
+  "reviewer_repository": "/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/detector-reviewer",
   "reviewer_branch": "factory/detector-review-ac8a13d1",
   "tester_commit": "244184e631695cc331d64667bd20cfae7f286526",
   "tester_tree": "893a6ba3bbc464762d479aa13305d3761adc07b4",
@@ -37,7 +37,7 @@
     "Tester source repository",
     "Validator repository",
     "run-control directory",
-    "main Guildhall repository and prior review evidence",
+    "main Kinbase repository and prior review evidence",
     "reviewer-clone evidence/**",
     "reviewer-clone .kin/**",
     "Codex memories",
@@ -50,7 +50,7 @@
     "Tester source repository",
     "Validator repository",
     "run-control directory from inside the reviewer process",
-    "main Guildhall repository",
+    "main Kinbase repository",
     "Codex memories",
     "Claude state",
     "Kindex configuration and data paths"

@@ -1,4 +1,4 @@
-# Factory Coder continuation dispatch 006 — Guildhall proof
+# Factory Coder continuation dispatch 006 — Kinbase proof
 
 Resume the same bound GLM-5.3 Coder thread and isolated author lane after attempt
 5 ended solely because the provider reported `extra usage auto reload payment
@@ -15,7 +15,7 @@ claim.
 - Branch: `factory/coder-ac8a13d1`
 - Same Coder thread: `01a072d7-a9e2-7190-8b96-6f8abf42355b`
 - No Coder commit exists. Your uncommitted assigned product remains under
-  `guildhall/` and `pyproject.toml`; 29 Python files compiled at the failure
+  `kinbase/` and `pyproject.toml`; 29 Python files compiled at the failure
   checkpoint.
 - The final trace message said the publication changes had applied but the
   Codebase store/journal edit had not. This is a transport checkpoint only.

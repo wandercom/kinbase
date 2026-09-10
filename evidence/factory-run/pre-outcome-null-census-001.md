@@ -3,10 +3,10 @@
 Status: **Validator observation; binds absence/admission state before amendment
 ratification, not Product evidence**
 
-Observed at `2026-09-06T02:35:00Z` against Guildhall main HEAD
+Observed at `2026-09-06T02:35:00Z` against Kinbase main HEAD
 `0796cb77481ef1fbced3759ee6e05f3c6168cc27` plus the dirty candidate amendment and
 review evidence. `git worktree list --porcelain` reported only
-`/Users/jmcentire/Code/guildhall`; no Coder or Tester worktree was registered.
+`/Users/jmcentire/Code/kinbase`; no Coder or Tester worktree was registered.
 
 The Validator enumerated tracked and untracked paths and searched names/content for
 V-10 pilots, Corpus Builder snapshot maps, static-prior artifacts, Oracle Curator
