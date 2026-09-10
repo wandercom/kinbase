@@ -1,6 +1,6 @@
 # Amendment register
 
-The Kinbase (Kinbase) specification is ratified by exact digest: the founder and a
+The Kinbase specification is ratified by exact digest: the founder and a
 distinct Validator approve the bytes of the authority files, and only ratified bytes
 may be read by an isolated Coder lane. Changes arrive as candidate amendments in an
 append-only overlay format: each names the exact base passages it replaces or

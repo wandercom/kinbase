@@ -40,8 +40,8 @@ must be rejected for the detector to qualify. The pre-ratification G-1 semantic
 receipt quotes those four glossary entries, states agreement or conflict, and treats
 this bootstrap precedence as a founder-resolved residual rather than circular proof.
 
-This is an append-only amendment candidate to manifest
-`ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db`.
+This is an append-only amendment candidate to the post-rename manifest
+`12dd4c18aaca12c29cc816ca4a5161b5e011814f021879897b88b0e6e85168dd`.
 It supersedes only the clauses named below. Every Product behavior, threat,
 failure disposition, proof gate, role boundary, and source statement not named
 here remains byte-for-byte binding. Ratification creates a new run generation;

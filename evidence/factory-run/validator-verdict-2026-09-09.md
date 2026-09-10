@@ -1,4 +1,7 @@
-# Validator verdict — Kinbase (Kinbase) proof run, generation `ac8a13d1`
+# Validator verdict — Kinbase proof run, generation `12dd4c18`
+
+*Built under the name Guildhall; renamed wholesale on 2026-09-09 and re-ratified.
+The pre-rename generation was `ac8a13d1`, and rows below that name it mean it.*
 
 Validator: Claude, in the founder's Claude Code session. Mode: AI-rendered verdict, no
 human signature.
