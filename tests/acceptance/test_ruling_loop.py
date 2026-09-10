@@ -76,9 +76,10 @@ def project(driver, world, key):
     return result.json
 
 
-def current(driver, world, key):
+def current(driver, world, key, *, as_of=None):
+    clock = ["--as-of", as_of] if as_of is not None else []
     result = driver.run("explain", key, "--repo", str(world.repo.path),
-                        "--decision", f"Which rule governs {key}?", "--json", check=False)
+                        "--decision", f"Which rule governs {key}?", *clock, "--json", check=False)
     if result.returncode not in (0, 3):
         raise ProductFailure(f"explain failed: {result.stdout} {result.stderr}")
     body = result.json
@@ -86,6 +87,23 @@ def current(driver, world, key):
     if not isinstance(value, dict):
         raise ProductFailure(f"no current fact for {key}: {body}")
     return value
+
+
+def require_conflict_heads(driver, world, key, heads):
+    """Prove the contested fixture reached reduction before testing questions."""
+    result = driver.run("explain", key, "--repo", str(world.repo.path),
+                        "--decision", f"Which rule governs {key}?", "--json", check=False)
+    if result.returncode not in (0, 3):
+        raise ProductFailure(f"conflict precondition read failed: {result.stdout}")
+    payload = result.json
+    trace = payload.get("trace", {})
+    if (trace.get("state") != "conflict"
+            or set(trace.get("conflict_event_ids", [])) != set(heads)
+            or len(set(heads)) != 2):
+        raise ProductFailure(f"fixture did not reach two-head conflict for {key}: {trace}")
+    if not any(row.get("kind") == "conflict" and row.get("logical_key") == key
+               for row in required_rows(payload, "unknowns")):
+        raise ProductFailure(f"reducer conflict has no corresponding Unknown for {key}: {payload}")
 
 
 @spec_ref(DIRECT)
@@ -130,9 +148,11 @@ def test_conflicting_evidence_without_answering_authority_opens_question(ruled_w
     anchors.registry.entries = [dataclasses.replace(entry, capabilities=()) for entry in anchors.registry.entries]
     anchors.republish_registry(cursor="1001")
     key = "scheduler/ruling-conflict"
+    heads = []
     for statement in ("Scheduler must retry exactly twice.", "Scheduler must retry exactly five times."):
-        world.plant_event(world.maintainer, store_kind="codebase", logical_key=key, statement=statement,
-                          standing="present", provenance="human")
+        heads.append(world.plant_event(world.maintainer, store_kind="codebase", logical_key=key, statement=statement,
+                                       standing="present", provenance="human")["event_id"])
+    require_conflict_heads(driver, world, key, heads)
     project(driver, world, key)
     questions = required_rows(driver.run("questions", "list", "--json").ok().json, "questions")
     matching = [q for q in questions if q.get("logical_key") == key]
@@ -212,10 +232,12 @@ def test_shrug_is_terminal_while_unruled_remains_actionable(ruled_world, disposi
     for text in ("Scheduler uses one blank line.", "Scheduler uses two blank lines."):
         parents.append(world.plant_event(world.maintainer, store_kind="codebase", logical_key=key,
                                          statement=text, standing="present", provenance="human")["event_id"])
+    require_conflict_heads(driver, world, key, parents)
     project(driver, world, key)
     before_questions = required_rows(driver.run("questions", "list", "--json").ok().json, "questions")
     if not any(q.get("logical_key") == key for q in before_questions):
-        raise ProductFailure("the contested fixture did not open a question before the ruling")
+        raise ProductFailure("two eligible conflict heads and a reducer Unknown reached projection, "
+                             "but questions list has no question before the ruling")
     world.plant_event(world.maintainer, store_kind="codebase", logical_key=key,
                       statement="No direction is prescribed for scheduler whitespace.",
                       atom_kind="shrug" if disposition == "shrug" else "constraint",
@@ -260,14 +282,22 @@ def test_automatically_admitted_shared_fact_remains_revocable(ruled_world):
     if hashlib.sha256(path.read_bytes()).hexdigest() != address:
         raise ProductFailure("automatically admitted shared event has the wrong content address")
     key = event["logical_key"]
-    before = current(driver, world, key)
+    # repo init freezes the default proof clock before this live admission.
+    # Read at the signed event's effective time so NOT_YET_EFFECTIVE cannot
+    # masquerade as a revocation failure (or satisfy the withheld assertion).
+    before = current(driver, world, key, as_of=event["effective_from"])
     anchors.revoke(world.maintainer, cursor="1001")
-    after_result = driver.run("explain", key, "--repo", str(world.repo.path), "--decision", "Which rule remains?", "--json", check=False)
+    after_result = driver.run("explain", key, "--repo", str(world.repo.path),
+                              "--decision", "Which rule remains?", "--as-of", synth.receipt_stamp(1),
+                              "--json", check=False)
     if after_result.returncode not in (0, 3):
         raise ProductFailure(f"revocation read failed: {after_result.stdout}")
     after = after_result.json
+    revoked_support = any(row.get("event_id") == event["event_id"]
+                          and str(row.get("reason", "")).startswith(("REVOKED:", "SUPPORT_REVOKED:"))
+                          for row in after.get("trace", {}).get("rejected", []))
     O.check("RULING.revocable", {"before": before.get("status"),
-        "withdrawn": after.get("projection_state") == "withheld" and after.get("trusted") is False,
+        "withdrawn": after.get("projection_state") == "withheld" and after.get("trusted") is False and revoked_support,
         "record_retained": path.exists()},
         label="signed evidence is withheld after signer revocation while its record survives")
 

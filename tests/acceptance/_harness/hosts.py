@@ -89,7 +89,7 @@ class HostBinary:
     version: str
 
 
-def host_availability(name: str) -> HostBinary | None:
+def host_availability(name: str, *, env: dict[str, str] | None = None) -> HostBinary | None:
     """Resolve a real host executable, honouring an explicit override.
 
     ``KINBASE_HOST_CODEX`` / ``KINBASE_HOST_CLAUDE`` let the Validator point
@@ -101,14 +101,16 @@ def host_availability(name: str) -> HostBinary | None:
     override = os.environ.get(f"KINBASE_HOST_{name.upper()}")
     resolved = Path(override) if override else None
     if resolved is None:
-        found = shutil.which(name)
+        found = shutil.which(name, path=env.get("PATH") if env is not None else None)
         resolved = Path(found) if found else None
     if resolved is None or not resolved.exists():
         return None
     try:
         proc = subprocess.run(
-            [str(resolved), "--version"], capture_output=True, text=True, timeout=120
+            [str(resolved), "--version"], capture_output=True, text=True, timeout=120,
+            env=env,
         )
+        proc.check_returncode()
         version = (proc.stdout or proc.stderr).strip().splitlines()[0][:200]
     except (OSError, subprocess.SubprocessError, IndexError):
         version = "unknown"

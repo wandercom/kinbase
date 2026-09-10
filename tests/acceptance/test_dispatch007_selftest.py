@@ -163,6 +163,51 @@ def test_host_recorder_precedes_even_an_explicit_path(roots, monkeypatch):
 
 
 @spec_ref(VERIFY("INSTRUMENT", "positive-controls", "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS."))
+@pytest.mark.parametrize("override", [None, "/pinned/codex"])
+def test_v9_host_fixture_resolves_path_or_explicit_pin_in_isolated_home(roots, monkeypatch, override):
+    from . import test_v9_host_lifecycle as gate
+    from ._harness import cli, hosts
+    monkeypatch.setattr(cli, "_resolve_entrypoint", lambda: ("unused-product",))
+    if override is None:
+        monkeypatch.delenv("KINBASE_HOST_CODEX", raising=False)
+    else:
+        monkeypatch.setenv("KINBASE_HOST_CODEX", override)
+    resolved = []
+    monkeypatch.setattr(gate.prereq, "executable",
+                        lambda name, **kw: resolved.append(name) or Path("/bin/echo"))
+    environments = []
+    monkeypatch.setattr(hosts, "host_availability", lambda name, *, env:
+                        environments.append(env) or hosts.HostBinary(name, Path("/bin/echo"), "test-version"))
+    driver = cli.Kinbase(home=roots.home, xdg_config_home=roots.xdg_config_home,
+                        cwd=roots.repo_root)
+    host = gate.host_binary.__wrapped__("codex", roots, driver)
+    assert resolved == [override or "codex"]
+    assert host.version == "test-version"
+    assert environments[0]["HOME"] == str(roots.home)
+    assert environments[0]["PATH"].split(":")[0] == str(host.path.parent)
+
+
+@spec_ref(VERIFY("INSTRUMENT", "positive-controls", "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS."))
+@pytest.mark.parametrize("state,heads,unknowns,valid", [
+    ("conflict", ["left", "right"], [{"kind": "conflict", "logical_key": "key"}], True),
+    ("current", [], [], False),
+    ("conflict", ["left"], [{"kind": "conflict", "logical_key": "key"}], False),
+    ("conflict", ["left", "right"], [], False),
+])
+def test_ruling_conflict_precondition_requires_both_heads_and_unknown(tmp_path, state, heads, unknowns, valid):
+    from . import test_ruling_loop as gate
+    driver = SimpleNamespace(run=lambda *args, **kwargs: SimpleNamespace(
+        returncode=0, json={"trace": {"state": state, "conflict_event_ids": heads},
+                            "unknowns": unknowns}))
+    world = SimpleNamespace(repo=SimpleNamespace(path=tmp_path))
+    if valid:
+        gate.require_conflict_heads(driver, world, "key", ["left", "right"])
+    else:
+        with pytest.raises(ProductFailure):
+            gate.require_conflict_heads(driver, world, "key", ["left", "right"])
+
+
+@spec_ref(VERIFY("INSTRUMENT", "positive-controls", "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS."))
 def test_dispatch008_privacy_runner_forwards_stdin_and_environment(tmp_path):
     from . import test_v3_privacy as privacy
     calls = []

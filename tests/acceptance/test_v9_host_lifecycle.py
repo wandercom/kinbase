@@ -91,11 +91,9 @@ def host(request) -> str:
 def host_binary(host: str, roots: ProofRoots, kinbase: Kinbase) -> hosts.HostBinary:
     """The real pinned host executable, plus an invocation recorder in front."""
     variable = "KINBASE_HOST_" + host.upper()
-    configured = prereq.env_var(
-        variable, what=host + " host executable",
-        why="spec/verification.md V-9 runs the actual setup and hook executables "
-            "for Codex and Claude; a mocked host branch is not accepted evidence",
-    )
+    # An override selects a pinned build; without one, resolve the installed
+    # real host on PATH and record its exact version. Neither path uses a stub.
+    configured = os.environ.get(variable) or host
     resolved = prereq.executable(
         configured, what=host + " host executable",
         why="V-9 pins and reports the exact host version",
@@ -104,8 +102,10 @@ def host_binary(host: str, roots: ProofRoots, kinbase: Kinbase) -> hosts.HostBin
     bin_dir.mkdir(parents=True, exist_ok=True)
     recorder = hosts.install_invocation_recorder(bin_dir, host, resolved)
     kinbase.path_prefix.insert(0, bin_dir)
-    return hosts.HostBinary(name=host, path=recorder,
-                            version=hosts.host_availability(host).version)
+    available = hosts.host_availability(host, env=kinbase.base_env())
+    if available is None or available.version == "unknown":
+        raise HarnessInvalid("cannot record the exact version of " + host)
+    return hosts.HostBinary(name=host, path=recorder, version=available.version)
 
 
 def _run(kinbase: Kinbase, *argv: str, cwd: Path, **kwargs):
@@ -293,8 +293,7 @@ def test_matched_conversations_produce_identical_canonical_payloads(
     stamp = synth.receipt_stamp()
     for name in HOSTS:
         variable = "KINBASE_HOST_" + name.upper()
-        configured = prereq.env_var(variable, what=name + " host executable",
-                                   why="parity ranges over both real hosts")
+        configured = os.environ.get(variable) or name
         resolved = prereq.executable(configured, what=name + " host executable",
                                     why="parity ranges over both real hosts")
         bin_dir = roots.run_root / "hostbin" / name
@@ -330,9 +329,15 @@ def test_matched_conversations_produce_identical_canonical_payloads(
             raise ProductFailure("host Stop did not retain the observation's admission receipts")
         documents = admitted_documents(kinbase, world.repo.path, admissions)
         # Compare the admitted knowledge, not per-invocation signatures, clocks,
-        # event IDs or private lineage. Receipt digests bind the canonical payload.
-        facts = [{key: row[key] for key in ("store_kind", "atom_kind", "scope", "statement",
-                                           "standing", "provenance", "disposition")} for row in documents]
+        # event IDs or private lineage. Standing, provenance, governed paths and
+        # anchors change the meaning of the knowledge and belong in parity.
+        # CurrentFact.claimed_standing is also retained by the full projection
+        # comparison below; it is not a separate field on the signed FactEvent.
+        # The wire format omits empty governed-path and anchor arrays.
+        facts = [{**{key: row[key] for key in ("store_kind", "atom_kind", "scope", "statement",
+                                              "standing", "provenance", "disposition")},
+                  **{key: row.get(key, []) for key in ("governs_paths", "anchors")}}
+                 for row in documents]
         observed[name] = {"facts": sorted(facts, key=lambda row: json.dumps(row, sort_keys=True)),
                           "receipts": canonical_admissions(recovered)}
     projections = []

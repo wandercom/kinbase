@@ -540,9 +540,10 @@ def test_private_raw_retention_remains_enforced(kinbase: Kinbase, roots: ProofRo
     source = world.repo.path / "private-transcripts"
     source.mkdir()
     path = source / "retention.jsonl"
-    path.write_text(json.dumps({"id": "retention-message", "type": "message",
-                                "payload": {"text": "A private scheduling preference."},
-                                "ts": synth.receipt_stamp()}) + "\n")
+    # Retention must exercise a parsed native body. A made-up message/payload.text
+    # record is not Codex JSONL and yields no observations to expire.
+    synth.codex_session_jsonl(path, session_id="retention", cwd=str(world.repo.path),
+                             turns=[{"role": "user", "text": "A private scheduling preference."}])
     before = path.is_file() and path.stat().st_size > 0
     stale = time.time() - PRIVATE_RAW_RETENTION_SECONDS - 60
     os.utime(path, (stale, stale))
