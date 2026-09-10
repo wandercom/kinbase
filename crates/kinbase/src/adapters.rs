@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-pub const SOURCE_KINDS: [&str; 12] = [
+pub const SOURCE_KINDS: [&str; 13] = [
     "codex_jsonl",
     "claude_jsonl",
     "repo_code",
@@ -20,6 +20,10 @@ pub const SOURCE_KINDS: [&str; 12] = [
     // A pull request is the only artifact that ties a stated intent to the exact
     // lines that changed. Its diff hunks are where code anchors come from.
     "pull_request",
+    // Chat is where decisions are argued before they are written down, and where
+    // the most private material in a company also lives. It is ingested as
+    // company-confidential and never as repository evidence.
+    "chat_thread",
 ];
 
 /// Report the exact Kindex 0.36 seam this product reserves and supports.

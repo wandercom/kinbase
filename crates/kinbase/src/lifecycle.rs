@@ -280,6 +280,7 @@ pub fn scan(
         "docs_adr" => scan_docs_adr(source, repo)?,
         "issue_tracker" => scan_issue_tracker(source, repo)?,
         "pull_request" => scan_pull_request(source, repo)?,
+        "chat_thread" => scan_chat_thread(source, repo)?,
         "github_export" => scan_github_export(source, repo)?,
         "kindex" => scan_kindex(source, repo)?,
         "authority_answer" => scan_answers(source, repo)?,
@@ -1139,6 +1140,115 @@ fn scan_pull_request(source: &Path, _repo: &Repository) -> Result<SourceScan, Co
             );
             record.content = line.as_bytes().to_vec();
             record.confidence = 7_500;
+            scan.records.push(record);
+        }
+    }
+    Ok(scan)
+}
+
+// --------------------------------------------------------------------------
+// chat_thread: where decisions are argued before anyone writes them down
+// --------------------------------------------------------------------------
+
+/// A thread is one conversation however many messages it holds, so it becomes one
+/// record. Sixty messages arguing about retry budgets is a single piece of evidence
+/// that the argument happened, not sixty independent claims -- counting messages
+/// would let the loudest channel outweigh a written decision.
+///
+/// Envelope: id, channel, permalink, participants[], messages[{author,author_kind,
+/// text,ts}], started_at.
+fn scan_chat_thread(source: &Path, _repo: &Repository) -> Result<SourceScan, ContractError> {
+    let mut scan = SourceScan::default();
+    for path in source_files(source)? {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if !name.ends_with(".jsonl") {
+            continue;
+        }
+        let bytes = read_bounded(&path)?;
+        check_budget(&mut scan, bytes.len())?;
+        scan.unit_ids
+            .insert(name.trim_end_matches(".jsonl").to_owned());
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(document) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let id = crate::json::get_str(&document, "id")
+                .unwrap_or_default()
+                .to_owned();
+            if id.is_empty() {
+                continue;
+            }
+            let channel = crate::json::get_str(&document, "channel").unwrap_or_default();
+            let messages = document
+                .get("messages")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+
+            let mut body = String::new();
+            let mut any_human = false;
+            let mut all_agent = !messages.is_empty();
+            for message in &messages {
+                let author = crate::json::get_str(message, "author").unwrap_or("unknown");
+                let kind = crate::json::get_str(message, "author_kind").unwrap_or("unknown");
+                if kind == "human" {
+                    any_human = true;
+                }
+                if kind != "agent" && kind != "bot" {
+                    all_agent = false;
+                }
+                let line_text = crate::json::get_str(message, "text").unwrap_or_default();
+                body.push_str(&format!("{author}: {line_text}\n"));
+            }
+
+            let mut record =
+                SourceRecord::new(&format!("chat_thread:{id}"), &format!("chat_thread:{id}"));
+            record.logical_key = format!("chat_thread:{id}");
+            record.statement = format!("#{channel}\n{body}");
+            // A thread records that something was discussed. Whether it settled
+            // anything is a question for the authority who was in it, not a
+            // conclusion the adapter may draw from people talking.
+            record.atom_kind = "claim".to_owned();
+            record.disposition = "proposed".to_owned();
+            record.provenance = if all_agent {
+                "ai_generated".to_owned()
+            } else if any_human {
+                "human".to_owned()
+            } else {
+                "unknown".to_owned()
+            };
+            record.asserted_at = crate::json::get_str(&document, "started_at").map(str::to_owned);
+
+            let mut references = vec![format!("channel:{channel}")];
+            if let Some(permalink) = crate::json::get_str(&document, "permalink") {
+                references.push(format!("chat_thread:{permalink}"));
+            }
+            for ticket in document
+                .get("tickets")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(key) = ticket.as_str() {
+                    references.push(format!("issue_tracker:{key}"));
+                }
+            }
+            record.attributes.insert(
+                "references".to_owned(),
+                Value::Array(references.into_iter().map(Value::String).collect()),
+            );
+            record.content = line.as_bytes().to_vec();
+            // Deliberately the lowest of any adapter: chat is the least considered
+            // form of evidence in a company, and the scanner has the most work to do
+            // on it.
+            record.confidence = 5_000;
             scan.records.push(record);
         }
     }
