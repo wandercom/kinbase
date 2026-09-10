@@ -744,6 +744,17 @@ pub fn normalize_policy(value: &str) -> &'static str {
 /// A derived current fact in a disposable current view.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CurrentFact {
+    /// The standing this fact carried when the view was reduced, after provenance
+    /// clamped it. The reducer decides *using* this value, so dropping it from the
+    /// result would leave every caller unable to check the decision it just made.
+    #[serde(default = "default_standing")]
+    pub standing: String,
+    #[serde(default = "default_provenance")]
+    pub provenance: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub governs_paths: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<CodeAnchor>,
     pub fact_id: String,
     pub event_id: String,
     pub logical_key: String,

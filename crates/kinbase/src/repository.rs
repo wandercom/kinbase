@@ -2690,6 +2690,11 @@ pub fn status(
                 "logical_key": fact.logical_key,
                 "state": if fact.status == "current" { "current" } else { "withheld" },
                 "current_fact_state": fact.status.clone(),
+                "standing": fact.standing,
+                "claimed_standing": fact.standing,
+                "provenance": fact.provenance,
+                "governs_paths": fact.governs_paths,
+                "anchors": fact.anchors,
                 "statement": fact.statement,
                 "evidence_refs": fact.evidence_refs,
                 "trust": fact.trust,
@@ -2969,6 +2974,16 @@ pub fn status(
             let mut record = json!({
                 "event_id": event.event_id,
                 "atom_kind": event.atom_kind,
+                // The standing a fact actually carries, after provenance clamps it.
+                // Surfacing the effective value rather than the claimed one is the
+                // point: a caller must be able to see that an agent-authored fact
+                // did not reach `prevalent`, and an internal-only field cannot be
+                // verified by anyone outside this process.
+                "standing": crate::model::effective_standing(&event.standing, &event.provenance),
+                "claimed_standing": event.standing,
+                "provenance": event.provenance,
+                "governs_paths": event.governs_paths,
+                "anchors": event.anchors,
                 "disposition": event.disposition,
                 "statement": event.statement,
                 "signature": event.signature,

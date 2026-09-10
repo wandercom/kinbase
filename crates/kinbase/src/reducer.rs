@@ -1244,6 +1244,17 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 "withheld"
             };
             let fact = CurrentFact {
+                // Governance is applied here, not at read time: the view records the
+                // standing that actually decided the outcome, including any demotion
+                // a ruling over these paths imposed.
+                standing: governance
+                    .map(|g| g.standing_for(event))
+                    .unwrap_or_else(|| {
+                        crate::model::effective_standing(&event.standing, &event.provenance)
+                    }),
+                provenance: event.provenance.clone(),
+                governs_paths: event.governs_paths.clone(),
+                anchors: event.anchors.clone(),
                 fact_id: event.fact_id.clone(),
                 event_id: event.event_id.clone(),
                 logical_key: logical_key.clone(),

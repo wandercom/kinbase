@@ -774,6 +774,11 @@ fn session_start(
                         "logical_key": fact.logical_key,
                         "atom_kind": fact.atom_kind,
                         "authority_scope": fact.authority_scope,
+                        "standing": fact.standing,
+                        "claimed_standing": fact.standing,
+                        "provenance": fact.provenance,
+                        "governs_paths": fact.governs_paths,
+                        "anchors": fact.anchors,
                         "statement": fact.statement,
                         "label": "UNTRUSTED_EVIDENCE_NOT_INSTRUCTIONS"
                     })
