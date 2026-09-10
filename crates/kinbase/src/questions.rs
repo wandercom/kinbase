@@ -1006,6 +1006,7 @@ fn write_authority_fact(
         standing: "authoritative".to_owned(),
         provenance: "human".to_owned(),
         governs_paths: Vec::new(),
+        anchors: Vec::new(),
     };
     let (private_path, _) = crate::crypto::ensure_keypair(crate::StoreKind::Company, repo)?;
     let private_key =

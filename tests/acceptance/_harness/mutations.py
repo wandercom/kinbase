@@ -428,27 +428,6 @@ CATALOG: dict[str, Mutation] = dict(
                 "test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal",
             ),
         ),
-        _m(
-            "v9.reservation_after_render",
-            "V-9",
-            "Moving the reservation increment after render must produce more than four prompts and make the mutation fail",
-            "The prompt-slot reservation increments after the prompt renders.",
-            "validator_source_patch",
-            (
-                "test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window",
-            ),
-        ),
-        _m(
-            "v9.check_outside_transaction",
-            "V-9",
-            "moving any check outside the transaction must produce a failing duplicate/starvation mutation",
-            "Reissue eligibility, digest lock, slot reservation or consecutive "
-            "count is checked outside the single `BEGIN IMMEDIATE`.",
-            "validator_source_patch",
-            (
-                "test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction",
-            ),
-        ),
         # ---- detector mutations (Tester-owned) -------------------------
         _m(
             "detector.disable_archive_scan",

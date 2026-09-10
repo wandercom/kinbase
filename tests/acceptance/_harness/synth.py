@@ -165,6 +165,7 @@ ATOM_KINDS: tuple[str, ...] = (
     "constraint",
     "rationale",
     "observation",
+    "shrug",
 )
 
 #: Lifecycle actions the spec names but omits from the message-type enum.

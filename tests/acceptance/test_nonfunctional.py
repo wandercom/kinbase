@@ -34,6 +34,7 @@ from ._harness.requirements import (
     CLI,
     THREAT,
     VERIFY,
+    RULING,
     spec_ref,
 )
 from ._harness import trust
@@ -69,7 +70,7 @@ def anchored(roots: ProofRoots, kinbase: Kinbase):
 def test_commands_have_bounded_help(kinbase: Kinbase) -> None:
     commands = []
     for name in ("status", "doctor", "fsck", "ingest", "project", "explain",
-                 "proposals", "questions", "hooks"):
+                 "session", "questions", "hooks"):
         result = kinbase.run(name, "--help", check=False)
         commands.append({
             "command": name,
@@ -288,18 +289,7 @@ def test_external_calls_have_timeouts_and_failed_writes_are_not_admitted(
 
 
 @spec_ref(
-    VERIFY(
-        "NONFUNCTIONAL",
-        "diagnostics",
-        "`fsck`, `doctor`, corpus status, question status, and experiment status are executable and "
-        "useful after restart.",
-    ),
-    CLI(
-        "NONFUNCTIONAL",
-        "corpus-and-inspection",
-        "`explain` shows reducer steps, rejected events, current/conflict/Unknown state, and evidence "
-        "that would change it.",
-    ),
+    RULING("NONFUNCTIONAL", "diagnostics", "Diagnostics remain useful after restart: fsck, doctor, corpus status and question status."),
 )
 
 def test_diagnostics_are_executable_and_useful_after_restart(
@@ -542,70 +532,29 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
             label="every operational ceiling refuses with an omitted count")
 
 
-@spec_ref(
-    VERIFY(
-        "NONFUNCTIONAL",
-        "operational-limits",
-        "candidate and approval lifetime: 15 minutes;",
-    ),
-    VERIFY(
-        "NONFUNCTIONAL",
-        "operational-limits",
-        "private raw-session default retention in proof roots: 24 hours;",
-    ),
-    CLI(
-        "NONFUNCTIONAL",
-        "error-contract",
-        "`APPROVAL_EXPIRED` | candidate/token expired before commit | 2",
-    ),
-)
-
-def test_candidate_lifetime_and_private_retention_are_enforced(
-    kinbase: Kinbase, roots: ProofRoots, anchored
-) -> None:
+@spec_ref(VERIFY("NONFUNCTIONAL", "operational-limits",
+                 "private raw-session default retention in proof roots: 24 hours;"))
+def test_private_raw_retention_remains_enforced(kinbase: Kinbase, roots: ProofRoots, anchored):
+    import time
     world, anchors = anchored
-    trust.classifier_pinned(anchors, what="candidate lifetime probe")
-    corpus = roots.run_root / "lifetime.jsonl"
-    corpus.parent.mkdir(parents=True, exist_ok=True)
-    corpus.write_text(
-        json.dumps({"id": "m" + os.urandom(6).hex(), "role": "user",
-                    "text": "the retry ceiling is four attempts per hour",
-                    "observed_at": synth.receipt_stamp(),
-                    "source_kind": "codex_jsonl"}) + "\n",
-        encoding="utf-8",
-    )
-    # Validator ruling C8: SESSION is the id `session start --json` issued.
-    session = start_session(kinbase, roots.repo_root)
-    kinbase.run("session", "observe", session, "--event", str(corpus), "--json",
-                  cwd=roots.repo_root, check=False)
-    listing = kinbase.run("proposals", "list", "--session", session, "--json",
-                            cwd=roots.repo_root, check=False)
-    payload = listing.json if isinstance(listing.json, dict) else {}
-    candidates = payload.get("candidates")
-    first = candidates[0] if isinstance(candidates, list) and candidates else {}
-    expired = kinbase.run(
-        "proposals", "decide", str(first.get("candidate_id")),
-        "--destination", "codebase:none",
-        "--approve-digest", str(first.get("payload_digest")), "--json",
-        cwd=roots.repo_root, check=False,
-        env=kinbase.base_env({
-            "KINBASE_PROOF_CLOCK_OFFSET_SECONDS": str(CANDIDATE_LIFETIME_SECONDS + 60),
-        }),
-    )
-    body = expired.json if isinstance(expired.json, dict) else {}
-    raw_present = any(
-        p.is_file() for p in (roots.run_root / "raw").rglob("*")
-    ) if (roots.run_root / "raw").exists() else False
-    O.check(
-        "NF.lifetimes",
-        {
-            "candidate_lifetime_seconds": CANDIDATE_LIFETIME_SECONDS,
-            "private_retention_seconds": PRIVATE_RAW_RETENTION_SECONDS,
-            "expired_approval_refusal_code": _error_code(body),
-            "raw_removed_after_retention": not raw_present,
-        },
-        label="candidate lifetime and private retention are enforced",
-    )
+    source = world.repo.path / "private-transcripts"
+    source.mkdir()
+    path = source / "retention.jsonl"
+    path.write_text(json.dumps({"id": "retention-message", "type": "message",
+                                "payload": {"text": "A private scheduling preference."},
+                                "ts": synth.receipt_stamp()}) + "\n")
+    before = path.is_file() and path.stat().st_size > 0
+    stale = time.time() - PRIVATE_RAW_RETENTION_SECONDS - 60
+    os.utime(path, (stale, stale))
+    result = kinbase.run("ingest", "codex_jsonl", str(source), "--repo", str(world.repo.path),
+                         "--json").ok().json
+    from ._harness.admission import required_rows
+    observations = required_rows(result, "observations")
+    O.check("NF.lifetimes", {"private_retention_seconds": PRIVATE_RAW_RETENTION_SECONDS,
+                             "raw_present_before": before,
+                             "raw_withheld_after_retention": bool(observations) and all(
+                                 row.get("raw_withheld") is True for row in observations)},
+            label="expired native private bodies are withheld from retained observations")
 
 
 @pytest.mark.selftest

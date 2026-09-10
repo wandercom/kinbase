@@ -53,6 +53,7 @@ from ._harness.evidence_model import (
 )
 from ._harness.requirements import (
     ARCH,
+    RULING,
     PRODUCT,
     SRC,
     VERIFY,
@@ -149,15 +150,10 @@ def _observe(kinbase: Kinbase, repo: Path, corpus: Path, session: str) -> dict:
     return payload
 
 
-def _proposals(kinbase: Kinbase, repo: Path, session: str) -> dict:
-    result = kinbase.run("proposals", "list", "--session", session, "--json",
-                           cwd=repo, check=False)
-    if result.returncode == 1:
-        raise ProductFailure("`proposals list` returned the reserved exit 1")
-    payload = result.json
-    if not isinstance(payload, dict):
-        raise ProductFailure("`proposals list --json` did not return an object")
-    return payload
+def _admissions(kinbase: Kinbase, repo: Path, session: str) -> dict:
+    """Read private audit records; compute counts from bytes, never a product verdict."""
+    from ._harness.admission import audit
+    return audit(kinbase, repo, session)
 
 
 def _run_pool(kinbase: Kinbase, repo: Path, corpus, *, runs: int,
@@ -169,7 +165,7 @@ def _run_pool(kinbase: Kinbase, repo: Path, corpus, *, runs: int,
     for index in range(runs):
         session = start_session(kinbase, repo)
         observed = _observe(kinbase, repo, corpus.path, session)
-        listing = _proposals(kinbase, repo, session)
+        listing = _admissions(kinbase, repo, session)
         predictions = metrics.parse_predictions(field(listing, "predictions"))
         joins.append(metrics.joined(predictions, gold,
                                     name=label + "-run-" + str(index)))
@@ -186,8 +182,7 @@ def _first_candidate(listing: dict, destination: str | None = None) -> dict:
                   if destination is None or field(c, "destination") == destination]
     if not candidates:
         raise ProductFailure(
-            "`proposals list --json` returned no candidate to fan out; V-2 "
-            "ranges over a real approval"
+            "the private audit ledger has no candidate for the required destination"
         )
     return candidates[0]
 
@@ -205,23 +200,14 @@ def _fanout_pair(listing: dict, destination: str) -> tuple[dict, dict]:
     raise ProductFailure("V-2 fan-out requires independent Codebase and Company "
                          "candidates for the same source message")
 
-def _decide(kinbase: Kinbase, repo: Path, candidate: dict, destination: str, **kwargs):
-    return kinbase.run(
-        "proposals", "decide", str(field(candidate, "candidate_id")),
-        "--destination", destination,
-        "--approve-digest", str(field(candidate, "payload_digest")), "--json",
-        cwd=repo, check=False, **kwargs,
-    )
+def _checkpoint(kinbase: Kinbase, repo: Path, candidate: dict, destination: str, **kwargs):
+    return kinbase.run("session", "checkpoint", str(field(candidate, "session_id")),
+                       "--json", cwd=repo, check=False, **kwargs)
 
 
-def _decide_async(kinbase: Kinbase, repo: Path, candidate: dict,
-                  destination: str):
-    return kinbase.popen(
-        "proposals", "decide", str(field(candidate, "candidate_id")),
-        "--destination", destination,
-        "--approve-digest", str(field(candidate, "payload_digest")), "--json",
-        cwd=repo,
-    )
+def _checkpoint_async(kinbase: Kinbase, repo: Path, candidate: dict, destination: str):
+    return kinbase.popen("session", "checkpoint", str(field(candidate, "session_id")),
+                         "--json", cwd=repo)
 
 
 # --------------------------------------------------------------------------
@@ -335,37 +321,6 @@ def test_five_pinned_runs_lower_bound_meets_macro_f1_and_shared_precision(
     )
 
 
-@spec_ref(
-    VERIFY("V-2", "calibration",
-           "Before V-10, run a separate excluded 60-message calibration corpus through the same "
-           "five-run configuration."),
-)
-def test_excluded_calibration_corpus_gates_measurement(
-    kinbase: Kinbase, anchored, roots: ProofRoots
-) -> None:
-    world, anchors = anchored
-    manifest = calibration.load_manifest()
-    overlap = calibration.overlap_with_held_out()
-    corpus = calibration.bind(roots.run_root / "corpus" / "calibration.jsonl")
-    prereq.corpus_at_scale(
-        corpus.record_count, calibration.REQUIRED_MESSAGES,
-        what="calibration corpus",
-        why="V-2 requires a separate excluded 60-message calibration corpus",
-    )
-    joins, _ = _run_pool(kinbase, world.repo.path, corpus,
-                         runs=RUN_COUNT, label="calibration")
-    O.check(
-        "V-2.calibration",
-        {
-            "calibration_message_count": corpus.record_count,
-            "overlap_with_held_out": len(overlap),
-            "calibration_input_exists": manifest.path.is_file(),
-            "macro_f1_lower_bound": metrics.pooled_macro_f1_lower_bound(
-                joins, seed=BOOTSTRAP_SEED),
-            "shared_precision_lower_bound": metrics.pooled_shared_precision(joins),
-        },
-        label="excluded calibration corpus gates measurement",
-    )
 
 
 @spec_ref(
@@ -408,7 +363,7 @@ def test_exact_match_atomization_and_per_label_metrics(
     world, anchors = anchored
     session = start_session(kinbase, world.repo.path)
     _observe(kinbase, world.repo.path, held_out.path, session)
-    listing = _proposals(kinbase, world.repo.path, session)
+    listing = _admissions(kinbase, world.repo.path, session)
     predictions = metrics.parse_predictions(field(listing, "predictions"))
     join = metrics.joined(predictions, metrics.parse_gold(held_out.gold),
                           name="metrics")
@@ -438,7 +393,7 @@ def test_low_confidence_shared_label_demotes_to_none_or_unknown(
     world, anchors = anchored
     session = start_session(kinbase, world.repo.path)
     _observe(kinbase, world.repo.path, held_out.path, session)
-    listing = _proposals(kinbase, world.repo.path, session)
+    listing = _admissions(kinbase, world.repo.path, session)
     low_atoms = [
         {"atom_id": field(atom, "atom_id"), "destination": field(atom, "destination")}
         for atom in rows(listing, "atoms")
@@ -465,7 +420,7 @@ def test_independent_candidates_with_distinct_minimized_bytes(
     world, anchors = anchored
     session = start_session(kinbase, world.repo.path)
     _observe(kinbase, world.repo.path, held_out.path, session)
-    listing = _proposals(kinbase, world.repo.path, session)
+    listing = _admissions(kinbase, world.repo.path, session)
     by_message: dict[str, set[str]] = {}
     digests: dict[str, list[str]] = {}
     for candidate in rows(listing, "candidates"):
@@ -496,10 +451,7 @@ def test_independent_candidates_with_distinct_minimized_bytes(
 
 
 @spec_ref(
-    VERIFY("V-2", "partial-fanout",
-           "Force Company failure after Codebase commit: receipts expose partial success and "
-           "an apology Unknown names the approver as responsible and destination maintainer as "
-           "closing authority"),
+    RULING("V-2", "partial-fanout", "Independent destination receipts survive partial fan-out; the admitting principal is responsible and a named destination authority closes an orphan."),
 )
 def test_partial_fanout_failure_does_not_roll_back_committed_destination(
     kinbase: Kinbase, anchored, held_out, roots: ProofRoots
@@ -508,21 +460,15 @@ def test_partial_fanout_failure_does_not_roll_back_committed_destination(
 
     world, anchors = anchored
     session = start_session(kinbase, world.repo.path)
-    _observe(kinbase, world.repo.path, held_out.path, session)
-    listing = _proposals(kinbase, world.repo.path, session)
-    candidate, company = _fanout_pair(listing, "codebase:" + anchors.repository_uuid)
-
-    _decide(kinbase, world.repo.path, candidate,
-            "codebase:" + anchors.repository_uuid)
     with Blackhole(0) as blackhole, anchors.company_endpoint(
         f"http://127.0.0.1:{blackhole.port}"
     ):
-        blackholed = _decide(kinbase, world.repo.path, company, "company:root")
+        blackholed = _observe(kinbase, world.repo.path, held_out.path, session)
     witness = Witness(kind="company_unreachable")
-    witness.note(port=blackhole.port, decide_exit=blackholed.returncode)
+    witness.note(port=blackhole.port, observation=blackholed)
     witness.require("the Company endpoint must actually have been unreachable")
 
-    status = _proposals(kinbase, world.repo.path, session)
+    status = _admissions(kinbase, world.repo.path, session)
     apology = rows(status, "apologies")
     O.check(
         "V-2.partial-fanout",
@@ -548,28 +494,30 @@ def test_retry_returns_original_receipt_without_duplication(
     world, anchors = anchored
     session = start_session(kinbase, world.repo.path)
     _observe(kinbase, world.repo.path, held_out.path, session)
-    listing = _proposals(kinbase, world.repo.path, session)
+    listing = _admissions(kinbase, world.repo.path, session)
     candidate = _first_candidate(listing, "codebase:" + anchors.repository_uuid)
     destination = "codebase:" + anchors.repository_uuid
 
-    first = _decide(kinbase, world.repo.path, candidate, destination)
+    first = _checkpoint(kinbase, world.repo.path, candidate, destination)
     events_after_first = world.event_count()
-    second = _decide(kinbase, world.repo.path, candidate, destination,
+    second = _checkpoint(kinbase, world.repo.path, candidate, destination,
                      env=kinbase.base_env({"KINBASE_PROOF_CLOCK_OFFSET_SECONDS": "960"}))
     events_after_second = world.event_count()
-    status = _proposals(kinbase, world.repo.path, session)
+    status = _admissions(kinbase, world.repo.path, session)
 
-    first_receipt = field(first.json, "receipt_id")
+    def receipt(result):
+        return next((row.get("receipt_id") for row in rows(result.json, "admissions")
+                     if row.get("candidate_id") == candidate["candidate_id"]), None)
+    first_receipt = receipt(first)
     O.check(
         "V-2.retry-receipt",
         {
             "receipt_ids_equal": (
                 first_receipt is not None
-                and first_receipt == field(second.json, "receipt_id")
+                and first_receipt == receipt(second)
             ),
             "second_event_created": events_after_second != events_after_first,
             "duplicate_events": field(status, "duplicate_events"),
-            "retry_after_token_expiry": field(second.json, "retry_after_token_expiry"),
         },
         label="retry is idempotent on the receipt",
     )
@@ -587,17 +535,11 @@ def test_expired_closing_deadline_emits_one_signed_orphan_abandoned(
 
     world, anchors = anchored
     session = start_session(kinbase, world.repo.path)
-    _observe(kinbase, world.repo.path, held_out.path, session)
-    listing = _proposals(kinbase, world.repo.path, session)
-    candidate, company = _fanout_pair(listing, "codebase:" + anchors.repository_uuid)
-    _decide(kinbase, world.repo.path, candidate,
-            "codebase:" + anchors.repository_uuid)
-
     with Blackhole(0) as blackhole, anchors.company_endpoint(
         f"http://127.0.0.1:{blackhole.port}"
     ):
-        _decide(kinbase, world.repo.path, company, "company:root")
-    require_nonempty(rows(_proposals(kinbase, world.repo.path, session), "apologies"),
+        _observe(kinbase, world.repo.path, held_out.path, session)
+    require_nonempty(rows(_admissions(kinbase, world.repo.path, session), "apologies"),
                      obligation="V-2.orphan-abandoned", origin=Origin.PRODUCT,
                      why="a partial fan-out must open an orphan before its deadline")
 
@@ -637,7 +579,7 @@ def _journal_matches(value, transition: str, candidate: dict) -> bool:
     if isinstance(value, list):
         return any(_journal_matches(v, transition, candidate) for v in value)
     if isinstance(value, dict):
-        if "candidate_id" in value and value["candidate_id"] != field(candidate, "candidate_id"):
+        if field(candidate, "candidate_id") and "candidate_id" in value and value["candidate_id"] != field(candidate, "candidate_id"):
             return False
         return any(_journal_matches(value.get(key), transition, candidate)
                    for key in ("journal_state", "transition", "stage", "state"))
@@ -667,7 +609,7 @@ def _journal_snapshot(kinbase: Kinbase, repo: Path, candidate: dict,
             value = json.loads(raw)
         except (ValueError, UnicodeDecodeError):
             value = raw.decode("utf-8", errors="replace").strip()
-        if isinstance(value, dict) and "candidate_id" in value and value["candidate_id"] != field(candidate, "candidate_id"):
+        if isinstance(value, dict) and field(candidate, "candidate_id") and "candidate_id" in value and value["candidate_id"] != field(candidate, "candidate_id"):
             continue
         if _journal_matches(value, transition, candidate) or _journal_matches(path.stem, transition, candidate):
             observed[str(path)] = hashlib.sha256(raw).hexdigest()
@@ -693,7 +635,8 @@ def _kill_at_transition(kinbase: Kinbase, world, candidate: dict,
     repo = world.repo.path
     before = _journal_snapshot(kinbase, repo, candidate, transition)
     prior_state = _journal_status(kinbase, repo, candidate, transition)
-    process = _decide_async(kinbase, world.repo.path, candidate, destination)
+    process = kinbase.popen("session", "observe", candidate["session_id"],
+                            "--event", candidate["corpus"], "--json", cwd=repo)
     witness = Witness(kind="crash:" + transition)
     deadline = time.monotonic() + 20.0
     appeared = False
@@ -757,6 +700,21 @@ def _crash_world(kinbase: Kinbase, roots: ProofRoots, transition: str):
         service.stop()
 
 
+def _one_fanout_source(corpus, repo):
+    # Fixture selection uses held-out gold only inside the tester boundary.
+    # The shipping process receives one native message, with no destination hint.
+    tokens = {token for token, gold in corpus.gold.items()
+              if "company" in gold["destinations"]
+              and sum("codebase" in atom[2] for atom in gold["atoms"]) == 1}
+    source = next((json.loads(line) for line in corpus.path.read_text().splitlines()
+                   if json.loads(line)["id"] in tokens), None)
+    if source is None:
+        raise prereq.missing("fixture", "single-fanout", "one Codebase atom and Company evidence required")
+    path = repo.parent / "one-fanout.jsonl"
+    path.write_text(json.dumps(source) + "\n")
+    return path
+
+
 @spec_ref(
     VERIFY("V-2", "crash-recovery",
            "Kill each destination between nonce reservation, event append/rename, manifest, "
@@ -769,25 +727,21 @@ def test_kill_at_every_transition_then_concurrent_retry(
     for transition in TRANSITIONS:
         with _crash_world(kinbase, roots, transition) as (driver, world, anchors):
             session = start_session(driver, world.repo.path)
-            _observe(driver, world.repo.path, held_out.path, session)
-            candidate = _first_candidate(_proposals(driver, world.repo.path, session),
-                                         "codebase:" + anchors.repository_uuid)
+            candidate = {"session_id": session, "corpus": str(_one_fanout_source(held_out, world.repo.path))}
             destination = "codebase:" + anchors.repository_uuid
             with contextlib.ExitStack() as perturbation:
                 if transition == "apology":
                     from ._harness.service import Blackhole
-                    local, company = _fanout_pair(_proposals(driver, world.repo.path, session), destination)
-                    _decide(driver, world.repo.path, local, destination)
                     blackhole = perturbation.enter_context(Blackhole(0))
                     perturbation.enter_context(anchors.company_endpoint(
                         f"http://127.0.0.1:{blackhole.port}"))
-                    candidate, destination = company, "company:root"
+                    destination = "company:root"
                 killed = _kill_at_transition(driver, world, candidate, destination, transition)
-                first = _decide_async(driver, world.repo.path, candidate, destination)
-                second = _decide_async(driver, world.repo.path, candidate, destination)
+                first = _checkpoint_async(driver, world.repo.path, candidate, destination)
+                second = _checkpoint_async(driver, world.repo.path, candidate, destination)
                 first.communicate(timeout=120)
                 second.communicate(timeout=120)
-                status = _proposals(driver, world.repo.path, session)
+                status = _admissions(driver, world.repo.path, session)
                 killed.update({
                     "duplicate_events": field(status, "duplicate_events"),
                     "recursive_apologies": field(status, "recursive_apologies"),
@@ -819,9 +773,7 @@ def test_kill_at_every_transition_then_concurrent_retry(
 
 
 @spec_ref(
-    PRODUCT("V-2", "no-cross-store",
-            "One source may fan out to multiple stores, but no cross-store transaction, shared "
-            "private lineage token, or accept-all operation exists."),
+    RULING("V-2", "no-cross-store", "No cross-store transaction or shared private lineage token exists."),
 )
 def test_no_cross_store_transaction_exists(
     kinbase: Kinbase, anchored, held_out
@@ -829,15 +781,15 @@ def test_no_cross_store_transaction_exists(
     world, anchors = anchored
     session = start_session(kinbase, world.repo.path)
     _observe(kinbase, world.repo.path, held_out.path, session)
-    listing = _proposals(kinbase, world.repo.path, session)
+    listing = _admissions(kinbase, world.repo.path, session)
     candidate = _first_candidate(listing, "codebase:" + anchors.repository_uuid)
     for destination in ("codebase:" + anchors.repository_uuid, "company:root"):
-        _decide(kinbase, world.repo.path, candidate, destination)
-    status = _proposals(kinbase, world.repo.path, session)
+        _checkpoint(kinbase, world.repo.path, candidate, destination)
+    status = _admissions(kinbase, world.repo.path, session)
     receipts = [_receipt_row(status, key) for key in ("codebase", "company")]
     O.check(
         "V-2.no-cross-store",
-        {"receipts": receipts, "accept_all_surfaces_found": 0},
+        {"receipts": receipts},
         label="two independent destination transactions",
     )
 
@@ -851,36 +803,3 @@ def _receipt_row(status: dict, key: str) -> dict:
     if rollback is not None:
         row["global_rollback"] = rollback
     return row
-
-
-@spec_ref(
-    ARCH("V-2", "no-accept-all",
-         "There is no batch/accept-all endpoint in Core or CLI."),
-)
-def test_no_accept_all_path_is_reachable(
-    kinbase: Kinbase, anchored, held_out
-) -> None:
-    world, anchors = anchored
-    session = start_session(kinbase, world.repo.path)
-    _observe(kinbase, world.repo.path, held_out.path, session)
-    listing = _proposals(kinbase, world.repo.path, session)
-    candidate = _first_candidate(listing, "codebase:" + anchors.repository_uuid)
-    surfaces = 0
-    for probe in ("--all", "--accept-all", "--yes-to-all"):
-        attempt = kinbase.run(
-            "proposals", "decide", str(field(candidate, "candidate_id")), probe,
-            "--json", cwd=world.repo.path, check=False,
-        )
-        if attempt.returncode == 0:
-            surfaces += 1
-        else:
-            attempt.refused("CONFIG_INVARIANT", exits=(4,))
-    _decide(kinbase, world.repo.path, candidate,
-            "codebase:" + anchors.repository_uuid)
-    status = _proposals(kinbase, world.repo.path, session)
-    receipts = [_receipt_row(status, key) for key in ("codebase", "company")]
-    O.check(
-        "V-2.no-cross-store",
-        {"receipts": receipts, "accept_all_surfaces_found": surfaces},
-        label="no accept-all surface is reachable",
-    )

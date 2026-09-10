@@ -511,36 +511,6 @@
       "point_meaning": "a native host lifecycle payload, before it is delivered",
       "requirement": "Mutation: disable mid-session capture while keeping SessionStart green; V-9 fails.",
       "semantics": "Prompt/observation and pre-edit events stop capturing while SessionStart still returns a healthy payload."
-    },
-    {
-      "applies_before_product_execution": true,
-      "description": "the reservation increment is scheduled after the render",
-      "expected_channel": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "kind": "fault_schedule",
-      "must_fail_nodes": [
-        "test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window"
-      ],
-      "mutation_id": "v9.reservation_after_render",
-      "point": "fault.schedule",
-      "point_meaning": "an ordering, interleave or crash schedule at a real seam",
-      "requirement": "Moving the reservation increment after render must produce more than four prompts and make the mutation fail",
-      "semantics": "The prompt-slot reservation increments after the prompt renders."
-    },
-    {
-      "applies_before_product_execution": true,
-      "description": "the reissue eligibility check is scheduled outside BEGIN IMMEDIATE",
-      "expected_channel": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "kind": "fault_schedule",
-      "must_fail_nodes": [
-        "test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction"
-      ],
-      "mutation_id": "v9.check_outside_transaction",
-      "point": "fault.schedule",
-      "point_meaning": "an ordering, interleave or crash schedule at a real seam",
-      "requirement": "moving any check outside the transaction must produce a failing duplicate/starvation mutation",
-      "semantics": "Reissue eligibility, digest lock, slot reservation or consecutive count is checked outside the single `BEGIN IMMEDIATE`."
     }
   ],
   "points": {

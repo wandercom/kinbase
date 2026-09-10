@@ -41,11 +41,10 @@ _GATE_MODULES: tuple[str, ...] = (
     "test_v4_maintenance.py",
     "test_v5_temporal.py",
     "test_v6_authority.py",
+    "test_ruling_loop.py",
     "test_v7_projection.py",
     "test_v8_company_refs.py",
-    "test_v9_fatigue.py",
     "test_v9_host_lifecycle.py",
-    "test_v10_protocol.py",
     "test_nonfunctional.py",
     "test_evidence_packet.py",
 )

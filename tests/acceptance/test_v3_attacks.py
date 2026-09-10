@@ -48,7 +48,7 @@ pytestmark = [pytest.mark.v3, pytest.mark.denial, pytest.mark.requires_product]
 ATTACK_FAMILIES: dict[int, str] = {
     1: "exact/partial/substring and deterministic-lineage disclosure",
     2: "reversible encoding and normalisation transformations",
-    3: "approval replay, retarget, substitution, expiry bypass, preview race, symlink swap",
+    3: "admission replay, content substitution and symlink swap",
     4: "malicious clone root, unauthorized/rotated/revoked signer, stale revocation, foreign branch",
     5: "signed prompt-injection prose",
     6: "deletion, packed object, missing manifest, forged completeness, shallow/sparse, rebase, squash, union",
@@ -60,9 +60,9 @@ ATTACK_FAMILIES: dict[int, str] = {
     12: "signature/parser differential and cross-domain reuse",
     13: "stolen base bearer token: directory read, answer admission, scope escalation, replay",
     14: "process-capability inspection",
-    15: "concurrent approvals, double submission, crash at every transition, counter races, reset spam",
+    15: "concurrent admission, double submission and crash recovery",
     16: "classifier-executable substitution",
-    17: "terminal approval deception",
+    17: "terminal question deception",
     18: "saturated signed-insider prompt injection at the projection ceiling",
     19: "check/execute classifier swaps and inherited open-Personal descriptors",
 }
@@ -98,15 +98,15 @@ FAMILY_PROBE: dict[int, tuple[str, str, str]] = {
 #: Families whose attack is an action against the product, and the ratified
 #: surface each one is driven through.
 ACTION_FAMILIES: dict[int, tuple[str, ...]] = {
-    3: ("proposals", "decide"),
+    3: ("session", "checkpoint"),
     4: ("ingest", "kindex"),
     5: ("project",),
     11: ("explain",),
     12: ("ingest", "kindex"),
     13: ("status",),
-    15: ("proposals", "decide"),
+    15: ("session", "checkpoint"),
     16: ("doctor",),
-    17: ("proposals", "show"),
+    17: ("questions", "show"),
     19: ("doctor",),
 }
 
@@ -150,7 +150,7 @@ def _drive_action(kinbase: Kinbase, world, family: int) -> dict:
     """Execute the family's real attack action through a ratified surface."""
     argv = ACTION_FAMILIES[family]
     payload = {
-        3: ("--session", "s" + os.urandom(6).hex(), "--json"),
+        3: ("s" + os.urandom(6).hex(), "--json"),
         4: (str(world.repo.path / ".kin"), "--repo", str(world.repo.path), "--json"),
         5: ("--repo", str(world.repo.path), "--task", "diagnose the scheduler",
             "--decision", "which invariant constrains the change", "--json"),
@@ -158,9 +158,9 @@ def _drive_action(kinbase: Kinbase, world, family: int) -> dict:
              "--decision", "which rule applies", "--json"),
         12: (str(world.repo.path / ".kin"), "--repo", str(world.repo.path), "--json"),
         13: ("--repo", str(world.repo.path), "--json"),
-        15: ("--session", "s" + os.urandom(6).hex(), "--json"),
+        15: ("s" + os.urandom(6).hex(), "--json"),
         16: ("--repo", str(world.repo.path), "--json"),
-        17: ("--destination", "codebase:none", "--json"),
+        17: ("q" + os.urandom(6).hex(), "--json"),
         19: ("--repo", str(world.repo.path), "--json"),
     }[family]
     result = kinbase.run(*argv, *payload, cwd=world.repo.path, check=False)

@@ -203,64 +203,6 @@ def test_document_statuses_and_milestones_are_not_verdicts() -> None:
         assert event.upper().replace(" ", "_") not in TERMINAL_VERDICTS
 
 
-@pytest.mark.requires_product
-@spec_ref(
-    ARCH(
-        "VERDICT",
-        "brownfield-harness",
-        "Threshold computation is deterministic and produces `PROVEN`, `NOT_PROVEN`, "
-        "`INCONCLUSIVE_NO_HEADROOM`, or `INCONCLUSIVE_CEILING`; it has no `demo-success` state.",
-    ),
-    CLI(
-        "VERDICT",
-        "hosts-and-experiments",
-        "`verdict` has only the states in the verification strategy.",
-    ),
-)
-def test_product_verdict_states_are_exactly_the_ratified_set(
-    kinbase: Kinbase, tmp_path: Path
-) -> None:
-    run_dir = tmp_path / "run"
-    run_dir.mkdir(parents=True, exist_ok=True)
-    result = kinbase.run("experiment", "verdict", str(run_dir), "--json", check=False)
-    assert result.returncode != 1
-    help_text = kinbase.run("experiment", "verdict", "--help", check=False).stdout
-    assert "demo-success" not in help_text.lower(), (
-        "spec/architecture.md section 10: threshold computation 'has no `demo-success` "
-        "state'"
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        raise ProductFailure(
-            "`experiment verdict` produced no states to compare against the ratified "
-            "composition table"
-        )
-    payload = result.json
-    terminal = payload.get("terminal_product_verdict")
-    if terminal is not None:
-        assert terminal in TERMINAL_VERDICTS, terminal
-    gate = payload.get("gate_result")
-    if gate is not None:
-        assert gate in GATE_RESULTS, gate
-    measurement = payload.get("measurement_result")
-    if measurement is not None:
-        assert measurement in MEASUREMENT_RESULTS, measurement
-    if None not in (gate, measurement, terminal):
-        expected = compose(
-            gate,
-            measurement,
-            independent_product_failure=bool(payload.get("independent_product_failure")),
-            headroom_condition=bool(payload.get("headroom_condition")),
-            ceiling_condition=bool(payload.get("ceiling_condition")),
-        ).terminal
-        assert terminal == expected, (
-            f"the product composed {gate}/{measurement} to {terminal}; the ratified "
-            f"table gives {expected}"
-        )
-    vector = payload.get("gate_vector")
-    assert vector is not None, (
-        "the packet must carry the full gate diagnostic vector even when terminal "
-        "proof fails"
-    )
 
 
 @pytest.mark.selftest

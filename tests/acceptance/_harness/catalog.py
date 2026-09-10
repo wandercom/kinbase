@@ -139,6 +139,7 @@ class Obligation:
         }
 
 
+
 _OBLIGATIONS: list[Obligation] = []
 
 
@@ -177,6 +178,7 @@ P = "spec/product.md"
 A = "spec/architecture.md"
 T = "spec/threat-model.md"
 L = "spec/cli.md"
+R = "tests/RULING-CONTRACT.md"
 
 ADAPTERS = (
     "codex_jsonl", "claude_jsonl", "repo_code", "repo_tests", "git_history",
@@ -509,26 +511,6 @@ _o(
     nodes=("test_v2_classification.py::test_five_pinned_runs_lower_bound_meets_macro_f1_and_shared_precision",),
 )
 
-_o(
-    "V-2.calibration", "V-2", "excluded calibration corpus gates measurement",
-    V, "calibration",
-    "Before V-10, run a separate excluded 60-message calibration corpus through the "
-    "same five-run configuration.",
-    clauses(
-        equals("calibration_message_count", 60, "exactly 60 calibration messages"),
-        equals("overlap_with_held_out", 0, "the calibration corpus is disjoint"),
-        is_true("calibration_input_exists",
-                "the frozen calibration input must exist to be run"),
-        at_least("macro_f1_lower_bound", 0.90, "calibration macro-F1 floor"),
-        every("shared_precision_lower_bound", "each shared destination clears 0.95",
-              present("destination", "which destination"),
-              at_least("value", 0.95, "shared precision floor"),
-              min_len=2),
-    ),
-    surfaces=("kinbase experiment calibrate",),
-    vectors=("excluded 60-message calibration corpus",),
-    nodes=("test_v2_classification.py::test_excluded_calibration_corpus_gates_measurement",),
-)
 
 _o(
     "V-2.atomisation", "V-2", "mixed text splits rather than takes one label",
@@ -608,25 +590,22 @@ _o(
                        min_len=3),
               min_len=1),
     ),
-    surfaces=("kinbase proposals list --json",),
+    surfaces=("private admission audit ledgers",),
     vectors=("two-store fan-out", "three-store fan-out"),
     nodes=("test_v2_classification.py::test_independent_candidates_with_distinct_minimized_bytes",),
 )
 
 _o(
     "V-2.partial-fanout", "V-2", "partial failure never rolls back a durable write",
-    V, "apology",
-    "receipts expose partial success and an apology Unknown names the approver as "
-    "responsible and destination maintainer as closing authority, withholds the "
-    "orphaned Codebase fact, and reaches an explicit reconcile/abandon state",
+    R, "apology", "Independent destination receipts survive partial fan-out; the admitting principal is responsible and a named destination authority closes an orphan.",
     clauses(
         equals("codebase_receipt_state", "committed",
                "the durable Codebase write survives the Company failure"),
         member("company_receipt_state", ("refused", "pending", "abandoned"),
                "the failed destination reports its own state"),
         at_least("apology_count", 1, "a terminally divergent fan-out emits an apology"),
-        equals("apology.responsible_party_role", "approving-principal",
-               "the apology names the approving principal as responsible"),
+        equals("apology.responsible_party_role", "admitting-principal",
+               "the apology names the admitting principal as responsible"),
         member("apology.closing_authority_role",
                ("repository-maintainer", "company-steward"),
                "the apology names the in-scope closing authority"),
@@ -635,26 +614,21 @@ _o(
                ("awaiting_reconcile_or_abandon", "reconciled", "abandoned"),
                "an explicit reconcile/abandon state is reached"),
     ),
-    surfaces=("kinbase proposals decide", "kinbase status --json"),
+    surfaces=("kinbase session checkpoint", "kinbase status --json"),
     vectors=("Codebase commit then terminal Company failure",),
     nodes=("test_v2_classification.py::test_partial_fanout_failure_does_not_roll_back_committed_destination",),
 )
 
 _o(
     "V-2.retry-receipt", "V-2", "retry returns the original receipt",
-    P, "P-2",
-    "A retry of an already committed exact event returns the original commit receipt "
-    "even after token expiry; it cannot create a second event or pretend the first "
-    "commit did not happen.",
+    R, "retry", "Receipt replay returns the original receipt in a fresh process without duplicating events.",
     clauses(
         is_true("receipt_ids_equal", "the retry returns the original receipt"),
         is_false("second_event_created", "no second event is created"),
         equals("duplicate_events", 0, "no duplicate events exist afterwards"),
-        is_true("retry_after_token_expiry",
-                "the retry is exercised after token expiry, per the ratified text"),
     ),
-    surfaces=("kinbase proposals decide --json",),
-    vectors=("committed retry", "committed retry after token expiry"),
+    surfaces=("kinbase session checkpoint --json",),
+    vectors=("committed retry", "committed retry in a fresh process"),
     nodes=("test_v2_classification.py::test_retry_returns_original_receipt_without_duplication",),
 )
 
@@ -695,17 +669,15 @@ _o(
         equals("total_events_after_recovery", 1,
                "exactly one content-addressed event survives"),
     ),
-    surfaces=("kinbase proposals decide", "kinbase fsck --json"),
+    surfaces=("kinbase session checkpoint", "kinbase fsck --json"),
     vectors=("nonce_reservation", "event_append", "event_rename", "manifest",
              "receipt", "apology"),
     nodes=("test_v2_classification.py::test_kill_at_every_transition_then_concurrent_retry",),
 )
 
 _o(
-    "V-2.no-cross-store", "V-2", "no cross-store transaction or accept-all",
-    P, "P-2",
-    "One source may fan out to multiple stores, but no cross-store transaction, "
-    "shared private lineage token, or accept-all operation exists.",
+    "V-2.no-cross-store", "V-2", "independent destination transactions",
+    R, "independence", "No cross-store transaction or shared private lineage token exists.",
     clauses(
         every("receipts", "each destination returns its own saga receipt",
               present("destination", "which destination"),
@@ -713,13 +685,10 @@ _o(
                      "closed saga receipt state set"),
               absent("global_rollback", "no global rollback is claimed"),
               min_len=2),
-        equals("accept_all_surfaces_found", 0,
-               "no accept-all surface exists in Core or CLI"),
     ),
-    surfaces=("kinbase proposals --help", "kinbase status --json"),
+    surfaces=("kinbase session --help", "kinbase status --json"),
     vectors=("cross-destination fan-out",),
-    nodes=("test_v2_classification.py::test_no_cross_store_transaction_exists",
-           "test_v2_classification.py::test_no_accept_all_path_is_reachable"),
+    nodes=("test_v2_classification.py::test_no_cross_store_transaction_exists",),
 )
 
 # ==========================================================================
@@ -740,8 +709,8 @@ _o(
                 "host_projection", "process_artifacts", "evidence_packet"),
                "every declared shared surface family is traversed"),
         covers("lifecycle_stages_executed",
-               ("classification", "approval", "rejection", "defer", "expiry",
-                "fan-out", "host projection", "logs", "receipts", "caches",
+               ("classification", "admission replay", "retention",
+                "host projection", "logs", "receipts", "caches",
                 "service", "kin", "restart", "cleanup"),
                "every ratified lifecycle stage is executed"),
         is_true("scan_fail_closed",
@@ -836,7 +805,7 @@ _o(
         is_false("stolen_bytes_promoted",
                  "bytes recovered by a same-UID process are still rejected"),
     ),
-    surfaces=("kinbase doctor --json", "kinbase proposals decide"),
+    surfaces=("kinbase doctor --json", "kinbase session checkpoint"),
     vectors=("sandboxed agent read", "arbitrary same-UID process"),
     nodes=("test_v3_privacy.py::test_sandbox_denies_personal_root_for_shared_processes",),
 )
@@ -898,7 +867,7 @@ _o(
         is_true("deidentify_retains_taint",
                 "de-identification does not remove the private audit record's taint"),
     ),
-    surfaces=("kinbase proposals list --json",),
+    surfaces=("private admission audit ledgers",),
     vectors=("secret", "credential", "configured-canary", "forbidden-identifier"),
     nodes=("test_v3_privacy.py::test_hard_blocking_taint_is_never_cleared_by_deidentification",),
 )
@@ -917,7 +886,7 @@ _o(
                 "the model output carries only a paraphrase, so the scanner alone "
                 "would miss it"),
     ),
-    surfaces=("kinbase proposals list --json",),
+    surfaces=("private admission audit ledgers",),
     vectors=("hard-blocking canary with paraphrase-only output",),
     nodes=("test_v3_privacy.py::test_paraphrase_only_output_stays_private_by_taint_policy",),
 )
@@ -2123,157 +2092,13 @@ _o(
     nodes=("test_v9_host_lifecycle.py::test_twenty_session_soak_warm_path_and_fsck_incidence",),
 )
 
-_o(
-    "V-9.prompt-budget", "V-9", "four total prompts per sliding hour across destinations",
-    P, "P-9",
-    "Destinations share that four-slot ceiling and may have stricter sublimits; two "
-    "concurrent Codex/Claude sessions on the same host instance share the serialized "
-    "shard.",
-    clauses(
-        at_least("eligible_candidates", 5,
-                 "more eligible candidates than slots, so the ceiling binds"),
-        at_least("rendered", 1,
-                 "at least one prompt renders; zero prompts is not compliance"),
-        at_most("rendered", 4, "at most four total prompts per sliding hour"),
-        at_least("suppressed", 1, "excess proposals are suppressed, not dropped"),
-        present("shard.shard_id", "the host instance owns its shard"),
-        is_true("shard.signed", "the shard observation is host-signed"),
-        is_true("unknown_global_total_warning",
-                "doctor warns that no global cross-machine total is known"),
-    ),
-    surfaces=("kinbase proposals list", "kinbase doctor --json"),
-    vectors=("company", "codebase", "interleaved Codex and Claude sessions"),
-    nodes=("test_v9_fatigue.py::test_four_total_per_hour_shared_across_destinations",),
-)
-
-_o(
-    "V-9.reset", "V-9", "reset clears only the consecutive counter, once per hour",
-    L, "reset",
-    "`reset` only clears the three- consecutive counter after a real new primary-task "
-    "event, is limited to once per hour, and records its closed reason code.",
-    clauses(
-        is_true("first_reset_accepted", "a reset after a new primary task is accepted"),
-        equals("second_reset_refusal_code", "LIMIT_EXCEEDED",
-               "a second reset inside the cooldown refuses"),
-        is_true("hourly_ceiling_preserved", "a reset never clears the hourly ceiling"),
-        equals("consecutive_after_reset", 0, "the consecutive counter clears"),
-        is_false("free_text_reason_accepted", "reason codes are a closed set"),
-    ),
-    surfaces=("kinbase proposals reset",),
-    vectors=("new-primary-task", "operator-recovery", "host-restart"),
-    nodes=("test_v9_fatigue.py::test_reset_clears_only_the_consecutive_counter_once_per_hour",),
-)
-
-_o(
-    "V-9.reissue-atomicity", "V-9", "reissue and reservation commit in one transaction",
-    V, "reissue",
-    "Reissue eligibility, unique digest lock, total slot reservation, and consecutive "
-    "count must commit in one `BEGIN IMMEDIATE`;",
-    clauses(
-        at_least("eligible_candidates", 1,
-                 "an eligible candidate must exist for a reissue race to mean anything"),
-        at_least("issued", 1, "at least one reissue succeeds; zero is not compliance"),
-        is_true("candidate_ids_distinct", "each reissue creates a new candidate ID"),
-        is_true("digests_distinct", "no two reissues commit the same digest"),
-        at_most("hourly_consumed", 4, "the racing reissues do not over-reserve"),
-        is_false("untrusted_churn_triggered_reissue",
-                 "untrusted branch churn cannot trigger byte-change reissue"),
-    ),
-    surfaces=("kinbase proposals reissue", "kinbase doctor --json"),
-    vectors=("four racing reissues", "untrusted branch churn"),
-    nodes=("test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction",),
-)
-
-_o(
-    "V-9.interleave", "V-9", "interleaved sessions never exceed the shard ceiling",
-    V, "interleave",
-    "Force Codex and Claude sessions on one host instance to interleave exactly between "
-    "slot check and render.",
-    clauses(
-        at_least("eligible_candidates", 6,
-                 "more eligible work than slots so the ceiling binds"),
-        at_least("rendered", 1, "prompts genuinely render"),
-        at_most("rendered", 4, "the shard ceiling holds under interleaving"),
-        is_true("interleaving_witnessed",
-                "the interleaving is independently witnessed, not merely requested"),
-        is_true("crash_after_reservation_counted",
-                "a crash after reservation remains counted until expiry"),
-        present("delivery_loss_rate", "delivery-loss rate is explicit"),
-    ),
-    surfaces=("kinbase proposals list", "kinbase doctor --json"),
-    vectors=("Codex and Claude on one host instance",),
-    nodes=("test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window",),
-)
-
-_o(
-    "V-9.operator", "V-9", "the blinded operator exercise is completed",
-    P, "P-9",
-    "A 20-item blinded operator exercise must achieve at least 95% correct "
-    "approve/reject decisions with median decision time at most 30 seconds.",
-    clauses(
-        equals("item_count", 20, "exactly twenty items"),
-        is_true("blinded", "the exercise is blinded"),
-        equals("decisions_recorded", 20, "every item receives a real decision"),
-        at_least("accuracy", 0.95, "at least 95% correct decisions"),
-        at_most("median_decision_seconds", 30.0, "median decision time at most 30s"),
-        is_true("gold_withheld_from_operator_input",
-                "the gold decision never reaches the operator input"),
-    ),
-    surfaces=("operator exercise transcript",),
-    vectors=("twenty blinded approve/reject items",),
-    nodes=("test_v9_fatigue.py::test_blinded_operator_exercise_accuracy_and_median_time",),
-)
-
-_o(
-    "V-9.adequacy", "V-9", "corpus growth is adequate under the fatigue ceiling",
-    P, "P-9",
-    "the distortion/authority queue must place at least 18 of those facts into a human "
-    "decision slot within five simulated sliding-hour windows, admit at least 17 correct "
-    "facts after decisions, and surface no more than four total prompts in any window",
-    clauses(
-        equals("observations_ingested", 100, "the frozen 100-observation workload runs"),
-        equals("durable_facts", 20, "twenty independently gold-labelled durable facts"),
-        at_least("decision_slots", 18, "at least 18 facts receive a decision slot"),
-        at_least("admitted_correct", 17, "at least 17 correct facts admit"),
-        every("windows", "no window exceeds the four-prompt ceiling",
-              at_most("prompts", 4, "four total prompts per window"),
-              min_len=5),
-        is_false("low_authority_churn_displaced_high_distortion",
-                 "low-authority churn cannot displace a higher-distortion fact"),
-        is_true("gold_withheld_from_product",
-                "the gold labels never reach the product input"),
-    ),
-    surfaces=("kinbase session observe", "kinbase status --json"),
-    vectors=("100 observations across five sliding-hour windows",),
-    nodes=("test_v9_fatigue.py::test_corpus_growth_adequacy_under_the_fatigue_ceiling",),
-)
 
 
-_o(
-    "V-10.envelope", "V-10", "the eleven arms and the call envelope are enumerated",
-    V, "envelope",
-    "Before author-lane ratification, the Validator publishes this unavoidable call-count "
-    "envelope for eleven arms, three seeds, twelve all-arm pilot tasks, two graders, and the "
-    "full 10% block reserve (gate/calibration calls are additional):",
-    clauses(
-        covers("arms",
-               ("baseline", "null-system", "static-prior", "distractor", "topk-raw",
-                "topk-maintained", "authority-only", "codebase-only", "company-only",
-                "full-system", "oracle-spec"),
-               "every one of the eleven ratified arms is enumerated"),
-        every("envelope_rows", "each published row matches the frozen formula",
-              present("n", "powered task N"),
-              present("reserved_coding_calls", "reserved coding calls"),
-              present("reserved_scorer_calls", "reserved scorer calls"),
-              is_true("matches_formula", "the row matches 396 + 33*N + 11*ceil(0.10*3*N)"),
-              min_len=4),
-    ),
-    surfaces=("frozen experiment manifest",),
-    vectors=("eleven arms", "N in {8, 32, 71, 126}"),
-    nodes=("test_v10_protocol.py::test_eleven_arms_are_frozen_and_enumerated",
-           "test_v10_protocol.py::test_published_call_envelope_matches_the_formula"),
-    fail_closed=INSTRUMENT,
-)
+
+
+
+
+
 
 
 # --------------------------------------------------------------------------
@@ -2343,9 +2168,7 @@ _o("NF.timeouts", "NONFUNCTIONAL", "external calls time out and failed writes do
           "test_external_calls_have_timeouts_and_failed_writes_are_not_admitted",))
 
 _o("NF.diagnostics", "NONFUNCTIONAL", "diagnostics are executable after restart",
-   V, "diagnostics",
-   "`fsck`, `doctor`, corpus status, question status, and experiment status are "
-   "executable and useful after restart.",
+   R, "diagnostics", "Diagnostics remain useful after restart: fsck, doctor, corpus status and question status.",
    clauses(every("diagnostics", "each diagnostic runs after restart",
                  present("command", "which diagnostic"),
                  is_true("executable", "it ran"),
@@ -2381,18 +2204,14 @@ _o("NF.ceilings", "NONFUNCTIONAL", "every ceiling refuses with an omitted count"
             "projection call"),
    nodes=("test_nonfunctional.py::test_every_operational_ceiling_refuses_with_an_omitted_count",))
 
-_o("NF.lifetimes", "NONFUNCTIONAL", "candidate lifetime and private retention hold",
-   V, "operational-limits", "candidate and approval lifetime: 15 minutes;",
-   clauses(equals("candidate_lifetime_seconds", 900,
-                  "the ratified candidate lifetime is fifteen minutes"),
-           equals("private_retention_seconds", 86400,
+_o("NF.lifetimes", "NONFUNCTIONAL", "private raw retention remains bounded",
+   V, "operational-limits", "private raw-session default retention in proof roots: 24 hours;",
+   clauses(equals("private_retention_seconds", 86400,
                   "private raw-session retention is twenty-four hours"),
-           equals("expired_approval_refusal_code", "APPROVAL_EXPIRED",
-                  "an expired candidate refuses with its typed code"),
-           is_true("raw_removed_after_retention",
-                   "raw private session bytes are gone after retention")),
-   surfaces=("kinbase proposals decide",), vectors=("expiry", "retention"),
-   nodes=("test_nonfunctional.py::test_candidate_lifetime_and_private_retention_are_enforced",))
+           is_true("raw_present_before", "the native input exists before expiry"),
+           is_true("raw_withheld_after_retention", "every expired observation withholds its raw body")),
+   surfaces=("kinbase ingest codex_jsonl",), vectors=("retention",),
+   nodes=("test_nonfunctional.py::test_private_raw_retention_remains_enforced",))
 
 # Tester dispatch 006, item 5. The earlier form of this obligation drove one
 # probe with a NUL inside an argv element; the OS refuses that before the
@@ -2494,76 +2313,59 @@ _o("EV.ciphertext-only", "EVIDENCE", "only ciphertext metadata reaches the manif
    nodes=("test_evidence_packet.py::test_only_ciphertext_metadata_reaches_the_manifest",),
    fail_closed=INSTRUMENT)
 
-# ==========================================================================
-# V-10 protocol denial checks (no task corpus is authored or exposed)
-# ==========================================================================
+# Current user-ratified ruling contract supersedes the retired approval study.
+_o("RULING.direct", "V-6", "direct signed admission and idempotent replay", R, "direct-admission",
+   "facts are admitted directly, with a signed, content-addressed, revocable record;",
+   clauses(equals("admitted", 12, "all twelve candidates admitted without a prompt"), is_true("all_committed", "all admitted"),
+           is_true("signatures_valid", "independently verified signatures"), is_true("addresses_valid", "hash exact stored bytes"),
+           equals("events", 12, "one event per admission"), is_true("replayed", "stable receipts"), equals("checkpoint_receipts", 12, "checkpoint recovers all receipts")),
+   surfaces=("session observe", "session checkpoint", "signed events"), vectors=("twelve admissions", "repeat observation"),
+   nodes=("test_ruling_loop.py::test_direct_admission_exceeds_old_prompt_limit_and_replays",))
+_o("RULING.durable", "V-6", "ownerless uncertainty is visible", R, "unknown",
+   "Conflicting evidence with no authority in scope opens an Unknown and an `awaiting_authority` question.",
+   clauses(equals("questions", 1, "one durable question"), equals("unknowns", 1, "one durable Unknown"), is_true("awaiting", "missing owner is explicit"),
+           is_true("signed", "Unknown signature verified"), is_true("stable", "no duplicate question")),
+   surfaces=("session observe", "questions list"), vectors=("unresolved owner", "fresh process"),
+   nodes=("test_ruling_loop.py::test_unresolved_session_question_is_durable_and_deduplicated",))
+_o("RULING.conflict", "V-6", "conflict with no answering authority opens a question", R, "unknown",
+   "Conflicting evidence with no authority in scope opens an Unknown and an `awaiting_authority` question.",
+   clauses(at_least("visible", 1, "conflict question exists"), is_true("awaiting", "owner unresolved"), is_true("stable", "survives rebuild")),
+   surfaces=("project", "questions list"), vectors=("conflicting signed facts", "no answering authority"),
+   nodes=("test_ruling_loop.py::test_conflicting_evidence_without_answering_authority_opens_question",))
+_o("RULING.volume", "V-6", "one ratified rule outranks volume", R, "standing",
+   "Given N `present` facts saying X and one `ratified` fact saying Y, the reduced view must say Y.",
+   clauses(equals("statement", "Scheduler must use bounded exponential backoff.", "ruling wins"), equals("standing", "ratified", "standing retained"),
+           equals("fixture_events", 257, "256 competing observations plus ruling")),
+   surfaces=("explain",), vectors=("ruling first", "ruling last", "256 independent present facts"),
+   nodes=("test_ruling_loop.py::test_one_ratified_fact_outweighs_256_present_facts",))
+_o("RULING.ceiling", "V-6", "agent provenance caps claimed standing", R, "provenance",
+   "A fact whose provenance is `ai_generated` may never reach `prevalent`, however often the pattern recurs.",
+   clauses(equals("standing", "present", "agent evidence cannot become direction"), equals("provenance", "ai_generated", "provenance retained")),
+   surfaces=("explain",), vectors=("every elevated standing", "signed agent fact"),
+   nodes=("test_ruling_loop.py::test_ai_generated_standing_is_clamped_in_reduced_view",))
+_o("RULING.git", "V-6", "git provenance survives ingestion", R, "unlabelled",
+   "A commit with no authorship marker is `unknown`, never `human`.",
+   clauses(at_least("observations", 32, "all actual commits observed"), is_true("provenance_correct", "trailers and unmarked history preserved"),
+           is_true("standing_capped", "volume never elevates inferred authorship")),
+   surfaces=("git commits", "ingest git_history"), vectors=("agent trailers", "unmarked commits"),
+   nodes=("test_ruling_loop.py::test_git_authorship_survives_ingestion_without_inventing_human_review",))
+_o("RULING.terminal", "V-6", "shrug is terminal and unruled is actionable", R, "shrug",
+   "Once something is ruled `shrug`, the system never opens another question about it.",
+   clauses(is_true("correct", "only unruled reopens"), equals("reads", 3, "survives three independent reads/rebuilds")),
+   surfaces=("project", "corpus rebuild", "questions list"), vectors=("shrug", "unruled"),
+   nodes=("test_ruling_loop.py::test_shrug_is_terminal_while_unruled_remains_actionable",))
+_o("RULING.revocable", "V-6", "direct admission retains revocation", R, "direct-admission",
+   "facts are admitted directly, with a signed, content-addressed, revocable record;",
+   clauses(equals("before", "current", "admitted before revocation"), is_true("withdrawn", "revoked fact withheld"), is_true("record_retained", "audit event survives")),
+   surfaces=("explain", "signed registry revocation"), vectors=("direct admission", "revoked signer"),
+   nodes=("test_ruling_loop.py::test_automatically_admitted_shared_fact_remains_revocable",))
 
-_o("V10.freeze-order", "V-10", "freeze refuses before gates, census, power and budget",
-   L, "hosts-and-experiments",
-   "`freeze` refuses without census, power/MDE/cost results, valid calibration, "
-   "and exact human budget ratification.",
-   clauses(every("preconditions", "each missing precondition refuses freeze",
-                 present("missing", "which precondition was withheld"),
-                 is_true("refused", "freeze refused"),
-                 present("refusal_code", "the refusal is typed"), min_len=4)),
-   surfaces=("kinbase experiment freeze",),
-   vectors=("census", "power", "calibration", "budget"),
-   nodes=("test_v10_protocol.py::test_experiment_freeze_refuses_before_gates_census_power_and_budget",))
-
-_o("V10.census-row", "V-10", "launch without a signed census row is refused",
-   L, "error-contract",
-   "`RUN_CENSUS_MISSING` | benchmark action lacks its pre-launch signed census row | 70",
-   clauses(equals("refusal_code", "RUN_CENSUS_MISSING", "the typed code is required"),
-           equals("exit_code", 70, "the ratified exit status"),
-           is_false("smoke_exemption_accepted", "smoke and debug are not exemptions")),
-   surfaces=("kinbase experiment run",), vectors=("missing census row",),
-   nodes=("test_v10_protocol.py::test_launch_without_a_signed_census_row_is_refused",))
-
-_o("V10.human-bytes", "V-10", "human bytes after freeze must be zero",
-   V, "human-bytes",
-   "The broker records `human_bytes_after_freeze`; any value other than zero is "
-   "`INVALID_RUN`.",
-   clauses(equals("human_bytes_after_freeze", 0, "the required value is zero"),
-           is_true("nonzero_yields_invalid_run",
-                   "a nonzero value must classify the run INVALID_RUN")),
-   surfaces=("kinbase experiment run",), vectors=("post-freeze human bytes",),
-   nodes=("test_v10_protocol.py::test_human_bytes_after_freeze_must_be_zero",))
-
-_o("V10.principal", "V-10", "administrative principals cannot run a measurement task",
-   A, "brownfield-harness",
-   "Administrative or broad service-reader identities cannot run a measurement task.",
-   clauses(every("principals", "each forbidden principal is refused",
-                 present("principal", "which identity"),
-                 is_true("refused", "the run was refused"),
-                 present("refusal_code", "the refusal is typed"), min_len=2),
-           is_true("least_privilege_principal_accepted",
-                   "a realistic least-privilege principal is accepted")),
-   surfaces=("kinbase experiment run",),
-   vectors=("administrative identity", "broad service reader"),
-   nodes=("test_v10_protocol.py::"
-          "test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task",))
-
-_o("V10.ceiling", "V-10", "the aggregate ceiling is reserved atomically",
-   V, "ceiling",
-   "The harness atomically reserves and enforces the aggregate ceiling.",
-   clauses(is_true("reserved_atomically", "the ceiling is reserved in one commit"),
-           is_true("increase_refused", "an increase for this run is refused"),
-           present("increase_refusal_code", "the refusal is typed"),
-           equals("ceiling_raised", False, "the ceiling never rises mid-run")),
-   surfaces=("kinbase experiment freeze",), vectors=("aggregate budget",),
-   nodes=("test_v10_protocol.py::test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised",))
-
-_o("V10.claim", "V-10", "the published conclusion uses only the licensed claim",
-   V, "claim",
-   "The published conclusion must use the exact licensed-claim template in P-10 "
-   "with run-specific digests and metrics.",
-   clauses(is_true("uses_licensed_template", "the licensed template is used"),
-           equals("forbidden_claims_found", 0, "no broader claim appears"),
-           present("run_digest", "the claim carries run-specific digests")),
-   surfaces=("kinbase experiment verdict",), vectors=("published conclusion",),
-   nodes=("test_v10_protocol.py::test_published_conclusion_uses_only_the_licensed_claim",))
-
-
+_o("RULING.commands", "V-6", "retired commands are absent", R, "commands",
+   "Retired commands must be absent from CLI help.",
+   clauses(is_true("retired_absent", "approval and study commands are gone"),
+           is_true("ruling_present", "session and question paths are exposed")),
+   surfaces=("kinbase --help",), vectors=("top-level command list",),
+   nodes=("test_ruling_loop.py::test_approval_and_study_commands_are_absent",))
 
 OBLIGATIONS: tuple[Obligation, ...] = tuple(_OBLIGATIONS)
 

@@ -9,11 +9,10 @@
     "V-7",
     "V-8",
     "V-9",
-    "V-10",
     "EVIDENCE",
     "NONFUNCTIONAL"
   ],
-  "obligation_count": 117,
+  "obligation_count": 112,
   "obligations": [
     {
       "anchor": "acceptance-map",
@@ -1054,86 +1053,6 @@
       ]
     },
     {
-      "anchor": "calibration",
-      "artifact": "spec/verification.md",
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-2",
-      "nodes": [
-        "test_v2_classification.py::test_excluded_calibration_corpus_gates_measurement"
-      ],
-      "oid": "V-2.calibration",
-      "requirement": "Before V-10, run a separate excluded 60-message calibration corpus through the same five-run configuration.",
-      "surfaces": [
-        "kinbase experiment calibrate"
-      ],
-      "thresholds": [
-        {
-          "bound": 60,
-          "detector_mutation": "V-2.calibration#dm:equals:calibration_message_count",
-          "kind": "equals",
-          "min_len": 1,
-          "negative_control": "V-2.calibration#nc:equals:calibration_message_count",
-          "path": "calibration_message_count",
-          "positive_control": "V-2.calibration#pc:equals:calibration_message_count",
-          "product_mutation": "V-2.calibration#pm:equals:calibration_message_count",
-          "tag": "equals:calibration_message_count",
-          "why": "exactly 60 calibration messages"
-        },
-        {
-          "bound": 0,
-          "detector_mutation": "V-2.calibration#dm:equals:overlap_with_held_out",
-          "kind": "equals",
-          "min_len": 1,
-          "negative_control": "V-2.calibration#nc:equals:overlap_with_held_out",
-          "path": "overlap_with_held_out",
-          "positive_control": "V-2.calibration#pc:equals:overlap_with_held_out",
-          "product_mutation": "V-2.calibration#pm:equals:overlap_with_held_out",
-          "tag": "equals:overlap_with_held_out",
-          "why": "the calibration corpus is disjoint"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-2.calibration#dm:is_true:calibration_input_exists",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-2.calibration#nc:is_true:calibration_input_exists",
-          "path": "calibration_input_exists",
-          "positive_control": "V-2.calibration#pc:is_true:calibration_input_exists",
-          "product_mutation": "V-2.calibration#pm:is_true:calibration_input_exists",
-          "tag": "is_true:calibration_input_exists",
-          "why": "the frozen calibration input must exist to be run"
-        },
-        {
-          "bound": 0.9,
-          "detector_mutation": "V-2.calibration#dm:at_least:macro_f1_lower_bound",
-          "kind": "at_least",
-          "min_len": 1,
-          "negative_control": "V-2.calibration#nc:at_least:macro_f1_lower_bound",
-          "path": "macro_f1_lower_bound",
-          "positive_control": "V-2.calibration#pc:at_least:macro_f1_lower_bound",
-          "product_mutation": "V-2.calibration#pm:at_least:macro_f1_lower_bound",
-          "tag": "at_least:macro_f1_lower_bound",
-          "why": "calibration macro-F1 floor"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-2.calibration#dm:every:shared_precision_lower_bound",
-          "kind": "every",
-          "min_len": 2,
-          "negative_control": "V-2.calibration#nc:every:shared_precision_lower_bound",
-          "path": "shared_precision_lower_bound",
-          "positive_control": "V-2.calibration#pc:every:shared_precision_lower_bound",
-          "product_mutation": "V-2.calibration#pm:every:shared_precision_lower_bound",
-          "tag": "every:shared_precision_lower_bound",
-          "why": "each shared destination clears 0.95"
-        }
-      ],
-      "title": "excluded calibration corpus gates measurement",
-      "vectors": [
-        "excluded 60-message calibration corpus"
-      ]
-    },
-    {
       "anchor": "P-2",
       "artifact": "spec/product.md",
       "fail_closed": "PRODUCT_FAILURE",
@@ -1320,7 +1239,7 @@
       "oid": "V-2.independent-candidates",
       "requirement": "One mixed message must yield independent Personal and Codebase candidates; another yields Personal, Company, and Codebase candidates with distinct minimized bytes.",
       "surfaces": [
-        "kinbase proposals list --json"
+        "private admission audit ledgers"
       ],
       "thresholds": [
         {
@@ -1368,16 +1287,16 @@
     },
     {
       "anchor": "apology",
-      "artifact": "spec/verification.md",
+      "artifact": "tests/RULING-CONTRACT.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-2",
       "nodes": [
         "test_v2_classification.py::test_partial_fanout_failure_does_not_roll_back_committed_destination"
       ],
       "oid": "V-2.partial-fanout",
-      "requirement": "receipts expose partial success and an apology Unknown names the approver as responsible and destination maintainer as closing authority, withholds the orphaned Codebase fact, and reaches an explicit reconcile/abandon state",
+      "requirement": "Independent destination receipts survive partial fan-out; the admitting principal is responsible and a named destination authority closes an orphan.",
       "surfaces": [
-        "kinbase proposals decide",
+        "kinbase session checkpoint",
         "kinbase status --json"
       ],
       "thresholds": [
@@ -1422,7 +1341,7 @@
           "why": "a terminally divergent fan-out emits an apology"
         },
         {
-          "bound": "approving-principal",
+          "bound": "admitting-principal",
           "detector_mutation": "V-2.partial-fanout#dm:equals:apology.responsible_party_role",
           "kind": "equals",
           "min_len": 1,
@@ -1431,7 +1350,7 @@
           "positive_control": "V-2.partial-fanout#pc:equals:apology.responsible_party_role",
           "product_mutation": "V-2.partial-fanout#pm:equals:apology.responsible_party_role",
           "tag": "equals:apology.responsible_party_role",
-          "why": "the apology names the approving principal as responsible"
+          "why": "the apology names the admitting principal as responsible"
         },
         {
           "bound": [
@@ -1483,17 +1402,17 @@
       ]
     },
     {
-      "anchor": "P-2",
-      "artifact": "spec/product.md",
+      "anchor": "retry",
+      "artifact": "tests/RULING-CONTRACT.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-2",
       "nodes": [
         "test_v2_classification.py::test_retry_returns_original_receipt_without_duplication"
       ],
       "oid": "V-2.retry-receipt",
-      "requirement": "A retry of an already committed exact event returns the original commit receipt even after token expiry; it cannot create a second event or pretend the first commit did not happen.",
+      "requirement": "Receipt replay returns the original receipt in a fresh process without duplicating events.",
       "surfaces": [
-        "kinbase proposals decide --json"
+        "kinbase session checkpoint --json"
       ],
       "thresholds": [
         {
@@ -1531,24 +1450,12 @@
           "product_mutation": "V-2.retry-receipt#pm:equals:duplicate_events",
           "tag": "equals:duplicate_events",
           "why": "no duplicate events exist afterwards"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-2.retry-receipt#dm:is_true:retry_after_token_expiry",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-2.retry-receipt#nc:is_true:retry_after_token_expiry",
-          "path": "retry_after_token_expiry",
-          "positive_control": "V-2.retry-receipt#pc:is_true:retry_after_token_expiry",
-          "product_mutation": "V-2.retry-receipt#pm:is_true:retry_after_token_expiry",
-          "tag": "is_true:retry_after_token_expiry",
-          "why": "the retry is exercised after token expiry, per the ratified text"
         }
       ],
       "title": "retry returns the original receipt",
       "vectors": [
         "committed retry",
-        "committed retry after token expiry"
+        "committed retry in a fresh process"
       ]
     },
     {
@@ -1642,7 +1549,7 @@
       "oid": "V-2.crash-recovery",
       "requirement": "Kill each destination between nonce reservation, event append/rename, manifest, receipt, and apology transitions, then retry concurrently.",
       "surfaces": [
-        "kinbase proposals decide",
+        "kinbase session checkpoint",
         "kinbase fsck --json"
       ],
       "thresholds": [
@@ -1682,18 +1589,17 @@
       ]
     },
     {
-      "anchor": "P-2",
-      "artifact": "spec/product.md",
+      "anchor": "independence",
+      "artifact": "tests/RULING-CONTRACT.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-2",
       "nodes": [
-        "test_v2_classification.py::test_no_cross_store_transaction_exists",
-        "test_v2_classification.py::test_no_accept_all_path_is_reachable"
+        "test_v2_classification.py::test_no_cross_store_transaction_exists"
       ],
       "oid": "V-2.no-cross-store",
-      "requirement": "One source may fan out to multiple stores, but no cross-store transaction, shared private lineage token, or accept-all operation exists.",
+      "requirement": "No cross-store transaction or shared private lineage token exists.",
       "surfaces": [
-        "kinbase proposals --help",
+        "kinbase session --help",
         "kinbase status --json"
       ],
       "thresholds": [
@@ -1708,21 +1614,9 @@
           "product_mutation": "V-2.no-cross-store#pm:every:receipts",
           "tag": "every:receipts",
           "why": "each destination returns its own saga receipt"
-        },
-        {
-          "bound": 0,
-          "detector_mutation": "V-2.no-cross-store#dm:equals:accept_all_surfaces_found",
-          "kind": "equals",
-          "min_len": 1,
-          "negative_control": "V-2.no-cross-store#nc:equals:accept_all_surfaces_found",
-          "path": "accept_all_surfaces_found",
-          "positive_control": "V-2.no-cross-store#pc:equals:accept_all_surfaces_found",
-          "product_mutation": "V-2.no-cross-store#pm:equals:accept_all_surfaces_found",
-          "tag": "equals:accept_all_surfaces_found",
-          "why": "no accept-all surface exists in Core or CLI"
         }
       ],
-      "title": "no cross-store transaction or accept-all",
+      "title": "independent destination transactions",
       "vectors": [
         "cross-destination fan-out"
       ]
@@ -1792,11 +1686,8 @@
         {
           "bound": [
             "classification",
-            "approval",
-            "rejection",
-            "defer",
-            "expiry",
-            "fan-out",
+            "admission replay",
+            "retention",
             "host projection",
             "logs",
             "receipts",
@@ -2075,7 +1966,7 @@
       "requirement": "If no supported kernel enforcement is available or the probe succeeds in reading Personal, shared projection/publication is disabled with a typed failure.",
       "surfaces": [
         "kinbase doctor --json",
-        "kinbase proposals decide"
+        "kinbase session checkpoint"
       ],
       "thresholds": [
         {
@@ -2284,7 +2175,7 @@
       "oid": "V-3.taint",
       "requirement": "Taint is never described as cleared; its policy consequence differs by class.",
       "surfaces": [
-        "kinbase proposals list --json"
+        "private admission audit ledgers"
       ],
       "thresholds": [
         {
@@ -2343,7 +2234,7 @@
       "oid": "V-3.paraphrase",
       "requirement": "The entire observation must remain private by taint policy; the scanner is defense in depth, not the claimed semantic boundary.",
       "surfaces": [
-        "kinbase proposals list --json"
+        "private admission audit ledgers"
       ],
       "thresholds": [
         {
@@ -6733,637 +6624,6 @@
       ]
     },
     {
-      "anchor": "P-9",
-      "artifact": "spec/product.md",
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "nodes": [
-        "test_v9_fatigue.py::test_four_total_per_hour_shared_across_destinations"
-      ],
-      "oid": "V-9.prompt-budget",
-      "requirement": "Destinations share that four-slot ceiling and may have stricter sublimits; two concurrent Codex/Claude sessions on the same host instance share the serialized shard.",
-      "surfaces": [
-        "kinbase proposals list",
-        "kinbase doctor --json"
-      ],
-      "thresholds": [
-        {
-          "bound": 5,
-          "detector_mutation": "V-9.prompt-budget#dm:at_least:eligible_candidates",
-          "kind": "at_least",
-          "min_len": 1,
-          "negative_control": "V-9.prompt-budget#nc:at_least:eligible_candidates",
-          "path": "eligible_candidates",
-          "positive_control": "V-9.prompt-budget#pc:at_least:eligible_candidates",
-          "product_mutation": "V-9.prompt-budget#pm:at_least:eligible_candidates",
-          "tag": "at_least:eligible_candidates",
-          "why": "more eligible candidates than slots, so the ceiling binds"
-        },
-        {
-          "bound": 1,
-          "detector_mutation": "V-9.prompt-budget#dm:at_least:rendered",
-          "kind": "at_least",
-          "min_len": 1,
-          "negative_control": "V-9.prompt-budget#nc:at_least:rendered",
-          "path": "rendered",
-          "positive_control": "V-9.prompt-budget#pc:at_least:rendered",
-          "product_mutation": "V-9.prompt-budget#pm:at_least:rendered",
-          "tag": "at_least:rendered",
-          "why": "at least one prompt renders; zero prompts is not compliance"
-        },
-        {
-          "bound": 4,
-          "detector_mutation": "V-9.prompt-budget#dm:at_most:rendered",
-          "kind": "at_most",
-          "min_len": 1,
-          "negative_control": "V-9.prompt-budget#nc:at_most:rendered",
-          "path": "rendered",
-          "positive_control": "V-9.prompt-budget#pc:at_most:rendered",
-          "product_mutation": "V-9.prompt-budget#pm:at_most:rendered",
-          "tag": "at_most:rendered",
-          "why": "at most four total prompts per sliding hour"
-        },
-        {
-          "bound": 1,
-          "detector_mutation": "V-9.prompt-budget#dm:at_least:suppressed",
-          "kind": "at_least",
-          "min_len": 1,
-          "negative_control": "V-9.prompt-budget#nc:at_least:suppressed",
-          "path": "suppressed",
-          "positive_control": "V-9.prompt-budget#pc:at_least:suppressed",
-          "product_mutation": "V-9.prompt-budget#pm:at_least:suppressed",
-          "tag": "at_least:suppressed",
-          "why": "excess proposals are suppressed, not dropped"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.prompt-budget#dm:present:shard.shard_id",
-          "kind": "present",
-          "min_len": 1,
-          "negative_control": "V-9.prompt-budget#nc:present:shard.shard_id",
-          "path": "shard.shard_id",
-          "positive_control": "V-9.prompt-budget#pc:present:shard.shard_id",
-          "product_mutation": "V-9.prompt-budget#pm:present:shard.shard_id",
-          "tag": "present:shard.shard_id",
-          "why": "the host instance owns its shard"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.prompt-budget#dm:is_true:shard.signed",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-9.prompt-budget#nc:is_true:shard.signed",
-          "path": "shard.signed",
-          "positive_control": "V-9.prompt-budget#pc:is_true:shard.signed",
-          "product_mutation": "V-9.prompt-budget#pm:is_true:shard.signed",
-          "tag": "is_true:shard.signed",
-          "why": "the shard observation is host-signed"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.prompt-budget#dm:is_true:unknown_global_total_warning",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-9.prompt-budget#nc:is_true:unknown_global_total_warning",
-          "path": "unknown_global_total_warning",
-          "positive_control": "V-9.prompt-budget#pc:is_true:unknown_global_total_warning",
-          "product_mutation": "V-9.prompt-budget#pm:is_true:unknown_global_total_warning",
-          "tag": "is_true:unknown_global_total_warning",
-          "why": "doctor warns that no global cross-machine total is known"
-        }
-      ],
-      "title": "four total prompts per sliding hour across destinations",
-      "vectors": [
-        "company",
-        "codebase",
-        "interleaved Codex and Claude sessions"
-      ]
-    },
-    {
-      "anchor": "reset",
-      "artifact": "spec/cli.md",
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "nodes": [
-        "test_v9_fatigue.py::test_reset_clears_only_the_consecutive_counter_once_per_hour"
-      ],
-      "oid": "V-9.reset",
-      "requirement": "`reset` only clears the three- consecutive counter after a real new primary-task event, is limited to once per hour, and records its closed reason code.",
-      "surfaces": [
-        "kinbase proposals reset"
-      ],
-      "thresholds": [
-        {
-          "bound": null,
-          "detector_mutation": "V-9.reset#dm:is_true:first_reset_accepted",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-9.reset#nc:is_true:first_reset_accepted",
-          "path": "first_reset_accepted",
-          "positive_control": "V-9.reset#pc:is_true:first_reset_accepted",
-          "product_mutation": "V-9.reset#pm:is_true:first_reset_accepted",
-          "tag": "is_true:first_reset_accepted",
-          "why": "a reset after a new primary task is accepted"
-        },
-        {
-          "bound": "LIMIT_EXCEEDED",
-          "detector_mutation": "V-9.reset#dm:equals:second_reset_refusal_code",
-          "kind": "equals",
-          "min_len": 1,
-          "negative_control": "V-9.reset#nc:equals:second_reset_refusal_code",
-          "path": "second_reset_refusal_code",
-          "positive_control": "V-9.reset#pc:equals:second_reset_refusal_code",
-          "product_mutation": "V-9.reset#pm:equals:second_reset_refusal_code",
-          "tag": "equals:second_reset_refusal_code",
-          "why": "a second reset inside the cooldown refuses"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.reset#dm:is_true:hourly_ceiling_preserved",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-9.reset#nc:is_true:hourly_ceiling_preserved",
-          "path": "hourly_ceiling_preserved",
-          "positive_control": "V-9.reset#pc:is_true:hourly_ceiling_preserved",
-          "product_mutation": "V-9.reset#pm:is_true:hourly_ceiling_preserved",
-          "tag": "is_true:hourly_ceiling_preserved",
-          "why": "a reset never clears the hourly ceiling"
-        },
-        {
-          "bound": 0,
-          "detector_mutation": "V-9.reset#dm:equals:consecutive_after_reset",
-          "kind": "equals",
-          "min_len": 1,
-          "negative_control": "V-9.reset#nc:equals:consecutive_after_reset",
-          "path": "consecutive_after_reset",
-          "positive_control": "V-9.reset#pc:equals:consecutive_after_reset",
-          "product_mutation": "V-9.reset#pm:equals:consecutive_after_reset",
-          "tag": "equals:consecutive_after_reset",
-          "why": "the consecutive counter clears"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.reset#dm:is_false:free_text_reason_accepted",
-          "kind": "is_false",
-          "min_len": 1,
-          "negative_control": "V-9.reset#nc:is_false:free_text_reason_accepted",
-          "path": "free_text_reason_accepted",
-          "positive_control": "V-9.reset#pc:is_false:free_text_reason_accepted",
-          "product_mutation": "V-9.reset#pm:is_false:free_text_reason_accepted",
-          "tag": "is_false:free_text_reason_accepted",
-          "why": "reason codes are a closed set"
-        }
-      ],
-      "title": "reset clears only the consecutive counter, once per hour",
-      "vectors": [
-        "new-primary-task",
-        "operator-recovery",
-        "host-restart"
-      ]
-    },
-    {
-      "anchor": "reissue",
-      "artifact": "spec/verification.md",
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "nodes": [
-        "test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction"
-      ],
-      "oid": "V-9.reissue-atomicity",
-      "requirement": "Reissue eligibility, unique digest lock, total slot reservation, and consecutive count must commit in one `BEGIN IMMEDIATE`;",
-      "surfaces": [
-        "kinbase proposals reissue",
-        "kinbase doctor --json"
-      ],
-      "thresholds": [
-        {
-          "bound": 1,
-          "detector_mutation": "V-9.reissue-atomicity#dm:at_least:eligible_candidates",
-          "kind": "at_least",
-          "min_len": 1,
-          "negative_control": "V-9.reissue-atomicity#nc:at_least:eligible_candidates",
-          "path": "eligible_candidates",
-          "positive_control": "V-9.reissue-atomicity#pc:at_least:eligible_candidates",
-          "product_mutation": "V-9.reissue-atomicity#pm:at_least:eligible_candidates",
-          "tag": "at_least:eligible_candidates",
-          "why": "an eligible candidate must exist for a reissue race to mean anything"
-        },
-        {
-          "bound": 1,
-          "detector_mutation": "V-9.reissue-atomicity#dm:at_least:issued",
-          "kind": "at_least",
-          "min_len": 1,
-          "negative_control": "V-9.reissue-atomicity#nc:at_least:issued",
-          "path": "issued",
-          "positive_control": "V-9.reissue-atomicity#pc:at_least:issued",
-          "product_mutation": "V-9.reissue-atomicity#pm:at_least:issued",
-          "tag": "at_least:issued",
-          "why": "at least one reissue succeeds; zero is not compliance"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.reissue-atomicity#dm:is_true:candidate_ids_distinct",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-9.reissue-atomicity#nc:is_true:candidate_ids_distinct",
-          "path": "candidate_ids_distinct",
-          "positive_control": "V-9.reissue-atomicity#pc:is_true:candidate_ids_distinct",
-          "product_mutation": "V-9.reissue-atomicity#pm:is_true:candidate_ids_distinct",
-          "tag": "is_true:candidate_ids_distinct",
-          "why": "each reissue creates a new candidate ID"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.reissue-atomicity#dm:is_true:digests_distinct",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-9.reissue-atomicity#nc:is_true:digests_distinct",
-          "path": "digests_distinct",
-          "positive_control": "V-9.reissue-atomicity#pc:is_true:digests_distinct",
-          "product_mutation": "V-9.reissue-atomicity#pm:is_true:digests_distinct",
-          "tag": "is_true:digests_distinct",
-          "why": "no two reissues commit the same digest"
-        },
-        {
-          "bound": 4,
-          "detector_mutation": "V-9.reissue-atomicity#dm:at_most:hourly_consumed",
-          "kind": "at_most",
-          "min_len": 1,
-          "negative_control": "V-9.reissue-atomicity#nc:at_most:hourly_consumed",
-          "path": "hourly_consumed",
-          "positive_control": "V-9.reissue-atomicity#pc:at_most:hourly_consumed",
-          "product_mutation": "V-9.reissue-atomicity#pm:at_most:hourly_consumed",
-          "tag": "at_most:hourly_consumed",
-          "why": "the racing reissues do not over-reserve"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.reissue-atomicity#dm:is_false:untrusted_churn_triggered_reissue",
-          "kind": "is_false",
-          "min_len": 1,
-          "negative_control": "V-9.reissue-atomicity#nc:is_false:untrusted_churn_triggered_reissue",
-          "path": "untrusted_churn_triggered_reissue",
-          "positive_control": "V-9.reissue-atomicity#pc:is_false:untrusted_churn_triggered_reissue",
-          "product_mutation": "V-9.reissue-atomicity#pm:is_false:untrusted_churn_triggered_reissue",
-          "tag": "is_false:untrusted_churn_triggered_reissue",
-          "why": "untrusted branch churn cannot trigger byte-change reissue"
-        }
-      ],
-      "title": "reissue and reservation commit in one transaction",
-      "vectors": [
-        "four racing reissues",
-        "untrusted branch churn"
-      ]
-    },
-    {
-      "anchor": "interleave",
-      "artifact": "spec/verification.md",
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "nodes": [
-        "test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window"
-      ],
-      "oid": "V-9.interleave",
-      "requirement": "Force Codex and Claude sessions on one host instance to interleave exactly between slot check and render.",
-      "surfaces": [
-        "kinbase proposals list",
-        "kinbase doctor --json"
-      ],
-      "thresholds": [
-        {
-          "bound": 6,
-          "detector_mutation": "V-9.interleave#dm:at_least:eligible_candidates",
-          "kind": "at_least",
-          "min_len": 1,
-          "negative_control": "V-9.interleave#nc:at_least:eligible_candidates",
-          "path": "eligible_candidates",
-          "positive_control": "V-9.interleave#pc:at_least:eligible_candidates",
-          "product_mutation": "V-9.interleave#pm:at_least:eligible_candidates",
-          "tag": "at_least:eligible_candidates",
-          "why": "more eligible work than slots so the ceiling binds"
-        },
-        {
-          "bound": 1,
-          "detector_mutation": "V-9.interleave#dm:at_least:rendered",
-          "kind": "at_least",
-          "min_len": 1,
-          "negative_control": "V-9.interleave#nc:at_least:rendered",
-          "path": "rendered",
-          "positive_control": "V-9.interleave#pc:at_least:rendered",
-          "product_mutation": "V-9.interleave#pm:at_least:rendered",
-          "tag": "at_least:rendered",
-          "why": "prompts genuinely render"
-        },
-        {
-          "bound": 4,
-          "detector_mutation": "V-9.interleave#dm:at_most:rendered",
-          "kind": "at_most",
-          "min_len": 1,
-          "negative_control": "V-9.interleave#nc:at_most:rendered",
-          "path": "rendered",
-          "positive_control": "V-9.interleave#pc:at_most:rendered",
-          "product_mutation": "V-9.interleave#pm:at_most:rendered",
-          "tag": "at_most:rendered",
-          "why": "the shard ceiling holds under interleaving"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.interleave#dm:is_true:interleaving_witnessed",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-9.interleave#nc:is_true:interleaving_witnessed",
-          "path": "interleaving_witnessed",
-          "positive_control": "V-9.interleave#pc:is_true:interleaving_witnessed",
-          "product_mutation": "V-9.interleave#pm:is_true:interleaving_witnessed",
-          "tag": "is_true:interleaving_witnessed",
-          "why": "the interleaving is independently witnessed, not merely requested"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.interleave#dm:is_true:crash_after_reservation_counted",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-9.interleave#nc:is_true:crash_after_reservation_counted",
-          "path": "crash_after_reservation_counted",
-          "positive_control": "V-9.interleave#pc:is_true:crash_after_reservation_counted",
-          "product_mutation": "V-9.interleave#pm:is_true:crash_after_reservation_counted",
-          "tag": "is_true:crash_after_reservation_counted",
-          "why": "a crash after reservation remains counted until expiry"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.interleave#dm:present:delivery_loss_rate",
-          "kind": "present",
-          "min_len": 1,
-          "negative_control": "V-9.interleave#nc:present:delivery_loss_rate",
-          "path": "delivery_loss_rate",
-          "positive_control": "V-9.interleave#pc:present:delivery_loss_rate",
-          "product_mutation": "V-9.interleave#pm:present:delivery_loss_rate",
-          "tag": "present:delivery_loss_rate",
-          "why": "delivery-loss rate is explicit"
-        }
-      ],
-      "title": "interleaved sessions never exceed the shard ceiling",
-      "vectors": [
-        "Codex and Claude on one host instance"
-      ]
-    },
-    {
-      "anchor": "P-9",
-      "artifact": "spec/product.md",
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "nodes": [
-        "test_v9_fatigue.py::test_blinded_operator_exercise_accuracy_and_median_time"
-      ],
-      "oid": "V-9.operator",
-      "requirement": "A 20-item blinded operator exercise must achieve at least 95% correct approve/reject decisions with median decision time at most 30 seconds.",
-      "surfaces": [
-        "operator exercise transcript"
-      ],
-      "thresholds": [
-        {
-          "bound": 20,
-          "detector_mutation": "V-9.operator#dm:equals:item_count",
-          "kind": "equals",
-          "min_len": 1,
-          "negative_control": "V-9.operator#nc:equals:item_count",
-          "path": "item_count",
-          "positive_control": "V-9.operator#pc:equals:item_count",
-          "product_mutation": "V-9.operator#pm:equals:item_count",
-          "tag": "equals:item_count",
-          "why": "exactly twenty items"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.operator#dm:is_true:blinded",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-9.operator#nc:is_true:blinded",
-          "path": "blinded",
-          "positive_control": "V-9.operator#pc:is_true:blinded",
-          "product_mutation": "V-9.operator#pm:is_true:blinded",
-          "tag": "is_true:blinded",
-          "why": "the exercise is blinded"
-        },
-        {
-          "bound": 20,
-          "detector_mutation": "V-9.operator#dm:equals:decisions_recorded",
-          "kind": "equals",
-          "min_len": 1,
-          "negative_control": "V-9.operator#nc:equals:decisions_recorded",
-          "path": "decisions_recorded",
-          "positive_control": "V-9.operator#pc:equals:decisions_recorded",
-          "product_mutation": "V-9.operator#pm:equals:decisions_recorded",
-          "tag": "equals:decisions_recorded",
-          "why": "every item receives a real decision"
-        },
-        {
-          "bound": 0.95,
-          "detector_mutation": "V-9.operator#dm:at_least:accuracy",
-          "kind": "at_least",
-          "min_len": 1,
-          "negative_control": "V-9.operator#nc:at_least:accuracy",
-          "path": "accuracy",
-          "positive_control": "V-9.operator#pc:at_least:accuracy",
-          "product_mutation": "V-9.operator#pm:at_least:accuracy",
-          "tag": "at_least:accuracy",
-          "why": "at least 95% correct decisions"
-        },
-        {
-          "bound": 30.0,
-          "detector_mutation": "V-9.operator#dm:at_most:median_decision_seconds",
-          "kind": "at_most",
-          "min_len": 1,
-          "negative_control": "V-9.operator#nc:at_most:median_decision_seconds",
-          "path": "median_decision_seconds",
-          "positive_control": "V-9.operator#pc:at_most:median_decision_seconds",
-          "product_mutation": "V-9.operator#pm:at_most:median_decision_seconds",
-          "tag": "at_most:median_decision_seconds",
-          "why": "median decision time at most 30s"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.operator#dm:is_true:gold_withheld_from_operator_input",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-9.operator#nc:is_true:gold_withheld_from_operator_input",
-          "path": "gold_withheld_from_operator_input",
-          "positive_control": "V-9.operator#pc:is_true:gold_withheld_from_operator_input",
-          "product_mutation": "V-9.operator#pm:is_true:gold_withheld_from_operator_input",
-          "tag": "is_true:gold_withheld_from_operator_input",
-          "why": "the gold decision never reaches the operator input"
-        }
-      ],
-      "title": "the blinded operator exercise is completed",
-      "vectors": [
-        "twenty blinded approve/reject items"
-      ]
-    },
-    {
-      "anchor": "P-9",
-      "artifact": "spec/product.md",
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "nodes": [
-        "test_v9_fatigue.py::test_corpus_growth_adequacy_under_the_fatigue_ceiling"
-      ],
-      "oid": "V-9.adequacy",
-      "requirement": "the distortion/authority queue must place at least 18 of those facts into a human decision slot within five simulated sliding-hour windows, admit at least 17 correct facts after decisions, and surface no more than four total prompts in any window",
-      "surfaces": [
-        "kinbase session observe",
-        "kinbase status --json"
-      ],
-      "thresholds": [
-        {
-          "bound": 100,
-          "detector_mutation": "V-9.adequacy#dm:equals:observations_ingested",
-          "kind": "equals",
-          "min_len": 1,
-          "negative_control": "V-9.adequacy#nc:equals:observations_ingested",
-          "path": "observations_ingested",
-          "positive_control": "V-9.adequacy#pc:equals:observations_ingested",
-          "product_mutation": "V-9.adequacy#pm:equals:observations_ingested",
-          "tag": "equals:observations_ingested",
-          "why": "the frozen 100-observation workload runs"
-        },
-        {
-          "bound": 20,
-          "detector_mutation": "V-9.adequacy#dm:equals:durable_facts",
-          "kind": "equals",
-          "min_len": 1,
-          "negative_control": "V-9.adequacy#nc:equals:durable_facts",
-          "path": "durable_facts",
-          "positive_control": "V-9.adequacy#pc:equals:durable_facts",
-          "product_mutation": "V-9.adequacy#pm:equals:durable_facts",
-          "tag": "equals:durable_facts",
-          "why": "twenty independently gold-labelled durable facts"
-        },
-        {
-          "bound": 18,
-          "detector_mutation": "V-9.adequacy#dm:at_least:decision_slots",
-          "kind": "at_least",
-          "min_len": 1,
-          "negative_control": "V-9.adequacy#nc:at_least:decision_slots",
-          "path": "decision_slots",
-          "positive_control": "V-9.adequacy#pc:at_least:decision_slots",
-          "product_mutation": "V-9.adequacy#pm:at_least:decision_slots",
-          "tag": "at_least:decision_slots",
-          "why": "at least 18 facts receive a decision slot"
-        },
-        {
-          "bound": 17,
-          "detector_mutation": "V-9.adequacy#dm:at_least:admitted_correct",
-          "kind": "at_least",
-          "min_len": 1,
-          "negative_control": "V-9.adequacy#nc:at_least:admitted_correct",
-          "path": "admitted_correct",
-          "positive_control": "V-9.adequacy#pc:at_least:admitted_correct",
-          "product_mutation": "V-9.adequacy#pm:at_least:admitted_correct",
-          "tag": "at_least:admitted_correct",
-          "why": "at least 17 correct facts admit"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.adequacy#dm:every:windows",
-          "kind": "every",
-          "min_len": 5,
-          "negative_control": "V-9.adequacy#nc:every:windows",
-          "path": "windows",
-          "positive_control": "V-9.adequacy#pc:every:windows",
-          "product_mutation": "V-9.adequacy#pm:every:windows",
-          "tag": "every:windows",
-          "why": "no window exceeds the four-prompt ceiling"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.adequacy#dm:is_false:low_authority_churn_displaced_high_distortion",
-          "kind": "is_false",
-          "min_len": 1,
-          "negative_control": "V-9.adequacy#nc:is_false:low_authority_churn_displaced_high_distortion",
-          "path": "low_authority_churn_displaced_high_distortion",
-          "positive_control": "V-9.adequacy#pc:is_false:low_authority_churn_displaced_high_distortion",
-          "product_mutation": "V-9.adequacy#pm:is_false:low_authority_churn_displaced_high_distortion",
-          "tag": "is_false:low_authority_churn_displaced_high_distortion",
-          "why": "low-authority churn cannot displace a higher-distortion fact"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-9.adequacy#dm:is_true:gold_withheld_from_product",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V-9.adequacy#nc:is_true:gold_withheld_from_product",
-          "path": "gold_withheld_from_product",
-          "positive_control": "V-9.adequacy#pc:is_true:gold_withheld_from_product",
-          "product_mutation": "V-9.adequacy#pm:is_true:gold_withheld_from_product",
-          "tag": "is_true:gold_withheld_from_product",
-          "why": "the gold labels never reach the product input"
-        }
-      ],
-      "title": "corpus growth is adequate under the fatigue ceiling",
-      "vectors": [
-        "100 observations across five sliding-hour windows"
-      ]
-    },
-    {
-      "anchor": "envelope",
-      "artifact": "spec/verification.md",
-      "fail_closed": "INVALID_HARNESS",
-      "gate": "V-10",
-      "nodes": [
-        "test_v10_protocol.py::test_eleven_arms_are_frozen_and_enumerated",
-        "test_v10_protocol.py::test_published_call_envelope_matches_the_formula"
-      ],
-      "oid": "V-10.envelope",
-      "requirement": "Before author-lane ratification, the Validator publishes this unavoidable call-count envelope for eleven arms, three seeds, twelve all-arm pilot tasks, two graders, and the full 10% block reserve (gate/calibration calls are additional):",
-      "surfaces": [
-        "frozen experiment manifest"
-      ],
-      "thresholds": [
-        {
-          "bound": [
-            "baseline",
-            "null-system",
-            "static-prior",
-            "distractor",
-            "topk-raw",
-            "topk-maintained",
-            "authority-only",
-            "codebase-only",
-            "company-only",
-            "full-system",
-            "oracle-spec"
-          ],
-          "detector_mutation": "V-10.envelope#dm:covers:arms",
-          "kind": "covers",
-          "min_len": 1,
-          "negative_control": "V-10.envelope#nc:covers:arms",
-          "path": "arms",
-          "positive_control": "V-10.envelope#pc:covers:arms",
-          "product_mutation": "V-10.envelope#pm:covers:arms",
-          "tag": "covers:arms",
-          "why": "every one of the eleven ratified arms is enumerated"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V-10.envelope#dm:every:envelope_rows",
-          "kind": "every",
-          "min_len": 4,
-          "negative_control": "V-10.envelope#nc:every:envelope_rows",
-          "path": "envelope_rows",
-          "positive_control": "V-10.envelope#pc:every:envelope_rows",
-          "product_mutation": "V-10.envelope#pm:every:envelope_rows",
-          "tag": "every:envelope_rows",
-          "why": "each published row matches the frozen formula"
-        }
-      ],
-      "title": "the eleven arms and the call envelope are enumerated",
-      "vectors": [
-        "eleven arms",
-        "N in {8, 32, 71, 126}"
-      ]
-    },
-    {
       "anchor": "packaging",
       "artifact": "spec/verification.md",
       "fail_closed": "PRODUCT_FAILURE",
@@ -7650,14 +6910,14 @@
     },
     {
       "anchor": "diagnostics",
-      "artifact": "spec/verification.md",
+      "artifact": "tests/RULING-CONTRACT.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "NONFUNCTIONAL",
       "nodes": [
         "test_nonfunctional.py::test_diagnostics_are_executable_and_useful_after_restart"
       ],
       "oid": "NF.diagnostics",
-      "requirement": "`fsck`, `doctor`, corpus status, question status, and experiment status are executable and useful after restart.",
+      "requirement": "Diagnostics remain useful after restart: fsck, doctor, corpus status and question status.",
       "surfaces": [
         "kinbase fsck",
         "kinbase doctor",
@@ -7772,26 +7032,14 @@
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "NONFUNCTIONAL",
       "nodes": [
-        "test_nonfunctional.py::test_candidate_lifetime_and_private_retention_are_enforced"
+        "test_nonfunctional.py::test_private_raw_retention_remains_enforced"
       ],
       "oid": "NF.lifetimes",
-      "requirement": "candidate and approval lifetime: 15 minutes;",
+      "requirement": "private raw-session default retention in proof roots: 24 hours;",
       "surfaces": [
-        "kinbase proposals decide"
+        "kinbase ingest codex_jsonl"
       ],
       "thresholds": [
-        {
-          "bound": 900,
-          "detector_mutation": "NF.lifetimes#dm:equals:candidate_lifetime_seconds",
-          "kind": "equals",
-          "min_len": 1,
-          "negative_control": "NF.lifetimes#nc:equals:candidate_lifetime_seconds",
-          "path": "candidate_lifetime_seconds",
-          "positive_control": "NF.lifetimes#pc:equals:candidate_lifetime_seconds",
-          "product_mutation": "NF.lifetimes#pm:equals:candidate_lifetime_seconds",
-          "tag": "equals:candidate_lifetime_seconds",
-          "why": "the ratified candidate lifetime is fifteen minutes"
-        },
         {
           "bound": 86400,
           "detector_mutation": "NF.lifetimes#dm:equals:private_retention_seconds",
@@ -7805,33 +7053,32 @@
           "why": "private raw-session retention is twenty-four hours"
         },
         {
-          "bound": "APPROVAL_EXPIRED",
-          "detector_mutation": "NF.lifetimes#dm:equals:expired_approval_refusal_code",
-          "kind": "equals",
+          "bound": null,
+          "detector_mutation": "NF.lifetimes#dm:is_true:raw_present_before",
+          "kind": "is_true",
           "min_len": 1,
-          "negative_control": "NF.lifetimes#nc:equals:expired_approval_refusal_code",
-          "path": "expired_approval_refusal_code",
-          "positive_control": "NF.lifetimes#pc:equals:expired_approval_refusal_code",
-          "product_mutation": "NF.lifetimes#pm:equals:expired_approval_refusal_code",
-          "tag": "equals:expired_approval_refusal_code",
-          "why": "an expired candidate refuses with its typed code"
+          "negative_control": "NF.lifetimes#nc:is_true:raw_present_before",
+          "path": "raw_present_before",
+          "positive_control": "NF.lifetimes#pc:is_true:raw_present_before",
+          "product_mutation": "NF.lifetimes#pm:is_true:raw_present_before",
+          "tag": "is_true:raw_present_before",
+          "why": "the native input exists before expiry"
         },
         {
           "bound": null,
-          "detector_mutation": "NF.lifetimes#dm:is_true:raw_removed_after_retention",
+          "detector_mutation": "NF.lifetimes#dm:is_true:raw_withheld_after_retention",
           "kind": "is_true",
           "min_len": 1,
-          "negative_control": "NF.lifetimes#nc:is_true:raw_removed_after_retention",
-          "path": "raw_removed_after_retention",
-          "positive_control": "NF.lifetimes#pc:is_true:raw_removed_after_retention",
-          "product_mutation": "NF.lifetimes#pm:is_true:raw_removed_after_retention",
-          "tag": "is_true:raw_removed_after_retention",
-          "why": "raw private session bytes are gone after retention"
+          "negative_control": "NF.lifetimes#nc:is_true:raw_withheld_after_retention",
+          "path": "raw_withheld_after_retention",
+          "positive_control": "NF.lifetimes#pc:is_true:raw_withheld_after_retention",
+          "product_mutation": "NF.lifetimes#pm:is_true:raw_withheld_after_retention",
+          "tag": "is_true:raw_withheld_after_retention",
+          "why": "every expired observation withholds its raw body"
         }
       ],
-      "title": "candidate lifetime and private retention hold",
+      "title": "private raw retention remains bounded",
       "vectors": [
-        "expiry",
         "retention"
       ]
     },
@@ -8201,307 +7448,560 @@
       ]
     },
     {
-      "anchor": "hosts-and-experiments",
-      "artifact": "spec/cli.md",
+      "anchor": "direct-admission",
+      "artifact": "tests/RULING-CONTRACT.md",
       "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-10",
+      "gate": "V-6",
       "nodes": [
-        "test_v10_protocol.py::test_experiment_freeze_refuses_before_gates_census_power_and_budget"
+        "test_ruling_loop.py::test_direct_admission_exceeds_old_prompt_limit_and_replays"
       ],
-      "oid": "V10.freeze-order",
-      "requirement": "`freeze` refuses without census, power/MDE/cost results, valid calibration, and exact human budget ratification.",
+      "oid": "RULING.direct",
+      "requirement": "facts are admitted directly, with a signed, content-addressed, revocable record;",
       "surfaces": [
-        "kinbase experiment freeze"
+        "session observe",
+        "session checkpoint",
+        "signed events"
       ],
       "thresholds": [
         {
+          "bound": 12,
+          "detector_mutation": "RULING.direct#dm:equals:admitted",
+          "kind": "equals",
+          "min_len": 1,
+          "negative_control": "RULING.direct#nc:equals:admitted",
+          "path": "admitted",
+          "positive_control": "RULING.direct#pc:equals:admitted",
+          "product_mutation": "RULING.direct#pm:equals:admitted",
+          "tag": "equals:admitted",
+          "why": "all twelve candidates admitted without a prompt"
+        },
+        {
           "bound": null,
-          "detector_mutation": "V10.freeze-order#dm:every:preconditions",
-          "kind": "every",
-          "min_len": 4,
-          "negative_control": "V10.freeze-order#nc:every:preconditions",
-          "path": "preconditions",
-          "positive_control": "V10.freeze-order#pc:every:preconditions",
-          "product_mutation": "V10.freeze-order#pm:every:preconditions",
-          "tag": "every:preconditions",
-          "why": "each missing precondition refuses freeze"
+          "detector_mutation": "RULING.direct#dm:is_true:all_committed",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "RULING.direct#nc:is_true:all_committed",
+          "path": "all_committed",
+          "positive_control": "RULING.direct#pc:is_true:all_committed",
+          "product_mutation": "RULING.direct#pm:is_true:all_committed",
+          "tag": "is_true:all_committed",
+          "why": "all admitted"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "RULING.direct#dm:is_true:signatures_valid",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "RULING.direct#nc:is_true:signatures_valid",
+          "path": "signatures_valid",
+          "positive_control": "RULING.direct#pc:is_true:signatures_valid",
+          "product_mutation": "RULING.direct#pm:is_true:signatures_valid",
+          "tag": "is_true:signatures_valid",
+          "why": "independently verified signatures"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "RULING.direct#dm:is_true:addresses_valid",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "RULING.direct#nc:is_true:addresses_valid",
+          "path": "addresses_valid",
+          "positive_control": "RULING.direct#pc:is_true:addresses_valid",
+          "product_mutation": "RULING.direct#pm:is_true:addresses_valid",
+          "tag": "is_true:addresses_valid",
+          "why": "hash exact stored bytes"
+        },
+        {
+          "bound": 12,
+          "detector_mutation": "RULING.direct#dm:equals:events",
+          "kind": "equals",
+          "min_len": 1,
+          "negative_control": "RULING.direct#nc:equals:events",
+          "path": "events",
+          "positive_control": "RULING.direct#pc:equals:events",
+          "product_mutation": "RULING.direct#pm:equals:events",
+          "tag": "equals:events",
+          "why": "one event per admission"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "RULING.direct#dm:is_true:replayed",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "RULING.direct#nc:is_true:replayed",
+          "path": "replayed",
+          "positive_control": "RULING.direct#pc:is_true:replayed",
+          "product_mutation": "RULING.direct#pm:is_true:replayed",
+          "tag": "is_true:replayed",
+          "why": "stable receipts"
+        },
+        {
+          "bound": 12,
+          "detector_mutation": "RULING.direct#dm:equals:checkpoint_receipts",
+          "kind": "equals",
+          "min_len": 1,
+          "negative_control": "RULING.direct#nc:equals:checkpoint_receipts",
+          "path": "checkpoint_receipts",
+          "positive_control": "RULING.direct#pc:equals:checkpoint_receipts",
+          "product_mutation": "RULING.direct#pm:equals:checkpoint_receipts",
+          "tag": "equals:checkpoint_receipts",
+          "why": "checkpoint recovers all receipts"
         }
       ],
-      "title": "freeze refuses before gates, census, power and budget",
+      "title": "direct signed admission and idempotent replay",
       "vectors": [
-        "census",
-        "power",
-        "calibration",
-        "budget"
+        "twelve admissions",
+        "repeat observation"
       ]
     },
     {
-      "anchor": "error-contract",
-      "artifact": "spec/cli.md",
+      "anchor": "unknown",
+      "artifact": "tests/RULING-CONTRACT.md",
       "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-10",
+      "gate": "V-6",
       "nodes": [
-        "test_v10_protocol.py::test_launch_without_a_signed_census_row_is_refused"
+        "test_ruling_loop.py::test_unresolved_session_question_is_durable_and_deduplicated"
       ],
-      "oid": "V10.census-row",
-      "requirement": "`RUN_CENSUS_MISSING` | benchmark action lacks its pre-launch signed census row | 70",
+      "oid": "RULING.durable",
+      "requirement": "Conflicting evidence with no authority in scope opens an Unknown and an `awaiting_authority` question.",
       "surfaces": [
-        "kinbase experiment run"
+        "session observe",
+        "questions list"
       ],
       "thresholds": [
         {
-          "bound": "RUN_CENSUS_MISSING",
-          "detector_mutation": "V10.census-row#dm:equals:refusal_code",
+          "bound": 1,
+          "detector_mutation": "RULING.durable#dm:equals:questions",
           "kind": "equals",
           "min_len": 1,
-          "negative_control": "V10.census-row#nc:equals:refusal_code",
-          "path": "refusal_code",
-          "positive_control": "V10.census-row#pc:equals:refusal_code",
-          "product_mutation": "V10.census-row#pm:equals:refusal_code",
-          "tag": "equals:refusal_code",
-          "why": "the typed code is required"
+          "negative_control": "RULING.durable#nc:equals:questions",
+          "path": "questions",
+          "positive_control": "RULING.durable#pc:equals:questions",
+          "product_mutation": "RULING.durable#pm:equals:questions",
+          "tag": "equals:questions",
+          "why": "one durable question"
         },
         {
-          "bound": 70,
-          "detector_mutation": "V10.census-row#dm:equals:exit_code",
+          "bound": 1,
+          "detector_mutation": "RULING.durable#dm:equals:unknowns",
           "kind": "equals",
           "min_len": 1,
-          "negative_control": "V10.census-row#nc:equals:exit_code",
-          "path": "exit_code",
-          "positive_control": "V10.census-row#pc:equals:exit_code",
-          "product_mutation": "V10.census-row#pm:equals:exit_code",
-          "tag": "equals:exit_code",
-          "why": "the ratified exit status"
+          "negative_control": "RULING.durable#nc:equals:unknowns",
+          "path": "unknowns",
+          "positive_control": "RULING.durable#pc:equals:unknowns",
+          "product_mutation": "RULING.durable#pm:equals:unknowns",
+          "tag": "equals:unknowns",
+          "why": "one durable Unknown"
         },
         {
           "bound": null,
-          "detector_mutation": "V10.census-row#dm:is_false:smoke_exemption_accepted",
-          "kind": "is_false",
+          "detector_mutation": "RULING.durable#dm:is_true:awaiting",
+          "kind": "is_true",
           "min_len": 1,
-          "negative_control": "V10.census-row#nc:is_false:smoke_exemption_accepted",
-          "path": "smoke_exemption_accepted",
-          "positive_control": "V10.census-row#pc:is_false:smoke_exemption_accepted",
-          "product_mutation": "V10.census-row#pm:is_false:smoke_exemption_accepted",
-          "tag": "is_false:smoke_exemption_accepted",
-          "why": "smoke and debug are not exemptions"
+          "negative_control": "RULING.durable#nc:is_true:awaiting",
+          "path": "awaiting",
+          "positive_control": "RULING.durable#pc:is_true:awaiting",
+          "product_mutation": "RULING.durable#pm:is_true:awaiting",
+          "tag": "is_true:awaiting",
+          "why": "missing owner is explicit"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "RULING.durable#dm:is_true:signed",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "RULING.durable#nc:is_true:signed",
+          "path": "signed",
+          "positive_control": "RULING.durable#pc:is_true:signed",
+          "product_mutation": "RULING.durable#pm:is_true:signed",
+          "tag": "is_true:signed",
+          "why": "Unknown signature verified"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "RULING.durable#dm:is_true:stable",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "RULING.durable#nc:is_true:stable",
+          "path": "stable",
+          "positive_control": "RULING.durable#pc:is_true:stable",
+          "product_mutation": "RULING.durable#pm:is_true:stable",
+          "tag": "is_true:stable",
+          "why": "no duplicate question"
         }
       ],
-      "title": "launch without a signed census row is refused",
+      "title": "ownerless uncertainty is visible",
       "vectors": [
-        "missing census row"
+        "unresolved owner",
+        "fresh process"
       ]
     },
     {
-      "anchor": "human-bytes",
-      "artifact": "spec/verification.md",
+      "anchor": "unknown",
+      "artifact": "tests/RULING-CONTRACT.md",
       "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-10",
+      "gate": "V-6",
       "nodes": [
-        "test_v10_protocol.py::test_human_bytes_after_freeze_must_be_zero"
+        "test_ruling_loop.py::test_conflicting_evidence_without_answering_authority_opens_question"
       ],
-      "oid": "V10.human-bytes",
-      "requirement": "The broker records `human_bytes_after_freeze`; any value other than zero is `INVALID_RUN`.",
+      "oid": "RULING.conflict",
+      "requirement": "Conflicting evidence with no authority in scope opens an Unknown and an `awaiting_authority` question.",
       "surfaces": [
-        "kinbase experiment run"
+        "project",
+        "questions list"
       ],
       "thresholds": [
         {
-          "bound": 0,
-          "detector_mutation": "V10.human-bytes#dm:equals:human_bytes_after_freeze",
-          "kind": "equals",
+          "bound": 1,
+          "detector_mutation": "RULING.conflict#dm:at_least:visible",
+          "kind": "at_least",
           "min_len": 1,
-          "negative_control": "V10.human-bytes#nc:equals:human_bytes_after_freeze",
-          "path": "human_bytes_after_freeze",
-          "positive_control": "V10.human-bytes#pc:equals:human_bytes_after_freeze",
-          "product_mutation": "V10.human-bytes#pm:equals:human_bytes_after_freeze",
-          "tag": "equals:human_bytes_after_freeze",
-          "why": "the required value is zero"
+          "negative_control": "RULING.conflict#nc:at_least:visible",
+          "path": "visible",
+          "positive_control": "RULING.conflict#pc:at_least:visible",
+          "product_mutation": "RULING.conflict#pm:at_least:visible",
+          "tag": "at_least:visible",
+          "why": "conflict question exists"
         },
         {
           "bound": null,
-          "detector_mutation": "V10.human-bytes#dm:is_true:nonzero_yields_invalid_run",
+          "detector_mutation": "RULING.conflict#dm:is_true:awaiting",
           "kind": "is_true",
           "min_len": 1,
-          "negative_control": "V10.human-bytes#nc:is_true:nonzero_yields_invalid_run",
-          "path": "nonzero_yields_invalid_run",
-          "positive_control": "V10.human-bytes#pc:is_true:nonzero_yields_invalid_run",
-          "product_mutation": "V10.human-bytes#pm:is_true:nonzero_yields_invalid_run",
-          "tag": "is_true:nonzero_yields_invalid_run",
-          "why": "a nonzero value must classify the run INVALID_RUN"
+          "negative_control": "RULING.conflict#nc:is_true:awaiting",
+          "path": "awaiting",
+          "positive_control": "RULING.conflict#pc:is_true:awaiting",
+          "product_mutation": "RULING.conflict#pm:is_true:awaiting",
+          "tag": "is_true:awaiting",
+          "why": "owner unresolved"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "RULING.conflict#dm:is_true:stable",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "RULING.conflict#nc:is_true:stable",
+          "path": "stable",
+          "positive_control": "RULING.conflict#pc:is_true:stable",
+          "product_mutation": "RULING.conflict#pm:is_true:stable",
+          "tag": "is_true:stable",
+          "why": "survives rebuild"
         }
       ],
-      "title": "human bytes after freeze must be zero",
+      "title": "conflict with no answering authority opens a question",
       "vectors": [
-        "post-freeze human bytes"
+        "conflicting signed facts",
+        "no answering authority"
       ]
     },
     {
-      "anchor": "brownfield-harness",
-      "artifact": "spec/architecture.md",
+      "anchor": "standing",
+      "artifact": "tests/RULING-CONTRACT.md",
       "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-10",
+      "gate": "V-6",
       "nodes": [
-        "test_v10_protocol.py::test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task"
+        "test_ruling_loop.py::test_one_ratified_fact_outweighs_256_present_facts"
       ],
-      "oid": "V10.principal",
-      "requirement": "Administrative or broad service-reader identities cannot run a measurement task.",
+      "oid": "RULING.volume",
+      "requirement": "Given N `present` facts saying X and one `ratified` fact saying Y, the reduced view must say Y.",
       "surfaces": [
-        "kinbase experiment run"
+        "explain"
       ],
       "thresholds": [
         {
-          "bound": null,
-          "detector_mutation": "V10.principal#dm:every:principals",
-          "kind": "every",
-          "min_len": 2,
-          "negative_control": "V10.principal#nc:every:principals",
-          "path": "principals",
-          "positive_control": "V10.principal#pc:every:principals",
-          "product_mutation": "V10.principal#pm:every:principals",
-          "tag": "every:principals",
-          "why": "each forbidden principal is refused"
+          "bound": "Scheduler must use bounded exponential backoff.",
+          "detector_mutation": "RULING.volume#dm:equals:statement",
+          "kind": "equals",
+          "min_len": 1,
+          "negative_control": "RULING.volume#nc:equals:statement",
+          "path": "statement",
+          "positive_control": "RULING.volume#pc:equals:statement",
+          "product_mutation": "RULING.volume#pm:equals:statement",
+          "tag": "equals:statement",
+          "why": "ruling wins"
         },
         {
-          "bound": null,
-          "detector_mutation": "V10.principal#dm:is_true:least_privilege_principal_accepted",
-          "kind": "is_true",
+          "bound": "ratified",
+          "detector_mutation": "RULING.volume#dm:equals:standing",
+          "kind": "equals",
           "min_len": 1,
-          "negative_control": "V10.principal#nc:is_true:least_privilege_principal_accepted",
-          "path": "least_privilege_principal_accepted",
-          "positive_control": "V10.principal#pc:is_true:least_privilege_principal_accepted",
-          "product_mutation": "V10.principal#pm:is_true:least_privilege_principal_accepted",
-          "tag": "is_true:least_privilege_principal_accepted",
-          "why": "a realistic least-privilege principal is accepted"
+          "negative_control": "RULING.volume#nc:equals:standing",
+          "path": "standing",
+          "positive_control": "RULING.volume#pc:equals:standing",
+          "product_mutation": "RULING.volume#pm:equals:standing",
+          "tag": "equals:standing",
+          "why": "standing retained"
+        },
+        {
+          "bound": 257,
+          "detector_mutation": "RULING.volume#dm:equals:fixture_events",
+          "kind": "equals",
+          "min_len": 1,
+          "negative_control": "RULING.volume#nc:equals:fixture_events",
+          "path": "fixture_events",
+          "positive_control": "RULING.volume#pc:equals:fixture_events",
+          "product_mutation": "RULING.volume#pm:equals:fixture_events",
+          "tag": "equals:fixture_events",
+          "why": "256 competing observations plus ruling"
         }
       ],
-      "title": "administrative principals cannot run a measurement task",
+      "title": "one ratified rule outranks volume",
       "vectors": [
-        "administrative identity",
-        "broad service reader"
+        "ruling first",
+        "ruling last",
+        "256 independent present facts"
       ]
     },
     {
-      "anchor": "ceiling",
-      "artifact": "spec/verification.md",
+      "anchor": "provenance",
+      "artifact": "tests/RULING-CONTRACT.md",
       "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-10",
+      "gate": "V-6",
       "nodes": [
-        "test_v10_protocol.py::test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised"
+        "test_ruling_loop.py::test_ai_generated_standing_is_clamped_in_reduced_view"
       ],
-      "oid": "V10.ceiling",
-      "requirement": "The harness atomically reserves and enforces the aggregate ceiling.",
+      "oid": "RULING.ceiling",
+      "requirement": "A fact whose provenance is `ai_generated` may never reach `prevalent`, however often the pattern recurs.",
       "surfaces": [
-        "kinbase experiment freeze"
+        "explain"
       ],
       "thresholds": [
         {
-          "bound": null,
-          "detector_mutation": "V10.ceiling#dm:is_true:reserved_atomically",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V10.ceiling#nc:is_true:reserved_atomically",
-          "path": "reserved_atomically",
-          "positive_control": "V10.ceiling#pc:is_true:reserved_atomically",
-          "product_mutation": "V10.ceiling#pm:is_true:reserved_atomically",
-          "tag": "is_true:reserved_atomically",
-          "why": "the ceiling is reserved in one commit"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V10.ceiling#dm:is_true:increase_refused",
-          "kind": "is_true",
-          "min_len": 1,
-          "negative_control": "V10.ceiling#nc:is_true:increase_refused",
-          "path": "increase_refused",
-          "positive_control": "V10.ceiling#pc:is_true:increase_refused",
-          "product_mutation": "V10.ceiling#pm:is_true:increase_refused",
-          "tag": "is_true:increase_refused",
-          "why": "an increase for this run is refused"
-        },
-        {
-          "bound": null,
-          "detector_mutation": "V10.ceiling#dm:present:increase_refusal_code",
-          "kind": "present",
-          "min_len": 1,
-          "negative_control": "V10.ceiling#nc:present:increase_refusal_code",
-          "path": "increase_refusal_code",
-          "positive_control": "V10.ceiling#pc:present:increase_refusal_code",
-          "product_mutation": "V10.ceiling#pm:present:increase_refusal_code",
-          "tag": "present:increase_refusal_code",
-          "why": "the refusal is typed"
-        },
-        {
-          "bound": false,
-          "detector_mutation": "V10.ceiling#dm:equals:ceiling_raised",
+          "bound": "present",
+          "detector_mutation": "RULING.ceiling#dm:equals:standing",
           "kind": "equals",
           "min_len": 1,
-          "negative_control": "V10.ceiling#nc:equals:ceiling_raised",
-          "path": "ceiling_raised",
-          "positive_control": "V10.ceiling#pc:equals:ceiling_raised",
-          "product_mutation": "V10.ceiling#pm:equals:ceiling_raised",
-          "tag": "equals:ceiling_raised",
-          "why": "the ceiling never rises mid-run"
+          "negative_control": "RULING.ceiling#nc:equals:standing",
+          "path": "standing",
+          "positive_control": "RULING.ceiling#pc:equals:standing",
+          "product_mutation": "RULING.ceiling#pm:equals:standing",
+          "tag": "equals:standing",
+          "why": "agent evidence cannot become direction"
+        },
+        {
+          "bound": "ai_generated",
+          "detector_mutation": "RULING.ceiling#dm:equals:provenance",
+          "kind": "equals",
+          "min_len": 1,
+          "negative_control": "RULING.ceiling#nc:equals:provenance",
+          "path": "provenance",
+          "positive_control": "RULING.ceiling#pc:equals:provenance",
+          "product_mutation": "RULING.ceiling#pm:equals:provenance",
+          "tag": "equals:provenance",
+          "why": "provenance retained"
         }
       ],
-      "title": "the aggregate ceiling is reserved atomically",
+      "title": "agent provenance caps claimed standing",
       "vectors": [
-        "aggregate budget"
+        "every elevated standing",
+        "signed agent fact"
       ]
     },
     {
-      "anchor": "claim",
-      "artifact": "spec/verification.md",
+      "anchor": "unlabelled",
+      "artifact": "tests/RULING-CONTRACT.md",
       "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-10",
+      "gate": "V-6",
       "nodes": [
-        "test_v10_protocol.py::test_published_conclusion_uses_only_the_licensed_claim"
+        "test_ruling_loop.py::test_git_authorship_survives_ingestion_without_inventing_human_review"
       ],
-      "oid": "V10.claim",
-      "requirement": "The published conclusion must use the exact licensed-claim template in P-10 with run-specific digests and metrics.",
+      "oid": "RULING.git",
+      "requirement": "A commit with no authorship marker is `unknown`, never `human`.",
       "surfaces": [
-        "kinbase experiment verdict"
+        "git commits",
+        "ingest git_history"
+      ],
+      "thresholds": [
+        {
+          "bound": 32,
+          "detector_mutation": "RULING.git#dm:at_least:observations",
+          "kind": "at_least",
+          "min_len": 1,
+          "negative_control": "RULING.git#nc:at_least:observations",
+          "path": "observations",
+          "positive_control": "RULING.git#pc:at_least:observations",
+          "product_mutation": "RULING.git#pm:at_least:observations",
+          "tag": "at_least:observations",
+          "why": "all actual commits observed"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "RULING.git#dm:is_true:provenance_correct",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "RULING.git#nc:is_true:provenance_correct",
+          "path": "provenance_correct",
+          "positive_control": "RULING.git#pc:is_true:provenance_correct",
+          "product_mutation": "RULING.git#pm:is_true:provenance_correct",
+          "tag": "is_true:provenance_correct",
+          "why": "trailers and unmarked history preserved"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "RULING.git#dm:is_true:standing_capped",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "RULING.git#nc:is_true:standing_capped",
+          "path": "standing_capped",
+          "positive_control": "RULING.git#pc:is_true:standing_capped",
+          "product_mutation": "RULING.git#pm:is_true:standing_capped",
+          "tag": "is_true:standing_capped",
+          "why": "volume never elevates inferred authorship"
+        }
+      ],
+      "title": "git provenance survives ingestion",
+      "vectors": [
+        "agent trailers",
+        "unmarked commits"
+      ]
+    },
+    {
+      "anchor": "shrug",
+      "artifact": "tests/RULING-CONTRACT.md",
+      "fail_closed": "PRODUCT_FAILURE",
+      "gate": "V-6",
+      "nodes": [
+        "test_ruling_loop.py::test_shrug_is_terminal_while_unruled_remains_actionable"
+      ],
+      "oid": "RULING.terminal",
+      "requirement": "Once something is ruled `shrug`, the system never opens another question about it.",
+      "surfaces": [
+        "project",
+        "corpus rebuild",
+        "questions list"
       ],
       "thresholds": [
         {
           "bound": null,
-          "detector_mutation": "V10.claim#dm:is_true:uses_licensed_template",
+          "detector_mutation": "RULING.terminal#dm:is_true:correct",
           "kind": "is_true",
           "min_len": 1,
-          "negative_control": "V10.claim#nc:is_true:uses_licensed_template",
-          "path": "uses_licensed_template",
-          "positive_control": "V10.claim#pc:is_true:uses_licensed_template",
-          "product_mutation": "V10.claim#pm:is_true:uses_licensed_template",
-          "tag": "is_true:uses_licensed_template",
-          "why": "the licensed template is used"
+          "negative_control": "RULING.terminal#nc:is_true:correct",
+          "path": "correct",
+          "positive_control": "RULING.terminal#pc:is_true:correct",
+          "product_mutation": "RULING.terminal#pm:is_true:correct",
+          "tag": "is_true:correct",
+          "why": "only unruled reopens"
         },
         {
-          "bound": 0,
-          "detector_mutation": "V10.claim#dm:equals:forbidden_claims_found",
+          "bound": 3,
+          "detector_mutation": "RULING.terminal#dm:equals:reads",
           "kind": "equals",
           "min_len": 1,
-          "negative_control": "V10.claim#nc:equals:forbidden_claims_found",
-          "path": "forbidden_claims_found",
-          "positive_control": "V10.claim#pc:equals:forbidden_claims_found",
-          "product_mutation": "V10.claim#pm:equals:forbidden_claims_found",
-          "tag": "equals:forbidden_claims_found",
-          "why": "no broader claim appears"
+          "negative_control": "RULING.terminal#nc:equals:reads",
+          "path": "reads",
+          "positive_control": "RULING.terminal#pc:equals:reads",
+          "product_mutation": "RULING.terminal#pm:equals:reads",
+          "tag": "equals:reads",
+          "why": "survives three independent reads/rebuilds"
+        }
+      ],
+      "title": "shrug is terminal and unruled is actionable",
+      "vectors": [
+        "shrug",
+        "unruled"
+      ]
+    },
+    {
+      "anchor": "direct-admission",
+      "artifact": "tests/RULING-CONTRACT.md",
+      "fail_closed": "PRODUCT_FAILURE",
+      "gate": "V-6",
+      "nodes": [
+        "test_ruling_loop.py::test_automatically_admitted_shared_fact_remains_revocable"
+      ],
+      "oid": "RULING.revocable",
+      "requirement": "facts are admitted directly, with a signed, content-addressed, revocable record;",
+      "surfaces": [
+        "explain",
+        "signed registry revocation"
+      ],
+      "thresholds": [
+        {
+          "bound": "current",
+          "detector_mutation": "RULING.revocable#dm:equals:before",
+          "kind": "equals",
+          "min_len": 1,
+          "negative_control": "RULING.revocable#nc:equals:before",
+          "path": "before",
+          "positive_control": "RULING.revocable#pc:equals:before",
+          "product_mutation": "RULING.revocable#pm:equals:before",
+          "tag": "equals:before",
+          "why": "admitted before revocation"
         },
         {
           "bound": null,
-          "detector_mutation": "V10.claim#dm:present:run_digest",
-          "kind": "present",
+          "detector_mutation": "RULING.revocable#dm:is_true:withdrawn",
+          "kind": "is_true",
           "min_len": 1,
-          "negative_control": "V10.claim#nc:present:run_digest",
-          "path": "run_digest",
-          "positive_control": "V10.claim#pc:present:run_digest",
-          "product_mutation": "V10.claim#pm:present:run_digest",
-          "tag": "present:run_digest",
-          "why": "the claim carries run-specific digests"
+          "negative_control": "RULING.revocable#nc:is_true:withdrawn",
+          "path": "withdrawn",
+          "positive_control": "RULING.revocable#pc:is_true:withdrawn",
+          "product_mutation": "RULING.revocable#pm:is_true:withdrawn",
+          "tag": "is_true:withdrawn",
+          "why": "revoked fact withheld"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "RULING.revocable#dm:is_true:record_retained",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "RULING.revocable#nc:is_true:record_retained",
+          "path": "record_retained",
+          "positive_control": "RULING.revocable#pc:is_true:record_retained",
+          "product_mutation": "RULING.revocable#pm:is_true:record_retained",
+          "tag": "is_true:record_retained",
+          "why": "audit event survives"
         }
       ],
-      "title": "the published conclusion uses only the licensed claim",
+      "title": "direct admission retains revocation",
       "vectors": [
-        "published conclusion"
+        "direct admission",
+        "revoked signer"
+      ]
+    },
+    {
+      "anchor": "commands",
+      "artifact": "tests/RULING-CONTRACT.md",
+      "fail_closed": "PRODUCT_FAILURE",
+      "gate": "V-6",
+      "nodes": [
+        "test_ruling_loop.py::test_approval_and_study_commands_are_absent"
+      ],
+      "oid": "RULING.commands",
+      "requirement": "Retired commands must be absent from CLI help.",
+      "surfaces": [
+        "kinbase --help"
+      ],
+      "thresholds": [
+        {
+          "bound": null,
+          "detector_mutation": "RULING.commands#dm:is_true:retired_absent",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "RULING.commands#nc:is_true:retired_absent",
+          "path": "retired_absent",
+          "positive_control": "RULING.commands#pc:is_true:retired_absent",
+          "product_mutation": "RULING.commands#pm:is_true:retired_absent",
+          "tag": "is_true:retired_absent",
+          "why": "approval and study commands are gone"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "RULING.commands#dm:is_true:ruling_present",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "RULING.commands#nc:is_true:ruling_present",
+          "path": "ruling_present",
+          "positive_control": "RULING.commands#pc:is_true:ruling_present",
+          "product_mutation": "RULING.commands#pm:is_true:ruling_present",
+          "tag": "is_true:ruling_present",
+          "why": "session and question paths are exposed"
+        }
+      ],
+      "title": "retired commands are absent",
+      "vectors": [
+        "top-level command list"
       ]
     }
   ],

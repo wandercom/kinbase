@@ -1,6 +1,6 @@
 {
-  "control_rows": 482,
-  "obligation_count": 117,
+  "control_rows": 450,
+  "obligation_count": 112,
   "obligations": [
     {
       "fail_closed": "PRODUCT_FAILURE",
@@ -10539,222 +10539,6 @@
       "negatives": [
         {
           "benign": {
-            "calibration_input_exists": true,
-            "calibration_message_count": 60,
-            "macro_f1_lower_bound": 0.9,
-            "overlap_with_held_out": 0,
-            "shared_precision_lower_bound": [
-              {
-                "destination": "present",
-                "value": 0.95
-              },
-              {
-                "destination": "present",
-                "value": 0.95
-              }
-            ],
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "equals:calibration_message_count",
-          "kind": "equals",
-          "payload": {
-            "calibration_input_exists": true,
-            "calibration_message_count": "60-mutated",
-            "macro_f1_lower_bound": 0.9,
-            "overlap_with_held_out": 0,
-            "shared_precision_lower_bound": [
-              {
-                "destination": "present",
-                "value": 0.95
-              },
-              {
-                "destination": "present",
-                "value": 0.95
-              }
-            ]
-          },
-          "tag": "equals:calibration_message_count"
-        },
-        {
-          "benign": {
-            "calibration_input_exists": true,
-            "calibration_message_count": 60,
-            "macro_f1_lower_bound": 0.9,
-            "overlap_with_held_out": 0,
-            "shared_precision_lower_bound": [
-              {
-                "destination": "present",
-                "value": 0.95
-              },
-              {
-                "destination": "present",
-                "value": 0.95
-              }
-            ],
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "equals:overlap_with_held_out",
-          "kind": "equals",
-          "payload": {
-            "calibration_input_exists": true,
-            "calibration_message_count": 60,
-            "macro_f1_lower_bound": 0.9,
-            "overlap_with_held_out": "0-mutated",
-            "shared_precision_lower_bound": [
-              {
-                "destination": "present",
-                "value": 0.95
-              },
-              {
-                "destination": "present",
-                "value": 0.95
-              }
-            ]
-          },
-          "tag": "equals:overlap_with_held_out"
-        },
-        {
-          "benign": {
-            "calibration_input_exists": true,
-            "calibration_message_count": 60,
-            "macro_f1_lower_bound": 0.9,
-            "overlap_with_held_out": 0,
-            "shared_precision_lower_bound": [
-              {
-                "destination": "present",
-                "value": 0.95
-              },
-              {
-                "destination": "present",
-                "value": 0.95
-              }
-            ],
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:calibration_input_exists",
-          "kind": "is_true",
-          "payload": {
-            "calibration_input_exists": false,
-            "calibration_message_count": 60,
-            "macro_f1_lower_bound": 0.9,
-            "overlap_with_held_out": 0,
-            "shared_precision_lower_bound": [
-              {
-                "destination": "present",
-                "value": 0.95
-              },
-              {
-                "destination": "present",
-                "value": 0.95
-              }
-            ]
-          },
-          "tag": "is_true:calibration_input_exists"
-        },
-        {
-          "benign": {
-            "calibration_input_exists": true,
-            "calibration_message_count": 60,
-            "macro_f1_lower_bound": 1.125,
-            "overlap_with_held_out": 0,
-            "shared_precision_lower_bound": [
-              {
-                "destination": "present",
-                "value": 0.95
-              },
-              {
-                "destination": "present",
-                "value": 0.95
-              }
-            ],
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "at_least:macro_f1_lower_bound",
-          "kind": "at_least",
-          "payload": {
-            "calibration_input_exists": true,
-            "calibration_message_count": 60,
-            "macro_f1_lower_bound": 0.899999,
-            "overlap_with_held_out": 0,
-            "shared_precision_lower_bound": [
-              {
-                "destination": "present",
-                "value": 0.95
-              },
-              {
-                "destination": "present",
-                "value": 0.95
-              }
-            ]
-          },
-          "tag": "at_least:macro_f1_lower_bound"
-        },
-        {
-          "benign": {
-            "calibration_input_exists": true,
-            "calibration_message_count": 60,
-            "macro_f1_lower_bound": 0.9,
-            "overlap_with_held_out": 0,
-            "shared_precision_lower_bound": [
-              {
-                "destination": "present",
-                "value": 0.95
-              },
-              {
-                "destination": "present",
-                "value": 0.95
-              }
-            ],
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "every:shared_precision_lower_bound",
-          "kind": "every",
-          "payload": {
-            "calibration_input_exists": true,
-            "calibration_message_count": 60,
-            "macro_f1_lower_bound": 0.9,
-            "overlap_with_held_out": 0,
-            "shared_precision_lower_bound": [
-              {
-                "destination": "present",
-                "value": 0.95
-              },
-              {
-                "value": 0.95
-              }
-            ]
-          },
-          "tag": "every:shared_precision_lower_bound"
-        }
-      ],
-      "nodes": [
-        "test_v2_classification.py::test_excluded_calibration_corpus_gates_measurement"
-      ],
-      "oid": "V-2.calibration",
-      "positive": {
-        "calibration_input_exists": true,
-        "calibration_message_count": 60,
-        "macro_f1_lower_bound": 0.9,
-        "overlap_with_held_out": 0,
-        "shared_precision_lower_bound": [
-          {
-            "destination": "present",
-            "value": 0.95
-          },
-          {
-            "destination": "present",
-            "value": 0.95
-          }
-        ]
-      },
-      "product_mutations": []
-    },
-    {
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-2",
-      "negatives": [
-        {
-          "benign": {
             "exact_match_atomization": 0.0,
             "mixed_messages": [
               {
@@ -12449,7 +12233,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 1.0,
@@ -12463,7 +12247,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 1.0,
@@ -12477,7 +12261,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 1.0,
@@ -12491,7 +12275,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 1.0,
@@ -12505,7 +12289,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 1.25,
@@ -12519,7 +12303,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 0.999999,
@@ -12533,7 +12317,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 1.0,
@@ -12547,7 +12331,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "'approving-principal'-mutated",
+              "responsible_party_role": "'admitting-principal'-mutated",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 1.0,
@@ -12561,7 +12345,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 1.0,
@@ -12575,7 +12359,7 @@
             "apology": {
               "closing_authority_role": "value-outside-the-closed-set",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 1.0,
@@ -12589,7 +12373,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 1.0,
@@ -12603,7 +12387,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": false,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 1.0,
@@ -12617,7 +12401,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "awaiting_reconcile_or_abandon"
             },
             "apology_count": 1.0,
@@ -12631,7 +12415,7 @@
             "apology": {
               "closing_authority_role": "repository-maintainer",
               "orphaned_fact_withheld": true,
-              "responsible_party_role": "approving-principal",
+              "responsible_party_role": "admitting-principal",
               "state": "value-outside-the-closed-set"
             },
             "apology_count": 1.0,
@@ -12649,7 +12433,7 @@
         "apology": {
           "closing_authority_role": "repository-maintainer",
           "orphaned_fact_withheld": true,
-          "responsible_party_role": "approving-principal",
+          "responsible_party_role": "admitting-principal",
           "state": "awaiting_reconcile_or_abandon"
         },
         "apology_count": 1.0,
@@ -12668,7 +12452,6 @@
           "benign": {
             "duplicate_events": 0,
             "receipt_ids_equal": true,
-            "retry_after_token_expiry": true,
             "second_event_created": false,
             "unrelated_additional_field": "must not trip the checker"
           },
@@ -12677,7 +12460,6 @@
           "payload": {
             "duplicate_events": 0,
             "receipt_ids_equal": false,
-            "retry_after_token_expiry": true,
             "second_event_created": false
           },
           "tag": "is_true:receipt_ids_equal"
@@ -12686,7 +12468,6 @@
           "benign": {
             "duplicate_events": 0,
             "receipt_ids_equal": true,
-            "retry_after_token_expiry": true,
             "second_event_created": false,
             "unrelated_additional_field": "must not trip the checker"
           },
@@ -12695,7 +12476,6 @@
           "payload": {
             "duplicate_events": 0,
             "receipt_ids_equal": true,
-            "retry_after_token_expiry": true,
             "second_event_created": true
           },
           "tag": "is_false:second_event_created"
@@ -12704,7 +12484,6 @@
           "benign": {
             "duplicate_events": 0,
             "receipt_ids_equal": true,
-            "retry_after_token_expiry": true,
             "second_event_created": false,
             "unrelated_additional_field": "must not trip the checker"
           },
@@ -12713,28 +12492,9 @@
           "payload": {
             "duplicate_events": "0-mutated",
             "receipt_ids_equal": true,
-            "retry_after_token_expiry": true,
             "second_event_created": false
           },
           "tag": "equals:duplicate_events"
-        },
-        {
-          "benign": {
-            "duplicate_events": 0,
-            "receipt_ids_equal": true,
-            "retry_after_token_expiry": true,
-            "second_event_created": false,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:retry_after_token_expiry",
-          "kind": "is_true",
-          "payload": {
-            "duplicate_events": 0,
-            "receipt_ids_equal": true,
-            "retry_after_token_expiry": false,
-            "second_event_created": false
-          },
-          "tag": "is_true:retry_after_token_expiry"
         }
       ],
       "nodes": [
@@ -12744,7 +12504,6 @@
       "positive": {
         "duplicate_events": 0,
         "receipt_ids_equal": true,
-        "retry_after_token_expiry": true,
         "second_event_created": false
       },
       "product_mutations": [
@@ -13119,7 +12878,6 @@
       "negatives": [
         {
           "benign": {
-            "accept_all_surfaces_found": 0,
             "receipts": [
               {
                 "destination": "present",
@@ -13135,7 +12893,6 @@
           "expected_failing_tag": "every:receipts",
           "kind": "every",
           "payload": {
-            "accept_all_surfaces_found": 0,
             "receipts": [
               {
                 "destination": "present",
@@ -13147,47 +12904,13 @@
             ]
           },
           "tag": "every:receipts"
-        },
-        {
-          "benign": {
-            "accept_all_surfaces_found": 0,
-            "receipts": [
-              {
-                "destination": "present",
-                "state": "committed"
-              },
-              {
-                "destination": "present",
-                "state": "committed"
-              }
-            ],
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "equals:accept_all_surfaces_found",
-          "kind": "equals",
-          "payload": {
-            "accept_all_surfaces_found": "0-mutated",
-            "receipts": [
-              {
-                "destination": "present",
-                "state": "committed"
-              },
-              {
-                "destination": "present",
-                "state": "committed"
-              }
-            ]
-          },
-          "tag": "equals:accept_all_surfaces_found"
         }
       ],
       "nodes": [
-        "test_v2_classification.py::test_no_cross_store_transaction_exists",
-        "test_v2_classification.py::test_no_accept_all_path_is_reachable"
+        "test_v2_classification.py::test_no_cross_store_transaction_exists"
       ],
       "oid": "V-2.no-cross-store",
       "positive": {
-        "accept_all_surfaces_found": 0,
         "receipts": [
           {
             "destination": "present",
@@ -13212,11 +12935,8 @@
             "findings": 0,
             "lifecycle_stages_executed": [
               "classification",
-              "approval",
-              "rejection",
-              "defer",
-              "expiry",
-              "fan-out",
+              "admission replay",
+              "retention",
               "host projection",
               "logs",
               "receipts",
@@ -13249,11 +12969,8 @@
             "findings": "0-mutated",
             "lifecycle_stages_executed": [
               "classification",
-              "approval",
-              "rejection",
-              "defer",
-              "expiry",
-              "fan-out",
+              "admission replay",
+              "retention",
               "host projection",
               "logs",
               "receipts",
@@ -13286,11 +13003,8 @@
             "findings": 0,
             "lifecycle_stages_executed": [
               "classification",
-              "approval",
-              "rejection",
-              "defer",
-              "expiry",
-              "fan-out",
+              "admission replay",
+              "retention",
               "host projection",
               "logs",
               "receipts",
@@ -13323,11 +13037,8 @@
             "findings": 0,
             "lifecycle_stages_executed": [
               "classification",
-              "approval",
-              "rejection",
-              "defer",
-              "expiry",
-              "fan-out",
+              "admission replay",
+              "retention",
               "host projection",
               "logs",
               "receipts",
@@ -13360,11 +13071,8 @@
             "findings": 0,
             "lifecycle_stages_executed": [
               "classification",
-              "approval",
-              "rejection",
-              "defer",
-              "expiry",
-              "fan-out",
+              "admission replay",
+              "retention",
               "host projection",
               "logs",
               "receipts",
@@ -13398,11 +13106,8 @@
             "findings": 0,
             "lifecycle_stages_executed": [
               "classification",
-              "approval",
-              "rejection",
-              "defer",
-              "expiry",
-              "fan-out",
+              "admission replay",
+              "retention",
               "host projection",
               "logs",
               "receipts",
@@ -13434,11 +13139,8 @@
             "findings": 0,
             "lifecycle_stages_executed": [
               "classification",
-              "approval",
-              "rejection",
-              "defer",
-              "expiry",
-              "fan-out",
+              "admission replay",
+              "retention",
               "host projection",
               "logs",
               "receipts",
@@ -13471,11 +13173,8 @@
           "payload": {
             "findings": 0,
             "lifecycle_stages_executed": [
-              "approval",
-              "rejection",
-              "defer",
-              "expiry",
-              "fan-out",
+              "admission replay",
+              "retention",
               "host projection",
               "logs",
               "receipts",
@@ -13508,11 +13207,8 @@
             "findings": 0,
             "lifecycle_stages_executed": [
               "classification",
-              "approval",
-              "rejection",
-              "defer",
-              "expiry",
-              "fan-out",
+              "admission replay",
+              "retention",
               "host projection",
               "logs",
               "receipts",
@@ -13545,11 +13241,8 @@
             "findings": 0,
             "lifecycle_stages_executed": [
               "classification",
-              "approval",
-              "rejection",
-              "defer",
-              "expiry",
-              "fan-out",
+              "admission replay",
+              "retention",
               "host projection",
               "logs",
               "receipts",
@@ -13586,11 +13279,8 @@
         "findings": 0,
         "lifecycle_stages_executed": [
           "classification",
-          "approval",
-          "rejection",
-          "defer",
-          "expiry",
-          "fan-out",
+          "admission replay",
+          "retention",
           "host projection",
           "logs",
           "receipts",
@@ -25512,1425 +25202,6 @@
     },
     {
       "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "negatives": [
-        {
-          "benign": {
-            "eligible_candidates": 6.25,
-            "rendered": 4.0,
-            "shard": {
-              "shard_id": "present",
-              "signed": true
-            },
-            "suppressed": 1.0,
-            "unknown_global_total_warning": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "at_least:eligible_candidates",
-          "kind": "at_least",
-          "payload": {
-            "eligible_candidates": 4.999999,
-            "rendered": 4.0,
-            "shard": {
-              "shard_id": "present",
-              "signed": true
-            },
-            "suppressed": 1.0,
-            "unknown_global_total_warning": true
-          },
-          "tag": "at_least:eligible_candidates"
-        },
-        {
-          "benign": {
-            "eligible_candidates": 5.0,
-            "rendered": 1.25,
-            "shard": {
-              "shard_id": "present",
-              "signed": true
-            },
-            "suppressed": 1.0,
-            "unknown_global_total_warning": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "at_least:rendered",
-          "kind": "at_least",
-          "payload": {
-            "eligible_candidates": 5.0,
-            "rendered": 0.999999,
-            "shard": {
-              "shard_id": "present",
-              "signed": true
-            },
-            "suppressed": 1.0,
-            "unknown_global_total_warning": true
-          },
-          "tag": "at_least:rendered"
-        },
-        {
-          "benign": {
-            "eligible_candidates": 5.0,
-            "rendered": 3.0,
-            "shard": {
-              "shard_id": "present",
-              "signed": true
-            },
-            "suppressed": 1.0,
-            "unknown_global_total_warning": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "at_most:rendered",
-          "kind": "at_most",
-          "payload": {
-            "eligible_candidates": 5.0,
-            "rendered": 4.000001,
-            "shard": {
-              "shard_id": "present",
-              "signed": true
-            },
-            "suppressed": 1.0,
-            "unknown_global_total_warning": true
-          },
-          "tag": "at_most:rendered"
-        },
-        {
-          "benign": {
-            "eligible_candidates": 5.0,
-            "rendered": 4.0,
-            "shard": {
-              "shard_id": "present",
-              "signed": true
-            },
-            "suppressed": 1.25,
-            "unknown_global_total_warning": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "at_least:suppressed",
-          "kind": "at_least",
-          "payload": {
-            "eligible_candidates": 5.0,
-            "rendered": 4.0,
-            "shard": {
-              "shard_id": "present",
-              "signed": true
-            },
-            "suppressed": 0.999999,
-            "unknown_global_total_warning": true
-          },
-          "tag": "at_least:suppressed"
-        },
-        {
-          "benign": {
-            "eligible_candidates": 5.0,
-            "rendered": 4.0,
-            "shard": {
-              "shard_id": "present",
-              "signed": true
-            },
-            "suppressed": 1.0,
-            "unknown_global_total_warning": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "present:shard.shard_id",
-          "kind": "present",
-          "payload": {
-            "eligible_candidates": 5.0,
-            "rendered": 4.0,
-            "shard": {
-              "signed": true
-            },
-            "suppressed": 1.0,
-            "unknown_global_total_warning": true
-          },
-          "tag": "present:shard.shard_id"
-        },
-        {
-          "benign": {
-            "eligible_candidates": 5.0,
-            "rendered": 4.0,
-            "shard": {
-              "shard_id": "present",
-              "signed": true
-            },
-            "suppressed": 1.0,
-            "unknown_global_total_warning": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:shard.signed",
-          "kind": "is_true",
-          "payload": {
-            "eligible_candidates": 5.0,
-            "rendered": 4.0,
-            "shard": {
-              "shard_id": "present",
-              "signed": false
-            },
-            "suppressed": 1.0,
-            "unknown_global_total_warning": true
-          },
-          "tag": "is_true:shard.signed"
-        },
-        {
-          "benign": {
-            "eligible_candidates": 5.0,
-            "rendered": 4.0,
-            "shard": {
-              "shard_id": "present",
-              "signed": true
-            },
-            "suppressed": 1.0,
-            "unknown_global_total_warning": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:unknown_global_total_warning",
-          "kind": "is_true",
-          "payload": {
-            "eligible_candidates": 5.0,
-            "rendered": 4.0,
-            "shard": {
-              "shard_id": "present",
-              "signed": true
-            },
-            "suppressed": 1.0,
-            "unknown_global_total_warning": false
-          },
-          "tag": "is_true:unknown_global_total_warning"
-        }
-      ],
-      "nodes": [
-        "test_v9_fatigue.py::test_four_total_per_hour_shared_across_destinations"
-      ],
-      "oid": "V-9.prompt-budget",
-      "positive": {
-        "eligible_candidates": 5.0,
-        "rendered": 4.0,
-        "shard": {
-          "shard_id": "present",
-          "signed": true
-        },
-        "suppressed": 1.0,
-        "unknown_global_total_warning": true
-      },
-      "product_mutations": []
-    },
-    {
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "negatives": [
-        {
-          "benign": {
-            "consecutive_after_reset": 0,
-            "first_reset_accepted": true,
-            "free_text_reason_accepted": false,
-            "hourly_ceiling_preserved": true,
-            "second_reset_refusal_code": "LIMIT_EXCEEDED",
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:first_reset_accepted",
-          "kind": "is_true",
-          "payload": {
-            "consecutive_after_reset": 0,
-            "first_reset_accepted": false,
-            "free_text_reason_accepted": false,
-            "hourly_ceiling_preserved": true,
-            "second_reset_refusal_code": "LIMIT_EXCEEDED"
-          },
-          "tag": "is_true:first_reset_accepted"
-        },
-        {
-          "benign": {
-            "consecutive_after_reset": 0,
-            "first_reset_accepted": true,
-            "free_text_reason_accepted": false,
-            "hourly_ceiling_preserved": true,
-            "second_reset_refusal_code": "LIMIT_EXCEEDED",
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "equals:second_reset_refusal_code",
-          "kind": "equals",
-          "payload": {
-            "consecutive_after_reset": 0,
-            "first_reset_accepted": true,
-            "free_text_reason_accepted": false,
-            "hourly_ceiling_preserved": true,
-            "second_reset_refusal_code": "'LIMIT_EXCEEDED'-mutated"
-          },
-          "tag": "equals:second_reset_refusal_code"
-        },
-        {
-          "benign": {
-            "consecutive_after_reset": 0,
-            "first_reset_accepted": true,
-            "free_text_reason_accepted": false,
-            "hourly_ceiling_preserved": true,
-            "second_reset_refusal_code": "LIMIT_EXCEEDED",
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:hourly_ceiling_preserved",
-          "kind": "is_true",
-          "payload": {
-            "consecutive_after_reset": 0,
-            "first_reset_accepted": true,
-            "free_text_reason_accepted": false,
-            "hourly_ceiling_preserved": false,
-            "second_reset_refusal_code": "LIMIT_EXCEEDED"
-          },
-          "tag": "is_true:hourly_ceiling_preserved"
-        },
-        {
-          "benign": {
-            "consecutive_after_reset": 0,
-            "first_reset_accepted": true,
-            "free_text_reason_accepted": false,
-            "hourly_ceiling_preserved": true,
-            "second_reset_refusal_code": "LIMIT_EXCEEDED",
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "equals:consecutive_after_reset",
-          "kind": "equals",
-          "payload": {
-            "consecutive_after_reset": "0-mutated",
-            "first_reset_accepted": true,
-            "free_text_reason_accepted": false,
-            "hourly_ceiling_preserved": true,
-            "second_reset_refusal_code": "LIMIT_EXCEEDED"
-          },
-          "tag": "equals:consecutive_after_reset"
-        },
-        {
-          "benign": {
-            "consecutive_after_reset": 0,
-            "first_reset_accepted": true,
-            "free_text_reason_accepted": false,
-            "hourly_ceiling_preserved": true,
-            "second_reset_refusal_code": "LIMIT_EXCEEDED",
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_false:free_text_reason_accepted",
-          "kind": "is_false",
-          "payload": {
-            "consecutive_after_reset": 0,
-            "first_reset_accepted": true,
-            "free_text_reason_accepted": true,
-            "hourly_ceiling_preserved": true,
-            "second_reset_refusal_code": "LIMIT_EXCEEDED"
-          },
-          "tag": "is_false:free_text_reason_accepted"
-        }
-      ],
-      "nodes": [
-        "test_v9_fatigue.py::test_reset_clears_only_the_consecutive_counter_once_per_hour"
-      ],
-      "oid": "V-9.reset",
-      "positive": {
-        "consecutive_after_reset": 0,
-        "first_reset_accepted": true,
-        "free_text_reason_accepted": false,
-        "hourly_ceiling_preserved": true,
-        "second_reset_refusal_code": "LIMIT_EXCEEDED"
-      },
-      "product_mutations": []
-    },
-    {
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "negatives": [
-        {
-          "benign": {
-            "candidate_ids_distinct": true,
-            "digests_distinct": true,
-            "eligible_candidates": 1.25,
-            "hourly_consumed": 4.0,
-            "issued": 1.0,
-            "unrelated_additional_field": "must not trip the checker",
-            "untrusted_churn_triggered_reissue": false
-          },
-          "expected_failing_tag": "at_least:eligible_candidates",
-          "kind": "at_least",
-          "payload": {
-            "candidate_ids_distinct": true,
-            "digests_distinct": true,
-            "eligible_candidates": 0.999999,
-            "hourly_consumed": 4.0,
-            "issued": 1.0,
-            "untrusted_churn_triggered_reissue": false
-          },
-          "tag": "at_least:eligible_candidates"
-        },
-        {
-          "benign": {
-            "candidate_ids_distinct": true,
-            "digests_distinct": true,
-            "eligible_candidates": 1.0,
-            "hourly_consumed": 4.0,
-            "issued": 1.25,
-            "unrelated_additional_field": "must not trip the checker",
-            "untrusted_churn_triggered_reissue": false
-          },
-          "expected_failing_tag": "at_least:issued",
-          "kind": "at_least",
-          "payload": {
-            "candidate_ids_distinct": true,
-            "digests_distinct": true,
-            "eligible_candidates": 1.0,
-            "hourly_consumed": 4.0,
-            "issued": 0.999999,
-            "untrusted_churn_triggered_reissue": false
-          },
-          "tag": "at_least:issued"
-        },
-        {
-          "benign": {
-            "candidate_ids_distinct": true,
-            "digests_distinct": true,
-            "eligible_candidates": 1.0,
-            "hourly_consumed": 4.0,
-            "issued": 1.0,
-            "unrelated_additional_field": "must not trip the checker",
-            "untrusted_churn_triggered_reissue": false
-          },
-          "expected_failing_tag": "is_true:candidate_ids_distinct",
-          "kind": "is_true",
-          "payload": {
-            "candidate_ids_distinct": false,
-            "digests_distinct": true,
-            "eligible_candidates": 1.0,
-            "hourly_consumed": 4.0,
-            "issued": 1.0,
-            "untrusted_churn_triggered_reissue": false
-          },
-          "tag": "is_true:candidate_ids_distinct"
-        },
-        {
-          "benign": {
-            "candidate_ids_distinct": true,
-            "digests_distinct": true,
-            "eligible_candidates": 1.0,
-            "hourly_consumed": 4.0,
-            "issued": 1.0,
-            "unrelated_additional_field": "must not trip the checker",
-            "untrusted_churn_triggered_reissue": false
-          },
-          "expected_failing_tag": "is_true:digests_distinct",
-          "kind": "is_true",
-          "payload": {
-            "candidate_ids_distinct": true,
-            "digests_distinct": false,
-            "eligible_candidates": 1.0,
-            "hourly_consumed": 4.0,
-            "issued": 1.0,
-            "untrusted_churn_triggered_reissue": false
-          },
-          "tag": "is_true:digests_distinct"
-        },
-        {
-          "benign": {
-            "candidate_ids_distinct": true,
-            "digests_distinct": true,
-            "eligible_candidates": 1.0,
-            "hourly_consumed": 3.0,
-            "issued": 1.0,
-            "unrelated_additional_field": "must not trip the checker",
-            "untrusted_churn_triggered_reissue": false
-          },
-          "expected_failing_tag": "at_most:hourly_consumed",
-          "kind": "at_most",
-          "payload": {
-            "candidate_ids_distinct": true,
-            "digests_distinct": true,
-            "eligible_candidates": 1.0,
-            "hourly_consumed": 4.000001,
-            "issued": 1.0,
-            "untrusted_churn_triggered_reissue": false
-          },
-          "tag": "at_most:hourly_consumed"
-        },
-        {
-          "benign": {
-            "candidate_ids_distinct": true,
-            "digests_distinct": true,
-            "eligible_candidates": 1.0,
-            "hourly_consumed": 4.0,
-            "issued": 1.0,
-            "unrelated_additional_field": "must not trip the checker",
-            "untrusted_churn_triggered_reissue": false
-          },
-          "expected_failing_tag": "is_false:untrusted_churn_triggered_reissue",
-          "kind": "is_false",
-          "payload": {
-            "candidate_ids_distinct": true,
-            "digests_distinct": true,
-            "eligible_candidates": 1.0,
-            "hourly_consumed": 4.0,
-            "issued": 1.0,
-            "untrusted_churn_triggered_reissue": true
-          },
-          "tag": "is_false:untrusted_churn_triggered_reissue"
-        }
-      ],
-      "nodes": [
-        "test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction"
-      ],
-      "oid": "V-9.reissue-atomicity",
-      "positive": {
-        "candidate_ids_distinct": true,
-        "digests_distinct": true,
-        "eligible_candidates": 1.0,
-        "hourly_consumed": 4.0,
-        "issued": 1.0,
-        "untrusted_churn_triggered_reissue": false
-      },
-      "product_mutations": [
-        "v9.check_outside_transaction"
-      ]
-    },
-    {
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "negatives": [
-        {
-          "benign": {
-            "crash_after_reservation_counted": true,
-            "delivery_loss_rate": "present",
-            "eligible_candidates": 7.5,
-            "interleaving_witnessed": true,
-            "rendered": 4.0,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "at_least:eligible_candidates",
-          "kind": "at_least",
-          "payload": {
-            "crash_after_reservation_counted": true,
-            "delivery_loss_rate": "present",
-            "eligible_candidates": 5.999999,
-            "interleaving_witnessed": true,
-            "rendered": 4.0
-          },
-          "tag": "at_least:eligible_candidates"
-        },
-        {
-          "benign": {
-            "crash_after_reservation_counted": true,
-            "delivery_loss_rate": "present",
-            "eligible_candidates": 6.0,
-            "interleaving_witnessed": true,
-            "rendered": 1.25,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "at_least:rendered",
-          "kind": "at_least",
-          "payload": {
-            "crash_after_reservation_counted": true,
-            "delivery_loss_rate": "present",
-            "eligible_candidates": 6.0,
-            "interleaving_witnessed": true,
-            "rendered": 0.999999
-          },
-          "tag": "at_least:rendered"
-        },
-        {
-          "benign": {
-            "crash_after_reservation_counted": true,
-            "delivery_loss_rate": "present",
-            "eligible_candidates": 6.0,
-            "interleaving_witnessed": true,
-            "rendered": 3.0,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "at_most:rendered",
-          "kind": "at_most",
-          "payload": {
-            "crash_after_reservation_counted": true,
-            "delivery_loss_rate": "present",
-            "eligible_candidates": 6.0,
-            "interleaving_witnessed": true,
-            "rendered": 4.000001
-          },
-          "tag": "at_most:rendered"
-        },
-        {
-          "benign": {
-            "crash_after_reservation_counted": true,
-            "delivery_loss_rate": "present",
-            "eligible_candidates": 6.0,
-            "interleaving_witnessed": true,
-            "rendered": 4.0,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:interleaving_witnessed",
-          "kind": "is_true",
-          "payload": {
-            "crash_after_reservation_counted": true,
-            "delivery_loss_rate": "present",
-            "eligible_candidates": 6.0,
-            "interleaving_witnessed": false,
-            "rendered": 4.0
-          },
-          "tag": "is_true:interleaving_witnessed"
-        },
-        {
-          "benign": {
-            "crash_after_reservation_counted": true,
-            "delivery_loss_rate": "present",
-            "eligible_candidates": 6.0,
-            "interleaving_witnessed": true,
-            "rendered": 4.0,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:crash_after_reservation_counted",
-          "kind": "is_true",
-          "payload": {
-            "crash_after_reservation_counted": false,
-            "delivery_loss_rate": "present",
-            "eligible_candidates": 6.0,
-            "interleaving_witnessed": true,
-            "rendered": 4.0
-          },
-          "tag": "is_true:crash_after_reservation_counted"
-        },
-        {
-          "benign": {
-            "crash_after_reservation_counted": true,
-            "delivery_loss_rate": "present",
-            "eligible_candidates": 6.0,
-            "interleaving_witnessed": true,
-            "rendered": 4.0,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "present:delivery_loss_rate",
-          "kind": "present",
-          "payload": {
-            "crash_after_reservation_counted": true,
-            "eligible_candidates": 6.0,
-            "interleaving_witnessed": true,
-            "rendered": 4.0
-          },
-          "tag": "present:delivery_loss_rate"
-        }
-      ],
-      "nodes": [
-        "test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window"
-      ],
-      "oid": "V-9.interleave",
-      "positive": {
-        "crash_after_reservation_counted": true,
-        "delivery_loss_rate": "present",
-        "eligible_candidates": 6.0,
-        "interleaving_witnessed": true,
-        "rendered": 4.0
-      },
-      "product_mutations": [
-        "v9.reservation_after_render"
-      ]
-    },
-    {
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "negatives": [
-        {
-          "benign": {
-            "accuracy": 0.95,
-            "blinded": true,
-            "decisions_recorded": 20,
-            "gold_withheld_from_operator_input": true,
-            "item_count": 20,
-            "median_decision_seconds": 30.0,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "equals:item_count",
-          "kind": "equals",
-          "payload": {
-            "accuracy": 0.95,
-            "blinded": true,
-            "decisions_recorded": 20,
-            "gold_withheld_from_operator_input": true,
-            "item_count": "20-mutated",
-            "median_decision_seconds": 30.0
-          },
-          "tag": "equals:item_count"
-        },
-        {
-          "benign": {
-            "accuracy": 0.95,
-            "blinded": true,
-            "decisions_recorded": 20,
-            "gold_withheld_from_operator_input": true,
-            "item_count": 20,
-            "median_decision_seconds": 30.0,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:blinded",
-          "kind": "is_true",
-          "payload": {
-            "accuracy": 0.95,
-            "blinded": false,
-            "decisions_recorded": 20,
-            "gold_withheld_from_operator_input": true,
-            "item_count": 20,
-            "median_decision_seconds": 30.0
-          },
-          "tag": "is_true:blinded"
-        },
-        {
-          "benign": {
-            "accuracy": 0.95,
-            "blinded": true,
-            "decisions_recorded": 20,
-            "gold_withheld_from_operator_input": true,
-            "item_count": 20,
-            "median_decision_seconds": 30.0,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "equals:decisions_recorded",
-          "kind": "equals",
-          "payload": {
-            "accuracy": 0.95,
-            "blinded": true,
-            "decisions_recorded": "20-mutated",
-            "gold_withheld_from_operator_input": true,
-            "item_count": 20,
-            "median_decision_seconds": 30.0
-          },
-          "tag": "equals:decisions_recorded"
-        },
-        {
-          "benign": {
-            "accuracy": 1.1875,
-            "blinded": true,
-            "decisions_recorded": 20,
-            "gold_withheld_from_operator_input": true,
-            "item_count": 20,
-            "median_decision_seconds": 30.0,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "at_least:accuracy",
-          "kind": "at_least",
-          "payload": {
-            "accuracy": 0.9499989999999999,
-            "blinded": true,
-            "decisions_recorded": 20,
-            "gold_withheld_from_operator_input": true,
-            "item_count": 20,
-            "median_decision_seconds": 30.0
-          },
-          "tag": "at_least:accuracy"
-        },
-        {
-          "benign": {
-            "accuracy": 0.95,
-            "blinded": true,
-            "decisions_recorded": 20,
-            "gold_withheld_from_operator_input": true,
-            "item_count": 20,
-            "median_decision_seconds": 22.5,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "at_most:median_decision_seconds",
-          "kind": "at_most",
-          "payload": {
-            "accuracy": 0.95,
-            "blinded": true,
-            "decisions_recorded": 20,
-            "gold_withheld_from_operator_input": true,
-            "item_count": 20,
-            "median_decision_seconds": 30.000001
-          },
-          "tag": "at_most:median_decision_seconds"
-        },
-        {
-          "benign": {
-            "accuracy": 0.95,
-            "blinded": true,
-            "decisions_recorded": 20,
-            "gold_withheld_from_operator_input": true,
-            "item_count": 20,
-            "median_decision_seconds": 30.0,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:gold_withheld_from_operator_input",
-          "kind": "is_true",
-          "payload": {
-            "accuracy": 0.95,
-            "blinded": true,
-            "decisions_recorded": 20,
-            "gold_withheld_from_operator_input": false,
-            "item_count": 20,
-            "median_decision_seconds": 30.0
-          },
-          "tag": "is_true:gold_withheld_from_operator_input"
-        }
-      ],
-      "nodes": [
-        "test_v9_fatigue.py::test_blinded_operator_exercise_accuracy_and_median_time"
-      ],
-      "oid": "V-9.operator",
-      "positive": {
-        "accuracy": 0.95,
-        "blinded": true,
-        "decisions_recorded": 20,
-        "gold_withheld_from_operator_input": true,
-        "item_count": 20,
-        "median_decision_seconds": 30.0
-      },
-      "product_mutations": []
-    },
-    {
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-9",
-      "negatives": [
-        {
-          "benign": {
-            "admitted_correct": 17.0,
-            "decision_slots": 18.0,
-            "durable_facts": 20,
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": 100,
-            "unrelated_additional_field": "must not trip the checker",
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "expected_failing_tag": "equals:observations_ingested",
-          "kind": "equals",
-          "payload": {
-            "admitted_correct": 17.0,
-            "decision_slots": 18.0,
-            "durable_facts": 20,
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": "100-mutated",
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "tag": "equals:observations_ingested"
-        },
-        {
-          "benign": {
-            "admitted_correct": 17.0,
-            "decision_slots": 18.0,
-            "durable_facts": 20,
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": 100,
-            "unrelated_additional_field": "must not trip the checker",
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "expected_failing_tag": "equals:durable_facts",
-          "kind": "equals",
-          "payload": {
-            "admitted_correct": 17.0,
-            "decision_slots": 18.0,
-            "durable_facts": "20-mutated",
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": 100,
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "tag": "equals:durable_facts"
-        },
-        {
-          "benign": {
-            "admitted_correct": 17.0,
-            "decision_slots": 22.5,
-            "durable_facts": 20,
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": 100,
-            "unrelated_additional_field": "must not trip the checker",
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "expected_failing_tag": "at_least:decision_slots",
-          "kind": "at_least",
-          "payload": {
-            "admitted_correct": 17.0,
-            "decision_slots": 17.999999,
-            "durable_facts": 20,
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": 100,
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "tag": "at_least:decision_slots"
-        },
-        {
-          "benign": {
-            "admitted_correct": 21.25,
-            "decision_slots": 18.0,
-            "durable_facts": 20,
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": 100,
-            "unrelated_additional_field": "must not trip the checker",
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "expected_failing_tag": "at_least:admitted_correct",
-          "kind": "at_least",
-          "payload": {
-            "admitted_correct": 16.999999,
-            "decision_slots": 18.0,
-            "durable_facts": 20,
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": 100,
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "tag": "at_least:admitted_correct"
-        },
-        {
-          "benign": {
-            "admitted_correct": 17.0,
-            "decision_slots": 18.0,
-            "durable_facts": 20,
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": 100,
-            "unrelated_additional_field": "must not trip the checker",
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "expected_failing_tag": "every:windows",
-          "kind": "every",
-          "payload": {
-            "admitted_correct": 17.0,
-            "decision_slots": 18.0,
-            "durable_facts": 20,
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": 100,
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.000001
-              }
-            ]
-          },
-          "tag": "every:windows"
-        },
-        {
-          "benign": {
-            "admitted_correct": 17.0,
-            "decision_slots": 18.0,
-            "durable_facts": 20,
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": 100,
-            "unrelated_additional_field": "must not trip the checker",
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "expected_failing_tag": "is_false:low_authority_churn_displaced_high_distortion",
-          "kind": "is_false",
-          "payload": {
-            "admitted_correct": 17.0,
-            "decision_slots": 18.0,
-            "durable_facts": 20,
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": true,
-            "observations_ingested": 100,
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "tag": "is_false:low_authority_churn_displaced_high_distortion"
-        },
-        {
-          "benign": {
-            "admitted_correct": 17.0,
-            "decision_slots": 18.0,
-            "durable_facts": 20,
-            "gold_withheld_from_product": true,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": 100,
-            "unrelated_additional_field": "must not trip the checker",
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "expected_failing_tag": "is_true:gold_withheld_from_product",
-          "kind": "is_true",
-          "payload": {
-            "admitted_correct": 17.0,
-            "decision_slots": 18.0,
-            "durable_facts": 20,
-            "gold_withheld_from_product": false,
-            "low_authority_churn_displaced_high_distortion": false,
-            "observations_ingested": 100,
-            "windows": [
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              },
-              {
-                "prompts": 4.0
-              }
-            ]
-          },
-          "tag": "is_true:gold_withheld_from_product"
-        }
-      ],
-      "nodes": [
-        "test_v9_fatigue.py::test_corpus_growth_adequacy_under_the_fatigue_ceiling"
-      ],
-      "oid": "V-9.adequacy",
-      "positive": {
-        "admitted_correct": 17.0,
-        "decision_slots": 18.0,
-        "durable_facts": 20,
-        "gold_withheld_from_product": true,
-        "low_authority_churn_displaced_high_distortion": false,
-        "observations_ingested": 100,
-        "windows": [
-          {
-            "prompts": 4.0
-          },
-          {
-            "prompts": 4.0
-          },
-          {
-            "prompts": 4.0
-          },
-          {
-            "prompts": 4.0
-          },
-          {
-            "prompts": 4.0
-          }
-        ]
-      },
-      "product_mutations": []
-    },
-    {
-      "fail_closed": "INVALID_HARNESS",
-      "gate": "V-10",
-      "negatives": [
-        {
-          "benign": {
-            "arms": [
-              "baseline",
-              "null-system",
-              "static-prior",
-              "distractor",
-              "topk-raw",
-              "topk-maintained",
-              "authority-only",
-              "codebase-only",
-              "company-only",
-              "full-system",
-              "oracle-spec",
-              "additional-unrequired-element"
-            ],
-            "envelope_rows": [
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              },
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              },
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              },
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              }
-            ],
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "covers:arms",
-          "kind": "covers",
-          "payload": {
-            "arms": [
-              "null-system",
-              "static-prior",
-              "distractor",
-              "topk-raw",
-              "topk-maintained",
-              "authority-only",
-              "codebase-only",
-              "company-only",
-              "full-system",
-              "oracle-spec"
-            ],
-            "envelope_rows": [
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              },
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              },
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              },
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              }
-            ]
-          },
-          "tag": "covers:arms"
-        },
-        {
-          "benign": {
-            "arms": [
-              "baseline",
-              "null-system",
-              "static-prior",
-              "distractor",
-              "topk-raw",
-              "topk-maintained",
-              "authority-only",
-              "codebase-only",
-              "company-only",
-              "full-system",
-              "oracle-spec"
-            ],
-            "envelope_rows": [
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              },
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              },
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              },
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              }
-            ],
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "every:envelope_rows",
-          "kind": "every",
-          "payload": {
-            "arms": [
-              "baseline",
-              "null-system",
-              "static-prior",
-              "distractor",
-              "topk-raw",
-              "topk-maintained",
-              "authority-only",
-              "codebase-only",
-              "company-only",
-              "full-system",
-              "oracle-spec"
-            ],
-            "envelope_rows": [
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              },
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              },
-              {
-                "matches_formula": true,
-                "n": "present",
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              },
-              {
-                "matches_formula": true,
-                "reserved_coding_calls": "present",
-                "reserved_scorer_calls": "present"
-              }
-            ]
-          },
-          "tag": "every:envelope_rows"
-        }
-      ],
-      "nodes": [
-        "test_v10_protocol.py::test_eleven_arms_are_frozen_and_enumerated",
-        "test_v10_protocol.py::test_published_call_envelope_matches_the_formula"
-      ],
-      "oid": "V-10.envelope",
-      "positive": {
-        "arms": [
-          "baseline",
-          "null-system",
-          "static-prior",
-          "distractor",
-          "topk-raw",
-          "topk-maintained",
-          "authority-only",
-          "codebase-only",
-          "company-only",
-          "full-system",
-          "oracle-spec"
-        ],
-        "envelope_rows": [
-          {
-            "matches_formula": true,
-            "n": "present",
-            "reserved_coding_calls": "present",
-            "reserved_scorer_calls": "present"
-          },
-          {
-            "matches_formula": true,
-            "n": "present",
-            "reserved_coding_calls": "present",
-            "reserved_scorer_calls": "present"
-          },
-          {
-            "matches_formula": true,
-            "n": "present",
-            "reserved_coding_calls": "present",
-            "reserved_scorer_calls": "present"
-          },
-          {
-            "matches_formula": true,
-            "n": "present",
-            "reserved_coding_calls": "present",
-            "reserved_scorer_calls": "present"
-          }
-        ]
-      },
-      "product_mutations": []
-    },
-    {
-      "fail_closed": "PRODUCT_FAILURE",
       "gate": "NONFUNCTIONAL",
       "negatives": [
         {
@@ -27886,86 +26157,61 @@
       "negatives": [
         {
           "benign": {
-            "candidate_lifetime_seconds": 900,
-            "expired_approval_refusal_code": "APPROVAL_EXPIRED",
             "private_retention_seconds": 86400,
-            "raw_removed_after_retention": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "equals:candidate_lifetime_seconds",
-          "kind": "equals",
-          "payload": {
-            "candidate_lifetime_seconds": "900-mutated",
-            "expired_approval_refusal_code": "APPROVAL_EXPIRED",
-            "private_retention_seconds": 86400,
-            "raw_removed_after_retention": true
-          },
-          "tag": "equals:candidate_lifetime_seconds"
-        },
-        {
-          "benign": {
-            "candidate_lifetime_seconds": 900,
-            "expired_approval_refusal_code": "APPROVAL_EXPIRED",
-            "private_retention_seconds": 86400,
-            "raw_removed_after_retention": true,
+            "raw_present_before": true,
+            "raw_withheld_after_retention": true,
             "unrelated_additional_field": "must not trip the checker"
           },
           "expected_failing_tag": "equals:private_retention_seconds",
           "kind": "equals",
           "payload": {
-            "candidate_lifetime_seconds": 900,
-            "expired_approval_refusal_code": "APPROVAL_EXPIRED",
             "private_retention_seconds": "86400-mutated",
-            "raw_removed_after_retention": true
+            "raw_present_before": true,
+            "raw_withheld_after_retention": true
           },
           "tag": "equals:private_retention_seconds"
         },
         {
           "benign": {
-            "candidate_lifetime_seconds": 900,
-            "expired_approval_refusal_code": "APPROVAL_EXPIRED",
             "private_retention_seconds": 86400,
-            "raw_removed_after_retention": true,
+            "raw_present_before": true,
+            "raw_withheld_after_retention": true,
             "unrelated_additional_field": "must not trip the checker"
           },
-          "expected_failing_tag": "equals:expired_approval_refusal_code",
-          "kind": "equals",
+          "expected_failing_tag": "is_true:raw_present_before",
+          "kind": "is_true",
           "payload": {
-            "candidate_lifetime_seconds": 900,
-            "expired_approval_refusal_code": "'APPROVAL_EXPIRED'-mutated",
             "private_retention_seconds": 86400,
-            "raw_removed_after_retention": true
+            "raw_present_before": false,
+            "raw_withheld_after_retention": true
           },
-          "tag": "equals:expired_approval_refusal_code"
+          "tag": "is_true:raw_present_before"
         },
         {
           "benign": {
-            "candidate_lifetime_seconds": 900,
-            "expired_approval_refusal_code": "APPROVAL_EXPIRED",
             "private_retention_seconds": 86400,
-            "raw_removed_after_retention": true,
+            "raw_present_before": true,
+            "raw_withheld_after_retention": true,
             "unrelated_additional_field": "must not trip the checker"
           },
-          "expected_failing_tag": "is_true:raw_removed_after_retention",
+          "expected_failing_tag": "is_true:raw_withheld_after_retention",
           "kind": "is_true",
           "payload": {
-            "candidate_lifetime_seconds": 900,
-            "expired_approval_refusal_code": "APPROVAL_EXPIRED",
             "private_retention_seconds": 86400,
-            "raw_removed_after_retention": false
+            "raw_present_before": true,
+            "raw_withheld_after_retention": false
           },
-          "tag": "is_true:raw_removed_after_retention"
+          "tag": "is_true:raw_withheld_after_retention"
         }
       ],
       "nodes": [
-        "test_nonfunctional.py::test_candidate_lifetime_and_private_retention_are_enforced"
+        "test_nonfunctional.py::test_private_raw_retention_remains_enforced"
       ],
       "oid": "NF.lifetimes",
       "positive": {
-        "candidate_lifetime_seconds": 900,
-        "expired_approval_refusal_code": "APPROVAL_EXPIRED",
         "private_retention_seconds": 86400,
-        "raw_removed_after_retention": true
+        "raw_present_before": true,
+        "raw_withheld_after_retention": true
       },
       "product_mutations": []
     },
@@ -28813,444 +27059,692 @@
     },
     {
       "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-10",
+      "gate": "V-6",
       "negatives": [
         {
           "benign": {
-            "preconditions": [
-              {
-                "missing": "present",
-                "refusal_code": "present",
-                "refused": true
-              },
-              {
-                "missing": "present",
-                "refusal_code": "present",
-                "refused": true
-              },
-              {
-                "missing": "present",
-                "refusal_code": "present",
-                "refused": true
-              },
-              {
-                "missing": "present",
-                "refusal_code": "present",
-                "refused": true
-              }
-            ],
+            "addresses_valid": true,
+            "admitted": 12,
+            "all_committed": true,
+            "checkpoint_receipts": 12,
+            "events": 12,
+            "replayed": true,
+            "signatures_valid": true,
             "unrelated_additional_field": "must not trip the checker"
           },
-          "expected_failing_tag": "every:preconditions",
-          "kind": "every",
-          "payload": {
-            "preconditions": [
-              {
-                "missing": "present",
-                "refusal_code": "present",
-                "refused": true
-              },
-              {
-                "missing": "present",
-                "refusal_code": "present",
-                "refused": true
-              },
-              {
-                "missing": "present",
-                "refusal_code": "present",
-                "refused": true
-              },
-              {
-                "refusal_code": "present",
-                "refused": true
-              }
-            ]
-          },
-          "tag": "every:preconditions"
-        }
-      ],
-      "nodes": [
-        "test_v10_protocol.py::test_experiment_freeze_refuses_before_gates_census_power_and_budget"
-      ],
-      "oid": "V10.freeze-order",
-      "positive": {
-        "preconditions": [
-          {
-            "missing": "present",
-            "refusal_code": "present",
-            "refused": true
-          },
-          {
-            "missing": "present",
-            "refusal_code": "present",
-            "refused": true
-          },
-          {
-            "missing": "present",
-            "refusal_code": "present",
-            "refused": true
-          },
-          {
-            "missing": "present",
-            "refusal_code": "present",
-            "refused": true
-          }
-        ]
-      },
-      "product_mutations": []
-    },
-    {
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-10",
-      "negatives": [
-        {
-          "benign": {
-            "exit_code": 70,
-            "refusal_code": "RUN_CENSUS_MISSING",
-            "smoke_exemption_accepted": false,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "equals:refusal_code",
+          "expected_failing_tag": "equals:admitted",
           "kind": "equals",
           "payload": {
-            "exit_code": 70,
-            "refusal_code": "'RUN_CENSUS_MISSING'-mutated",
-            "smoke_exemption_accepted": false
+            "addresses_valid": true,
+            "admitted": "12-mutated",
+            "all_committed": true,
+            "checkpoint_receipts": 12,
+            "events": 12,
+            "replayed": true,
+            "signatures_valid": true
           },
-          "tag": "equals:refusal_code"
+          "tag": "equals:admitted"
         },
         {
           "benign": {
-            "exit_code": 70,
-            "refusal_code": "RUN_CENSUS_MISSING",
-            "smoke_exemption_accepted": false,
+            "addresses_valid": true,
+            "admitted": 12,
+            "all_committed": true,
+            "checkpoint_receipts": 12,
+            "events": 12,
+            "replayed": true,
+            "signatures_valid": true,
             "unrelated_additional_field": "must not trip the checker"
           },
-          "expected_failing_tag": "equals:exit_code",
+          "expected_failing_tag": "is_true:all_committed",
+          "kind": "is_true",
+          "payload": {
+            "addresses_valid": true,
+            "admitted": 12,
+            "all_committed": false,
+            "checkpoint_receipts": 12,
+            "events": 12,
+            "replayed": true,
+            "signatures_valid": true
+          },
+          "tag": "is_true:all_committed"
+        },
+        {
+          "benign": {
+            "addresses_valid": true,
+            "admitted": 12,
+            "all_committed": true,
+            "checkpoint_receipts": 12,
+            "events": 12,
+            "replayed": true,
+            "signatures_valid": true,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:signatures_valid",
+          "kind": "is_true",
+          "payload": {
+            "addresses_valid": true,
+            "admitted": 12,
+            "all_committed": true,
+            "checkpoint_receipts": 12,
+            "events": 12,
+            "replayed": true,
+            "signatures_valid": false
+          },
+          "tag": "is_true:signatures_valid"
+        },
+        {
+          "benign": {
+            "addresses_valid": true,
+            "admitted": 12,
+            "all_committed": true,
+            "checkpoint_receipts": 12,
+            "events": 12,
+            "replayed": true,
+            "signatures_valid": true,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:addresses_valid",
+          "kind": "is_true",
+          "payload": {
+            "addresses_valid": false,
+            "admitted": 12,
+            "all_committed": true,
+            "checkpoint_receipts": 12,
+            "events": 12,
+            "replayed": true,
+            "signatures_valid": true
+          },
+          "tag": "is_true:addresses_valid"
+        },
+        {
+          "benign": {
+            "addresses_valid": true,
+            "admitted": 12,
+            "all_committed": true,
+            "checkpoint_receipts": 12,
+            "events": 12,
+            "replayed": true,
+            "signatures_valid": true,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "equals:events",
           "kind": "equals",
           "payload": {
-            "exit_code": "70-mutated",
-            "refusal_code": "RUN_CENSUS_MISSING",
-            "smoke_exemption_accepted": false
+            "addresses_valid": true,
+            "admitted": 12,
+            "all_committed": true,
+            "checkpoint_receipts": 12,
+            "events": "12-mutated",
+            "replayed": true,
+            "signatures_valid": true
           },
-          "tag": "equals:exit_code"
+          "tag": "equals:events"
         },
         {
           "benign": {
-            "exit_code": 70,
-            "refusal_code": "RUN_CENSUS_MISSING",
-            "smoke_exemption_accepted": false,
+            "addresses_valid": true,
+            "admitted": 12,
+            "all_committed": true,
+            "checkpoint_receipts": 12,
+            "events": 12,
+            "replayed": true,
+            "signatures_valid": true,
             "unrelated_additional_field": "must not trip the checker"
           },
-          "expected_failing_tag": "is_false:smoke_exemption_accepted",
-          "kind": "is_false",
+          "expected_failing_tag": "is_true:replayed",
+          "kind": "is_true",
           "payload": {
-            "exit_code": 70,
-            "refusal_code": "RUN_CENSUS_MISSING",
-            "smoke_exemption_accepted": true
+            "addresses_valid": true,
+            "admitted": 12,
+            "all_committed": true,
+            "checkpoint_receipts": 12,
+            "events": 12,
+            "replayed": false,
+            "signatures_valid": true
           },
-          "tag": "is_false:smoke_exemption_accepted"
-        }
-      ],
-      "nodes": [
-        "test_v10_protocol.py::test_launch_without_a_signed_census_row_is_refused"
-      ],
-      "oid": "V10.census-row",
-      "positive": {
-        "exit_code": 70,
-        "refusal_code": "RUN_CENSUS_MISSING",
-        "smoke_exemption_accepted": false
-      },
-      "product_mutations": []
-    },
-    {
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-10",
-      "negatives": [
+          "tag": "is_true:replayed"
+        },
         {
           "benign": {
-            "human_bytes_after_freeze": 0,
-            "nonzero_yields_invalid_run": true,
+            "addresses_valid": true,
+            "admitted": 12,
+            "all_committed": true,
+            "checkpoint_receipts": 12,
+            "events": 12,
+            "replayed": true,
+            "signatures_valid": true,
             "unrelated_additional_field": "must not trip the checker"
           },
-          "expected_failing_tag": "equals:human_bytes_after_freeze",
+          "expected_failing_tag": "equals:checkpoint_receipts",
           "kind": "equals",
           "payload": {
-            "human_bytes_after_freeze": "0-mutated",
-            "nonzero_yields_invalid_run": true
+            "addresses_valid": true,
+            "admitted": 12,
+            "all_committed": true,
+            "checkpoint_receipts": "12-mutated",
+            "events": 12,
+            "replayed": true,
+            "signatures_valid": true
           },
-          "tag": "equals:human_bytes_after_freeze"
-        },
-        {
-          "benign": {
-            "human_bytes_after_freeze": 0,
-            "nonzero_yields_invalid_run": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:nonzero_yields_invalid_run",
-          "kind": "is_true",
-          "payload": {
-            "human_bytes_after_freeze": 0,
-            "nonzero_yields_invalid_run": false
-          },
-          "tag": "is_true:nonzero_yields_invalid_run"
+          "tag": "equals:checkpoint_receipts"
         }
       ],
       "nodes": [
-        "test_v10_protocol.py::test_human_bytes_after_freeze_must_be_zero"
+        "test_ruling_loop.py::test_direct_admission_exceeds_old_prompt_limit_and_replays"
       ],
-      "oid": "V10.human-bytes",
+      "oid": "RULING.direct",
       "positive": {
-        "human_bytes_after_freeze": 0,
-        "nonzero_yields_invalid_run": true
+        "addresses_valid": true,
+        "admitted": 12,
+        "all_committed": true,
+        "checkpoint_receipts": 12,
+        "events": 12,
+        "replayed": true,
+        "signatures_valid": true
       },
       "product_mutations": []
     },
     {
       "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-10",
+      "gate": "V-6",
       "negatives": [
         {
           "benign": {
-            "least_privilege_principal_accepted": true,
-            "principals": [
-              {
-                "principal": "present",
-                "refusal_code": "present",
-                "refused": true
-              },
-              {
-                "principal": "present",
-                "refusal_code": "present",
-                "refused": true
-              }
-            ],
+            "awaiting": true,
+            "questions": 1,
+            "signed": true,
+            "stable": true,
+            "unknowns": 1,
             "unrelated_additional_field": "must not trip the checker"
           },
-          "expected_failing_tag": "every:principals",
-          "kind": "every",
-          "payload": {
-            "least_privilege_principal_accepted": true,
-            "principals": [
-              {
-                "principal": "present",
-                "refusal_code": "present",
-                "refused": true
-              },
-              {
-                "refusal_code": "present",
-                "refused": true
-              }
-            ]
-          },
-          "tag": "every:principals"
-        },
-        {
-          "benign": {
-            "least_privilege_principal_accepted": true,
-            "principals": [
-              {
-                "principal": "present",
-                "refusal_code": "present",
-                "refused": true
-              },
-              {
-                "principal": "present",
-                "refusal_code": "present",
-                "refused": true
-              }
-            ],
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:least_privilege_principal_accepted",
-          "kind": "is_true",
-          "payload": {
-            "least_privilege_principal_accepted": false,
-            "principals": [
-              {
-                "principal": "present",
-                "refusal_code": "present",
-                "refused": true
-              },
-              {
-                "principal": "present",
-                "refusal_code": "present",
-                "refused": true
-              }
-            ]
-          },
-          "tag": "is_true:least_privilege_principal_accepted"
-        }
-      ],
-      "nodes": [
-        "test_v10_protocol.py::test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task"
-      ],
-      "oid": "V10.principal",
-      "positive": {
-        "least_privilege_principal_accepted": true,
-        "principals": [
-          {
-            "principal": "present",
-            "refusal_code": "present",
-            "refused": true
-          },
-          {
-            "principal": "present",
-            "refusal_code": "present",
-            "refused": true
-          }
-        ]
-      },
-      "product_mutations": []
-    },
-    {
-      "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-10",
-      "negatives": [
-        {
-          "benign": {
-            "ceiling_raised": false,
-            "increase_refusal_code": "present",
-            "increase_refused": true,
-            "reserved_atomically": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:reserved_atomically",
-          "kind": "is_true",
-          "payload": {
-            "ceiling_raised": false,
-            "increase_refusal_code": "present",
-            "increase_refused": true,
-            "reserved_atomically": false
-          },
-          "tag": "is_true:reserved_atomically"
-        },
-        {
-          "benign": {
-            "ceiling_raised": false,
-            "increase_refusal_code": "present",
-            "increase_refused": true,
-            "reserved_atomically": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "is_true:increase_refused",
-          "kind": "is_true",
-          "payload": {
-            "ceiling_raised": false,
-            "increase_refusal_code": "present",
-            "increase_refused": false,
-            "reserved_atomically": true
-          },
-          "tag": "is_true:increase_refused"
-        },
-        {
-          "benign": {
-            "ceiling_raised": false,
-            "increase_refusal_code": "present",
-            "increase_refused": true,
-            "reserved_atomically": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "present:increase_refusal_code",
-          "kind": "present",
-          "payload": {
-            "ceiling_raised": false,
-            "increase_refused": true,
-            "reserved_atomically": true
-          },
-          "tag": "present:increase_refusal_code"
-        },
-        {
-          "benign": {
-            "ceiling_raised": false,
-            "increase_refusal_code": "present",
-            "increase_refused": true,
-            "reserved_atomically": true,
-            "unrelated_additional_field": "must not trip the checker"
-          },
-          "expected_failing_tag": "equals:ceiling_raised",
+          "expected_failing_tag": "equals:questions",
           "kind": "equals",
           "payload": {
-            "ceiling_raised": true,
-            "increase_refusal_code": "present",
-            "increase_refused": true,
-            "reserved_atomically": true
+            "awaiting": true,
+            "questions": "1-mutated",
+            "signed": true,
+            "stable": true,
+            "unknowns": 1
           },
-          "tag": "equals:ceiling_raised"
+          "tag": "equals:questions"
+        },
+        {
+          "benign": {
+            "awaiting": true,
+            "questions": 1,
+            "signed": true,
+            "stable": true,
+            "unknowns": 1,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "equals:unknowns",
+          "kind": "equals",
+          "payload": {
+            "awaiting": true,
+            "questions": 1,
+            "signed": true,
+            "stable": true,
+            "unknowns": "1-mutated"
+          },
+          "tag": "equals:unknowns"
+        },
+        {
+          "benign": {
+            "awaiting": true,
+            "questions": 1,
+            "signed": true,
+            "stable": true,
+            "unknowns": 1,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:awaiting",
+          "kind": "is_true",
+          "payload": {
+            "awaiting": false,
+            "questions": 1,
+            "signed": true,
+            "stable": true,
+            "unknowns": 1
+          },
+          "tag": "is_true:awaiting"
+        },
+        {
+          "benign": {
+            "awaiting": true,
+            "questions": 1,
+            "signed": true,
+            "stable": true,
+            "unknowns": 1,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:signed",
+          "kind": "is_true",
+          "payload": {
+            "awaiting": true,
+            "questions": 1,
+            "signed": false,
+            "stable": true,
+            "unknowns": 1
+          },
+          "tag": "is_true:signed"
+        },
+        {
+          "benign": {
+            "awaiting": true,
+            "questions": 1,
+            "signed": true,
+            "stable": true,
+            "unknowns": 1,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:stable",
+          "kind": "is_true",
+          "payload": {
+            "awaiting": true,
+            "questions": 1,
+            "signed": true,
+            "stable": false,
+            "unknowns": 1
+          },
+          "tag": "is_true:stable"
         }
       ],
       "nodes": [
-        "test_v10_protocol.py::test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised"
+        "test_ruling_loop.py::test_unresolved_session_question_is_durable_and_deduplicated"
       ],
-      "oid": "V10.ceiling",
+      "oid": "RULING.durable",
       "positive": {
-        "ceiling_raised": false,
-        "increase_refusal_code": "present",
-        "increase_refused": true,
-        "reserved_atomically": true
+        "awaiting": true,
+        "questions": 1,
+        "signed": true,
+        "stable": true,
+        "unknowns": 1
       },
       "product_mutations": []
     },
     {
       "fail_closed": "PRODUCT_FAILURE",
-      "gate": "V-10",
+      "gate": "V-6",
       "negatives": [
         {
           "benign": {
-            "forbidden_claims_found": 0,
-            "run_digest": "present",
+            "awaiting": true,
+            "stable": true,
             "unrelated_additional_field": "must not trip the checker",
-            "uses_licensed_template": true
+            "visible": 1.25
           },
-          "expected_failing_tag": "is_true:uses_licensed_template",
+          "expected_failing_tag": "at_least:visible",
+          "kind": "at_least",
+          "payload": {
+            "awaiting": true,
+            "stable": true,
+            "visible": 0.999999
+          },
+          "tag": "at_least:visible"
+        },
+        {
+          "benign": {
+            "awaiting": true,
+            "stable": true,
+            "unrelated_additional_field": "must not trip the checker",
+            "visible": 1.0
+          },
+          "expected_failing_tag": "is_true:awaiting",
           "kind": "is_true",
           "payload": {
-            "forbidden_claims_found": 0,
-            "run_digest": "present",
-            "uses_licensed_template": false
+            "awaiting": false,
+            "stable": true,
+            "visible": 1.0
           },
-          "tag": "is_true:uses_licensed_template"
+          "tag": "is_true:awaiting"
         },
         {
           "benign": {
-            "forbidden_claims_found": 0,
-            "run_digest": "present",
+            "awaiting": true,
+            "stable": true,
             "unrelated_additional_field": "must not trip the checker",
-            "uses_licensed_template": true
+            "visible": 1.0
           },
-          "expected_failing_tag": "equals:forbidden_claims_found",
-          "kind": "equals",
+          "expected_failing_tag": "is_true:stable",
+          "kind": "is_true",
           "payload": {
-            "forbidden_claims_found": "0-mutated",
-            "run_digest": "present",
-            "uses_licensed_template": true
+            "awaiting": true,
+            "stable": false,
+            "visible": 1.0
           },
-          "tag": "equals:forbidden_claims_found"
-        },
-        {
-          "benign": {
-            "forbidden_claims_found": 0,
-            "run_digest": "present",
-            "unrelated_additional_field": "must not trip the checker",
-            "uses_licensed_template": true
-          },
-          "expected_failing_tag": "present:run_digest",
-          "kind": "present",
-          "payload": {
-            "forbidden_claims_found": 0,
-            "uses_licensed_template": true
-          },
-          "tag": "present:run_digest"
+          "tag": "is_true:stable"
         }
       ],
       "nodes": [
-        "test_v10_protocol.py::test_published_conclusion_uses_only_the_licensed_claim"
+        "test_ruling_loop.py::test_conflicting_evidence_without_answering_authority_opens_question"
       ],
-      "oid": "V10.claim",
+      "oid": "RULING.conflict",
       "positive": {
-        "forbidden_claims_found": 0,
-        "run_digest": "present",
-        "uses_licensed_template": true
+        "awaiting": true,
+        "stable": true,
+        "visible": 1.0
+      },
+      "product_mutations": []
+    },
+    {
+      "fail_closed": "PRODUCT_FAILURE",
+      "gate": "V-6",
+      "negatives": [
+        {
+          "benign": {
+            "fixture_events": 257,
+            "standing": "ratified",
+            "statement": "Scheduler must use bounded exponential backoff.",
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "equals:statement",
+          "kind": "equals",
+          "payload": {
+            "fixture_events": 257,
+            "standing": "ratified",
+            "statement": "'Scheduler must use bounded exponential backoff.'-mutated"
+          },
+          "tag": "equals:statement"
+        },
+        {
+          "benign": {
+            "fixture_events": 257,
+            "standing": "ratified",
+            "statement": "Scheduler must use bounded exponential backoff.",
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "equals:standing",
+          "kind": "equals",
+          "payload": {
+            "fixture_events": 257,
+            "standing": "'ratified'-mutated",
+            "statement": "Scheduler must use bounded exponential backoff."
+          },
+          "tag": "equals:standing"
+        },
+        {
+          "benign": {
+            "fixture_events": 257,
+            "standing": "ratified",
+            "statement": "Scheduler must use bounded exponential backoff.",
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "equals:fixture_events",
+          "kind": "equals",
+          "payload": {
+            "fixture_events": "257-mutated",
+            "standing": "ratified",
+            "statement": "Scheduler must use bounded exponential backoff."
+          },
+          "tag": "equals:fixture_events"
+        }
+      ],
+      "nodes": [
+        "test_ruling_loop.py::test_one_ratified_fact_outweighs_256_present_facts"
+      ],
+      "oid": "RULING.volume",
+      "positive": {
+        "fixture_events": 257,
+        "standing": "ratified",
+        "statement": "Scheduler must use bounded exponential backoff."
+      },
+      "product_mutations": []
+    },
+    {
+      "fail_closed": "PRODUCT_FAILURE",
+      "gate": "V-6",
+      "negatives": [
+        {
+          "benign": {
+            "provenance": "ai_generated",
+            "standing": "present",
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "equals:standing",
+          "kind": "equals",
+          "payload": {
+            "provenance": "ai_generated",
+            "standing": "'present'-mutated"
+          },
+          "tag": "equals:standing"
+        },
+        {
+          "benign": {
+            "provenance": "ai_generated",
+            "standing": "present",
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "equals:provenance",
+          "kind": "equals",
+          "payload": {
+            "provenance": "'ai_generated'-mutated",
+            "standing": "present"
+          },
+          "tag": "equals:provenance"
+        }
+      ],
+      "nodes": [
+        "test_ruling_loop.py::test_ai_generated_standing_is_clamped_in_reduced_view"
+      ],
+      "oid": "RULING.ceiling",
+      "positive": {
+        "provenance": "ai_generated",
+        "standing": "present"
+      },
+      "product_mutations": []
+    },
+    {
+      "fail_closed": "PRODUCT_FAILURE",
+      "gate": "V-6",
+      "negatives": [
+        {
+          "benign": {
+            "observations": 40.0,
+            "provenance_correct": true,
+            "standing_capped": true,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "at_least:observations",
+          "kind": "at_least",
+          "payload": {
+            "observations": 31.999999,
+            "provenance_correct": true,
+            "standing_capped": true
+          },
+          "tag": "at_least:observations"
+        },
+        {
+          "benign": {
+            "observations": 32.0,
+            "provenance_correct": true,
+            "standing_capped": true,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:provenance_correct",
+          "kind": "is_true",
+          "payload": {
+            "observations": 32.0,
+            "provenance_correct": false,
+            "standing_capped": true
+          },
+          "tag": "is_true:provenance_correct"
+        },
+        {
+          "benign": {
+            "observations": 32.0,
+            "provenance_correct": true,
+            "standing_capped": true,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:standing_capped",
+          "kind": "is_true",
+          "payload": {
+            "observations": 32.0,
+            "provenance_correct": true,
+            "standing_capped": false
+          },
+          "tag": "is_true:standing_capped"
+        }
+      ],
+      "nodes": [
+        "test_ruling_loop.py::test_git_authorship_survives_ingestion_without_inventing_human_review"
+      ],
+      "oid": "RULING.git",
+      "positive": {
+        "observations": 32.0,
+        "provenance_correct": true,
+        "standing_capped": true
+      },
+      "product_mutations": []
+    },
+    {
+      "fail_closed": "PRODUCT_FAILURE",
+      "gate": "V-6",
+      "negatives": [
+        {
+          "benign": {
+            "correct": true,
+            "reads": 3,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:correct",
+          "kind": "is_true",
+          "payload": {
+            "correct": false,
+            "reads": 3
+          },
+          "tag": "is_true:correct"
+        },
+        {
+          "benign": {
+            "correct": true,
+            "reads": 3,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "equals:reads",
+          "kind": "equals",
+          "payload": {
+            "correct": true,
+            "reads": "3-mutated"
+          },
+          "tag": "equals:reads"
+        }
+      ],
+      "nodes": [
+        "test_ruling_loop.py::test_shrug_is_terminal_while_unruled_remains_actionable"
+      ],
+      "oid": "RULING.terminal",
+      "positive": {
+        "correct": true,
+        "reads": 3
+      },
+      "product_mutations": []
+    },
+    {
+      "fail_closed": "PRODUCT_FAILURE",
+      "gate": "V-6",
+      "negatives": [
+        {
+          "benign": {
+            "before": "current",
+            "record_retained": true,
+            "unrelated_additional_field": "must not trip the checker",
+            "withdrawn": true
+          },
+          "expected_failing_tag": "equals:before",
+          "kind": "equals",
+          "payload": {
+            "before": "'current'-mutated",
+            "record_retained": true,
+            "withdrawn": true
+          },
+          "tag": "equals:before"
+        },
+        {
+          "benign": {
+            "before": "current",
+            "record_retained": true,
+            "unrelated_additional_field": "must not trip the checker",
+            "withdrawn": true
+          },
+          "expected_failing_tag": "is_true:withdrawn",
+          "kind": "is_true",
+          "payload": {
+            "before": "current",
+            "record_retained": true,
+            "withdrawn": false
+          },
+          "tag": "is_true:withdrawn"
+        },
+        {
+          "benign": {
+            "before": "current",
+            "record_retained": true,
+            "unrelated_additional_field": "must not trip the checker",
+            "withdrawn": true
+          },
+          "expected_failing_tag": "is_true:record_retained",
+          "kind": "is_true",
+          "payload": {
+            "before": "current",
+            "record_retained": false,
+            "withdrawn": true
+          },
+          "tag": "is_true:record_retained"
+        }
+      ],
+      "nodes": [
+        "test_ruling_loop.py::test_automatically_admitted_shared_fact_remains_revocable"
+      ],
+      "oid": "RULING.revocable",
+      "positive": {
+        "before": "current",
+        "record_retained": true,
+        "withdrawn": true
+      },
+      "product_mutations": []
+    },
+    {
+      "fail_closed": "PRODUCT_FAILURE",
+      "gate": "V-6",
+      "negatives": [
+        {
+          "benign": {
+            "retired_absent": true,
+            "ruling_present": true,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:retired_absent",
+          "kind": "is_true",
+          "payload": {
+            "retired_absent": false,
+            "ruling_present": true
+          },
+          "tag": "is_true:retired_absent"
+        },
+        {
+          "benign": {
+            "retired_absent": true,
+            "ruling_present": true,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:ruling_present",
+          "kind": "is_true",
+          "payload": {
+            "retired_absent": true,
+            "ruling_present": false
+          },
+          "tag": "is_true:ruling_present"
+        }
+      ],
+      "nodes": [
+        "test_ruling_loop.py::test_approval_and_study_commands_are_absent"
+      ],
+      "oid": "RULING.commands",
+      "positive": {
+        "retired_absent": true,
+        "ruling_present": true
       },
       "product_mutations": []
     }

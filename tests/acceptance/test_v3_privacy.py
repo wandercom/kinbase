@@ -34,6 +34,7 @@ from ._harness import synth
 from ._harness import obligations as O
 from ._harness import prereq, scanners, service, trust
 from ._harness.cli import Kinbase
+from ._harness.admission import audit
 from ._harness.evidence import sanitised_report_claims_are_qualified
 from ._harness.evidence_model import (
     Origin,
@@ -96,7 +97,7 @@ def _run(kinbase: Kinbase, *argv: str, cwd: Path, **kwargs):
 
 def _drive_lifecycle(kinbase: Kinbase, roots: ProofRoots, world, anchors,
                      corpus: Path) -> dict[str, dict]:
-    """Execute all fourteen ratified stages through the shipping surfaces.
+    """Exercise automatic admission, recovery, projection and private retention.
 
     The returned mapping is what the gate reports. A stage that could not be
     driven is absent from it, so the total-coverage clause fails; the product's
@@ -110,39 +111,17 @@ def _drive_lifecycle(kinbase: Kinbase, roots: ProofRoots, world, anchors,
     def stage(name: str, *argv: str, **kwargs) -> None:
         result = _run(kinbase, *argv, cwd=repo, **kwargs)
         executed[name] = {"argv": list(argv), "exit": result.returncode}
-        if argv[:2] == ("proposals", "decide") and result.returncode != 0:
-            # C19: repeated use may be consumed/expired; preserve the typed
-            # observation rather than treating a replay as a successful action.
-            code = result.code
-            result.refused(code)
-            executed[name]["refusal_code"] = code
-
     stage("classification", "session", "observe", session,
           "--event", str(corpus), "--json")
-    listing = _run(kinbase, "proposals", "list", "--session", session, "--json",
-                   cwd=repo)
-    candidates = rows(listing.json if isinstance(listing.json, dict) else {},
-                      "candidates")
-    identifier = str(field(candidates[0], "candidate_id")) if candidates else "none"
-    digest = str(field(candidates[0], "payload_digest")) if candidates else "0" * 64
-    destination = "codebase:" + anchors.repository_uuid
-
-    stage("approval", "proposals", "decide", identifier,
-          "--destination", destination, "--approve-digest", digest, "--json")
-    stage("rejection", "proposals", "decide", identifier,
-          "--destination", destination, "--reject", "--json")
-    stage("defer", "proposals", "decide", identifier,
-          "--destination", destination, "--defer", "--json")
-    stage("fan-out", "proposals", "decide", identifier,
-          "--destination", "company:root", "--approve-digest", digest, "--json")
-    stage("receipts", "proposals", "show", identifier,
-          "--destination", destination, "--json")
+    stage("admission replay", "session", "observe", session,
+          "--event", str(corpus), "--json")
+    stage("receipts", "session", "checkpoint", session, "--json")
     stage("host projection", "hooks", "dispatch", "codex", "SessionStart", "--json")
     stage("logs", "doctor", "--repo", str(repo), "--json")
     stage("caches", "status", "--repo", str(repo), "--json")
     stage("service", "status", "--repo", str(repo), "--json")
     stage("kin", "ingest", "kindex", str(repo / ".kin"), "--repo", str(repo), "--json")
-    stage("expiry", "status", "--repo", str(repo), "--json",
+    stage("retention", "status", "--repo", str(repo), "--json",
           env=kinbase.base_env({"KINBASE_PROOF_CLOCK_OFFSET_SECONDS": "86400"}))
     stage("restart", "session", "end", session, "--json")
     stage("restart", "session", "start", "--host", "codex",
@@ -435,9 +414,7 @@ def test_hard_blocking_taint_is_never_cleared_by_deidentification(
     )
     _run(kinbase, "session", "observe", session, "--event", str(corpus),
          "--json", cwd=world.repo.path)
-    listing = _run(kinbase, "proposals", "list", "--session", session, "--json",
-                   cwd=world.repo.path)
-    payload = listing.json if isinstance(listing.json, dict) else {}
+    payload = audit(kinbase, world.repo.path, session)
     candidates = rows(payload, "candidates")
     O.check(
         "V-3.taint",
@@ -483,9 +460,7 @@ def test_paraphrase_only_output_stays_private_by_taint_policy(
     )) + "\n", encoding="utf-8")
     observed = _run(kinbase, "session", "observe", session, "--event",
                     str(corpus), "--json", cwd=world.repo.path)
-    listing = _run(kinbase, "proposals", "list", "--session", session, "--json",
-                   cwd=world.repo.path)
-    payload = listing.json if isinstance(listing.json, dict) else {}
+    payload = audit(kinbase, world.repo.path, session)
     shared = [
         c for c in rows(payload, "candidates")
         if isinstance(field(c, "destination"), str)

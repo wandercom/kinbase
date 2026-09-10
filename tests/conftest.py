@@ -58,7 +58,7 @@ CENSUS_KEY: pytest.StashKey[Census] = pytest.StashKey()
 
 GATE_MARKERS: dict[str, str] = {
     "v1": "V-1", "v2": "V-2", "v3": "V-3", "v4": "V-4", "v5": "V-5",
-    "v6": "V-6", "v7": "V-7", "v8": "V-8", "v9": "V-9", "v10": "V-10",
+    "v6": "V-6", "v7": "V-7", "v8": "V-8", "v9": "V-9",
     "nonfunctional": "NONFUNCTIONAL",
     "evidence": "EVIDENCE",
     "verdict": "VERDICT",

@@ -2835,6 +2835,7 @@ fn build_destination_event(
         standing: "present".to_owned(),
         provenance: "unknown".to_owned(),
         governs_paths: Vec::new(),
+        anchors: Vec::new(),
     };
     let repo = repo()?;
     let (private_path, _) = crate::crypto::ensure_keypair(store, &repo)?;

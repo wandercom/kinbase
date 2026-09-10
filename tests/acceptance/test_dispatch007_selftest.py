@@ -526,17 +526,15 @@ def test_dispatch009_partial_fanout_binds_before_redirecting_company(roots, monk
         yield
         events.append("restore")
 
-    def decide(*args):
-        if args[-1] == "company:root":
-            assert events[-1] == "redirect"
-        return SimpleNamespace(returncode=3)
+    def observe(*args):
+        assert events[-1] == "redirect"
+        return {"status": "observed"}
 
     monkeypatch.setattr(service.socket, "socket", Socket)
     monkeypatch.setattr(gates, "start_session", lambda *args: "session-issued")
-    monkeypatch.setattr(gates, "_observe", lambda *args: None)
-    monkeypatch.setattr(gates, "_proposals", lambda *args: {})
+    monkeypatch.setattr(gates, "_observe", observe)
+    monkeypatch.setattr(gates, "_admissions", lambda *args: {})
     monkeypatch.setattr(gates, "_fanout_pair", lambda *args: ("local-issued", "company-issued"))
-    monkeypatch.setattr(gates, "_decide", decide)
     monkeypatch.setattr(gates.O, "check", lambda oid, payload, **kw: captured.append(oid))
     anchors = SimpleNamespace(company_endpoint=endpoint, repository_uuid="uuid")
     gates.test_partial_fanout_failure_does_not_roll_back_committed_destination(
@@ -698,7 +696,7 @@ def test_dispatch010_kill_witness_uses_journal_and_reaps_sigkill(roots, monkeypa
     import json
     import signal
     from . import test_v2_classification as gate
-    candidate = {"candidate_id": "fixture-candidate"}
+    candidate = {"candidate_id": "fixture-candidate", "session_id": "fixture-session", "corpus": "native.jsonl"}
     roots.user_config_path.parent.mkdir(parents=True, exist_ok=True)
     roots.user_config_path.write_text('[personal]\ndata_root = ' + json.dumps(str(roots.personal_root)) + '\n')
     marker_root = roots.repo_root / ".kin/local/journal" if source == "repo" else roots.personal_root / "journal"
@@ -720,7 +718,7 @@ def test_dispatch010_kill_witness_uses_journal_and_reaps_sigkill(roots, monkeypa
             return b"", b""
     process = Process()
     running = False
-    def launch(*args):
+    def launch(*args, **kwargs):
         nonlocal running
         running = True
         if source != "status":
@@ -729,8 +727,8 @@ def test_dispatch010_kill_witness_uses_journal_and_reaps_sigkill(roots, monkeypa
     def run(*args, **kwargs):
         assert args[0] == "status"
         return SimpleNamespace(json={"journal_state": {**candidate, "transition": transition} if running and source == "status" else None})
-    monkeypatch.setattr(gate, "_decide_async", launch)
-    driver = SimpleNamespace(xdg_config_home=roots.xdg_config_home, run=run)
+    monkeypatch.setattr(gate, "_checkpoint_async", launch)
+    driver = SimpleNamespace(xdg_config_home=roots.xdg_config_home, run=run, popen=launch)
     result = gate._kill_at_transition(driver, SimpleNamespace(repo=SimpleNamespace(path=roots.repo_root)), candidate, "codebase:fixture", transition)
     assert result["crash_witnessed"]
     assert calls == ["kill", "reap"]
@@ -751,14 +749,14 @@ def test_dispatch010_completed_or_stale_journal_never_licenses_crash(roots, monk
             return self.returncode
         def communicate(self, timeout):
             return b"", b""
-    def launch(*args):
+    def launch(*args, **kwargs):
         if ending != "stale":
             marker.write_text("receipt\n")
         return Process()
-    monkeypatch.setattr(gate, "_decide_async", launch)
-    driver = SimpleNamespace(xdg_config_home=roots.xdg_config_home,
+    monkeypatch.setattr(gate, "_checkpoint_async", launch)
+    driver = SimpleNamespace(xdg_config_home=roots.xdg_config_home, popen=launch,
                              run=lambda *a, **kw: SimpleNamespace(json={"journal_state": "receipt"}))
-    result = gate._kill_at_transition(driver, SimpleNamespace(repo=SimpleNamespace(path=roots.repo_root)), {"candidate_id": "fixture"}, "codebase:fixture", "receipt")
+    result = gate._kill_at_transition(driver, SimpleNamespace(repo=SimpleNamespace(path=roots.repo_root)), {"candidate_id": "fixture", "session_id": "fixture-session", "corpus": "native.jsonl"}, "codebase:fixture", "receipt")
     assert not result["crash_witnessed"]
 
 
@@ -782,7 +780,8 @@ def test_dispatch010_crash_gate_uses_five_fresh_worlds_and_checks_each_recovery(
     monkeypatch.setattr(gate.trust, "classifier_pinned", lambda *a, **kw: None)
     monkeypatch.setattr(gate, "start_session", lambda *a: "fixture-session")
     monkeypatch.setattr(gate, "_observe", lambda *a: None)
-    monkeypatch.setattr(gate, "_decide", lambda *a: None)
+    monkeypatch.setattr(gate, "_one_fanout_source", lambda corpus, repo: repo / "one.jsonl")
+    monkeypatch.setattr(gate, "_checkpoint", lambda *a: None)
     monkeypatch.setattr(service, "Blackhole", lambda *a: nullcontext(SimpleNamespace(port=0)))
     def listing(*args):
         return {"candidates": [{"candidate_id": "fixture", "payload_digest": "f" * 64, "destination": "codebase:fixture", "message_id": "source"},
@@ -790,7 +789,7 @@ def test_dispatch010_crash_gate_uses_five_fresh_worlds_and_checks_each_recovery(
                 "duplicate_events": 0, "recursive_apologies": 0,
                 "fanout_receipts": {"codebase": {"state": "committed"}},
                 "committed_event_count": event_count if len(seen) == 1 else 1}
-    monkeypatch.setattr(gate, "_proposals", listing)
+    monkeypatch.setattr(gate, "_admissions", listing)
     def killed(*args):
         actions.clear()
         return {"transition": args[-1], "crash_witnessed": True}
@@ -801,7 +800,7 @@ def test_dispatch010_crash_gate_uses_five_fresh_worlds_and_checks_each_recovery(
             assert actions[:2] == ["launch", "launch"]
             actions.append("reap")
         return SimpleNamespace(communicate=communicate)
-    monkeypatch.setattr(gate, "_decide_async", retry)
+    monkeypatch.setattr(gate, "_checkpoint_async", retry)
     args = (SimpleNamespace(path_prefix=[]), roots, SimpleNamespace(path=roots.run_root / "held-out"))
     if event_count == 1:
         gate.test_kill_at_every_transition_then_concurrent_retry(*args)
@@ -812,48 +811,6 @@ def test_dispatch010_crash_gate_uses_five_fresh_worlds_and_checks_each_recovery(
     assert stopped == seen
 
 
-@spec_ref(_REMEDIATION_010)
-def test_dispatch010_interleave_gate_feeds_both_pipes_before_waiting(roots, monkeypatch):
-    import json
-    import subprocess
-    from . import test_v9_fatigue as gate
-    from ._harness.corpora import OpaqueIds
-    fed = []
-    processes = []
-    class Input:
-        def __init__(self, name):
-            self.name = name
-        def write(self, data):
-            assert isinstance(json.loads(data), dict)
-            fed.append(self.name)
-        def close(self):
-            pass
-    class Process:
-        returncode = 0
-        def __init__(self, name):
-            self.stdin = Input(name)
-        def communicate(self, timeout):
-            assert len(fed) == len(gate.hosts.HOSTS)
-            assert self.stdin is None
-        def kill(self):
-            self.returncode = -9
-        def wait(self, timeout):
-            return self.returncode
-    class Driver:
-        def popen(self, *args, **kw):
-            if args[0] == "hooks":
-                assert kw["stdin"] == subprocess.PIPE
-            process = Process(args[2])
-            processes.append(process)
-            return process
-        def run(self, *args, **kw):
-            return SimpleNamespace(returncode=0, json={"reservations_held_after_crash": 1,
-                "delivery_loss_rate": 0, "candidates": [{"rendered": True}]})
-    monkeypatch.setattr(gate, "_eligible_candidates", lambda *a: ("fixture", [{"candidate_id": str(n)} for n in range(8)]))
-    gate.test_interleaved_sessions_never_exceed_four_prompts_per_window(
-        Driver(), (SimpleNamespace(repo=SimpleNamespace(path=roots.repo_root)), None), OpaqueIds(seed=b"pipe-fixture"))
-    assert fed == list(gate.hosts.HOSTS)
-    assert len(processes) == 3
 
 
 @spec_ref(_REMEDIATION_010)
@@ -902,17 +859,6 @@ def test_dispatch011_fanout_pairs_destination_bound_candidates_by_message():
         gate._fanout_pair({"candidates": [unrelated, local]}, "codebase:uuid")
 
 
-@spec_ref(_REMEDIATION_010)
-def test_dispatch011_retry_advances_clock_and_reuses_exact_approval(tmp_path):
-    from . import test_v2_classification as gate
-    calls = []
-    candidate = {"candidate_id": "local", "payload_digest": "a" * 64}
-    driver = SimpleNamespace(run=lambda *argv, **kw: calls.append((argv, kw)))
-    gate._decide(driver, tmp_path, candidate, "codebase:uuid",
-                 env={"KINBASE_PROOF_CLOCK_OFFSET_SECONDS": "960"})
-    argv, kwargs = calls[0]
-    assert argv[2] == "local" and argv[argv.index("--approve-digest") + 1] == "a" * 64
-    assert kwargs["env"]["KINBASE_PROOF_CLOCK_OFFSET_SECONDS"] == "960"
 
 
 @spec_ref(_REMEDIATION_010)

@@ -152,6 +152,8 @@ class SignedWorld:
         confidence: str = "high",
         commit: bool = True,
         may_refuse: bool = False,
+        standing: str = "present",
+        provenance: str = "unknown",
     ) -> dict[str, Any]:
         """Plant one genuinely signed event in the store its ``store_kind`` names.
 
@@ -193,6 +195,9 @@ class SignedWorld:
             authority_snapshot_cursor=authority_snapshot_cursor,
             confidence=confidence,
         )
+        body["standing"] = standing
+        body["provenance"] = provenance
+        body["event_id"] = synth.content_event_id("evt", {k: v for k, v in body.items() if k != "event_id"})
         # Detector Reviewer finding 7: a mutation must change the state the
         # product reads, before it reads it. Both seams are pre-execution: the
         # claim before it is signed, and the canonical bytes before they land at

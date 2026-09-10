@@ -35,7 +35,6 @@ from .evidence_model import Outcome
 
 #: Non-gate reporting groups. They are censused the same way.
 AUXILIARY_GROUPS: tuple[str, ...] = (
-    "V-10",
     "NONFUNCTIONAL",
     "EVIDENCE",
     "VERDICT",

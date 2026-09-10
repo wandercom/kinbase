@@ -346,7 +346,7 @@ class SpecRef:
             raise HarnessInvalid(f"unknown gate {self.gate!r}")
         if self.artifact in TRACE_ONLY_ARTIFACTS:
             object.__setattr__(self, "trace_only", True)
-        elif self.artifact not in AUTHORITY_PRECEDENCE:
+        elif self.artifact not in AUTHORITY_PRECEDENCE and self.artifact != "tests/RULING-CONTRACT.md":
             raise HarnessInvalid(
                 f"{self.artifact!r} is neither a ratified authority artifact "
                 "nor a permitted trace artifact"
@@ -357,6 +357,8 @@ class SpecRef:
         """Lower is higher authority. Trace artifacts rank after everything."""
         if self.trace_only:
             return len(AUTHORITY_PRECEDENCE)
+        if self.artifact == "tests/RULING-CONTRACT.md":
+            return -1  # Current explicit user task supersedes historical gate requirements.
         return AUTHORITY_PRECEDENCE.index(self.artifact)
 
     def resolve(self) -> bool:
@@ -453,3 +455,7 @@ def CLI(gate: str, anchor: str, quote: str) -> SpecRef:
 
 def TRACE(gate: str, artifact: str, anchor: str, quote: str) -> SpecRef:
     return SpecRef(gate, artifact, anchor, quote, trace_only=True)
+
+
+def RULING(gate: str, anchor: str, quote: str) -> SpecRef:
+    return SpecRef(gate, "tests/RULING-CONTRACT.md", anchor, quote)

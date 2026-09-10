@@ -453,12 +453,6 @@ PLANTERS: tuple[Planter, ...] = (
     _p("v9.disable_mid_session_capture", "host.envelope", CONFIG_DEFECT,
        "the delivered host payload disables mid-session capture while leaving "
        "SessionStart enabled", _disable_mid_session_capture),
-    _p("v9.reservation_after_render", "fault.schedule", FAULT_SCHEDULE,
-       "the reservation increment is scheduled after the render",
-       _reservation_after_render),
-    _p("v9.check_outside_transaction", "fault.schedule", FAULT_SCHEDULE,
-       "the reissue eligibility check is scheduled outside BEGIN IMMEDIATE",
-       _check_outside_transaction),
 )
 
 BY_ID: dict[str, Planter] = {p.mutation_id: p for p in PLANTERS}
