@@ -23,7 +23,17 @@ pub const GIT_ATTRIBUTES: [&str; 2] = [
 ];
 /// Paths Kinbase reserves under `.kin/`; a pinned-Kindex inventory that
 /// collides with one refuses `repo init` (architecture §11).
-pub const RESERVED_PATHS: [&str; 4] = ["config", "events", "manifests", "local/kinbase-index.json"];
+/// Paths inside `.kin/` that belong to Kinbase.
+///
+/// `config` is deliberately absent: that file is Kindex's, in YAML, and reserving it
+/// is what made Kinbase refuse to initialise in 87 of Wander's repositories. The two
+/// products share this directory by design, so each claims only its own names.
+pub const RESERVED_PATHS: [&str; 4] = [
+    CONFIG_FILE,
+    "events",
+    "manifests",
+    "local/kinbase-index.json",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepoConfig {

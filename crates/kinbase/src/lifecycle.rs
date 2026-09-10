@@ -1797,6 +1797,24 @@ pub fn is_kindex_sqlite_source(source: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Column names present on a Kindex `nodes` table.
+///
+/// Kindex has shipped more than one shape and Kinbase must read whichever is in
+/// front of it, so the adapter asks rather than assumes.
+fn kindex_columns(connection: &rusqlite::Connection) -> std::collections::BTreeSet<String> {
+    let mut names = std::collections::BTreeSet::new();
+    if let Ok(mut statement) = connection.prepare("PRAGMA table_info(nodes)") {
+        if let Ok(mut rows) = statement.query([]) {
+            while let Ok(Some(row)) = rows.next() {
+                if let Ok(name) = row.get::<_, String>(1) {
+                    names.insert(name);
+                }
+            }
+        }
+    }
+    names
+}
+
 fn scan_kindex(source: &Path, repo: &Repository) -> Result<SourceScan, ContractError> {
     let mut scan = SourceScan::default();
     let files = sqlite_files(source)?;
@@ -1816,15 +1834,55 @@ fn scan_kindex(source: &Path, repo: &Repository) -> Result<SourceScan, ContractE
                 "Use a valid Kindex 0.36 SQLite export or signed `.kin/events` tree.",
             )
         })?;
-        let mut statement = connection
-            .prepare("SELECT id, node_type, title, content, payload, created_at FROM nodes")
-            .map_err(|error| {
-                ContractError::refused(
-                    "CONFIG_INVARIANT",
-                    format!("Kindex nodes table is unavailable: {error}"),
-                    "Use a valid Kindex 0.36 SQLite export.",
-                )
-            })?;
+        // Kindex and Kinbase are the same family and must interoperate, so this
+        // reads the schema Kindex actually ships rather than an export format it
+        // never emitted. The columns were guessed once and never run against a real
+        // store: `node_type` and `payload` do not exist, and the query failed on
+        // every one of the 87 populated Kindex databases at Wander.
+        //
+        // Real Kindex carries more than Kinbase asked for, and the extra columns are
+        // exactly the ones this product needs: `prov_who` and `prov_source` are
+        // provenance, `status` is disposition, `audience` says who a node is for.
+        // The older export shape is still accepted so a genuine export keeps working.
+        let columns = kindex_columns(&connection);
+        let node_type_column = if columns.contains("type") {
+            "type"
+        } else {
+            "node_type"
+        };
+        let payload_column = if columns.contains("extra") {
+            "extra"
+        } else {
+            "payload"
+        };
+        let provenance_column = if columns.contains("prov_source") {
+            "prov_source"
+        } else if columns.contains("prov_who") {
+            "prov_who"
+        } else {
+            "NULL"
+        };
+        let status_column = if columns.contains("status") {
+            "status"
+        } else {
+            "NULL"
+        };
+        let audience_column = if columns.contains("audience") {
+            "audience"
+        } else {
+            "NULL"
+        };
+        let query = format!(
+            "SELECT id, {node_type_column}, title, content, {payload_column}, created_at, \
+             {provenance_column}, {status_column}, {audience_column} FROM nodes"
+        );
+        let mut statement = connection.prepare(&query).map_err(|error| {
+            ContractError::refused(
+                "CONFIG_INVARIANT",
+                format!("Kindex nodes table is unavailable: {error}"),
+                "Use a Kindex store or a 0.36 SQLite export.",
+            )
+        })?;
         let mut rows = statement.query([]).map_err(|error| {
             ContractError::invariant(format!("Kindex nodes cannot be read: {error}"))
         })?;
@@ -1838,6 +1896,9 @@ fn scan_kindex(source: &Path, repo: &Repository) -> Result<SourceScan, ContractE
             let content: Option<String> = row.get(3).ok();
             let payload: Option<Vec<u8>> = row.get(4).ok();
             let created_at: Option<String> = row.get(5).ok();
+            let kindex_provenance: Option<String> = row.get(6).ok();
+            let kindex_status: Option<String> = row.get(7).ok();
+            let kindex_audience: Option<String> = row.get(8).ok();
             let payload_text = payload
                 .as_ref()
                 .map(|bytes| String::from_utf8_lossy(bytes).trim().to_owned())
@@ -1853,6 +1914,22 @@ fn scan_kindex(source: &Path, repo: &Repository) -> Result<SourceScan, ContractE
             let mut record = SourceRecord::new(&id, &relpath);
             record.logical_key = format!("kindex:{id}");
             record.statement = statement_text.clone();
+            // Kindex records who put a node there. Honour it rather than defaulting
+            // everything to `unknown`: a node a person wrote is human evidence, and a
+            // node an agent captured during a session is not, which is the same
+            // distinction Kinbase draws everywhere else.
+            record.provenance = match kindex_provenance.as_deref().map(str::to_lowercase) {
+                Some(ref who)
+                    if ["claude", "codex", "agent", "gpt", "copilot", "cursor"]
+                        .iter()
+                        .any(|marker| who.contains(marker)) =>
+                {
+                    "ai_generated".to_owned()
+                }
+                Some(ref who) if who.contains("transcript") => "transcript".to_owned(),
+                Some(ref who) if !who.trim().is_empty() => "human".to_owned(),
+                _ => "unknown".to_owned(),
+            };
             record.atom_kind = match node_type.as_deref() {
                 Some("decision") => "decision",
                 Some("constraint") => "constraint",
