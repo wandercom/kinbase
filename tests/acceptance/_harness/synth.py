@@ -215,7 +215,7 @@ def receipt_stamp(offset_seconds: int = 0) -> str:
     import os
     import time
 
-    offset = int(os.environ.get("GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS", "0"))
+    offset = int(os.environ.get("KINBASE_PROOF_CLOCK_OFFSET_SECONDS", "0"))
     return time.strftime("%Y-%m-%dT%H:%M:%S.000Z",
                          time.gmtime(time.time() + offset + offset_seconds))
 
@@ -387,7 +387,7 @@ def command_result_envelope(
     environment/deployment owner and a freshness-bounded ``effective_until``."
     """
     payload: dict[str, Any] = {
-        "schema": "guildhall-command-result/1",
+        "schema": "kinbase-command-result/1",
         "command": list(command),
         "exit_code": exit_code,
         "stdout": stdout,
@@ -484,7 +484,7 @@ def kindex_sqlite_export(path: Path, nodes: Sequence[Mapping[str, Any]]) -> Path
     """A minimal Kindex-shaped SQLite graph export.
 
     ``spec/architecture.md`` section 4: "``kindex``: exported SQLite graph facts
-    and ``.kin/`` events/indexes". Guildhall must read it through public seams;
+    and ``.kin/`` events/indexes". Kinbase must read it through public seams;
     the fixture simply provides a real SQLite file with text and blob columns so
     the V-3 blob scan has something to find.
     """
@@ -676,7 +676,7 @@ def fact_event(
                 f"distortion must be exactly {DISTORTION_FIELDS}, got {sorted(distortion)}"
             )
     payload: dict[str, Any] = {
-        "schema": "guildhall-event/1",
+        "schema": "kinbase-event/1",
         "store_kind": store_kind,
         "authority_id": authority_id,
         "authority_scope": authority_scope,
@@ -766,7 +766,7 @@ def unknown_event(
         unresolved_uncertainty=question,
     )
     payload.pop("event_id")
-    payload["schema"] = "guildhall-unknown/1"
+    payload["schema"] = "kinbase-unknown/1"
     payload.update({
         "decision_blocked": decision_blocked,
         "owner_role": owner_role,
@@ -825,7 +825,7 @@ def repo_certificate(
 ) -> dict[str, Any]:
     """Out-of-worktree Company-steward repository certificate."""
     payload: dict[str, Any] = {
-        "schema": "guildhall-repo-certificate/1",
+        "schema": "kinbase-repo-certificate/1",
         "repository_uuid": repository_uuid,
         "issued_at": _stamp(),
         "company_id": "company-demo",
@@ -846,7 +846,7 @@ def authority_answer(
     return authority.sign_message(
         "answer",
         {
-            "schema": "guildhall-answer/1",
+            "schema": "kinbase-answer/1",
             "question_id": question_id,
             "authority_id": authority.authority_id,
             "authority_scope": authority.scope,

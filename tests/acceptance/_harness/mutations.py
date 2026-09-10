@@ -16,12 +16,12 @@ by the suite.
 Mutation-run protocol
 ---------------------
 
-``GUILDHALL_ACCEPT_MUTATION=<id>`` selects one catalog entry. Under a mutation
+``KINBASE_ACCEPT_MUTATION=<id>`` selects one catalog entry. Under a mutation
 run the polarity of the named nodes inverts: each listed node **must fail**. A
 mutation under which every named node still passes means the gate cannot detect
 the defect it claims to detect, which is ``INVALID_HARNESS`` -- never a pass.
 
-``GUILDHALL_ACCEPT_DETECTOR_MUTATION=<id>`` selects a detector mutation instead;
+``KINBASE_ACCEPT_DETECTOR_MUTATION=<id>`` selects a detector mutation instead;
 those are applied inside :mod:`acceptance._harness.detectors` because the Tester
 owns the detectors.
 """
@@ -34,7 +34,7 @@ from typing import Literal
 
 from .requirements import HarnessInvalid
 
-MUTATION_ENV = "GUILDHALL_ACCEPT_MUTATION"
+MUTATION_ENV = "KINBASE_ACCEPT_MUTATION"
 
 Method = Literal["fixture", "config", "detector", "validator_source_patch"]
 

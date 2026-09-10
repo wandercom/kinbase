@@ -73,7 +73,7 @@ def test_manifest_and_every_artifact_digest_verify(manifest) -> None:
     # Receipt verification is the Validator's step. An implementation-blind
     # Detector Reviewer has no access to spec/receipts/** or evidence/**, so
     # reviewer mode verifies the six ratified authority artifacts and stops.
-    if os.environ.get("GUILDHALL_REVIEWER_MODE") == "1":
+    if os.environ.get("KINBASE_REVIEWER_MODE") == "1":
         assert manifest.receipt_digests == {}, (
             "reviewer mode must not read receipts"
         )
@@ -103,19 +103,19 @@ def test_suite_refuses_unratified_bytes(tmp_path: Path, spec_root: Path) -> None
         target.read_text(encoding="utf-8").replace("0.90", "0.50", 1), encoding="utf-8"
     )
 
-    reviewer = os.environ.get("GUILDHALL_REVIEWER_MODE") == "1"
-    previous = os.environ.get("GUILDHALL_SPEC_ROOT")
+    reviewer = os.environ.get("KINBASE_REVIEWER_MODE") == "1"
+    previous = os.environ.get("KINBASE_SPEC_ROOT")
     req.repo_root.cache_clear()
     req.verify_manifest.cache_clear()
-    os.environ["GUILDHALL_SPEC_ROOT"] = str(clone)
+    os.environ["KINBASE_SPEC_ROOT"] = str(clone)
     try:
         with pytest.raises(HarnessInvalid):
             req.verify_manifest(reviewer_mode=reviewer)
     finally:
         if previous is None:
-            os.environ.pop("GUILDHALL_SPEC_ROOT", None)
+            os.environ.pop("KINBASE_SPEC_ROOT", None)
         else:
-            os.environ["GUILDHALL_SPEC_ROOT"] = previous
+            os.environ["KINBASE_SPEC_ROOT"] = previous
         req.repo_root.cache_clear()
         req.verify_manifest.cache_clear()
         req.verify_manifest(reviewer_mode=reviewer)
@@ -173,7 +173,7 @@ def test_ed25519_agrees_with_cryptography_when_available() -> None:
     crypto = pytest.importorskip("cryptography.hazmat.primitives.asymmetric.ed25519")
     seed = bytes(range(32))
     private = crypto.Ed25519PrivateKey.from_private_bytes(seed)
-    message = b"guildhall acceptance cross-check"
+    message = b"kinbase acceptance cross-check"
     from cryptography.hazmat.primitives import serialization
 
     reference_pub = private.public_key().public_bytes(
@@ -188,7 +188,7 @@ def test_ed25519_agrees_with_cryptography_when_available() -> None:
     ARCH(
         "INSTRUMENT",
         "canonical-data-model",
-        'Every signer signs `SHA-256("guildhall-sig/1" || 0x00 || message_type || 0x00 || '
+        'Every signer signs `SHA-256("kinbase-sig/1" || 0x00 || message_type || 0x00 || '
         "jcs_bytes)`",
     )
 )
@@ -635,7 +635,7 @@ def test_sealed_registry_exposes_only_ciphertext_metadata(vault) -> None:
     blob = vault.registry_path.read_bytes()
     assert canary.value.encode() not in blob, "the sealed registry must be ciphertext"
     with pytest.raises(ValueError):
-        crypto_box.unseal(b"\x00" * 32, blob, b"guildhall-acceptance-canary-registry/1")
+        crypto_box.unseal(b"\x00" * 32, blob, b"kinbase-acceptance-canary-registry/1")
     vault.load()
     assert vault.get(canary.canary_id).raw_value == canary.value
 
@@ -1033,7 +1033,7 @@ def test_trust_installers_run_without_the_product(roots) -> None:
         roots, company_url="http://127.0.0.1:1", facts_token="facts-selftest",
         root_key=root_key, classifier=classifier,
     )
-    assert config == roots.xdg_config_home / "guildhall" / "config.toml"
+    assert config == roots.xdg_config_home / "kinbase" / "config.toml"
     assert oct(config.stat().st_mode & 0o777) == "0o600"
     assert oct(token.stat().st_mode & 0o777) == "0o600"
     body = config.read_text(encoding="utf-8")

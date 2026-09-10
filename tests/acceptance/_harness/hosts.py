@@ -92,13 +92,13 @@ class HostBinary:
 def host_availability(name: str) -> HostBinary | None:
     """Resolve a real host executable, honouring an explicit override.
 
-    ``GUILDHALL_HOST_CODEX`` / ``GUILDHALL_HOST_CLAUDE`` let the Validator point
+    ``KINBASE_HOST_CODEX`` / ``KINBASE_HOST_CLAUDE`` let the Validator point
     at the pinned host build. ``spec/verification.md`` V-9: "Pin and report exact
     Codex/Claude versions and native envelope fixtures."
     """
     if name not in HOSTS:
         raise HarnessInvalid(f"unknown host {name!r}")
-    override = os.environ.get(f"GUILDHALL_HOST_{name.upper()}")
+    override = os.environ.get(f"KINBASE_HOST_{name.upper()}")
     resolved = Path(override) if override else None
     if resolved is None:
         found = shutil.which(name)

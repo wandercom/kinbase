@@ -1,4 +1,4 @@
-"""Guildhall black-box acceptance instruments (Tester lane).
+"""Kinbase black-box acceptance instruments (Tester lane).
 
 Authored under Factory Tester dispatch against ratification manifest
 ``ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db``

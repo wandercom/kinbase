@@ -25,7 +25,7 @@ def test_pool_projection_and_byte_framing_are_reproducible(tmp_path):
     raw = json.dumps(projected, sort_keys=True, separators=(",", ":"),
                      ensure_ascii=True, allow_nan=False).encode("utf-8")
     blocks = [raw] + [(auxsel.AUXILIARY / name).read_bytes() for name in auxsel.DOCUMENTS]
-    expected = hashlib.sha256(b"guildhall-auxiliary-pool-digest/1\0" + b"".join(
+    expected = hashlib.sha256(b"kinbase-auxiliary-pool-digest/1\0" + b"".join(
         len(block).to_bytes(8, "big") + block for block in blocks)).hexdigest()
     assert auxsel.verify() == expected
     mutable = copy.deepcopy(pool)

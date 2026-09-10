@@ -150,12 +150,12 @@ class ProofRoots:
 
     @property
     def user_config_path(self) -> Path:
-        """``${XDG_CONFIG_HOME:-~/.config}/guildhall/config.toml`` (0600)."""
-        return self.xdg_config_home / "guildhall" / "config.toml"
+        """``${XDG_CONFIG_HOME:-~/.config}/kinbase/config.toml`` (0600)."""
+        return self.xdg_config_home / "kinbase" / "config.toml"
 
     @property
     def service_config_path(self) -> Path:
-        return self.company_root / "guildhalld.toml"
+        return self.company_root / "kinbased.toml"
 
     @property
     def company_url(self) -> str:
@@ -180,7 +180,7 @@ class ProofRoots:
         """Write the launcher-only user config exactly as ``spec/cli.md`` frames it.
 
         Validator ruling C1: the config lives at
-        ``${XDG_CONFIG_HOME:-$HOME/.config}/guildhall/config.toml`` (0600) with
+        ``${XDG_CONFIG_HOME:-$HOME/.config}/kinbase/config.toml`` (0600) with
         exactly the ``spec/cli.md`` keys, under an isolated ``HOME`` /
         ``XDG_CONFIG_HOME`` per world, and is written before any command that
         needs Company, cache, certificate or Personal.

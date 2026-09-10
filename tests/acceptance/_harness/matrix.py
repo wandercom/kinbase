@@ -186,7 +186,7 @@ def _write_receipt(roots: SurfaceRoots, name: str, payload: str) -> Path:
 
 
 def _write_log(roots: SurfaceRoots, name: str, payload: str) -> Path:
-    path = roots.state / "guildhall.log"
+    path = roots.state / "kinbase.log"
     with path.open("a", encoding="utf-8") as handle:
         handle.write(name + " " + payload + "\n")
     return path
@@ -211,7 +211,7 @@ def _write_process_artifact(roots: SurfaceRoots, name: str, payload: str) -> Pat
     path = roots.state / "process" / (name + ".json")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps({"label": name, "argv": ["guildhall", payload],
+        json.dumps({"label": name, "argv": ["kinbase", payload],
                     "environ": {"NOTE": payload}, "fds": []}),
         encoding="utf-8",
     )
@@ -409,7 +409,7 @@ class Matrix:
 
     def as_json(self) -> dict:
         return {
-            "schema": "guildhall-v3-surface-encoding-matrix/1",
+            "schema": "kinbase-v3-surface-encoding-matrix/1",
             "seed": self.seed,
             "surface_families": list(SURFACE_FAMILIES),
             "encoding_families": list(TRANSFORMATION_FAMILIES),

@@ -36,7 +36,7 @@ import pytest
 from ._harness import hosts
 from ._harness import obligations as O
 from ._harness import prereq, scale, trust
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.evidence_model import field, rows
 from ._harness.gitfix import GitRepo
 from ._harness.requirements import (
@@ -75,9 +75,9 @@ def ids() -> OpaqueIds:
 
 
 @pytest.fixture()
-def anchored(roots: ProofRoots, guildhall: Guildhall):
+def anchored(roots: ProofRoots, kinbase: Kinbase):
     world = SignedWorld.create(roots.repo_root)
-    anchors = trust.establish(guildhall, roots, world)
+    anchors = trust.establish(kinbase, roots, world)
     return world, anchors
 
 
@@ -87,9 +87,9 @@ def host(request) -> str:
 
 
 @pytest.fixture()
-def host_binary(host: str, roots: ProofRoots, guildhall: Guildhall) -> hosts.HostBinary:
+def host_binary(host: str, roots: ProofRoots, kinbase: Kinbase) -> hosts.HostBinary:
     """The real pinned host executable, plus an invocation recorder in front."""
-    variable = "GUILDHALL_HOST_" + host.upper()
+    variable = "KINBASE_HOST_" + host.upper()
     configured = prereq.env_var(
         variable, what=host + " host executable",
         why="spec/verification.md V-9 runs the actual setup and hook executables "
@@ -102,13 +102,13 @@ def host_binary(host: str, roots: ProofRoots, guildhall: Guildhall) -> hosts.Hos
     bin_dir = roots.run_root / "hostbin" / host
     bin_dir.mkdir(parents=True, exist_ok=True)
     recorder = hosts.install_invocation_recorder(bin_dir, host, resolved)
-    guildhall.path_prefix.insert(0, bin_dir)
+    kinbase.path_prefix.insert(0, bin_dir)
     return hosts.HostBinary(name=host, path=recorder,
                             version=hosts.host_availability(host).version)
 
 
-def _run(guildhall: Guildhall, *argv: str, cwd: Path, **kwargs):
-    result = guildhall.run(*argv, cwd=cwd, check=False, **kwargs)
+def _run(kinbase: Kinbase, *argv: str, cwd: Path, **kwargs):
+    result = kinbase.run(*argv, cwd=cwd, check=False, **kwargs)
     if result.returncode == 1:
         raise ProductFailure(
             "`" + " ".join(argv[:2]) + "` returned the reserved ambiguous exit 1"
@@ -156,7 +156,7 @@ def _tree(root: Path) -> dict[str, str]:
            "approval installs only expected files."),
 )
 def test_hooks_plan_is_read_only_and_install_requires_native_approval(
-    guildhall: Guildhall, roots: ProofRoots, anchored, host: str,
+    kinbase: Kinbase, roots: ProofRoots, anchored, host: str,
     host_binary: hosts.HostBinary
 ) -> None:
     world, anchors = anchored
@@ -165,7 +165,7 @@ def test_hooks_plan_is_read_only_and_install_requires_native_approval(
     for forbidden in ("--approve", "--yes", "--all", "--accept-all",
                       "--yes-to-all", "--unlisted-008"):
         before_usage = (_tree(roots.home), _tree(world.repo.path))
-        refusal = _run(guildhall, "hooks", "install", host, forbidden, "--json",
+        refusal = _run(kinbase, "hooks", "install", host, forbidden, "--json",
                        cwd=world.repo.path)
         refusal.refused("CONFIG_INVARIANT")
         if before_usage != (_tree(roots.home), _tree(world.repo.path)):
@@ -173,14 +173,14 @@ def test_hooks_plan_is_read_only_and_install_requires_native_approval(
     before = _tree(roots.home)
     text_before = {str(p.relative_to(roots.home)): p.read_text(errors="replace")
                    for p in roots.home.rglob("*") if p.is_file()}
-    plan = _json(_run(guildhall, "hooks", "plan", host, "--json",
+    plan = _json(_run(kinbase, "hooks", "plan", host, "--json",
                       cwd=world.repo.path))
     after_plan = _tree(roots.home)
 
-    doctor = _run(guildhall, "doctor", "--repo", str(world.repo.path),
+    doctor = _run(kinbase, "doctor", "--repo", str(world.repo.path),
                   "--json", cwd=world.repo.path)
     project_before = _tree(world.repo.path)
-    installed_result = _run(guildhall, "hooks", "install", host, "--json",
+    installed_result = _run(kinbase, "hooks", "install", host, "--json",
                             cwd=world.repo.path)
     after_install = _tree(roots.home)
     project_after = _tree(world.repo.path)
@@ -229,13 +229,13 @@ def test_hooks_plan_is_read_only_and_install_requires_native_approval(
            "payloads."),
 )
 def test_native_host_events_prime_capture_and_exclude_personal(
-    guildhall: Guildhall, roots: ProofRoots, anchored, host: str,
+    kinbase: Kinbase, roots: ProofRoots, anchored, host: str,
     host_binary: hosts.HostBinary, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
     canary = "kx" + os.urandom(10).hex()
     roots.plant_personal_canary_file("host-probe.txt", canary)
-    _run(guildhall, "hooks", "install", host, "--json",
+    _run(kinbase, "hooks", "install", host, "--json",
          cwd=world.repo.path)
 
     session = ids.token("native-events")
@@ -243,7 +243,7 @@ def test_native_host_events_prime_capture_and_exclude_personal(
     for event in NATIVE_EVENTS:
         envelope = hosts.envelope_for(host, event, session_id=session,
                                       cwd=str(world.repo.path))
-        result = _run(guildhall, "hooks", "dispatch", host, event, "--json",
+        result = _run(kinbase, "hooks", "dispatch", host, event, "--json",
                       cwd=world.repo.path, stdin=json.dumps(envelope))
         dispatched[event] = _json(result)
 
@@ -283,12 +283,12 @@ def test_native_host_events_prime_capture_and_exclude_personal(
            "For matched conversations, canonical facts/projections/receipts match across hosts."),
 )
 def test_matched_conversations_produce_identical_canonical_payloads(
-    guildhall: Guildhall, roots: ProofRoots, anchored, ids: OpaqueIds
+    kinbase: Kinbase, roots: ProofRoots, anchored, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
     observed: dict[str, dict] = {}
     for name in HOSTS:
-        variable = "GUILDHALL_HOST_" + name.upper()
+        variable = "KINBASE_HOST_" + name.upper()
         configured = prereq.env_var(
             variable, what=name + " host executable",
             why="parity ranges over both real hosts",
@@ -297,13 +297,13 @@ def test_matched_conversations_produce_identical_canonical_payloads(
                                      why="parity ranges over both real hosts")
         bin_dir = roots.run_root / "hostbin" / name
         hosts.install_invocation_recorder(bin_dir, name, resolved)
-        guildhall.path_prefix.insert(0, bin_dir)
-        _run(guildhall, "hooks", "install", name, "--json",
+        kinbase.path_prefix.insert(0, bin_dir)
+        _run(kinbase, "hooks", "install", name, "--json",
              cwd=world.repo.path)
         session = ids.token("parity-" + name)
         envelope = hosts.envelope_for(name, "SessionStart", session_id=session,
                                       cwd=str(world.repo.path))
-        observed[name] = _json(_run(guildhall, "hooks", "dispatch", name,
+        observed[name] = _json(_run(kinbase, "hooks", "dispatch", name,
                                     "SessionStart", "--json", cwd=world.repo.path,
                                     stdin=json.dumps(envelope)))
     first, second = (observed[h] for h in HOSTS)
@@ -321,10 +321,10 @@ def test_matched_conversations_produce_identical_canonical_payloads(
     )
 
 
-def _construct_state(guildhall: Guildhall, roots: ProofRoots, world, state: str) -> bool:
+def _construct_state(kinbase: Kinbase, roots: ProofRoots, world, state: str) -> bool:
     """Really move the store into the named SessionStart state."""
     if state == "warm":
-        _run(guildhall, "fsck", "--repo", str(world.repo.path), "--json",
+        _run(kinbase, "fsck", "--repo", str(world.repo.path), "--json",
              cwd=world.repo.path)
         return True
     if state == "cold":
@@ -352,15 +352,15 @@ def _construct_state(guildhall: Guildhall, roots: ProofRoots, world, state: str)
 )
 @pytest.mark.slow
 def test_session_start_p95_under_two_seconds_in_every_state(
-    guildhall: Guildhall, roots: ProofRoots, anchored, host: str,
+    kinbase: Kinbase, roots: ProofRoots, anchored, host: str,
     host_binary: hosts.HostBinary, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
-    _run(guildhall, "hooks", "install", host, "--json",
+    _run(kinbase, "hooks", "install", host, "--json",
          cwd=world.repo.path)
     measured = []
     for state in START_STATES:
-        constructed = _construct_state(guildhall, roots, world, state)
+        constructed = _construct_state(kinbase, roots, world, state)
         durations: list[float] = []
         refusals = 0
         for index in range(hosts.INVOCATIONS_PER_HOST_STATE):
@@ -368,7 +368,7 @@ def test_session_start_p95_under_two_seconds_in_every_state(
                 host, "SessionStart", session_id=ids.token(state + str(index)),
                 cwd=str(world.repo.path),
             )
-            result = guildhall.run("hooks", "dispatch", host, "SessionStart",
+            result = kinbase.run("hooks", "dispatch", host, "SessionStart",
                                    "--json", cwd=world.repo.path,
                                    stdin=json.dumps(envelope), check=False)
             durations.append(result.duration_s)
@@ -415,11 +415,11 @@ def _filesystem_of(path: Path) -> str:
            "while affected facts are withheld and loudly degraded."),
 )
 def test_blackholed_company_endpoint_degrades_loudly_inside_the_budget(
-    guildhall: Guildhall, roots: ProofRoots, anchored, host: str,
+    kinbase: Kinbase, roots: ProofRoots, anchored, host: str,
     host_binary: hosts.HostBinary, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
-    _run(guildhall, "hooks", "install", host, "--json",
+    _run(kinbase, "hooks", "install", host, "--json",
          cwd=world.repo.path)
     trust.remove_cache(roots)
     payloads: list[dict] = []
@@ -434,7 +434,7 @@ def test_blackholed_company_endpoint_degrades_loudly_inside_the_budget(
                 cwd=str(world.repo.path),
             )
             started = time.monotonic()
-            result = guildhall.run("hooks", "dispatch", host, "SessionStart",
+            result = kinbase.run("hooks", "dispatch", host, "SessionStart",
                                    "--json", cwd=world.repo.path,
                                    stdin=json.dumps(envelope), check=False)
             durations.append(time.monotonic() - started)
@@ -473,7 +473,7 @@ def test_blackholed_company_endpoint_degrades_loudly_inside_the_budget(
            "Launch inside a normal clone, linked worktree, submodule, and nested repository:"),
 )
 def test_worktrees_share_uuid_while_nested_roots_require_their_own_certificate(
-    guildhall: Guildhall, roots: ProofRoots, anchored, ids: OpaqueIds, tmp_path: Path
+    kinbase: Kinbase, roots: ProofRoots, anchored, ids: OpaqueIds, tmp_path: Path
 ) -> None:
     world, anchors = anchored
     clone = world.repo.clone(tmp_path / ids.token("clone"))
@@ -492,7 +492,7 @@ def test_worktrees_share_uuid_while_nested_roots_require_their_own_certificate(
     for name, path in (("clone", clone.path), ("linked_worktree", worktree.path),
                        ("submodule", world.repo.path / "vendor" / "child"),
                        ("nested", nested.path)):
-        observed[name] = _json(_run(guildhall, "status", "--repo", str(path),
+        observed[name] = _json(_run(kinbase, "status", "--repo", str(path),
                                     "--json", cwd=path))
     superproject_statements = {
         str(field(f, "statement")) for f in rows(observed["clone"], "facts")
@@ -528,11 +528,11 @@ def test_worktrees_share_uuid_while_nested_roots_require_their_own_certificate(
 )
 @pytest.mark.slow
 def test_twenty_session_soak_warm_path_and_fsck_incidence(
-    guildhall: Guildhall, roots: ProofRoots, anchored, host: str,
+    kinbase: Kinbase, roots: ProofRoots, anchored, host: str,
     host_binary: hosts.HostBinary, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
-    _run(guildhall, "hooks", "install", host, "--json",
+    _run(kinbase, "hooks", "install", host, "--json",
          cwd=world.repo.path)
     build = scale.build_event_corpus(
         world.repo.path, world.maintainer, hosts.SHARED_EVENT_CEILING,
@@ -551,7 +551,7 @@ def test_twenty_session_soak_warm_path_and_fsck_incidence(
             host, "SessionStart", session_id=ids.token("soak" + str(index)),
             cwd=str(world.repo.path),
         )
-        result = guildhall.run("hooks", "dispatch", host, "SessionStart", "--json",
+        result = kinbase.run("hooks", "dispatch", host, "SessionStart", "--json",
                                cwd=world.repo.path, stdin=json.dumps(envelope),
                                check=False)
         payload = result.json if isinstance(result.json, dict) else {}

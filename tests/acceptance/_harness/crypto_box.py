@@ -69,8 +69,8 @@ def chacha20(key: bytes, nonce: bytes, data: bytes, counter: int = 1) -> bytes:
 
 
 def _subkeys(key: bytes) -> tuple[bytes, bytes]:
-    enc = hashlib.sha256(b"guildhall-acceptance-vault/enc\x00" + key).digest()
-    mac = hashlib.sha256(b"guildhall-acceptance-vault/mac\x00" + key).digest()
+    enc = hashlib.sha256(b"kinbase-acceptance-vault/enc\x00" + key).digest()
+    mac = hashlib.sha256(b"kinbase-acceptance-vault/mac\x00" + key).digest()
     return enc, mac
 
 
@@ -81,7 +81,7 @@ def seal(key: bytes, plaintext: bytes, associated: bytes = b"") -> bytes:
     ciphertext = chacha20(enc_key, nonce, plaintext)
     tag = hmac.new(
         mac_key,
-        b"guildhall-acceptance-vault/1"
+        b"kinbase-acceptance-vault/1"
         + struct.pack("<Q", len(associated))
         + associated
         + nonce
@@ -98,7 +98,7 @@ def unseal(key: bytes, blob: bytes, associated: bytes = b"") -> bytes:
     nonce, ciphertext, tag = blob[:12], blob[12:-32], blob[-32:]
     expected = hmac.new(
         mac_key,
-        b"guildhall-acceptance-vault/1"
+        b"kinbase-acceptance-vault/1"
         + struct.pack("<Q", len(associated))
         + associated
         + nonce

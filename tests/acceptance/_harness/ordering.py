@@ -105,10 +105,10 @@ BUILDER_FORBIDDEN_INPUTS: tuple[str, ...] = (
 
 #: Knowledge the Oracle Curator must not have.
 #: ``spec/product.md`` P-10: "The Oracle Curator receives a date-bounded census of
-#: every merged change in the two declared repositories and no Guildhall schema,
+#: every merged change in the two declared repositories and no Kinbase schema,
 #: retrieval design, candidate, or arm output."
 CURATOR_FORBIDDEN_INPUTS: tuple[str, ...] = (
-    "guildhall_schema",
+    "kinbase_schema",
     "retrieval_design",
     "candidates",
     "arm_outputs",

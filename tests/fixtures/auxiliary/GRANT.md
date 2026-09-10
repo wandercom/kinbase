@@ -22,13 +22,16 @@ I, Jeremy McEntire, of Wander, state that:
    transmission to the model provider named in the experiment manifest.
 
 5. I make this statement over the pool manifest digest
-   d6def61a0b7cefb103994a19487beba10b67a3bc31b992495a36adb8c2163036, and
+   5ba052b1c881b79707bc6e9769897f908a945d849a04c4052bd16e83bfb1e1b7, and
    understand that changing any candidate byte invalidates it. This digest is
    reproducible from the committed bytes by `acceptance._harness.auxsel`. It
-   supersedes the digest 1f3d9db708ffcfe4c37f299e2d699e2f402f5a2e8c2f88d137c8e5e547295eb3
-   recorded in my signature of 2026-09-09T20:42:31Z, which named no reproducible
-   preimage and which I re-attest over the digest above.
+   supersedes d6def61a0b7cefb103994a19487beba10b67a3bc31b992495a36adb8c2163036
+   (re-attested 2026-09-09T23:34:19Z), which named the same candidate bytes under
+   the project's former name; the rename to kinbase moved the digest's domain
+   separator, not the bytes I am granting rights in. It in turn superseded
+   1f3d9db708ffcfe4c37f299e2d699e2f402f5a2e8c2f88d137c8e5e547295eb3, which named
+   no reproducible preimage.
 
 Signed: Jeremy McEntire
 Name:   Jeremy McEntire
-Date:   2026-09-09T23:34:19Z
+Date:   2026-09-10T00:17:20Z

@@ -31,7 +31,7 @@ import pytest
 from ._harness import canaries, matrix as MX
 from ._harness import obligations as O
 from ._harness import prereq, scanners, trust
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.evidence_model import Origin, field, require_all
 from ._harness.requirements import (
     THREAT,
@@ -114,9 +114,9 @@ MATRIX_SEED = 20260907
 
 
 @pytest.fixture()
-def anchored(roots: ProofRoots, guildhall: Guildhall):
+def anchored(roots: ProofRoots, kinbase: Kinbase):
     world = SignedWorld.create(roots.repo_root)
-    anchors = trust.establish(guildhall, roots, world)
+    anchors = trust.establish(kinbase, roots, world)
     return world, anchors
 
 
@@ -146,7 +146,7 @@ def _sweep_one(surfaces: MX.SurfaceRoots, registry: dict[str, str],
     return len(scanners.sweep(detector, stream).findings)
 
 
-def _drive_action(guildhall: Guildhall, world, family: int) -> dict:
+def _drive_action(kinbase: Kinbase, world, family: int) -> dict:
     """Execute the family's real attack action through a ratified surface."""
     argv = ACTION_FAMILIES[family]
     payload = {
@@ -163,7 +163,7 @@ def _drive_action(guildhall: Guildhall, world, family: int) -> dict:
         17: ("--destination", "codebase:none", "--json"),
         19: ("--repo", str(world.repo.path), "--json"),
     }[family]
-    result = guildhall.run(*argv, *payload, cwd=world.repo.path, check=False)
+    result = kinbase.run(*argv, *payload, cwd=world.repo.path, check=False)
     body = result.json if isinstance(result.json, dict) else {}
     return {
         "argv": list(argv) + list(payload),
@@ -182,7 +182,7 @@ def _drive_action(guildhall: Guildhall, world, family: int) -> dict:
            "separately from semantic guesses."),
 )
 def test_every_frozen_attack_family_has_a_probe(
-    guildhall: Guildhall, roots: ProofRoots, anchored, vault: CanaryVault
+    kinbase: Kinbase, roots: ProofRoots, anchored, vault: CanaryVault
 ) -> None:
     """Nineteen families, each executed with its own control, decoy and blinding."""
     world, anchors = anchored
@@ -232,7 +232,7 @@ def test_every_frozen_attack_family_has_a_probe(
             "encoding": encoding,
         }
         if number in ACTION_FAMILIES:
-            row["action"] = _drive_action(guildhall, world, number)
+            row["action"] = _drive_action(kinbase, world, number)
         executed[number] = row
     vault.seal()
 

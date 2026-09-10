@@ -69,7 +69,7 @@ def build() -> dict:
             })
         rows.append(entry)
     return {
-        "schema": "guildhall-frozen-controls/1",
+        "schema": "kinbase-frozen-controls/1",
         "provenance": (
             "Derived once from the preregistered obligation catalog by "
             "tests/tools/freeze-controls.py and committed. The suite reads these "

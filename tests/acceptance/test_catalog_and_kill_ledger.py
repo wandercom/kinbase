@@ -394,10 +394,10 @@ def test_every_planter_mutates_raw_state_before_the_product_runs() -> None:
         "host.envelope": {"capture": {"session_start": True, "mid_session": True}},
     }
     inert: list[str] = []
-    previous = _os.environ.get("GUILDHALL_ACCEPT_MUTATION", "")
+    previous = _os.environ.get("KINBASE_ACCEPT_MUTATION", "")
     try:
         for planter in P.PLANTERS:
-            _os.environ["GUILDHALL_ACCEPT_MUTATION"] = planter.mutation_id
+            _os.environ["KINBASE_ACCEPT_MUTATION"] = planter.mutation_id
             P.reset()
             seed = seed_values[planter.point]
             result = P.mutate(planter.point, seed, personal_root="/personal",
@@ -407,9 +407,9 @@ def test_every_planter_mutates_raw_state_before_the_product_runs() -> None:
                 inert.append(f"{planter.mutation_id} at {planter.point}")
     finally:
         if previous:
-            _os.environ["GUILDHALL_ACCEPT_MUTATION"] = previous
+            _os.environ["KINBASE_ACCEPT_MUTATION"] = previous
         else:
-            _os.environ.pop("GUILDHALL_ACCEPT_MUTATION", None)
+            _os.environ.pop("KINBASE_ACCEPT_MUTATION", None)
         P.reset()
 
     assert not inert, (
@@ -430,17 +430,17 @@ def test_a_planter_that_never_reaches_its_seam_is_invalid_not_a_kill() -> None:
 
     from ._harness import planters as P
 
-    previous = _os.environ.get("GUILDHALL_ACCEPT_MUTATION", "")
-    _os.environ["GUILDHALL_ACCEPT_MUTATION"] = "v5.newest_wins"
+    previous = _os.environ.get("KINBASE_ACCEPT_MUTATION", "")
+    _os.environ["KINBASE_ACCEPT_MUTATION"] = "v5.newest_wins"
     P.reset()
     try:
         with pytest.raises(HarnessInvalid, match="never reached its seam"):
             P.require_applied()
     finally:
         if previous:
-            _os.environ["GUILDHALL_ACCEPT_MUTATION"] = previous
+            _os.environ["KINBASE_ACCEPT_MUTATION"] = previous
         else:
-            _os.environ.pop("GUILDHALL_ACCEPT_MUTATION", None)
+            _os.environ.pop("KINBASE_ACCEPT_MUTATION", None)
         P.reset()
 
 

@@ -25,7 +25,7 @@ import pytest
 
 from ._harness import obligations as O
 from ._harness import trust
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.evidence_model import (
     Origin,
     require_all,
@@ -55,7 +55,7 @@ AS_OF = "2026-03-05T00:00:00.000Z"
 AUTHORITY_CURSOR = "1500"
 
 
-def _world(roots: ProofRoots, guildhall: Guildhall) -> tuple[SignedWorld, trust.TrustAnchors]:
+def _world(roots: ProofRoots, kinbase: Kinbase) -> tuple[SignedWorld, trust.TrustAnchors]:
     """A certified world with every trust anchor in place (Validator ruling C3).
 
     The ``environment:prod-eu`` deploy owner is published through the registry
@@ -64,19 +64,19 @@ def _world(roots: ProofRoots, guildhall: Guildhall) -> tuple[SignedWorld, trust.
     """
     world = SignedWorld.create(roots.repo_root)
     anchors = trust.establish(
-        guildhall, roots, world, extra_authorities=temporal_extra_authorities(),
+        kinbase, roots, world, extra_authorities=temporal_extra_authorities(),
     )
     return world, anchors
 
 
-def _explain(guildhall: Guildhall, repo: Path, logical_key: str, decision: str) -> dict:
+def _explain(kinbase: Kinbase, repo: Path, logical_key: str, decision: str) -> dict:
     """Ask the product to explain one logical key.
 
     The invocation carries only the logical key, the decision text, the frozen
     ``as_of`` and the authority cursor. No case identity, expected state or
     scenario string is passed.
     """
-    result = guildhall.run(
+    result = kinbase.run(
         "explain", logical_key,
         "--repo", str(repo),
         "--decision", decision,
@@ -101,9 +101,9 @@ def _explain(guildhall: Guildhall, repo: Path, logical_key: str, decision: str) 
     return payload
 
 
-def _ingest_planted(guildhall: Guildhall, world: SignedWorld) -> None:
+def _ingest_planted(kinbase: Kinbase, world: SignedWorld) -> None:
     """Admit the planted events through the ordinary shipping surface."""
-    result = guildhall.run(
+    result = kinbase.run(
         "ingest", "kindex", str(world.repo.path / ".kin"),
         "--repo", str(world.repo.path), "--json",
         cwd=world.repo.path, check=False,
@@ -113,9 +113,9 @@ def _ingest_planted(guildhall: Guildhall, world: SignedWorld) -> None:
 
 
 @pytest.fixture()
-def planted_world(roots: ProofRoots, guildhall: Guildhall):
+def planted_world(roots: ProofRoots, kinbase: Kinbase):
     """All nine histories planted into one repository, verified before use."""
-    world, anchors = _world(roots, guildhall)
+    world, anchors = _world(roots, kinbase)
     per_case: dict[str, list[dict]] = {}
     for case in TEMPORAL_CASES:
         per_case[case.case_id] = plant_temporal_history(world, case)
@@ -125,7 +125,7 @@ def planted_world(roots: ProofRoots, guildhall: Guildhall):
         raise HarnessInvalid(
             f"temporal histories with fewer than two signed events: {incomplete}"
         )
-    _ingest_planted(guildhall, world)
+    _ingest_planted(kinbase, world)
     return world, per_case
 
 
@@ -173,7 +173,7 @@ def _list(payload: dict, *keys: str) -> list:
         "evidence that would change it.",
     ),
 )
-def test_frozen_temporal_case(guildhall: Guildhall, planted_world) -> None:
+def test_frozen_temporal_case(kinbase: Kinbase, planted_world) -> None:
     """All nine rows, decided from planted history, checked in one total pass.
 
     The obligation is quantified over every case; a single case that cannot be
@@ -183,7 +183,7 @@ def test_frozen_temporal_case(guildhall: Guildhall, planted_world) -> None:
     world, per_case = planted_world
     cases: list[dict] = []
     for case in TEMPORAL_CASES:
-        payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
+        payload = _explain(kinbase, world.repo.path, case.logical_key, case.decision)
         rendered = json.dumps(payload).lower()
         trace = payload.get("trace") or payload.get("reducer_trace")
         counterfactual = payload.get("evidence_that_would_change_the_result") or (
@@ -232,10 +232,10 @@ def test_frozen_temporal_case(guildhall: Guildhall, planted_world) -> None:
         "each fail.",
     ),
 )
-def test_newest_wins_is_not_the_rule(guildhall: Guildhall, planted_world) -> None:
+def test_newest_wins_is_not_the_rule(kinbase: Kinbase, planted_world) -> None:
     world, _ = planted_world
     case = TEMPORAL_CASES[0]
-    payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
+    payload = _explain(kinbase, world.repo.path, case.logical_key, case.decision)
     selection_reason = _text(payload, "selection_reason", "selected_by")
     negative = _list(payload, "negative_evidence", "rejected_events")
     O.check(
@@ -259,11 +259,11 @@ def test_newest_wins_is_not_the_rule(guildhall: Guildhall, planted_world) -> Non
     )
 )
 def test_rejected_pr_does_not_displace_current_adr(
-    guildhall: Guildhall, planted_world
+    kinbase: Kinbase, planted_world
 ) -> None:
     world, per_case = planted_world
     case = TEMPORAL_CASES[0]
-    payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
+    payload = _explain(kinbase, world.repo.path, case.logical_key, case.decision)
     rejected = _list(payload, "rejected_events", "negative_evidence")
     require_nonempty(
         rejected, obligation="V-5.rejected-pr",
@@ -297,11 +297,11 @@ def test_rejected_pr_does_not_displace_current_adr(
     ),
 )
 def test_copied_chorus_does_not_outweigh_one_independent_decision(
-    guildhall: Guildhall, planted_world
+    kinbase: Kinbase, planted_world
 ) -> None:
     world, per_case = planted_world
     case = TEMPORAL_CASES[1]
-    payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
+    payload = _explain(kinbase, world.repo.path, case.logical_key, case.decision)
     reason = _text(payload, "selection_reason")
     O.check(
         "V-5.independence",
@@ -327,11 +327,11 @@ def test_copied_chorus_does_not_outweigh_one_independent_decision(
     PRODUCT("V-5", "P-5", "Recency is evidence, never authority by itself."),
 )
 def test_scope_bounds_authority_rather_than_prestige(
-    guildhall: Guildhall, planted_world
+    kinbase: Kinbase, planted_world
 ) -> None:
     world, _ = planted_world
     case = TEMPORAL_CASES[5]
-    payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
+    payload = _explain(kinbase, world.repo.path, case.logical_key, case.decision)
     unknowns = payload.get("unknowns")
     O.check(
         "V-5.scope",
@@ -360,15 +360,15 @@ def test_scope_bounds_authority_rather_than_prestige(
     ),
 )
 def test_runtime_config_wins_diagnosis_without_acquiring_architecture_authority(
-    guildhall: Guildhall, planted_world
+    kinbase: Kinbase, planted_world
 ) -> None:
     world, _ = planted_world
     operational = _explain(
-        guildhall, world.repo.path, TEMPORAL_CASES[4].logical_key,
+        kinbase, world.repo.path, TEMPORAL_CASES[4].logical_key,
         TEMPORAL_CASES[4].decision,
     )
     architecture = _explain(
-        guildhall, world.repo.path, TEMPORAL_CASES[5].logical_key,
+        kinbase, world.repo.path, TEMPORAL_CASES[5].logical_key,
         TEMPORAL_CASES[5].decision,
     )
     rendered_ops = json.dumps(operational)
@@ -402,11 +402,11 @@ def test_runtime_config_wins_diagnosis_without_acquiring_architecture_authority(
     ),
 )
 def test_unregistered_environment_is_untrusted_with_a_steward_unknown(
-    guildhall: Guildhall, planted_world
+    kinbase: Kinbase, planted_world
 ) -> None:
     world, _ = planted_world
     case = TEMPORAL_CASES[8]
-    payload = _explain(guildhall, world.repo.path, case.logical_key, case.decision)
+    payload = _explain(kinbase, world.repo.path, case.logical_key, case.decision)
     unknowns = payload.get("unknowns")
     unknowns = unknowns if isinstance(unknowns, list) else []
     O.check(

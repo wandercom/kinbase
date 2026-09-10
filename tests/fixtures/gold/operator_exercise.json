@@ -172,7 +172,7 @@
  ],
  "provenance": "Deliberately constructed synthetic items authored by the Tester. No text derives from any real private conversation.",
  "routing_context": "Personal retains durable private conversational memory; Company retains organization-wide direction; Codebase retains repository-scoped knowledge; none retains nothing; transient remarks are not retained, and private identifying material must not enter Company or Codebase.",
- "schema": "guildhall-acceptance-operator-exercise/2",
+ "schema": "kinbase-acceptance-operator-exercise/2",
  "thresholds": {
   "accuracy_minimum": 0.95,
   "median_decision_seconds_maximum": 30.0

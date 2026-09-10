@@ -29,7 +29,7 @@ import pytest
 from ._harness import corpora, hosts, operator_exercise
 from ._harness import obligations as O
 from ._harness import prereq, synth, trust
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.evidence_model import Origin, field, require_nonempty, rows
 from ._harness.requirements import (
     HarnessInvalid,
@@ -45,7 +45,7 @@ pytestmark = [pytest.mark.v9, pytest.mark.requires_product]
 
 #: Where a completed blinded operator run records its decisions. Harness-only:
 #: it never reaches the product.
-OPERATOR_RESPONSES_ENV = "GUILDHALL_OPERATOR_RESPONSES"
+OPERATOR_RESPONSES_ENV = "KINBASE_OPERATOR_RESPONSES"
 
 #: The frozen fatigue ceilings.
 PROMPTS_PER_HOUR = hosts.PROMPTS_PER_SLIDING_HOUR
@@ -61,15 +61,15 @@ def ids() -> OpaqueIds:
 
 
 @pytest.fixture()
-def anchored(roots: ProofRoots, guildhall: Guildhall):
+def anchored(roots: ProofRoots, kinbase: Kinbase):
     world = SignedWorld.create(roots.repo_root)
-    anchors = trust.establish(guildhall, roots, world)
+    anchors = trust.establish(kinbase, roots, world)
     trust.classifier_pinned(anchors, what="V-9 candidate extraction")
     return world, anchors
 
 
-def _run(guildhall: Guildhall, *argv: str, cwd: Path, **kwargs):
-    result = guildhall.run(*argv, cwd=cwd, check=False, **kwargs)
+def _run(kinbase: Kinbase, *argv: str, cwd: Path, **kwargs):
+    result = kinbase.run(*argv, cwd=cwd, check=False, **kwargs)
     if result.returncode == 1:
         raise ProductFailure(
             "`" + " ".join(argv[:2]) + "` returned the reserved ambiguous exit 1"
@@ -82,10 +82,10 @@ def _json(result) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def _eligible_candidates(guildhall: Guildhall, world, ids: OpaqueIds,
+def _eligible_candidates(kinbase: Kinbase, world, ids: OpaqueIds,
                          count: int) -> tuple[str, list[dict]]:
     """Plant ``count`` genuinely distinct eligible candidates and list them."""
-    session = start_session(guildhall, world.repo.path)
+    session = start_session(kinbase, world.repo.path)
     corpus_id = ids.token("fatigue-corpus")
     corpus = world.repo.path.parent / (corpus_id + ".jsonl")
     corpus.parent.mkdir(parents=True, exist_ok=True)
@@ -100,9 +100,9 @@ def _eligible_candidates(guildhall: Guildhall, world, ids: OpaqueIds,
             "source_kind": "codex_jsonl",
         }))
     corpus.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    _run(guildhall, "session", "observe", session, "--event", str(corpus),
+    _run(kinbase, "session", "observe", session, "--event", str(corpus),
          "--json", cwd=world.repo.path)
-    listing = _json(_run(guildhall, "proposals", "list", "--session", session,
+    listing = _json(_run(kinbase, "proposals", "list", "--session", session,
                          "--json", cwd=world.repo.path))
     return session, rows(listing, "candidates")
 
@@ -113,10 +113,10 @@ def _eligible_candidates(guildhall: Guildhall, world, ids: OpaqueIds,
            "concurrent Codex/Claude sessions sharing one host instance."),
 )
 def test_four_total_per_hour_shared_across_destinations(
-    guildhall: Guildhall, anchored, ids: OpaqueIds
+    kinbase: Kinbase, anchored, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
-    session, candidates = _eligible_candidates(guildhall, world, ids, 8)
+    session, candidates = _eligible_candidates(kinbase, world, ids, 8)
     require_nonempty(
         candidates, obligation="V-9.prompt-budget",
         why="the flood needs real eligible candidates to render",
@@ -124,7 +124,7 @@ def test_four_total_per_hour_shared_across_destinations(
     )
     rendered = [c for c in candidates if field(c, "rendered") is True]
     suppressed = [c for c in candidates if field(c, "suppressed") is True]
-    status = _json(_run(guildhall, "doctor", "--repo", str(world.repo.path),
+    status = _json(_run(kinbase, "doctor", "--repo", str(world.repo.path),
                         "--json", cwd=world.repo.path))
     O.check(
         "V-9.prompt-budget",
@@ -149,31 +149,31 @@ def test_four_total_per_hour_shared_across_destinations(
         "is limited to once per hour, and records its closed reason code."),
 )
 def test_reset_clears_only_the_consecutive_counter_once_per_hour(
-    guildhall: Guildhall, anchored, ids: OpaqueIds
+    kinbase: Kinbase, anchored, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
-    session, candidates = _eligible_candidates(guildhall, world, ids, 6)
+    session, candidates = _eligible_candidates(kinbase, world, ids, 6)
     primary = {"event_id": ids.token("primary")}
     event = world.repo.path.parent / (ids.token("primary-transcript") + ".jsonl")
     event.write_text(json.dumps({"id": primary["event_id"], "role": "user",
                                 "text": "Start a new primary task: inspect scheduler compatibility.",
                                 "source_kind": "codex_jsonl",
                                 "observed_at": synth.receipt_stamp()}) + "\n")
-    _run(guildhall, "session", "observe", session, "--event", str(event),
+    _run(kinbase, "session", "observe", session, "--event", str(event),
          "--json", cwd=world.repo.path)
-    first = _run(guildhall, "proposals", "reset",
+    first = _run(kinbase, "proposals", "reset",
                  "--after-primary-event", primary["event_id"],
                  "--reason-code", "new-primary-task", "--json",
                  cwd=world.repo.path)
-    second = _run(guildhall, "proposals", "reset",
+    second = _run(kinbase, "proposals", "reset",
                   "--after-primary-event", primary["event_id"],
                   "--reason-code", "new-primary-task", "--json",
                   cwd=world.repo.path)
-    free_text = _run(guildhall, "proposals", "reset",
+    free_text = _run(kinbase, "proposals", "reset",
                      "--after-primary-event", primary["event_id"],
                      "--reason-code", "the operator felt like it", "--json",
                      cwd=world.repo.path)
-    status = _json(_run(guildhall, "doctor", "--repo", str(world.repo.path),
+    status = _json(_run(kinbase, "doctor", "--repo", str(world.repo.path),
                         "--json", cwd=world.repo.path))
     O.check(
         "V-9.reset",
@@ -195,10 +195,10 @@ def test_reset_clears_only_the_consecutive_counter_once_per_hour(
            "count must commit in one `BEGIN IMMEDIATE`"),
 )
 def test_reissue_and_reservation_commit_in_one_immediate_transaction(
-    guildhall: Guildhall, anchored, ids: OpaqueIds
+    kinbase: Kinbase, anchored, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
-    session, candidates = _eligible_candidates(guildhall, world, ids, 4)
+    session, candidates = _eligible_candidates(kinbase, world, ids, 4)
     require_nonempty(
         candidates, obligation="V-9.reissue-atomicity",
         why="reissue needs a real candidate whose bytes can change",
@@ -210,8 +210,8 @@ def test_reissue_and_reservation_commit_in_one_immediate_transaction(
         logical_key="architecture/scheduler/reissue",
         statement="the rendered bytes changed materially",
     )
-    first = _decide_reissue(guildhall, world, identifier)
-    second = _decide_reissue(guildhall, world, identifier)
+    first = _decide_reissue(kinbase, world, identifier)
+    second = _decide_reissue(kinbase, world, identifier)
 
     # Untrusted churn: a branch nobody merged must not make bytes "change".
     world.repo.branch("churn/" + ids.token("churn"))
@@ -219,8 +219,8 @@ def test_reissue_and_reservation_commit_in_one_immediate_transaction(
     world.repo.write("docs/churn.md", "unmerged churn\n")
     world.repo.commit("record unmerged churn")
     world.repo.checkout(world.repo.default_branch)
-    churned = _decide_reissue(guildhall, world, identifier)
-    status = _json(_run(guildhall, "doctor", "--repo", str(world.repo.path),
+    churned = _decide_reissue(kinbase, world, identifier)
+    status = _json(_run(kinbase, "doctor", "--repo", str(world.repo.path),
                         "--json", cwd=world.repo.path))
     issued = [r for r in (first, second) if r["issued"]]
     O.check(
@@ -239,8 +239,8 @@ def test_reissue_and_reservation_commit_in_one_immediate_transaction(
     )
 
 
-def _decide_reissue(guildhall: Guildhall, world, identifier: str) -> dict:
-    result = _run(guildhall, "proposals", "reissue", identifier, "--json",
+def _decide_reissue(kinbase: Kinbase, world, identifier: str) -> dict:
+    result = _run(kinbase, "proposals", "reissue", identifier, "--json",
                   cwd=world.repo.path)
     payload = _json(result)
     return {
@@ -256,10 +256,10 @@ def _decide_reissue(guildhall: Guildhall, world, identifier: str) -> dict:
            "slot check and render."),
 )
 def test_interleaved_sessions_never_exceed_four_prompts_per_window(
-    guildhall: Guildhall, anchored, ids: OpaqueIds
+    kinbase: Kinbase, anchored, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
-    session, candidates = _eligible_candidates(guildhall, world, ids, 8)
+    session, candidates = _eligible_candidates(kinbase, world, ids, 8)
     require_nonempty(
         candidates, obligation="V-9.interleave",
         why="interleaving needs real candidates to contend for slots",
@@ -271,7 +271,7 @@ def test_interleaved_sessions_never_exceed_four_prompts_per_window(
             name, "UserPromptSubmit", session_id=ids.token("interleave-" + name),
             cwd=str(world.repo.path),
         )
-        process = guildhall.popen("hooks", "dispatch", name, "UserPromptSubmit",
+        process = kinbase.popen("hooks", "dispatch", name, "UserPromptSubmit",
                                   "--json", cwd=world.repo.path,
                                   stdin=subprocess.PIPE)
         processes.append((name, process, envelope))
@@ -289,7 +289,7 @@ def test_interleaved_sessions_never_exceed_four_prompts_per_window(
         outcomes.append({"host": name, "exit": process.returncode})
     overlap = time.monotonic() - started
 
-    crashed = guildhall.popen("proposals", "reissue",
+    crashed = kinbase.popen("proposals", "reissue",
                               str(field(candidates[0], "candidate_id")), "--json",
                               cwd=world.repo.path)
     time.sleep(0.05)
@@ -300,9 +300,9 @@ def test_interleaved_sessions_never_exceed_four_prompts_per_window(
                  crashed_exit=crashed.returncode)
     witness.require("both host sessions must actually have run concurrently")
 
-    status = _json(_run(guildhall, "doctor", "--repo", str(world.repo.path),
+    status = _json(_run(kinbase, "doctor", "--repo", str(world.repo.path),
                         "--json", cwd=world.repo.path))
-    listing = _json(_run(guildhall, "proposals", "list", "--session", session,
+    listing = _json(_run(kinbase, "proposals", "list", "--session", session,
                          "--json", cwd=world.repo.path))
     rendered = [c for c in rows(listing, "candidates")
                 if field(c, "rendered") is True]
@@ -434,7 +434,7 @@ def _epoch(stamp: str) -> float:
 )
 @pytest.mark.slow
 def test_corpus_growth_adequacy_under_the_fatigue_ceiling(
-    guildhall: Guildhall, roots: ProofRoots, anchored, ids: OpaqueIds
+    kinbase: Kinbase, roots: ProofRoots, anchored, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
     workload = corpora.load_gold("maintenance_workload.json")
@@ -459,13 +459,13 @@ def test_corpus_growth_adequacy_under_the_fatigue_ceiling(
         lines = bound.path.read_text(encoding="utf-8").splitlines()
         chunk = lines[window * per_window:(window + 1) * per_window]
         slice_path.write_text("\n".join(chunk) + "\n", encoding="utf-8")
-        session = start_session(guildhall, world.repo.path)
-        _run(guildhall, "session", "observe", session, "--event", str(slice_path),
+        session = start_session(kinbase, world.repo.path)
+        _run(kinbase, "session", "observe", session, "--event", str(slice_path),
              "--json", cwd=world.repo.path,
-             env=guildhall.base_env({
-                 "GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": str(window * 3600),
+             env=kinbase.base_env({
+                 "KINBASE_PROOF_CLOCK_OFFSET_SECONDS": str(window * 3600),
              }))
-        listing = _json(_run(guildhall, "proposals", "list", "--session", session,
+        listing = _json(_run(kinbase, "proposals", "list", "--session", session,
                              "--json", cwd=world.repo.path))
         candidates = rows(listing, "candidates")
         prompts = [c for c in candidates if field(c, "rendered") is True]
@@ -480,7 +480,7 @@ def test_corpus_growth_adequacy_under_the_fatigue_ceiling(
             "arrivals": len(chunk),
             "prompts": len(prompts),
         })
-    ordering = _json(_run(guildhall, "doctor", "--repo", str(world.repo.path),
+    ordering = _json(_run(kinbase, "doctor", "--repo", str(world.repo.path),
                           "--json", cwd=world.repo.path))
     O.check(
         "V-9.adequacy",

@@ -51,7 +51,7 @@ def validate(exercise):
             raise HarnessInvalid("operator exercise: " + message)
 
     items = exercise.get("items", [])
-    require(exercise.get("schema") == "guildhall-acceptance-operator-exercise/2",
+    require(exercise.get("schema") == "kinbase-acceptance-operator-exercise/2",
             "schema must define routing-action decisions")
     require(exercise.get("blinded") is True, "must remain blinded")
     require(exercise.get("item_count") == len(items) == 20, "must contain exactly 20 items")

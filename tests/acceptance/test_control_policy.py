@@ -98,7 +98,7 @@ def _env_names_passed_to_product() -> dict[str, list[str]]:
                     and value.args
                     and isinstance(value.args[0], ast.Dict)
                 ):
-                    # `guildhall.base_env({...})` is the driver's own allowlisted
+                    # `kinbase.base_env({...})` is the driver's own allowlisted
                     # constructor; the literal overrides are the test-supplied
                     # controls and are exactly what must be inspected.
                     keyword = ast.keyword(arg=keyword.arg, value=value.args[0])
@@ -143,7 +143,7 @@ SEMANTIC_TOKENS: tuple[str, ...] = (
 def _product_readable_string_literals() -> list[tuple[str, int, str]]:
     """String literals that flow into argv, cwd, stdin or a committed path.
 
-    Any literal passed positionally to a ``guildhall.run``/``popen`` call, used
+    Any literal passed positionally to a ``kinbase.run``/``popen`` call, used
     as a commit message, or written into a repository path is readable by the
     product. The scan is deliberately broad: a literal that never reaches the
     product costs nothing to rename, while one that does is a leak.
@@ -208,7 +208,7 @@ def test_no_semantic_control_reaches_the_product() -> None:
     )
 )
 def test_no_acceptance_prefixed_name_survives_anywhere_in_test_bodies() -> None:
-    """The ``GUILDHALL_ACCEPTANCE_`` prefix itself is forbidden.
+    """The ``KINBASE_ACCEPTANCE_`` prefix itself is forbidden.
 
     Its mere presence disclosed acceptance-run identity to the product, which
     let an implementation branch on being under test even when the value carried
@@ -219,7 +219,7 @@ def test_no_acceptance_prefixed_name_survives_anywhere_in_test_bodies() -> None:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                if "GUILDHALL_ACCEPTANCE_" in node.value:
+                if "KINBASE_ACCEPTANCE_" in node.value:
                     offenders.append(f"{path.name}:{node.lineno} {node.value[:60]!r}")
     assert not offenders, (
         "acceptance-run identity must not be disclosed to the product:\n  "

@@ -29256,5 +29256,5 @@
     }
   ],
   "provenance": "Derived once from the preregistered obligation catalog by tests/tools/freeze-controls.py and committed. The suite reads these bytes and never regenerates them, so a later clause change cannot move its own controls.",
-  "schema": "guildhall-frozen-controls/1"
+  "schema": "kinbase-frozen-controls/1"
 }

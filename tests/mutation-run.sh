@@ -28,14 +28,14 @@ if [ -z "$PYTHON" ]; then
     PYTHON="python3"
   fi
 fi
-REAL="${GUILDHALL_BIN:-$(command -v guildhall || true)}"
+REAL="${KINBASE_BIN:-$(command -v kinbase || true)}"
 if [ -z "$REAL" ]; then
-  echo "mutation-run: no product entry point; set GUILDHALL_BIN" >&2
+  echo "mutation-run: no product entry point; set KINBASE_BIN" >&2
   echo "mutation-run: INVALID_HARNESS -- a mutation run without a product" >&2
   echo "              tests nothing; it is not a kill and not a pass." >&2
   exit 70
 fi
-LEDGER="${GUILDHALL_KILL_LEDGER:-$HERE/_artifacts/product-kill-ledger.json}"
+LEDGER="${KINBASE_KILL_LEDGER:-$HERE/_artifacts/product-kill-ledger.json}"
 mkdir -p "$(dirname "$LEDGER")"
 exec "$PYTHON" - "$REAL" "$LEDGER" "${1:-}" <<'PYEOF'
 import hashlib, json, os, pathlib, subprocess, sys, tempfile
@@ -67,9 +67,9 @@ for planter in PLANTERS:
         tmpdir = pathlib.Path(tmp)
         census_path = tmpdir / "census.json"
         env = dict(os.environ)
-        env["GUILDHALL_BIN"] = real
-        env["GUILDHALL_ACCEPT_MUTATION"] = planter.mutation_id
-        env["GUILDHALL_ACCEPT_GATE_VECTOR"] = str(census_path)
+        env["KINBASE_BIN"] = real
+        env["KINBASE_ACCEPT_MUTATION"] = planter.mutation_id
+        env["KINBASE_ACCEPT_GATE_VECTOR"] = str(census_path)
         nodes = [f"acceptance/{n}" for n in planter.must_fail_nodes]
         proc = subprocess.run(
             [sys.executable, "-m", "pytest", "-c", "pytest.ini",
@@ -138,7 +138,7 @@ for planter in PLANTERS:
 
 not_killed = [r for r in rows if r["result"] != KILLED]
 payload = {
-    "schema": "guildhall-acceptance-product-kill-ledger/3",
+    "schema": "kinbase-acceptance-product-kill-ledger/3",
     "accounting": ("pre-execution planters; per-node call-phase outcomes in the "
                    "planter's declared channel; a batch exit code is never a kill"),
     "total": not only, "planters_run": len(rows),

@@ -16,7 +16,7 @@ mutations:
     self-test while causing the gate to reject the instrument.
 
 Detector mutations are therefore first-class here and are selected through the
-``GUILDHALL_ACCEPT_DETECTOR_MUTATION`` environment variable, which the mutation
+``KINBASE_ACCEPT_DETECTOR_MUTATION`` environment variable, which the mutation
 runner sets. A mutated detector must (a) miss its planted positive control and
 (b) make the gate report ``INVALID_HARNESS``.
 """
@@ -35,7 +35,7 @@ from typing import Iterable, Mapping, Sequence
 
 from .requirements import HarnessInvalid
 
-DETECTOR_MUTATION_ENV = "GUILDHALL_ACCEPT_DETECTOR_MUTATION"
+DETECTOR_MUTATION_ENV = "KINBASE_ACCEPT_DETECTOR_MUTATION"
 
 #: Frozen detector-mutation catalog. Each entry names the capability removed.
 DETECTOR_MUTATIONS: dict[str, str] = {

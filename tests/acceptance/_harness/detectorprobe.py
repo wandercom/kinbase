@@ -265,7 +265,7 @@ def unsound(results: tuple[ProbeResult, ...]) -> tuple[str, ...]:
 
 def as_json(results: tuple[ProbeResult, ...]) -> dict:
     return {
-        "schema": "guildhall-detector-mutation-probes/1",
+        "schema": "kinbase-detector-mutation-probes/1",
         "declared": sorted(DETECTOR_MUTATIONS),
         "probed": [r.as_json() for r in results],
         "unsound": list(unsound(results)),

@@ -155,7 +155,7 @@ def test_host_recorder_precedes_even_an_explicit_path(roots, monkeypatch):
     wrapper = hosts.install_invocation_recorder(directory, "codex", Path("/bin/echo"))
     assert wrapper == directory / "codex"
     assert os.access(wrapper, os.X_OK)
-    driver = cli.Guildhall(home=roots.home, xdg_config_home=roots.xdg_config_home,
+    driver = cli.Kinbase(home=roots.home, xdg_config_home=roots.xdg_config_home,
                           cwd=roots.repo_root, path_prefix=[directory])
     env = driver.base_env({"PATH": "/usr/bin:/bin"})
     assert env["PATH"].split(os.pathsep)[0] == str(directory)
@@ -251,8 +251,8 @@ def test_dispatch008_classifier_config_pins_product_and_uses_ruling_fields(roots
     import hashlib
     import tomllib
     from ._harness import trust
-    monkeypatch.delenv("GUILDHALL_CLASSIFIER_MODEL", raising=False)
-    executable = tmp_path / "guildhall-fixture"
+    monkeypatch.delenv("KINBASE_CLASSIFIER_MODEL", raising=False)
+    executable = tmp_path / "kinbase-fixture"
     executable.write_text("#!/bin/sh\nexit 99\n")
     executable.chmod(0o700)
     driver = SimpleNamespace(entrypoint=(str(executable),))
@@ -302,7 +302,7 @@ def test_dispatch008_receipt_clock_does_not_rewrite_historical_validity(monkeypa
     import datetime
     from ._harness import synth
     monkeypatch.setattr("time.time", lambda: 1800000000)
-    monkeypatch.setenv("GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS", "60")
+    monkeypatch.setenv("KINBASE_PROOF_CLOCK_OFFSET_SECONDS", "60")
     timestamp = datetime.datetime.fromisoformat(synth.receipt_stamp(-240).replace("Z", "+00:00"))
     assert timestamp.timestamp() == 1800000000 + 60 - 240
     event = synth.fact_event(store_kind="codebase", authority_id="a", authority_scope="codebase:r",
@@ -437,7 +437,7 @@ def test_dispatch009_latency_gates_read_numeric_percentiles(roots, monkeypatch, 
 @spec_ref(VERIFY("INSTRUMENT", "positive-controls", "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS."))
 def test_dispatch009_claim_rejects_bad_strings_and_quotes_observation(roots):
     from . import test_v3_privacy as privacy
-    valid = privacy.V3_CLAIM_FRAGMENT + " guildhall-atm/1"
+    valid = privacy.V3_CLAIM_FRAGMENT + " kinbase-atm/1"
     manifest = SimpleNamespace(artifact_digests={"spec/threat-model.md": "a" * 64})
 
     class Driver:
@@ -479,7 +479,7 @@ def test_dispatch009_restart_diagnostic_failure_quotes_product_output(roots, mon
                                    stdout='{"ok":true}\n', stderr="")
 
     driver = Driver()
-    monkeypatch.setattr(nf, "Guildhall", lambda **kwargs: driver)
+    monkeypatch.setattr(nf, "Kinbase", lambda **kwargs: driver)
     with pytest.raises(ProductFailure) as failure:
         nf.test_diagnostics_are_executable_and_useful_after_restart(
             driver, roots, (world, None))
@@ -556,7 +556,7 @@ def test_dispatch010_control_removal_restores_native_bytes_and_keeps_detector_ar
     repo = GitRepo.init(surfaces.repo)
     repo.write("baseline.md", "baseline must survive\n")
     head = repo.commit("baseline")
-    log = surfaces.state / "guildhall.log"
+    log = surfaces.state / "kinbase.log"
     log.write_text("original log\n")
     planted = MX.Matrix.plant(surfaces, seed=20260907)
     receipts = planted.receipts(planted.detector())
@@ -660,20 +660,20 @@ def test_dispatch010_classifier_override_is_config_only(roots, tmp_path, monkeyp
     executable.write_text("#!/bin/sh\nexit 99\n")
     executable.chmod(0o700)
     monkeypatch.setattr(cli, "_resolve_entrypoint", lambda: (str(executable),))
-    driver = cli.Guildhall(home=roots.home, xdg_config_home=roots.xdg_config_home, cwd=roots.repo_root)
-    monkeypatch.setenv("GUILDHALL_CLASSIFIER_MODEL", "ollama:glm-5.3:cloud")
+    driver = cli.Kinbase(home=roots.home, xdg_config_home=roots.xdg_config_home, cwd=roots.repo_root)
+    monkeypatch.setenv("KINBASE_CLASSIFIER_MODEL", "ollama:glm-5.3:cloud")
     for default in (None, "ollama:qwen2.5:7b"):
         pin = trust.resolve_classifier(roots, driver, model=default)
         config, _ = trust.write_user_config(roots, company_url="http://127.0.0.1:1",
                                           facts_token="fixture-token", root_key=tmp_path / "root.pub",
                                           classifier=pin)
         assert tomllib.loads(config.read_text())["classifier"]["model"] == "ollama:glm-5.3:cloud"
-        assert "GUILDHALL_CLASSIFIER_MODEL" not in driver.base_env()
-    assert "GUILDHALL_CLASSIFIER_MODEL" in HARNESS_ONLY
-    monkeypatch.setenv("GUILDHALL_CLASSIFIER_MODEL", "")
+        assert "KINBASE_CLASSIFIER_MODEL" not in driver.base_env()
+    assert "KINBASE_CLASSIFIER_MODEL" in HARNESS_ONLY
+    monkeypatch.setenv("KINBASE_CLASSIFIER_MODEL", "")
     with pytest.raises(HarnessInvalid, match="live model"):
         trust.resolve_classifier(roots, driver)
-    monkeypatch.delenv("GUILDHALL_CLASSIFIER_MODEL")
+    monkeypatch.delenv("KINBASE_CLASSIFIER_MODEL")
     assert trust.resolve_classifier(roots, driver).model is None
 
 
@@ -683,7 +683,7 @@ def test_dispatch010_popen_explicit_stdin_pipe_with_fixture_process(roots, monke
     import sys
     from ._harness import cli
     monkeypatch.setattr(cli, "_resolve_entrypoint", lambda: (sys.executable,))
-    driver = cli.Guildhall(home=roots.home, xdg_config_home=roots.xdg_config_home, cwd=roots.repo_root)
+    driver = cli.Kinbase(home=roots.home, xdg_config_home=roots.xdg_config_home, cwd=roots.repo_root)
     # A tester-owned Python echo process, never the product or a host executable.
     child = driver.popen("-c", "import sys; sys.stdout.buffer.write(sys.stdin.buffer.read())", stdin=subprocess.PIPE)
     stdout, stderr = child.communicate(b'{"fixture":"envelope"}', timeout=10)
@@ -776,7 +776,7 @@ def test_dispatch010_crash_gate_uses_five_fresh_worlds_and_checks_each_recovery(
     def driver(**kw):
         seen.append(kw["cwd"])
         return SimpleNamespace(**kw)
-    monkeypatch.setattr(gate, "Guildhall", driver)
+    monkeypatch.setattr(gate, "Kinbase", driver)
     monkeypatch.setattr(gate, "start_company", lambda driver, layout: SimpleNamespace(stop=lambda: stopped.append(layout.repo_root)))
     monkeypatch.setattr(gate.trust, "establish", lambda *a, **kw: SimpleNamespace(repository_uuid="fixture", company_endpoint=lambda *a: nullcontext()))
     monkeypatch.setattr(gate.trust, "classifier_pinned", lambda *a, **kw: None)
@@ -909,10 +909,10 @@ def test_dispatch011_retry_advances_clock_and_reuses_exact_approval(tmp_path):
     candidate = {"candidate_id": "local", "payload_digest": "a" * 64}
     driver = SimpleNamespace(run=lambda *argv, **kw: calls.append((argv, kw)))
     gate._decide(driver, tmp_path, candidate, "codebase:uuid",
-                 env={"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "960"})
+                 env={"KINBASE_PROOF_CLOCK_OFFSET_SECONDS": "960"})
     argv, kwargs = calls[0]
     assert argv[2] == "local" and argv[argv.index("--approve-digest") + 1] == "a" * 64
-    assert kwargs["env"]["GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS"] == "960"
+    assert kwargs["env"]["KINBASE_PROOF_CLOCK_OFFSET_SECONDS"] == "960"
 
 
 @spec_ref(_REMEDIATION_010)
@@ -1004,7 +1004,7 @@ def test_dispatch011_native_corpus_survives_without_lifecycle_teardown(tmp_path,
     assert set(result[3]) == set(gate.ADAPTERS)
     envelopes = list((ctx.sources / "tests").glob("*.json"))
     assert envelopes
-    assert all(json.loads(p.read_bytes())["schema"] == "guildhall-command-result/1" for p in envelopes)
+    assert all(json.loads(p.read_bytes())["schema"] == "kinbase-command-result/1" for p in envelopes)
     assert (world.repo.path / "src").is_dir()
     assert (ctx.sources / "answers").is_dir()
 
@@ -1043,7 +1043,7 @@ def test_dispatch012_late_test_result_preserves_earlier_receipt(tmp_path, monkey
     from datetime import datetime
     clock = [1790000000]
     monkeypatch.setattr(time, "time", lambda: clock[0])
-    monkeypatch.setenv("GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS", "60")
+    monkeypatch.setenv("KINBASE_PROOF_CLOCK_OFFSET_SECONDS", "60")
     ctx = L.LifecycleContext(None, tmp_path / "sources", tmp_path / "external")
     receipts = []
     for hour in range(1, 5):
@@ -1070,7 +1070,7 @@ def test_dispatch012_runtime_freshness_tracks_proof_clock(tmp_path, monkeypatch,
     import time
     from datetime import datetime
     monkeypatch.setattr(time, "time", lambda: now)
-    monkeypatch.setenv("GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS", str(offset))
+    monkeypatch.setenv("KINBASE_PROOF_CLOCK_OFFSET_SECONDS", str(offset))
     ctx = L.LifecycleContext(None, tmp_path / "sources", tmp_path / "external")
     for transition in (L._runtime_create, L._runtime_changed_value,
                        L._runtime_owner_change, L._runtime_late_arrival,

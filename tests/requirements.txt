@@ -1,4 +1,4 @@
-# Guildhall acceptance-instrument dependencies.
+# Kinbase acceptance-instrument dependencies.
 #
 # Lane rule (Tester dispatch): dependencies stay beneath tests/ so no shared
 # packaging file is edited. Install into tests/.venv via tests/run-acceptance.sh.

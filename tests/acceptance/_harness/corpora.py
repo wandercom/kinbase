@@ -222,7 +222,7 @@ def bind_operator_exercise(
     operator_exercise.validate(exercise)
     frozen = json.dumps(exercise, sort_keys=True, ensure_ascii=True,
                         separators=(",", ":"), allow_nan=False).encode("utf-8")
-    ids = OpaqueIds(hashlib.sha256(b"guildhall-operator-exercise/1\x00" + frozen).digest())
+    ids = OpaqueIds(hashlib.sha256(b"kinbase-operator-exercise/1\x00" + frozen).digest())
     records: list[dict] = []
     gold: dict[str, dict] = {}
     for item in exercise["items"]:

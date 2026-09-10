@@ -1090,5 +1090,5 @@
   }
  ],
  "purpose": "Deterministic reversible forms for the twelve frozen families.",
- "schema": "guildhall-acceptance-transformation-dictionary/1"
+ "schema": "kinbase-acceptance-transformation-dictionary/1"
 }

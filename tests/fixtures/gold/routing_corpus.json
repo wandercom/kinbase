@@ -7238,5 +7238,5 @@
  ],
  "mixed_message_count": 44,
  "provenance": "Deliberately constructed synthetic templates authored by the Tester for the acceptance instrument. No text derives from any real private conversation. spec/verification.md 'Evidence packet' requires committed V-2/V-3 fixtures to contain only generators, placeholder IDs, structural gold labels, and policies.",
- "schema": "guildhall-acceptance-routing-gold/1"
+ "schema": "kinbase-acceptance-routing-gold/1"
 }

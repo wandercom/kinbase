@@ -1,7 +1,7 @@
 # Dispatch 016 operator instrument audit (R-21)
 
 This is a newly authored, synthetic twenty-item routing-action exercise, schema
-`guildhall-acceptance-operator-exercise/2`, with ten approvals and ten rejections.
+`kinbase-acceptance-operator-exercise/2`, with ten approvals and ten rejections.
 The founder has not run this version. No human response file was read or used to
 construct, order, label, or tune it. `blinded: true`, accuracy >= 0.95, and median
 decision time <= 30 seconds remain frozen.
@@ -112,8 +112,8 @@ The requested three-file pytest selection produced **22 passed, 6 setup errors**
 all six errors are loopback `socket.bind` permission denials in `roots`, before
 product execution or operator response loading. The dispatch 015 and 016 selftest
 files alone produced **22 passed** (exit 0). Tests ran with
-`GUILDHALL_REVIEWER_MODE=1` to restrict authority reads to `spec/`, an explicitly
-nonexistent Tester-local `GUILDHALL_BIN` to prevent product discovery, and no
+`KINBASE_REVIEWER_MODE=1` to restrict authority reads to `spec/`, an explicitly
+nonexistent Tester-local `KINBASE_BIN` to prevent product discovery, and no
 operator-response environment value for the full selection. The full V-9
 selection is therefore not green in this sandbox. Synthetic scoring controls
 suppress census recording while retaining real obligation evaluation, so they

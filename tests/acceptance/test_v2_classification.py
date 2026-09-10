@@ -42,7 +42,7 @@ import pytest
 from ._harness import calibration, metrics
 from ._harness import obligations as O
 from ._harness import prereq, stats, trust
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.corpora import PRODUCT_VISIBLE_KEYS, bind_routing_corpus, load_gold
 from ._harness.evidence_model import (
     Origin,
@@ -107,9 +107,9 @@ def gold_corpus() -> dict:
 
 
 @pytest.fixture()
-def anchored(roots: ProofRoots, guildhall: Guildhall):
+def anchored(roots: ProofRoots, kinbase: Kinbase):
     world = SignedWorld.create(roots.repo_root)
-    anchors = trust.establish(guildhall, roots, world,
+    anchors = trust.establish(kinbase, roots, world,
                               classifier_model="ollama:qwen2.5:7b")
     trust.classifier_pinned(anchors, what="V-2 classification")
     return world, anchors
@@ -133,9 +133,9 @@ def held_out(roots: ProofRoots, gold_corpus: dict, vault: CanaryVault):
     return bind_routing_corpus(gold_corpus, values, destination)
 
 
-def _observe(guildhall: Guildhall, repo: Path, corpus: Path, session: str) -> dict:
+def _observe(kinbase: Kinbase, repo: Path, corpus: Path, session: str) -> dict:
     """Drive one classifier run over a bound corpus through the real surface."""
-    result = guildhall.run(
+    result = kinbase.run(
         "session", "observe", session, "--event", str(corpus), "--json",
         cwd=repo, check=False,
     )
@@ -145,12 +145,12 @@ def _observe(guildhall: Guildhall, repo: Path, corpus: Path, session: str) -> di
     if not isinstance(payload, dict):
         raise ProductFailure("`session observe --json` did not return an object")
     if result.returncode == 0:
-        trust.verify_classifier_spawn(guildhall, repo)
+        trust.verify_classifier_spawn(kinbase, repo)
     return payload
 
 
-def _proposals(guildhall: Guildhall, repo: Path, session: str) -> dict:
-    result = guildhall.run("proposals", "list", "--session", session, "--json",
+def _proposals(kinbase: Kinbase, repo: Path, session: str) -> dict:
+    result = kinbase.run("proposals", "list", "--session", session, "--json",
                            cwd=repo, check=False)
     if result.returncode == 1:
         raise ProductFailure("`proposals list` returned the reserved exit 1")
@@ -160,16 +160,16 @@ def _proposals(guildhall: Guildhall, repo: Path, session: str) -> dict:
     return payload
 
 
-def _run_pool(guildhall: Guildhall, repo: Path, corpus, *, runs: int,
+def _run_pool(kinbase: Kinbase, repo: Path, corpus, *, runs: int,
               label: str) -> tuple[list, list[dict]]:
     """Execute the preregistered runs and join each to Tester-held gold."""
     gold = metrics.parse_gold(corpus.gold)
     joins = []
     reported: list[dict] = []
     for index in range(runs):
-        session = start_session(guildhall, repo)
-        observed = _observe(guildhall, repo, corpus.path, session)
-        listing = _proposals(guildhall, repo, session)
+        session = start_session(kinbase, repo)
+        observed = _observe(kinbase, repo, corpus.path, session)
+        listing = _proposals(kinbase, repo, session)
         predictions = metrics.parse_predictions(field(listing, "predictions"))
         joins.append(metrics.joined(predictions, gold,
                                     name=label + "-run-" + str(index)))
@@ -205,8 +205,8 @@ def _fanout_pair(listing: dict, destination: str) -> tuple[dict, dict]:
     raise ProductFailure("V-2 fan-out requires independent Codebase and Company "
                          "candidates for the same source message")
 
-def _decide(guildhall: Guildhall, repo: Path, candidate: dict, destination: str, **kwargs):
-    return guildhall.run(
+def _decide(kinbase: Kinbase, repo: Path, candidate: dict, destination: str, **kwargs):
+    return kinbase.run(
         "proposals", "decide", str(field(candidate, "candidate_id")),
         "--destination", destination,
         "--approve-digest", str(field(candidate, "payload_digest")), "--json",
@@ -214,9 +214,9 @@ def _decide(guildhall: Guildhall, repo: Path, candidate: dict, destination: str,
     )
 
 
-def _decide_async(guildhall: Guildhall, repo: Path, candidate: dict,
+def _decide_async(kinbase: Kinbase, repo: Path, candidate: dict,
                   destination: str):
-    return guildhall.popen(
+    return kinbase.popen(
         "proposals", "decide", str(field(candidate, "candidate_id")),
         "--destination", destination,
         "--approve-digest", str(field(candidate, "payload_digest")), "--json",
@@ -307,10 +307,10 @@ def test_annotator_agreement_and_frozen_adjudication_digest(gold_corpus: dict) -
            "model/version/settings."),
 )
 def test_five_pinned_runs_lower_bound_meets_macro_f1_and_shared_precision(
-    guildhall: Guildhall, anchored, held_out
+    kinbase: Kinbase, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    joins, reported = _run_pool(guildhall, world.repo.path, held_out,
+    joins, reported = _run_pool(kinbase, world.repo.path, held_out,
                                 runs=RUN_COUNT, label="heldout")
     require_all(
         joins, lambda j: bool(j.tokens), obligation="V-2.pinned-runs",
@@ -341,7 +341,7 @@ def test_five_pinned_runs_lower_bound_meets_macro_f1_and_shared_precision(
            "five-run configuration."),
 )
 def test_excluded_calibration_corpus_gates_measurement(
-    guildhall: Guildhall, anchored, roots: ProofRoots
+    kinbase: Kinbase, anchored, roots: ProofRoots
 ) -> None:
     world, anchors = anchored
     manifest = calibration.load_manifest()
@@ -352,7 +352,7 @@ def test_excluded_calibration_corpus_gates_measurement(
         what="calibration corpus",
         why="V-2 requires a separate excluded 60-message calibration corpus",
     )
-    joins, _ = _run_pool(guildhall, world.repo.path, corpus,
+    joins, _ = _run_pool(kinbase, world.repo.path, corpus,
                          runs=RUN_COUNT, label="calibration")
     O.check(
         "V-2.calibration",
@@ -375,10 +375,10 @@ def test_excluded_calibration_corpus_gates_measurement(
            "One mixed message must yield independent Personal and Codebase candidates"),
 )
 def test_mixed_messages_atomise_rather_than_take_one_label(
-    guildhall: Guildhall, anchored, held_out
+    kinbase: Kinbase, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    joins, _ = _run_pool(guildhall, world.repo.path, held_out, runs=1,
+    joins, _ = _run_pool(kinbase, world.repo.path, held_out, runs=1,
                          label="atomisation")
     first = joins[0]
     detail = first.mixed_message_detail()
@@ -403,12 +403,12 @@ def test_mixed_messages_atomise_rather_than_take_one_label(
            "precision, private-to-shared detection, and calibration/abstention."),
 )
 def test_exact_match_atomization_and_per_label_metrics(
-    guildhall: Guildhall, anchored, held_out
+    kinbase: Kinbase, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = start_session(guildhall, world.repo.path)
-    _observe(guildhall, world.repo.path, held_out.path, session)
-    listing = _proposals(guildhall, world.repo.path, session)
+    session = start_session(kinbase, world.repo.path)
+    _observe(kinbase, world.repo.path, held_out.path, session)
+    listing = _proposals(kinbase, world.repo.path, session)
     predictions = metrics.parse_predictions(field(listing, "predictions"))
     join = metrics.joined(predictions, metrics.parse_gold(held_out.gold),
                           name="metrics")
@@ -433,12 +433,12 @@ def test_exact_match_atomization_and_per_label_metrics(
            "Mutations: whole-message single label; shared-by-default under low confidence;"),
 )
 def test_low_confidence_shared_label_demotes_to_none_or_unknown(
-    guildhall: Guildhall, anchored, held_out
+    kinbase: Kinbase, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = start_session(guildhall, world.repo.path)
-    _observe(guildhall, world.repo.path, held_out.path, session)
-    listing = _proposals(guildhall, world.repo.path, session)
+    session = start_session(kinbase, world.repo.path)
+    _observe(kinbase, world.repo.path, held_out.path, session)
+    listing = _proposals(kinbase, world.repo.path, session)
     low_atoms = [
         {"atom_id": field(atom, "atom_id"), "destination": field(atom, "destination")}
         for atom in rows(listing, "atoms")
@@ -460,12 +460,12 @@ def test_low_confidence_shared_label_demotes_to_none_or_unknown(
            "bytes."),
 )
 def test_independent_candidates_with_distinct_minimized_bytes(
-    guildhall: Guildhall, anchored, held_out
+    kinbase: Kinbase, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = start_session(guildhall, world.repo.path)
-    _observe(guildhall, world.repo.path, held_out.path, session)
-    listing = _proposals(guildhall, world.repo.path, session)
+    session = start_session(kinbase, world.repo.path)
+    _observe(kinbase, world.repo.path, held_out.path, session)
+    listing = _proposals(kinbase, world.repo.path, session)
     by_message: dict[str, set[str]] = {}
     digests: dict[str, list[str]] = {}
     for candidate in rows(listing, "candidates"):
@@ -502,27 +502,27 @@ def test_independent_candidates_with_distinct_minimized_bytes(
            "closing authority"),
 )
 def test_partial_fanout_failure_does_not_roll_back_committed_destination(
-    guildhall: Guildhall, anchored, held_out, roots: ProofRoots
+    kinbase: Kinbase, anchored, held_out, roots: ProofRoots
 ) -> None:
     from ._harness.service import Blackhole
 
     world, anchors = anchored
-    session = start_session(guildhall, world.repo.path)
-    _observe(guildhall, world.repo.path, held_out.path, session)
-    listing = _proposals(guildhall, world.repo.path, session)
+    session = start_session(kinbase, world.repo.path)
+    _observe(kinbase, world.repo.path, held_out.path, session)
+    listing = _proposals(kinbase, world.repo.path, session)
     candidate, company = _fanout_pair(listing, "codebase:" + anchors.repository_uuid)
 
-    _decide(guildhall, world.repo.path, candidate,
+    _decide(kinbase, world.repo.path, candidate,
             "codebase:" + anchors.repository_uuid)
     with Blackhole(0) as blackhole, anchors.company_endpoint(
         f"http://127.0.0.1:{blackhole.port}"
     ):
-        blackholed = _decide(guildhall, world.repo.path, company, "company:root")
+        blackholed = _decide(kinbase, world.repo.path, company, "company:root")
     witness = Witness(kind="company_unreachable")
     witness.note(port=blackhole.port, decide_exit=blackholed.returncode)
     witness.require("the Company endpoint must actually have been unreachable")
 
-    status = _proposals(guildhall, world.repo.path, session)
+    status = _proposals(kinbase, world.repo.path, session)
     apology = rows(status, "apologies")
     O.check(
         "V-2.partial-fanout",
@@ -543,21 +543,21 @@ def test_partial_fanout_failure_does_not_roll_back_committed_destination(
            "retry returns the original receipt without duplication."),
 )
 def test_retry_returns_original_receipt_without_duplication(
-    guildhall: Guildhall, anchored, held_out
+    kinbase: Kinbase, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = start_session(guildhall, world.repo.path)
-    _observe(guildhall, world.repo.path, held_out.path, session)
-    listing = _proposals(guildhall, world.repo.path, session)
+    session = start_session(kinbase, world.repo.path)
+    _observe(kinbase, world.repo.path, held_out.path, session)
+    listing = _proposals(kinbase, world.repo.path, session)
     candidate = _first_candidate(listing, "codebase:" + anchors.repository_uuid)
     destination = "codebase:" + anchors.repository_uuid
 
-    first = _decide(guildhall, world.repo.path, candidate, destination)
+    first = _decide(kinbase, world.repo.path, candidate, destination)
     events_after_first = world.event_count()
-    second = _decide(guildhall, world.repo.path, candidate, destination,
-                     env=guildhall.base_env({"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "960"}))
+    second = _decide(kinbase, world.repo.path, candidate, destination,
+                     env=kinbase.base_env({"KINBASE_PROOF_CLOCK_OFFSET_SECONDS": "960"}))
     events_after_second = world.event_count()
-    status = _proposals(guildhall, world.repo.path, session)
+    status = _proposals(kinbase, world.repo.path, session)
 
     first_receipt = field(first.json, "receipt_id")
     O.check(
@@ -581,33 +581,33 @@ def test_retry_returns_original_receipt_without_duplication(
            "authority, keeps the fact withdrawn, and leaves no pending orphan forever."),
 )
 def test_expired_closing_deadline_emits_one_signed_orphan_abandoned(
-    guildhall: Guildhall, anchored, held_out
+    kinbase: Kinbase, anchored, held_out
 ) -> None:
     from ._harness.service import Blackhole
 
     world, anchors = anchored
-    session = start_session(guildhall, world.repo.path)
-    _observe(guildhall, world.repo.path, held_out.path, session)
-    listing = _proposals(guildhall, world.repo.path, session)
+    session = start_session(kinbase, world.repo.path)
+    _observe(kinbase, world.repo.path, held_out.path, session)
+    listing = _proposals(kinbase, world.repo.path, session)
     candidate, company = _fanout_pair(listing, "codebase:" + anchors.repository_uuid)
-    _decide(guildhall, world.repo.path, candidate,
+    _decide(kinbase, world.repo.path, candidate,
             "codebase:" + anchors.repository_uuid)
 
     with Blackhole(0) as blackhole, anchors.company_endpoint(
         f"http://127.0.0.1:{blackhole.port}"
     ):
-        _decide(guildhall, world.repo.path, company, "company:root")
-    require_nonempty(rows(_proposals(guildhall, world.repo.path, session), "apologies"),
+        _decide(kinbase, world.repo.path, company, "company:root")
+    require_nonempty(rows(_proposals(kinbase, world.repo.path, session), "apologies"),
                      obligation="V-2.orphan-abandoned", origin=Origin.PRODUCT,
                      why="a partial fan-out must open an orphan before its deadline")
 
     # Advance the proof clock past the closing deadline. The witness is the
     # expiry state read back from the store, not the request itself.
-    advanced = guildhall.run(
+    advanced = kinbase.run(
         "status", "--repo", str(world.repo.path), "--json",
         cwd=world.repo.path, check=False,
-        env=guildhall.base_env({
-            "GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": str(CLOSING_DEADLINE_OFFSET),
+        env=kinbase.base_env({
+            "KINBASE_PROOF_CLOCK_OFFSET_SECONDS": str(CLOSING_DEADLINE_OFFSET),
         }),
     )
     witness = Witness(kind="closing_deadline_expired")
@@ -644,9 +644,9 @@ def _journal_matches(value, transition: str, candidate: dict) -> bool:
     return False
 
 
-def _journal_files(guildhall: Guildhall, repo: Path) -> tuple[Path, ...]:
+def _journal_files(kinbase: Kinbase, repo: Path) -> tuple[Path, ...]:
     roots = [repo / ".kin" / "local" / "journal"]
-    config = guildhall.xdg_config_home / "guildhall" / "config.toml"
+    config = kinbase.xdg_config_home / "kinbase" / "config.toml"
     if config.is_file():
         personal = tomllib.loads(config.read_text())["personal"]["data_root"]
         private = Path(personal)
@@ -655,10 +655,10 @@ def _journal_files(guildhall: Guildhall, repo: Path) -> tuple[Path, ...]:
     return tuple(sorted({p for root in roots for p in root.rglob("*") if p.is_file()}))
 
 
-def _journal_snapshot(guildhall: Guildhall, repo: Path, candidate: dict,
+def _journal_snapshot(kinbase: Kinbase, repo: Path, candidate: dict,
                       transition: str) -> dict[str, str]:
     observed = {}
-    for path in _journal_files(guildhall, repo):
+    for path in _journal_files(kinbase, repo):
         try:
             raw = path.read_bytes()
         except FileNotFoundError:  # Atomic journal rename during polling.
@@ -674,13 +674,13 @@ def _journal_snapshot(guildhall: Guildhall, repo: Path, candidate: dict,
     return observed
 
 
-def _journal_status(guildhall: Guildhall, repo: Path, candidate: dict, transition: str):
-    status = guildhall.run("status", "--repo", str(repo), "--json", cwd=repo, check=False)
+def _journal_status(kinbase: Kinbase, repo: Path, candidate: dict, transition: str):
+    status = kinbase.run("status", "--repo", str(repo), "--json", cwd=repo, check=False)
     value = field(status.json, "journal_state")
     return value if _journal_matches(value, transition, candidate) else None
 
 
-def _kill_at_transition(guildhall: Guildhall, world, candidate: dict,
+def _kill_at_transition(kinbase: Kinbase, world, candidate: dict,
                         destination: str, transition: str) -> dict:
     """Start a fan-out and kill it once the transition's artefact appears.
 
@@ -691,16 +691,16 @@ def _kill_at_transition(guildhall: Guildhall, world, candidate: dict,
     be reported as an interrupted transition.
     """
     repo = world.repo.path
-    before = _journal_snapshot(guildhall, repo, candidate, transition)
-    prior_state = _journal_status(guildhall, repo, candidate, transition)
-    process = _decide_async(guildhall, world.repo.path, candidate, destination)
+    before = _journal_snapshot(kinbase, repo, candidate, transition)
+    prior_state = _journal_status(kinbase, repo, candidate, transition)
+    process = _decide_async(kinbase, world.repo.path, candidate, destination)
     witness = Witness(kind="crash:" + transition)
     deadline = time.monotonic() + 20.0
     appeared = False
     observed = {}
     last_status = time.monotonic()
     while time.monotonic() < deadline:
-        now = _journal_snapshot(guildhall, repo, candidate, transition)
+        now = _journal_snapshot(kinbase, repo, candidate, transition)
         changed = {p: digest for p, digest in now.items() if before.get(p) != digest}
         if changed:
             appeared = True
@@ -709,7 +709,7 @@ def _kill_at_transition(guildhall: Guildhall, world, candidate: dict,
         if process.poll() is not None:
             break
         if time.monotonic() - last_status >= 0.05:
-            state = _journal_status(guildhall, repo, candidate, transition)
+            state = _journal_status(kinbase, repo, candidate, transition)
             last_status = time.monotonic()
             if state is not None and state != prior_state:
                 appeared = True
@@ -741,11 +741,11 @@ def _kill_at_transition(guildhall: Guildhall, world, candidate: dict,
 
 
 @contextlib.contextmanager
-def _crash_world(guildhall: Guildhall, roots: ProofRoots, transition: str):
+def _crash_world(kinbase: Kinbase, roots: ProofRoots, transition: str):
     """Each kill needs a fresh transaction, not the preceding probe's receipt."""
     layout = ProofRoots.create(roots.run_root / "crash-probes" / transition)
-    driver = Guildhall(home=layout.home, xdg_config_home=layout.xdg_config_home,
-                      cwd=layout.repo_root, path_prefix=guildhall.path_prefix)
+    driver = Kinbase(home=layout.home, xdg_config_home=layout.xdg_config_home,
+                      cwd=layout.repo_root, path_prefix=kinbase.path_prefix)
     world = SignedWorld.create(layout.repo_root)
     service = start_company(driver, layout)
     try:
@@ -763,11 +763,11 @@ def _crash_world(guildhall: Guildhall, roots: ProofRoots, transition: str):
            "receipt, and apology transitions, then retry concurrently."),
 )
 def test_kill_at_every_transition_then_concurrent_retry(
-    guildhall: Guildhall, roots: ProofRoots, held_out
+    kinbase: Kinbase, roots: ProofRoots, held_out
 ) -> None:
     results = []
     for transition in TRANSITIONS:
-        with _crash_world(guildhall, roots, transition) as (driver, world, anchors):
+        with _crash_world(kinbase, roots, transition) as (driver, world, anchors):
             session = start_session(driver, world.repo.path)
             _observe(driver, world.repo.path, held_out.path, session)
             candidate = _first_candidate(_proposals(driver, world.repo.path, session),
@@ -824,16 +824,16 @@ def test_kill_at_every_transition_then_concurrent_retry(
             "private lineage token, or accept-all operation exists."),
 )
 def test_no_cross_store_transaction_exists(
-    guildhall: Guildhall, anchored, held_out
+    kinbase: Kinbase, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = start_session(guildhall, world.repo.path)
-    _observe(guildhall, world.repo.path, held_out.path, session)
-    listing = _proposals(guildhall, world.repo.path, session)
+    session = start_session(kinbase, world.repo.path)
+    _observe(kinbase, world.repo.path, held_out.path, session)
+    listing = _proposals(kinbase, world.repo.path, session)
     candidate = _first_candidate(listing, "codebase:" + anchors.repository_uuid)
     for destination in ("codebase:" + anchors.repository_uuid, "company:root"):
-        _decide(guildhall, world.repo.path, candidate, destination)
-    status = _proposals(guildhall, world.repo.path, session)
+        _decide(kinbase, world.repo.path, candidate, destination)
+    status = _proposals(kinbase, world.repo.path, session)
     receipts = [_receipt_row(status, key) for key in ("codebase", "company")]
     O.check(
         "V-2.no-cross-store",
@@ -858,16 +858,16 @@ def _receipt_row(status: dict, key: str) -> dict:
          "There is no batch/accept-all endpoint in Core or CLI."),
 )
 def test_no_accept_all_path_is_reachable(
-    guildhall: Guildhall, anchored, held_out
+    kinbase: Kinbase, anchored, held_out
 ) -> None:
     world, anchors = anchored
-    session = start_session(guildhall, world.repo.path)
-    _observe(guildhall, world.repo.path, held_out.path, session)
-    listing = _proposals(guildhall, world.repo.path, session)
+    session = start_session(kinbase, world.repo.path)
+    _observe(kinbase, world.repo.path, held_out.path, session)
+    listing = _proposals(kinbase, world.repo.path, session)
     candidate = _first_candidate(listing, "codebase:" + anchors.repository_uuid)
     surfaces = 0
     for probe in ("--all", "--accept-all", "--yes-to-all"):
-        attempt = guildhall.run(
+        attempt = kinbase.run(
             "proposals", "decide", str(field(candidate, "candidate_id")), probe,
             "--json", cwd=world.repo.path, check=False,
         )
@@ -875,9 +875,9 @@ def test_no_accept_all_path_is_reachable(
             surfaces += 1
         else:
             attempt.refused("CONFIG_INVARIANT", exits=(4,))
-    _decide(guildhall, world.repo.path, candidate,
+    _decide(kinbase, world.repo.path, candidate,
             "codebase:" + anchors.repository_uuid)
-    status = _proposals(guildhall, world.repo.path, session)
+    status = _proposals(kinbase, world.repo.path, session)
     receipts = [_receipt_row(status, key) for key in ("codebase", "company")]
     O.check(
         "V-2.no-cross-store",

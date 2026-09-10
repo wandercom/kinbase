@@ -204,15 +204,15 @@ def sanitised_report_claims_are_qualified(report: str) -> list[str]:
     """Check the report against the frozen claim discipline.
 
     ``spec/threat-model.md`` "Retention and reporting": the sanitised report
-    "names ``guildhall-atm/1`` and its digest, lists every executed
+    "names ``kinbase-atm/1`` and its digest, lists every executed
     family/control/mutation and surface, preserves disagreements and adjudication
     receipts, and uses the qualified claim verbatim. It never says merely
     'privacy proved' or 'zero leakage'."
     """
     problems: list[str] = []
     lowered = report.lower()
-    if "guildhall-atm/1" not in report:
-        problems.append("report does not name guildhall-atm/1")
+    if "kinbase-atm/1" not in report:
+        problems.append("report does not name kinbase-atm/1")
     for banned in ("privacy proved", "zero leakage"):
         if banned in lowered:
             problems.append(f"report uses the forbidden phrase {banned!r}")

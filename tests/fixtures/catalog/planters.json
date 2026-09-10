@@ -557,5 +557,5 @@
     "world.event_bytes": "the signed event's canonical bytes, before they are written",
     "world.unknown": "an Unknown record, before it is written"
   },
-  "schema": "guildhall-preexecution-planters/1"
+  "schema": "kinbase-preexecution-planters/1"
 }

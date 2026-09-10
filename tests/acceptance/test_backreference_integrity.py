@@ -226,7 +226,7 @@ def test_the_lane_reads_no_implementation_and_issues_no_verdict() -> None:
         text = path.read_text(encoding="utf-8")
         for line in text.splitlines():
             stripped = line.strip()
-            if stripped.startswith(("import guildhall", "from guildhall")):
+            if stripped.startswith(("import kinbase", "from kinbase")):
                 offenders.append(f"{path.name}: {stripped}")
     assert not offenders, (
         "the acceptance suite must reach the product only through its ratified "

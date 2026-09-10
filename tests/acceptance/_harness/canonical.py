@@ -1,4 +1,4 @@
-"""RFC 8785 canonical bytes and ``guildhall-sig/1`` domain separation.
+"""RFC 8785 canonical bytes and ``kinbase-sig/1`` domain separation.
 
 ``spec/architecture.md`` section 3 "Canonical data model" freezes:
 
@@ -8,7 +8,7 @@
 
 and:
 
-    Every signer signs ``SHA-256("guildhall-sig/1" || 0x00 || message_type ||
+    Every signer signs ``SHA-256("kinbase-sig/1" || 0x00 || message_type ||
     0x00 || jcs_bytes)`` where ``message_type`` is one closed enum.
 
 The instrument implements both independently of the product so cross-domain
@@ -41,7 +41,7 @@ MESSAGE_TYPES: tuple[str, ...] = (
     "receipt",
 )
 
-SIG_DOMAIN = b"guildhall-sig/1"
+SIG_DOMAIN = b"kinbase-sig/1"
 
 #: ``spec/architecture.md`` section 3: integers bounded to +/-(2^53-1).
 INT_MAX = 2**53 - 1
@@ -143,7 +143,7 @@ def jcs(value: Any) -> bytes:
 
 
 def signing_digest(message_type: str, jcs_bytes: bytes) -> bytes:
-    """``SHA-256("guildhall-sig/1" || 0x00 || message_type || 0x00 || jcs_bytes)``."""
+    """``SHA-256("kinbase-sig/1" || 0x00 || message_type || 0x00 || jcs_bytes)``."""
     if message_type not in MESSAGE_TYPES:
         raise CanonicalisationError(
             f"{message_type!r} is not in the closed message_type enum"

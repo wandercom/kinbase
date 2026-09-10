@@ -1,6 +1,6 @@
-"""Loopback client for ``guildhalld``, the Company HTTP service.
+"""Loopback client for ``kinbased``, the Company HTTP service.
 
-``spec/architecture.md`` "Company / Guildhall" freezes the access contract:
+``spec/architecture.md`` "Company / Kinbase" freezes the access contract:
 
     Every endpoint, including reads, requires a per-instance bearer token loaded
     from a mode-0600 file, exact loopback Host validation, absent Origin header,
@@ -59,7 +59,7 @@ STATUS_PATH = "/status"
 FACTS_TOKEN_SCOPES: tuple[str, ...] = ("facts:read", "questions:write")
 DIRECTORY_TOKEN_SCOPES: tuple[str, ...] = ("directory:read", "admin:issue")
 
-#: ``spec/verification.md`` "Nonfunctional proof gates": "Guildhall HTTP rejects
+#: ``spec/verification.md`` "Nonfunctional proof gates": "Kinbase HTTP rejects
 #: unauthenticated reads, non-loopback Host, Origin-bearing requests, and
 #: non-JSON writes; all receive typed remediation-safe errors."
 REJECTION_PROBES: tuple[str, ...] = (
@@ -198,12 +198,12 @@ class ServiceClient:
             nonce = self.next_nonce()
             expires_at = time.strftime(
                 "%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() + expires_in + self.clock_offset_seconds +
-                    int(os.environ.get("GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS", "0")))
+                    int(os.environ.get("KINBASE_PROOF_CLOCK_OFFSET_SECONDS", "0")))
             )
-            headers["X-Guildhall-Nonce"] = nonce
-            headers["X-Guildhall-Expires-At"] = expires_at
-            headers["X-Guildhall-Client-Key"] = self.client_key.public.hex()
-            headers["X-Guildhall-Signature"] = self.request_signature(
+            headers["X-Kinbase-Nonce"] = nonce
+            headers["X-Kinbase-Expires-At"] = expires_at
+            headers["X-Kinbase-Client-Key"] = self.client_key.public.hex()
+            headers["X-Kinbase-Signature"] = self.request_signature(
                 method, path, payload, nonce, expires_at
             )
         headers.update(extra_headers or {})

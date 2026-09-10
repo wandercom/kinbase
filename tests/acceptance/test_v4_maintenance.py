@@ -32,7 +32,7 @@ import pytest
 
 from ._harness import obligations as O
 from ._harness import canonical, prereq, scale, synth, trust
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.detectors import compare_manifests
 from ._harness.evidence_model import (
     field,
@@ -76,9 +76,9 @@ IDENTITY_SEED = b"v4-opaque-identity"
 
 
 @pytest.fixture()
-def anchored(roots: ProofRoots, guildhall: Guildhall):
+def anchored(roots: ProofRoots, kinbase: Kinbase):
     world = SignedWorld.create(roots.repo_root)
-    anchors = trust.establish(guildhall, roots, world)
+    anchors = trust.establish(kinbase, roots, world)
     return world, anchors
 
 
@@ -87,8 +87,8 @@ def ids() -> OpaqueIds:
     return OpaqueIds(IDENTITY_SEED)
 
 
-def _run(guildhall: Guildhall, *argv: str, cwd: Path, **kwargs):
-    result = guildhall.run(*argv, cwd=cwd, check=False, **kwargs)
+def _run(kinbase: Kinbase, *argv: str, cwd: Path, **kwargs):
+    result = kinbase.run(*argv, cwd=cwd, check=False, **kwargs)
     if result.returncode == 1:
         raise ProductFailure(
             "`" + " ".join(argv[:2]) + "` returned the reserved ambiguous exit 1"
@@ -121,7 +121,7 @@ def _store_digest(repo: Path) -> str:
            "expire, branch, merge, conflict, resolve, rebuild, restart."),
 )
 def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
-    guildhall: Guildhall, anchored, ids: OpaqueIds
+    kinbase: Kinbase, anchored, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
     repo = world.repo.path
@@ -197,9 +197,9 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
         statement="the maintenance window is eight hours",
         parents=(first["event"]["event_id"],)))
     def stable_rebuild():
-        first = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+        first = _json(_run(kinbase, "corpus", "rebuild", "--store", "company",
                            "--repo", str(repo), "--json", cwd=repo))
-        second = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+        second = _json(_run(kinbase, "corpus", "rebuild", "--store", "company",
                             "--repo", str(repo), "--json", cwd=repo))
         digest = field(first, "current_view_digest")
         cycle_digests.append(digest if isinstance(digest, str)
@@ -209,7 +209,7 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
     # Each CLI invocation is a new process; restart must retain the same view.
     stage("restart", stable_rebuild)
 
-    final = _json(_run(guildhall, "status", "--repo", str(repo), "--json", cwd=repo))
+    final = _json(_run(kinbase, "status", "--repo", str(repo), "--json", cwd=repo))
     cycle_digests.append(_store_digest(repo))
     O.check(
         "V-4.incremental-cycle",
@@ -232,7 +232,7 @@ def test_repeated_incremental_cycle_is_restart_safe_and_bounded(
            "authorized parent-bound event."),
 )
 def test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event(
-    guildhall: Guildhall, anchored, ids: OpaqueIds, tmp_path: Path
+    kinbase: Kinbase, anchored, ids: OpaqueIds, tmp_path: Path
 ) -> None:
     world, anchors = anchored
     key = "architecture/scheduler/" + ids.token("conflict-key")
@@ -258,13 +258,13 @@ def test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event(
     world.repo.merge("incoming-left", message="merge one clone")
     world.repo.merge("incoming-right", message="merge the other clone")
 
-    before = _json(_run(guildhall, "explain", key, "--repo", str(world.repo.path),
+    before = _json(_run(kinbase, "explain", key, "--repo", str(world.repo.path),
                         "--decision", "which drain order applies", "--json",
                         cwd=world.repo.path))
-    after_time = _json(_run(guildhall, "explain", key, "--repo", str(world.repo.path),
+    after_time = _json(_run(kinbase, "explain", key, "--repo", str(world.repo.path),
                             "--decision", "which drain order applies", "--json",
-                            cwd=world.repo.path, env=guildhall.base_env({
-                                "GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "60"})))
+                            cwd=world.repo.path, env=kinbase.base_env({
+                                "KINBASE_PROOF_CLOCK_OFFSET_SECONDS": "60"})))
 
     # The maintainer owns both competing Codebase heads. Reconcile them to
     # the still-current Company policy; a Company-only event cannot erase a
@@ -275,7 +275,7 @@ def test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event(
         parents=(base["event_id"], left_event["event_id"], right_event["event_id"]),
         supersedes=(left_event["event_id"], right_event["event_id"]),
     )
-    resolved = _json(_run(guildhall, "explain", key, "--repo", str(world.repo.path),
+    resolved = _json(_run(kinbase, "explain", key, "--repo", str(world.repo.path),
                           "--decision", "which drain order applies", "--json",
                           cwd=world.repo.path))
     O.check(
@@ -302,7 +302,7 @@ def test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event(
            "Unknown rather than an integrity accusation."),
 )
 def test_manifest_comparison_classifies_lag_incomplete_and_expiry(
-    guildhall: Guildhall, anchored, ids: OpaqueIds
+    kinbase: Kinbase, anchored, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
     repo = world.repo.path
@@ -333,7 +333,7 @@ def test_manifest_comparison_classifies_lag_incomplete_and_expiry(
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(published), encoding="utf-8")
         comparison = compare_manifests(detector, published=published, local=local)
-        product = _json(_run(guildhall, "fsck", "--repo", str(repo), "--json",
+        product = _json(_run(kinbase, "fsck", "--repo", str(repo), "--json",
                              cwd=repo))
         scenarios.append({
             "scenario": ids.token(relation),
@@ -346,7 +346,7 @@ def test_manifest_comparison_classifies_lag_incomplete_and_expiry(
         scenarios, what="manifest relations", minimum=4,
         why="V-4 names four relations and all four must be constructed",
     )
-    product = _json(_run(guildhall, "fsck", "--repo", str(repo), "--json", cwd=repo))
+    product = _json(_run(kinbase, "fsck", "--repo", str(repo), "--json", cwd=repo))
     O.check(
         "V-4.manifest-comparison",
         {
@@ -366,7 +366,7 @@ def test_manifest_comparison_classifies_lag_incomplete_and_expiry(
            "Only computed lowercase ASCII digest paths admit; canonical bytes remain identical."),
 )
 def test_case_crlf_normalisation_and_uppercase_alias_are_refused(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors = anchored
     repo = world.repo
@@ -391,7 +391,7 @@ def test_case_crlf_normalisation_and_uppercase_alias_are_refused(
     if not repo.run("ls-tree", "HEAD", "--", alias_rel).strip():
         raise HarnessInvalid("uppercase alias was not planted in the Git tree")
 
-    status = _json(_run(guildhall, "fsck", "--repo", str(repo.path), "--json",
+    status = _json(_run(kinbase, "fsck", "--repo", str(repo.path), "--json",
                         cwd=repo.path))
     admitted = rows(status, "admitted_paths")
     if not admitted:
@@ -429,7 +429,7 @@ def test_case_crlf_normalisation_and_uppercase_alias_are_refused(
            "vary each input once."),
 )
 def test_rebuild_is_deterministic_over_frozen_inputs(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors = anchored
     repo = world.repo.path
@@ -439,9 +439,9 @@ def test_rebuild_is_deterministic_over_frozen_inputs(
         statement="rebuild is a pure function of its inputs",
     )
     as_of = synth._stamp(day=3, hour=12)
-    baseline = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+    baseline = _json(_run(kinbase, "corpus", "rebuild", "--store", "company",
                           "--repo", str(repo), "--as-of", as_of, "--json", cwd=repo))
-    repeat = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+    repeat = _json(_run(kinbase, "corpus", "rebuild", "--store", "company",
                         "--repo", str(repo), "--as-of", as_of, "--json", cwd=repo))
 
     varied = []
@@ -455,7 +455,7 @@ def test_rebuild_is_deterministic_over_frozen_inputs(
         "authority_cursor": lambda: anchors.republish_registry(cursor="1002"),
     }
     for name in REBUILD_INPUTS:
-        prior = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+        prior = _json(_run(kinbase, "corpus", "rebuild", "--store", "company",
                            "--repo", str(repo), "--as-of", as_of,
                            "--authority-cursor", str(anchors.registry.cursor),
                            "--json", cwd=repo))
@@ -470,7 +470,7 @@ def test_rebuild_is_deterministic_over_frozen_inputs(
             current = str(field(prior, "inputs", "reducer_version"))
             argv += ["--reducer-version", "1" if current.endswith("2") else "2"]
         argv += ["--authority-cursor", str(anchors.registry.cursor)]
-        result = _json(_run(guildhall, *argv, cwd=repo))
+        result = _json(_run(kinbase, *argv, cwd=repo))
         varied.append({
             "input": name,
             "observed_effect": field(result, "current_view_digest")
@@ -495,16 +495,16 @@ def test_rebuild_is_deterministic_over_frozen_inputs(
            "Omitting/reading ambient `as_of` must fail determinism."),
 )
 def test_omitting_as_of_breaks_determinism_and_is_refused(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors = anchored
     repo = world.repo.path
     as_of = synth._stamp(day=5, hour=6)
-    pinned = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+    pinned = _json(_run(kinbase, "corpus", "rebuild", "--store", "company",
                         "--repo", str(repo), "--as-of", as_of, "--json", cwd=repo))
-    omitted = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+    omitted = _json(_run(kinbase, "corpus", "rebuild", "--store", "company",
                          "--repo", str(repo), "--json", cwd=repo))
-    repeated = _json(_run(guildhall, "corpus", "rebuild", "--store", "company",
+    repeated = _json(_run(kinbase, "corpus", "rebuild", "--store", "company",
                           "--repo", str(repo), "--json", cwd=repo))
     recorded = field(pinned, "inputs", "as_of")
     # R-1/C12: omission selects the recorded proof clock, not the wall clock.
@@ -536,7 +536,7 @@ def test_omitting_as_of_breaks_determinism_and_is_refused(
 )
 @pytest.mark.slow
 def test_ten_times_the_admission_ceiling_refuses_writes_but_still_diagnoses(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors = anchored
     repo = world.repo.path
@@ -553,12 +553,12 @@ def test_ten_times_the_admission_ceiling_refuses_writes_but_still_diagnoses(
         observed, CEILING_EVENTS, what="10x admission ceiling corpus",
         why="V-4 exercises a corpus at ten times the admission ceiling",
     )
-    intake = _run(guildhall, "ingest", "kindex", str(repo / ".kin"),
+    intake = _run(kinbase, "ingest", "kindex", str(repo / ".kin"),
                   "--repo", str(repo), "--json", cwd=repo)
     started = time.monotonic()
-    diagnosis = _run(guildhall, "fsck", "--repo", str(repo), "--json", cwd=repo)
+    diagnosis = _run(kinbase, "fsck", "--repo", str(repo), "--json", cwd=repo)
     elapsed = time.monotonic() - started
-    session = _run(guildhall, "session", "start", "--host", "codex",
+    session = _run(kinbase, "session", "start", "--host", "codex",
                    "--repo", str(repo), "--json", cwd=repo)
     O.check(
         "V-4.ceiling",
@@ -579,7 +579,7 @@ def test_ten_times_the_admission_ceiling_refuses_writes_but_still_diagnoses(
 )
 @pytest.mark.slow
 def test_revocation_cascade_completes_in_bound_or_stays_fail_closed(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors = anchored
     repo = world.repo.path
@@ -595,7 +595,7 @@ def test_revocation_cascade_completes_in_bound_or_stays_fail_closed(
     )
     revocation = anchors.revoke(world.architect, cursor="2000")
     started = time.monotonic()
-    result = _json(_run(guildhall, "fsck", "--repo", str(repo), "--full", "--json",
+    result = _json(_run(kinbase, "fsck", "--repo", str(repo), "--full", "--json",
                         cwd=repo))
     elapsed = time.monotonic() - started
     state = field(result, "cascade_state")
@@ -621,7 +621,7 @@ def test_revocation_cascade_completes_in_bound_or_stays_fail_closed(
            "scoped client and must not re-admit/project it."),
 )
 def test_pre_revocation_replay_returns_history_without_readmission(
-    guildhall: Guildhall, anchored, ids: OpaqueIds
+    kinbase: Kinbase, anchored, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
     repo = world.repo.path
@@ -630,17 +630,17 @@ def test_pre_revocation_replay_returns_history_without_readmission(
         world.architect, store_kind="company", logical_key=key,
         statement="the replay window is one hour",
     )
-    before = _json(_run(guildhall, "status", "--repo", str(repo), "--json", cwd=repo))
+    before = _json(_run(kinbase, "status", "--repo", str(repo), "--json", cwd=repo))
     anchors.revoke(world.architect, cursor="2100")
-    after = _json(_run(guildhall, "status", "--repo", str(repo), "--json", cwd=repo))
+    after = _json(_run(kinbase, "status", "--repo", str(repo), "--json", cwd=repo))
 
     # Replay the identical pre-revocation event bytes, through the same
     # admission surface, after the revocation cursor was observed.
     result = field(anchors.admit_fact(original["document"]), "receipt")
     result = result if isinstance(result, dict) else {}
-    _run(guildhall, "ingest", "kindex", str(repo / ".kin"),
+    _run(kinbase, "ingest", "kindex", str(repo / ".kin"),
          "--repo", str(repo), "--json", cwd=repo)
-    projected = _json(_run(guildhall, "project", "--repo", str(repo),
+    projected = _json(_run(kinbase, "project", "--repo", str(repo),
                            "--task", "diagnose the replay window",
                            "--decision", "which window applies", "--json", cwd=repo))
     O.check(
@@ -667,7 +667,7 @@ def test_pre_revocation_replay_returns_history_without_readmission(
            "common directory serializes one manifest lineage."),
 )
 def test_linked_worktrees_serialize_on_one_common_dir_lock(
-    guildhall: Guildhall, anchored, ids: OpaqueIds, tmp_path: Path
+    kinbase: Kinbase, anchored, ids: OpaqueIds, tmp_path: Path
 ) -> None:
     world, anchors = anchored
     world.plant_event(world.maintainer, store_kind="codebase",
@@ -677,9 +677,9 @@ def test_linked_worktrees_serialize_on_one_common_dir_lock(
     second = world.repo.add_worktree(tmp_path / ids.token("wt-b"), "wt-b")
     common = world.repo.common_dir()
 
-    left = guildhall.popen("ingest", "kindex", str(first.path / ".kin"),
+    left = kinbase.popen("ingest", "kindex", str(first.path / ".kin"),
                            "--repo", str(first.path), "--json", cwd=first.path)
-    right = guildhall.popen("ingest", "kindex", str(second.path / ".kin"),
+    right = kinbase.popen("ingest", "kindex", str(second.path / ".kin"),
                             "--repo", str(second.path), "--json", cwd=second.path)
     left_code = left.wait(timeout=180)
     right_code = right.wait(timeout=180)
@@ -687,12 +687,12 @@ def test_linked_worktrees_serialize_on_one_common_dir_lock(
     witness.note(left_exit=left_code, right_exit=right_code, common_dir=str(common))
     witness.require("both worktree admissions must actually have run")
 
-    status = _json(_run(guildhall, "fsck", "--repo", str(world.repo.path), "--json",
+    status = _json(_run(kinbase, "fsck", "--repo", str(world.repo.path), "--json",
                         cwd=world.repo.path))
     lock_path = field(status, "admission_lock_path")
     worktree_locks = [
         p for p in (first.path, second.path)
-        if (p / ".git" / "guildhall.lock").exists()
+        if (p / ".git" / "kinbase.lock").exists()
     ]
     O.check(
         "V-4.common-dir-lock",
@@ -713,10 +713,10 @@ def test_linked_worktrees_serialize_on_one_common_dir_lock(
     VERIFY("V-4", "kindex-compat",
            "Initialize against a fully populated real pinned-Kindex `.kin/` inventory and prove "
            "byte preservation; inject a collision between an enumerated Kindex path and a "
-           "Guildhall reserved path and require typed no-write refusal."),
+           "Kinbase reserved path and require typed no-write refusal."),
 )
 def test_legacy_kindex_bytes_preserved_and_collision_refuses(
-    guildhall: Guildhall, roots: ProofRoots, anchored
+    kinbase: Kinbase, roots: ProofRoots, anchored
 ) -> None:
     world, anchors = anchored
     repo = GitRepo.init(roots.base / "workspace" / "legacy")
@@ -741,7 +741,7 @@ def test_legacy_kindex_bytes_preserved_and_collision_refuses(
     (collision / "legacy-node.json").write_text(
         json.dumps({"legacy": True}), encoding="utf-8"
     )
-    result = _run(guildhall, "repo", "init", "--repo", str(repo.path),
+    result = _run(kinbase, "repo", "init", "--repo", str(repo.path),
                   "--certificate", str(certificate), "--json", cwd=repo.path)
     after = {p: hashlib.sha256(p.read_bytes()).hexdigest()
              for p in before if p.is_file()}

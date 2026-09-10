@@ -304,7 +304,7 @@ def gates_with_open_debt() -> frozenset[str]:
 
 def as_json() -> dict:
     return {
-        "schema": "guildhall-acceptance-instrument-debt/1",
+        "schema": "kinbase-acceptance-instrument-debt/1",
         "review": "detector-reviewer dispatch 003",
         "total_findings": len(LEDGER),
         "closed": len(closed_entries()),

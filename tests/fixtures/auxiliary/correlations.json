@@ -1346,5 +1346,5 @@
    "resolves_to_at_most_one_canary": true
   }
  ],
- "schema": "guildhall-acceptance-correlation-records/1"
+ "schema": "kinbase-acceptance-correlation-records/1"
 }

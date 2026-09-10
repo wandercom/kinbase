@@ -26,8 +26,8 @@
       "oid": "V-1.adapters-native",
       "requirement": "Run all ten adapters against native-format sources in isolated fixtures; at least seven participate in the recorded end-to-end build.",
       "surfaces": [
-        "guildhall ingest",
-        "guildhall corpus rebuild"
+        "kinbase ingest",
+        "kinbase corpus rebuild"
       ],
       "thresholds": [
         {
@@ -103,7 +103,7 @@
       "oid": "V-1.receipt-not-count",
       "requirement": "A source-class count alone does not pass P-1: the evidence report lists native observations and derived facts.",
       "surfaces": [
-        "guildhall ingest --json"
+        "kinbase ingest --json"
       ],
       "thresholds": [
         {
@@ -168,7 +168,7 @@
       "oid": "V-1.build-manifest",
       "requirement": "Build manifest binds observation IDs, source revisions, digests, checkpoints, and fact derivations.",
       "surfaces": [
-        "guildhall corpus rebuild --json"
+        "kinbase corpus rebuild --json"
       ],
       "thresholds": [
         {
@@ -248,7 +248,7 @@
       "oid": "V-1.idempotence",
       "requirement": "Re-run unchanged ingestion: no duplicate observations/facts and byte-identical current views.",
       "surfaces": [
-        "guildhall corpus rebuild --json"
+        "kinbase corpus rebuild --json"
       ],
       "thresholds": [
         {
@@ -328,7 +328,7 @@
       "oid": "V-1.disposition-change",
       "requirement": "Change, delete, reject/revert, and re-run representative sources: history remains, current disposition changes explicitly.",
       "surfaces": [
-        "guildhall corpus rebuild --json"
+        "kinbase corpus rebuild --json"
       ],
       "thresholds": [
         {
@@ -375,8 +375,8 @@
       "oid": "V-1.lifecycle-matrix",
       "requirement": "Every declared cell has an expected observation/current-fact/Unknown state and at least one negative mutation.",
       "surfaces": [
-        "guildhall ingest",
-        "guildhall status --json"
+        "kinbase ingest",
+        "kinbase status --json"
       ],
       "thresholds": [
         {
@@ -443,7 +443,7 @@
       "oid": "V-1.support-retirement",
       "requirement": "the first recomputes provenance while retaining the fact, the second withdraws the fact and reopens every dependent decision",
       "surfaces": [
-        "guildhall explain --json"
+        "kinbase explain --json"
       ],
       "thresholds": [
         {
@@ -526,8 +526,8 @@
       "oid": "V-1.clock-skew",
       "requirement": "Out-of-order delivery and positive/negative clock skew run across Personal, Company, and Codebase cursors.",
       "surfaces": [
-        "guildhall ingest --json",
-        "guildhall status --json"
+        "kinbase ingest --json",
+        "kinbase status --json"
       ],
       "thresholds": [
         {
@@ -591,7 +591,7 @@
       "oid": "V-1.misextraction",
       "requirement": "it asserts only evidence/byte mismatch, withholds the fact, and reopens a subject-matter-authority Unknown",
       "surfaces": [
-        "guildhall ingest authority_answer"
+        "kinbase ingest authority_answer"
       ],
       "thresholds": [
         {
@@ -671,7 +671,7 @@
       "oid": "V-1.never-true-authority",
       "requirement": "Only that subject-matter authority may sign the semantic `never_true` withdrawal.",
       "surfaces": [
-        "guildhall ingest kindex"
+        "kinbase ingest kindex"
       ],
       "thresholds": [
         {
@@ -731,8 +731,8 @@
       "oid": "V-1.origin-trust",
       "requirement": "Anything below `merged-default` is ineligible for trusted durable direction unless a separately authorized event cites it; merely checking out an attacker branch cannot promote its ADR.",
       "surfaces": [
-        "guildhall ingest docs_adr",
-        "guildhall explain --json"
+        "kinbase ingest docs_adr",
+        "kinbase explain --json"
       ],
       "thresholds": [
         {
@@ -948,7 +948,7 @@
       "oid": "V-2.pinned-runs",
       "requirement": "Required macro-F1 across destination labels is 0.90 and each shared-destination precision is at least 0.95 across the preregistered 95% lower bound of at least five pinned live-model runs.",
       "surfaces": [
-        "guildhall session observe --json"
+        "kinbase session observe --json"
       ],
       "thresholds": [
         {
@@ -1064,7 +1064,7 @@
       "oid": "V-2.calibration",
       "requirement": "Before V-10, run a separate excluded 60-message calibration corpus through the same five-run configuration.",
       "surfaces": [
-        "guildhall experiment calibrate"
+        "kinbase experiment calibrate"
       ],
       "thresholds": [
         {
@@ -1144,7 +1144,7 @@
       "oid": "V-2.atomisation",
       "requirement": "Mixed text must split rather than force one label on the whole message.",
       "surfaces": [
-        "guildhall session observe --json"
+        "kinbase session observe --json"
       ],
       "thresholds": [
         {
@@ -1276,7 +1276,7 @@
       "oid": "V-2.low-confidence",
       "requirement": "A low-confidence shared label is demoted to `none`/Unknown rather than guessed.",
       "surfaces": [
-        "guildhall session observe --json"
+        "kinbase session observe --json"
       ],
       "thresholds": [
         {
@@ -1320,7 +1320,7 @@
       "oid": "V-2.independent-candidates",
       "requirement": "One mixed message must yield independent Personal and Codebase candidates; another yields Personal, Company, and Codebase candidates with distinct minimized bytes.",
       "surfaces": [
-        "guildhall proposals list --json"
+        "kinbase proposals list --json"
       ],
       "thresholds": [
         {
@@ -1377,8 +1377,8 @@
       "oid": "V-2.partial-fanout",
       "requirement": "receipts expose partial success and an apology Unknown names the approver as responsible and destination maintainer as closing authority, withholds the orphaned Codebase fact, and reaches an explicit reconcile/abandon state",
       "surfaces": [
-        "guildhall proposals decide",
-        "guildhall status --json"
+        "kinbase proposals decide",
+        "kinbase status --json"
       ],
       "thresholds": [
         {
@@ -1493,7 +1493,7 @@
       "oid": "V-2.retry-receipt",
       "requirement": "A retry of an already committed exact event returns the original commit receipt even after token expiry; it cannot create a second event or pretend the first commit did not happen.",
       "surfaces": [
-        "guildhall proposals decide --json"
+        "kinbase proposals decide --json"
       ],
       "thresholds": [
         {
@@ -1562,7 +1562,7 @@
       "oid": "V-2.orphan-abandoned",
       "requirement": "the destination service emits one signed `orphan_abandoned`, names the unresponsive authority, keeps the fact withdrawn, and leaves no pending orphan forever",
       "surfaces": [
-        "guildhall status --json"
+        "kinbase status --json"
       ],
       "thresholds": [
         {
@@ -1642,8 +1642,8 @@
       "oid": "V-2.crash-recovery",
       "requirement": "Kill each destination between nonce reservation, event append/rename, manifest, receipt, and apology transitions, then retry concurrently.",
       "surfaces": [
-        "guildhall proposals decide",
-        "guildhall fsck --json"
+        "kinbase proposals decide",
+        "kinbase fsck --json"
       ],
       "thresholds": [
         {
@@ -1693,8 +1693,8 @@
       "oid": "V-2.no-cross-store",
       "requirement": "One source may fan out to multiple stores, but no cross-store transaction, shared private lineage token, or accept-all operation exists.",
       "surfaces": [
-        "guildhall proposals --help",
-        "guildhall status --json"
+        "kinbase proposals --help",
+        "kinbase status --json"
       ],
       "thresholds": [
         {
@@ -2041,7 +2041,7 @@
       "oid": "V-3.capability",
       "requirement": "Verify the shared writer process/call graph has no Personal-store capability.",
       "surfaces": [
-        "guildhall doctor --json"
+        "kinbase doctor --json"
       ],
       "thresholds": [
         {
@@ -2074,8 +2074,8 @@
       "oid": "V-3.sandbox",
       "requirement": "If no supported kernel enforcement is available or the probe succeeds in reading Personal, shared projection/publication is disabled with a typed failure.",
       "surfaces": [
-        "guildhall doctor --json",
-        "guildhall proposals decide"
+        "kinbase doctor --json",
+        "kinbase proposals decide"
       ],
       "thresholds": [
         {
@@ -2144,7 +2144,7 @@
       "oid": "V-3.inherited-fd",
       "requirement": "Pass an open Personal directory descriptor while pathname denial still succeeds; descriptor enumeration/attestation must fail startup before shared work.",
       "surfaces": [
-        "guildhall project"
+        "kinbase project"
       ],
       "thresholds": [
         {
@@ -2284,7 +2284,7 @@
       "oid": "V-3.taint",
       "requirement": "Taint is never described as cleared; its policy consequence differs by class.",
       "surfaces": [
-        "guildhall proposals list --json"
+        "kinbase proposals list --json"
       ],
       "thresholds": [
         {
@@ -2343,7 +2343,7 @@
       "oid": "V-3.paraphrase",
       "requirement": "The entire observation must remain private by taint policy; the scanner is defense in depth, not the claimed semantic boundary.",
       "surfaces": [
-        "guildhall proposals list --json"
+        "kinbase proposals list --json"
       ],
       "thresholds": [
         {
@@ -2399,7 +2399,7 @@
       "oid": "V-3.egress",
       "requirement": "a send to an unnamed processor, a separate unapproved classifier provider, or a scope-ineligible request must fail",
       "surfaces": [
-        "guildhall session observe"
+        "kinbase session observe"
       ],
       "thresholds": [
         {
@@ -2469,7 +2469,7 @@
       "oid": "V-3.claim",
       "requirement": "An unqualified \u201czero leakage\u201d claim is a reporting failure.",
       "surfaces": [
-        "guildhall status --json"
+        "kinbase status --json"
       ],
       "thresholds": [
         {
@@ -2811,7 +2811,7 @@
       "oid": "V-4.incremental-cycle",
       "requirement": "Repeated incremental cycle: create, duplicate, edit, supersede, retract, revoke, expire, branch, merge, conflict, resolve, rebuild, restart.",
       "surfaces": [
-        "guildhall corpus rebuild --json",
+        "kinbase corpus rebuild --json",
         "repository state"
       ],
       "thresholds": [
@@ -2892,7 +2892,7 @@
       "oid": "V-4.conflict",
       "requirement": "Both events survive; incompatible facts remain conflict/Unknown until an authorized parent-bound event.",
       "surfaces": [
-        "guildhall explain --json",
+        "kinbase explain --json",
         ".kin/events"
       ],
       "thresholds": [
@@ -2976,7 +2976,7 @@
       "oid": "V-4.manifest-comparison",
       "requirement": "local strict superset within freshness is normal lag, missing expected heads is repository-owned `INCOMPLETE`, and expired expected state is a Company publication Unknown rather than an integrity accusation",
       "surfaces": [
-        "guildhall fsck --json",
+        "kinbase fsck --json",
         ".kin/manifests"
       ],
       "thresholds": [
@@ -3120,7 +3120,7 @@
       "oid": "V-4.determinism",
       "requirement": "Rebuild with fixed `(events, reducer version, as_of, authority cursor)` twice and vary each input once.",
       "surfaces": [
-        "guildhall corpus rebuild --json"
+        "kinbase corpus rebuild --json"
       ],
       "thresholds": [
         {
@@ -3179,7 +3179,7 @@
       "oid": "V-4.as-of",
       "requirement": "`as_of` is an explicit RFC 3339 UTC millisecond timestamp, never an ambient wall-clock read.",
       "surfaces": [
-        "guildhall corpus rebuild --json"
+        "kinbase corpus rebuild --json"
       ],
       "thresholds": [
         {
@@ -3235,8 +3235,8 @@
       "oid": "V-4.ceiling",
       "requirement": "Intake refuses new writes while bounded incremental `fsck`/diagnosis remains available; SessionStart latency and full-rebuild time are recorded rather than allowed to hang.",
       "surfaces": [
-        "guildhall ingest",
-        "guildhall fsck --json"
+        "kinbase ingest",
+        "kinbase fsck --json"
       ],
       "thresholds": [
         {
@@ -3316,7 +3316,7 @@
       "oid": "V-4.cascade",
       "requirement": "completion must be within 120 seconds or the typed fail-closed limit state persists with remaining count",
       "surfaces": [
-        "guildhall corpus rebuild --json"
+        "kinbase corpus rebuild --json"
       ],
       "thresholds": [
         {
@@ -3399,7 +3399,7 @@
       "oid": "V-4.replay",
       "requirement": "a path-exists fast path may return a historical receipt only to the original scoped client and must not re-admit/project it",
       "surfaces": [
-        "guildhall status --json"
+        "kinbase status --json"
       ],
       "thresholds": [
         {
@@ -3480,7 +3480,7 @@
       "requirement": "Admit concurrently from two linked worktrees and prove one exclusive lock in Git's common directory serializes one manifest lineage.",
       "surfaces": [
         "git common directory",
-        "guildhall repo publish-manifest"
+        "kinbase repo publish-manifest"
       ],
       "thresholds": [
         {
@@ -3570,10 +3570,10 @@
         "test_v4_maintenance.py::test_legacy_kindex_bytes_preserved_and_collision_refuses"
       ],
       "oid": "V-4.kindex-compat",
-      "requirement": "Initialize against a fully populated real pinned-Kindex `.kin/` inventory and prove byte preservation; inject a collision between an enumerated Kindex path and a Guildhall reserved path and require typed no-write refusal.",
+      "requirement": "Initialize against a fully populated real pinned-Kindex `.kin/` inventory and prove byte preservation; inject a collision between an enumerated Kindex path and a Kinbase reserved path and require typed no-write refusal.",
       "surfaces": [
         ".kin/ legacy inventory",
-        "guildhall repo init"
+        "kinbase repo init"
       ],
       "thresholds": [
         {
@@ -3642,7 +3642,7 @@
       "oid": "V-5.cases",
       "requirement": "Table-driven and narrative cases include:",
       "surfaces": [
-        "guildhall explain --json",
+        "kinbase explain --json",
         "planted signed event histories"
       ],
       "thresholds": [
@@ -3675,7 +3675,7 @@
       "oid": "V-5.no-newest-wins",
       "requirement": "Recency is evidence, never authority by itself.",
       "surfaces": [
-        "guildhall explain --json"
+        "kinbase explain --json"
       ],
       "thresholds": [
         {
@@ -3731,7 +3731,7 @@
       "oid": "V-5.rejected-pr",
       "requirement": "newer rejected PR vs current accepted ADR | ADR remains current; rejection is evidence",
       "surfaces": [
-        "guildhall explain --json"
+        "kinbase explain --json"
       ],
       "thresholds": [
         {
@@ -3800,7 +3800,7 @@
       "oid": "V-5.independence",
       "requirement": "distinguish independent corroboration from common-source repetition;",
       "surfaces": [
-        "guildhall explain --json"
+        "kinbase explain --json"
       ],
       "thresholds": [
         {
@@ -3868,7 +3868,7 @@
       "oid": "V-5.scope",
       "requirement": "The mapping resolves to exactly one authority identity for an exact scope; role prestige and recency are not an implicit lattice.",
       "surfaces": [
-        "guildhall explain --json"
+        "kinbase explain --json"
       ],
       "thresholds": [
         {
@@ -3924,7 +3924,7 @@
       "oid": "V-5.runtime-vs-architecture",
       "requirement": "Live runtime configuration may defeat a code-default diagnosis for an operational question without acquiring authority to rewrite a Company architecture decision.",
       "surfaces": [
-        "guildhall explain --json"
+        "kinbase explain --json"
       ],
       "thresholds": [
         {
@@ -3992,7 +3992,7 @@
       "oid": "V-5.unregistered-environment",
       "requirement": "The runtime adapter refuses trusted admission for an unregistered environment and creates a Company-steward registry Unknown instead; it never admits an observation carrying only a free-form owner string.",
       "surfaces": [
-        "guildhall explain --json"
+        "kinbase explain --json"
       ],
       "thresholds": [
         {
@@ -4060,9 +4060,9 @@
         "test_v6_authority.py::test_service_starts_and_registers_a_named_chief_architect"
       ],
       "oid": "V-6.registration",
-      "requirement": "Start `guildhalld` and register a named Chief Architect with a test signing key and a live channel endpoint/process separate from the caller.",
+      "requirement": "Start `kinbased` and register a named Chief Architect with a test signing key and a live channel endpoint/process separate from the caller.",
       "surfaces": [
-        "guildhalld",
+        "kinbased",
         "authority registry"
       ],
       "thresholds": [
@@ -4076,7 +4076,7 @@
           "positive_control": "V-6.registration#pc:is_true:service_started",
           "product_mutation": "V-6.registration#pm:is_true:service_started",
           "tag": "is_true:service_started",
-          "why": "guildhalld is genuinely running"
+          "why": "kinbased is genuinely running"
         },
         {
           "bound": null,
@@ -4179,8 +4179,8 @@
       "oid": "V-6.question",
       "requirement": "Assert a targeted question is delivered to that authority, dependent trusted guidance is withheld, and another role's signature is rejected.",
       "surfaces": [
-        "guildhall questions ask",
-        "guildhall project --json"
+        "kinbase questions ask",
+        "kinbase project --json"
       ],
       "thresholds": [
         {
@@ -4309,7 +4309,7 @@
       "requirement": "detect it, address the registered authority, ingest a signed answer, close/supersede the Unknown, rebuild the view, and materially change the projected guidance or decision",
       "surfaces": [
         "separate signing process",
-        "guildhall ingest authority_answer"
+        "kinbase ingest authority_answer"
       ],
       "thresholds": [
         {
@@ -4428,7 +4428,7 @@
       "oid": "V-6.wrong-role",
       "requirement": "Only the resolved named in-scope authority may answer.",
       "surfaces": [
-        "guildhall questions answer"
+        "kinbase questions answer"
       ],
       "thresholds": [
         {
@@ -4487,7 +4487,7 @@
       "oid": "V-6.degraded",
       "requirement": "Offline or unavailable authority does not become permission.",
       "surfaces": [
-        "guildhall project --json"
+        "kinbase project --json"
       ],
       "thresholds": [
         {
@@ -4627,8 +4627,8 @@
       "oid": "V-7.candidate-set",
       "requirement": "Construct a candidate set with high-scoring paraphrases, one distinct high-distortion compatibility invariant, one complementary test/rationale pair, one stale fact, and one high-distortion Unknown.",
       "surfaces": [
-        "guildhall ingest",
-        "guildhall project --json"
+        "kinbase ingest",
+        "kinbase project --json"
       ],
       "thresholds": [
         {
@@ -4715,7 +4715,7 @@
       "oid": "V-7.set-conditional",
       "requirement": "The projector selects a set, not independently weighted nodes.",
       "surfaces": [
-        "guildhall project --working-set"
+        "kinbase project --working-set"
       ],
       "thresholds": [
         {
@@ -4772,7 +4772,7 @@
       "oid": "V-7.no-crowding",
       "requirement": "It must demonstrate that redundant high-similarity facts do not crowd out a distinct high-distortion constraint and that adding the same fact to a warm working set has near-zero marginal value.",
       "surfaces": [
-        "guildhall project --json"
+        "kinbase project --json"
       ],
       "thresholds": [
         {
@@ -4828,7 +4828,7 @@
       "oid": "V-7.marginal-terms",
       "requirement": "The trace records the terms, not just a score.",
       "surfaces": [
-        "guildhall project --json"
+        "kinbase project --json"
       ],
       "thresholds": [
         {
@@ -4860,7 +4860,7 @@
       "oid": "V-7.complementarity",
       "requirement": "Complementarity permits a test plus rationale to be jointly useful.",
       "surfaces": [
-        "guildhall project --json"
+        "kinbase project --json"
       ],
       "thresholds": [
         {
@@ -4917,7 +4917,7 @@
       "oid": "V-7.stale-fact",
       "requirement": "A stale or disputed fact is worse than a missing fact: it is withheld from trusted projection and produces an owned Unknown.",
       "surfaces": [
-        "guildhall project --json"
+        "kinbase project --json"
       ],
       "thresholds": [
         {
@@ -4973,7 +4973,7 @@
       "oid": "V-7.no-voi-claim",
       "requirement": "This fixture proves selector mechanics only. Causal evidence for set selection comes from `topk-maintained` versus `full-system` in V-10, with natural-corpus redundancy cluster sizes and source dependence reported rather than manufactured.",
       "surfaces": [
-        "guildhall project --json"
+        "kinbase project --json"
       ],
       "thresholds": [
         {
@@ -5029,7 +5029,7 @@
       "oid": "V-7.voi-stop",
       "requirement": "Escalate evidence tiers and assert the loop stops on net marginal value, not a filled token window.",
       "surfaces": [
-        "guildhall project --json"
+        "kinbase project --json"
       ],
       "thresholds": [
         {
@@ -5125,7 +5125,7 @@
       "oid": "V-7.query-log",
       "requirement": "Query logs record retrievals, returned and selected IDs, working set, edit-time residency, declared use, outcome, and cost.",
       "surfaces": [
-        "guildhall status --json"
+        "kinbase status --json"
       ],
       "thresholds": [
         {
@@ -5158,7 +5158,7 @@
       "requirement": "From a fresh clone, resolve a valid Company architecture reference and project its live statement without copying it into Git.",
       "surfaces": [
         "git objects",
-        "guildhall project --json",
+        "kinbase project --json",
         "Company service"
       ],
       "thresholds": [
@@ -5409,7 +5409,7 @@
       "oid": "V-8.stricter-class",
       "requirement": "Projection uses the stricter of Company criticality and local dependence; raising the local class records its maintainer, and a missing local owner is a repository-maintainer Unknown.",
       "surfaces": [
-        "guildhall explain --json",
+        "kinbase explain --json",
         "signed Company and Codebase facts"
       ],
       "thresholds": [
@@ -5445,8 +5445,8 @@
       "oid": "V-8.steward-only-exception",
       "requirement": "Only a Company steward can authorize an exception to Company architecture. A Codebase maintainer or Factory role may request one but cannot mint it.",
       "surfaces": [
-        "guildhall ingest kindex",
-        "guildhall explain --json"
+        "kinbase ingest kindex",
+        "kinbase explain --json"
       ],
       "thresholds": [
         {
@@ -5533,7 +5533,7 @@
       "requirement": "A differing historical digest means a changed/corrupt reference and a steward-owned Unknown; a matching historical digest means a client canonicalization defect and a client-owned Unknown; unavailable or no-longer-retained historical version yields a Company publication-retention Unknown without accusing the client.",
       "surfaces": [
         "Company service",
-        "guildhall explain --json"
+        "kinbase explain --json"
       ],
       "thresholds": [
         {
@@ -5580,7 +5580,7 @@
       "oid": "V-8.uncertified",
       "requirement": "Fresh clone with no certificate or Company access yields zero trusted facts and one actionable certificate Unknown.",
       "surfaces": [
-        "guildhall status --json"
+        "kinbase status --json"
       ],
       "thresholds": [
         {
@@ -5673,8 +5673,8 @@
       "oid": "V-8.identity",
       "requirement": "A later hint returning a different UUID or certificate blocks with a steward-owned identity Unknown; it never silently repins.",
       "surfaces": [
-        "guildhall status --json",
-        "guildhall fsck"
+        "kinbase status --json",
+        "kinbase fsck"
       ],
       "thresholds": [
         {
@@ -5746,7 +5746,7 @@
       "oid": "V-8.publish-manifest",
       "requirement": "`MANIFEST_HEAD_REGRESSION` | published reachable lineage lowers event count without rewrite event | 4",
       "surfaces": [
-        "guildhall repo publish-manifest",
+        "kinbase repo publish-manifest",
         "Company service"
       ],
       "thresholds": [
@@ -5818,7 +5818,7 @@
       "requirement": "On `fresh_until`, Company itself emits one observation-expired event, retires the old observation to historical-only, and opens its steward-owned publication Unknown without waiting for maintainer/clone activity.",
       "surfaces": [
         "Company service",
-        "guildhall status --json"
+        "kinbase status --json"
       ],
       "thresholds": [
         {
@@ -5889,7 +5889,7 @@
       "requirement": "Exhaust the revocation-fresh/stale \u00d7 fact-fresh/stale \u00d7 safety/advisory truth table; stale revocation dominates safety projection.",
       "surfaces": [
         "Company cache",
-        "guildhall project --json"
+        "kinbase project --json"
       ],
       "thresholds": [
         {
@@ -5933,7 +5933,7 @@
       "oid": "V-8.counts-only",
       "requirement": "Event bodies are visible only through an explicit diagnostic inspect command and never enter SessionStart, a host projection, model request, or tool-result envelope.",
       "surfaces": [
-        "guildhall hooks dispatch"
+        "kinbase hooks dispatch"
       ],
       "thresholds": [
         {
@@ -6001,8 +6001,8 @@
       "oid": "V-9.setup",
       "requirement": "Verify setup dry-run exposes permission needs and changes nothing; explicit approval installs only expected files.",
       "surfaces": [
-        "guildhall hooks plan",
-        "guildhall hooks install",
+        "kinbase hooks plan",
+        "kinbase hooks install",
         "isolated HOME"
       ],
       "thresholds": [
@@ -6192,7 +6192,7 @@
       "oid": "V-9.native-events",
       "requirement": "Invoke native SessionStart, prompt/observation, pre-edit, PreCompact, and Stop/end payloads.",
       "surfaces": [
-        "guildhall hooks dispatch",
+        "kinbase hooks dispatch",
         "installed host config"
       ],
       "thresholds": [
@@ -6317,7 +6317,7 @@
       "oid": "V-9.parity",
       "requirement": "For matched conversations, canonical facts/projections/receipts match across hosts.",
       "surfaces": [
-        "guildhall session observe --json"
+        "kinbase session observe --json"
       ],
       "thresholds": [
         {
@@ -6397,7 +6397,7 @@
       "oid": "V-9.latency",
       "requirement": "Measure warm, cold, invalid-cache, and full-fsck-required SessionStart separately; run at least 200 invocations per host/state on the recorded proof machine, report CPU/RAM/filesystem, and require every state's p95 under two seconds.",
       "surfaces": [
-        "guildhall hooks dispatch SessionStart"
+        "kinbase hooks dispatch SessionStart"
       ],
       "thresholds": [
         {
@@ -6468,7 +6468,7 @@
       "oid": "V-9.blackhole",
       "requirement": "It uses a previously verified cache and launches asynchronous Company refresh with a 250-millisecond connection budget; a blackholed endpoint cannot hold the host open.",
       "surfaces": [
-        "guildhall hooks dispatch SessionStart"
+        "kinbase hooks dispatch SessionStart"
       ],
       "thresholds": [
         {
@@ -6560,7 +6560,7 @@
       "oid": "V-9.topology",
       "requirement": "Launch inside a normal clone, linked worktree, submodule, and nested repository: common-dir worktrees share UUID, while nested/submodule roots require independent certificates and never inherit superproject fact bodies.",
       "surfaces": [
-        "guildhall doctor --json"
+        "kinbase doctor --json"
       ],
       "thresholds": [
         {
@@ -6648,7 +6648,7 @@
       "oid": "V-9.soak",
       "requirement": "Across the 20-session private soak, at least 90% of starts must take the warm verified path and deliver nonempty trusted context when eligible facts exist; after the first cold start, at most 5% of ordinary append/branch-switch/restart/linked-worktree starts may require a full fsck.",
       "surfaces": [
-        "guildhall hooks dispatch SessionStart"
+        "kinbase hooks dispatch SessionStart"
       ],
       "thresholds": [
         {
@@ -6743,8 +6743,8 @@
       "oid": "V-9.prompt-budget",
       "requirement": "Destinations share that four-slot ceiling and may have stricter sublimits; two concurrent Codex/Claude sessions on the same host instance share the serialized shard.",
       "surfaces": [
-        "guildhall proposals list",
-        "guildhall doctor --json"
+        "kinbase proposals list",
+        "kinbase doctor --json"
       ],
       "thresholds": [
         {
@@ -6850,7 +6850,7 @@
       "oid": "V-9.reset",
       "requirement": "`reset` only clears the three- consecutive counter after a real new primary-task event, is limited to once per hour, and records its closed reason code.",
       "surfaces": [
-        "guildhall proposals reset"
+        "kinbase proposals reset"
       ],
       "thresholds": [
         {
@@ -6932,8 +6932,8 @@
       "oid": "V-9.reissue-atomicity",
       "requirement": "Reissue eligibility, unique digest lock, total slot reservation, and consecutive count must commit in one `BEGIN IMMEDIATE`;",
       "surfaces": [
-        "guildhall proposals reissue",
-        "guildhall doctor --json"
+        "kinbase proposals reissue",
+        "kinbase doctor --json"
       ],
       "thresholds": [
         {
@@ -7026,8 +7026,8 @@
       "oid": "V-9.interleave",
       "requirement": "Force Codex and Claude sessions on one host instance to interleave exactly between slot check and render.",
       "surfaces": [
-        "guildhall proposals list",
-        "guildhall doctor --json"
+        "kinbase proposals list",
+        "kinbase doctor --json"
       ],
       "thresholds": [
         {
@@ -7211,8 +7211,8 @@
       "oid": "V-9.adequacy",
       "requirement": "the distortion/authority queue must place at least 18 of those facts into a human decision slot within five simulated sliding-hour windows, admit at least 17 correct facts after decisions, and surface no more than four total prompts in any window",
       "surfaces": [
-        "guildhall session observe",
-        "guildhall status --json"
+        "kinbase session observe",
+        "kinbase status --json"
       ],
       "thresholds": [
         {
@@ -7374,7 +7374,7 @@
       "oid": "NF.help",
       "requirement": "Python package installs in a clean environment and commands have bounded help.",
       "surfaces": [
-        "guildhall --help"
+        "kinbase --help"
       ],
       "thresholds": [
         {
@@ -7406,7 +7406,7 @@
       "oid": "NF.roots",
       "requirement": "All service/data roots are explicit; default bind is loopback; filesystem modes are asserted; symlinks and escapes fail closed.",
       "surfaces": [
-        "guildhall status",
+        "kinbase status",
         "filesystem"
       ],
       "thresholds": [
@@ -7464,7 +7464,7 @@
       "oid": "NF.determinism",
       "requirement": "Schema validation, canonicalization, migrations, and rebuilds are deterministic.",
       "surfaces": [
-        "guildhall corpus rebuild"
+        "kinbase corpus rebuild"
       ],
       "thresholds": [
         {
@@ -7533,7 +7533,7 @@
       "oid": "NF.logs",
       "requirement": "Logs are structured and contain IDs/digests/statuses, never raw private messages.",
       "surfaces": [
-        "guildhall doctor",
+        "kinbase doctor",
         "log files"
       ],
       "thresholds": [
@@ -7590,7 +7590,7 @@
       "oid": "NF.timeouts",
       "requirement": "Every external/model/process call has a timeout and typed failure; failed writes do not become admitted facts.",
       "surfaces": [
-        "guildhall status"
+        "kinbase status"
       ],
       "thresholds": [
         {
@@ -7659,9 +7659,9 @@
       "oid": "NF.diagnostics",
       "requirement": "`fsck`, `doctor`, corpus status, question status, and experiment status are executable and useful after restart.",
       "surfaces": [
-        "guildhall fsck",
-        "guildhall doctor",
-        "guildhall explain"
+        "kinbase fsck",
+        "kinbase doctor",
+        "kinbase explain"
       ],
       "thresholds": [
         {
@@ -7703,9 +7703,9 @@
         "test_nonfunctional.py::test_http_rejects_every_declared_probe"
       ],
       "oid": "NF.http",
-      "requirement": "Guildhall HTTP rejects unauthenticated reads, non-loopback Host, Origin-bearing requests, and non-JSON writes; all receive typed remediation-safe errors.",
+      "requirement": "Kinbase HTTP rejects unauthenticated reads, non-loopback Host, Origin-bearing requests, and non-JSON writes; all receive typed remediation-safe errors.",
       "surfaces": [
-        "guildhalld HTTP"
+        "kinbased HTTP"
       ],
       "thresholds": [
         {
@@ -7740,8 +7740,8 @@
       "oid": "NF.ceilings",
       "requirement": "shared event: 64 KiB; `.kin/` intake: 10,000 events / 128 MiB;",
       "surfaces": [
-        "guildhall ingest",
-        "guildhall project"
+        "kinbase ingest",
+        "kinbase project"
       ],
       "thresholds": [
         {
@@ -7777,7 +7777,7 @@
       "oid": "NF.lifetimes",
       "requirement": "candidate and approval lifetime: 15 minutes;",
       "surfaces": [
-        "guildhall proposals decide"
+        "kinbase proposals decide"
       ],
       "thresholds": [
         {
@@ -7846,7 +7846,7 @@
       "oid": "NF.exit-boundary",
       "requirement": "The CLI installs one top-level exception boundary that emits the typed internal error and exits 70 for every caught application exception.",
       "surfaces": [
-        "guildhall"
+        "kinbase"
       ],
       "thresholds": [
         {
@@ -7905,7 +7905,7 @@
       "oid": "NF.token-mode",
       "requirement": "| token/key mode broader than 0600 | exit 4; chmod remediation |",
       "surfaces": [
-        "guildhall status"
+        "kinbase status"
       ],
       "thresholds": [
         {
@@ -8211,7 +8211,7 @@
       "oid": "V10.freeze-order",
       "requirement": "`freeze` refuses without census, power/MDE/cost results, valid calibration, and exact human budget ratification.",
       "surfaces": [
-        "guildhall experiment freeze"
+        "kinbase experiment freeze"
       ],
       "thresholds": [
         {
@@ -8246,7 +8246,7 @@
       "oid": "V10.census-row",
       "requirement": "`RUN_CENSUS_MISSING` | benchmark action lacks its pre-launch signed census row | 70",
       "surfaces": [
-        "guildhall experiment run"
+        "kinbase experiment run"
       ],
       "thresholds": [
         {
@@ -8302,7 +8302,7 @@
       "oid": "V10.human-bytes",
       "requirement": "The broker records `human_bytes_after_freeze`; any value other than zero is `INVALID_RUN`.",
       "surfaces": [
-        "guildhall experiment run"
+        "kinbase experiment run"
       ],
       "thresholds": [
         {
@@ -8346,7 +8346,7 @@
       "oid": "V10.principal",
       "requirement": "Administrative or broad service-reader identities cannot run a measurement task.",
       "surfaces": [
-        "guildhall experiment run"
+        "kinbase experiment run"
       ],
       "thresholds": [
         {
@@ -8391,7 +8391,7 @@
       "oid": "V10.ceiling",
       "requirement": "The harness atomically reserves and enforces the aggregate ceiling.",
       "surfaces": [
-        "guildhall experiment freeze"
+        "kinbase experiment freeze"
       ],
       "thresholds": [
         {
@@ -8459,7 +8459,7 @@
       "oid": "V10.claim",
       "requirement": "The published conclusion must use the exact licensed-claim template in P-10 with run-specific digests and metrics.",
       "surfaces": [
-        "guildhall experiment verdict"
+        "kinbase experiment verdict"
       ],
       "thresholds": [
         {
@@ -8505,5 +8505,5 @@
       ]
     }
   ],
-  "schema": "guildhall-acceptance-obligation-catalog/1"
+  "schema": "kinbase-acceptance-obligation-catalog/1"
 }

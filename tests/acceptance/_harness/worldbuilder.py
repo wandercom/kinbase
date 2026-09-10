@@ -111,7 +111,7 @@ class SignedWorld:
         repo = GitRepo.init(repo_root)
         repo.write(
             ".kin/config",
-            'schema_version = "guildhall-repo/1"\n'
+            'schema_version = "kinbase-repo/1"\n'
             f'repository_uuid_hint = "{REPO_UUID}"\n'
             'safe_name = "example-service"\n'
             'domains = ["scheduling"]\n',
@@ -335,7 +335,7 @@ class SignedWorld:
                 "Company refused a FactEvent signed by a registered in-scope "
                 f"authority ({signer.authority_id}, scope {signer.scope}) with a "
                 "valid token and request signature; spec/architecture.md "
-                "'Company / Guildhall' and Validator ruling C6 make such a fact "
+                "'Company / Kinbase' and Validator ruling C6 make such a fact "
                 "admissible. Observation: " + json.dumps(admission, default=str)
             )
         return record
@@ -423,7 +423,7 @@ class SignedWorld:
                 self._report_planted_loss(record, observed_digest)
             payload = json.loads(raw.decode("utf-8"))
             message_type = "unknown-event" if payload.get(
-                "schema") == "guildhall-unknown/1" else "fact-event"
+                "schema") == "kinbase-unknown/1" else "fact-event"
             if not synth.verify_document(message_type, payload):
                 raise HarnessInvalid(
                     f"planted event {record['digest'][:12]} does not verify; the "
@@ -848,8 +848,8 @@ class CompanyService:
         return self.process.poll() is None
 
 
-def start_company(guildhall, roots: ProofRoots, *, timeout: float = 30.0) -> CompanyService:
-    """Start ``guildhalld`` and prove it is listening before returning.
+def start_company(kinbase, roots: ProofRoots, *, timeout: float = 30.0) -> CompanyService:
+    """Start ``kinbased`` and prove it is listening before returning.
 
     A gate that needs live Company behaviour must fail loudly when the service
     is absent, rather than degrade into asserting a refusal.
@@ -859,14 +859,14 @@ def start_company(guildhall, roots: ProofRoots, *, timeout: float = 30.0) -> Com
     roots.write_secret("facts.token", facts_token.encode())
     roots.write_secret("directory.token", ("dir-" + secrets.token_hex(20)).encode())
     roots.write_secret("company-root.key", bytes([11]) * 32)
-    process = guildhall.popen(
+    process = kinbase.popen(
         "company", "serve", "--config", str(roots.service_config_path)
     )
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if process.poll() is not None:
             raise ProductFailure(
-                "guildhalld exited before accepting a connection; "
+                "kinbased exited before accepting a connection; "
                 "spec/architecture.md section 6 requires a real loopback service"
             )
         try:
@@ -881,7 +881,7 @@ def start_company(guildhall, roots: ProofRoots, *, timeout: float = 30.0) -> Com
             time.sleep(0.05)
     process.terminate()
     raise ProductFailure(
-        f"guildhalld did not accept a loopback connection within {timeout}s"
+        f"kinbased did not accept a loopback connection within {timeout}s"
     )
 
 
@@ -893,13 +893,13 @@ def start_company(guildhall, roots: ProofRoots, *, timeout: float = 30.0) -> Com
 SESSION_ID_KEYS: tuple[str, ...] = ("session_id", "session", "id")
 
 
-def start_session(guildhall, repo: Path, *, host: str = "codex") -> str:
-    """``guildhall session start --host H --repo R --json`` and return its id.
+def start_session(kinbase, repo: Path, *, host: str = "codex") -> str:
+    """``kinbase session start --host H --repo R --json`` and return its id.
 
     ``spec/cli.md`` "Session, candidates, and approval": ``SESSION`` is the id
     the product issued at ``session start``; the instrument never mints one.
     """
-    result = guildhall.run(
+    result = kinbase.run(
         "session", "start", "--host", host, "--repo", str(repo), "--json",
         cwd=repo, check=False,
     )

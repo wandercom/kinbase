@@ -167,7 +167,7 @@ FORBIDDEN_METHOD_LABEL = "CLEAN_QUALIFIED"
 LICENSED_CLAIM_FRAGMENT = (
     "On the digest-identified task population, repositories, model/provider "
     "fingerprint, budgets, authority service, and finite threat model in this "
-    "run, Guildhall met P-1 through P-9 and raised blinded brownfield quality "
+    "run, Kinbase met P-1 through P-9 and raised blinded brownfield quality "
     "to the preregistered P-10 equivalence band."
 )
 

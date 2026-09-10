@@ -162,7 +162,7 @@ def gates_with_unconsumed(nodes_executed: Iterable[str]) -> dict[str, list[str]]
 def as_json(nodes_executed: Iterable[str]) -> dict:
     executed = list(nodes_executed)
     return {
-        "schema": "guildhall-obligation-consumption/1",
+        "schema": "kinbase-obligation-consumption/1",
         "records": [r.as_json() for r in _RECORDS],
         "declared_pairs": len(expected_pairs(executed)),
         "consumed_pairs": len(consumed_pairs()),

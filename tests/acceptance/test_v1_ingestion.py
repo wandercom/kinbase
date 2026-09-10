@@ -29,7 +29,7 @@ from ._harness import lifecycle as L
 from ._harness import lifecycle_observations as LO
 from ._harness import obligations as O
 from ._harness import prereq, synth, trust
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.evidence_model import (
     Origin,
     field,
@@ -85,14 +85,14 @@ APPROVERS: tuple[synth.Signer, ...] = (
 
 
 @pytest.fixture()
-def anchored(roots: ProofRoots, guildhall: Guildhall):
+def anchored(roots: ProofRoots, kinbase: Kinbase):
     """A world whose external trust prerequisites are genuinely in place."""
     world = SignedWorld.create(roots.repo_root)
     # The two approvers are registered principals (approval scope) so their
     # misextraction notice is admissible; neither is a steward/maintainer, so
     # the never_true withdrawal from either must still be refused.
     anchors = trust.establish(
-        guildhall, roots, world,
+        kinbase, roots, world,
         extra_authorities=tuple((a, "approver:local") for a in APPROVERS) + temporal_extra_authorities(),
     )
     sources = roots.repo_root / "sources"
@@ -124,14 +124,14 @@ def native_corpus(anchored):
 
 
 @pytest.fixture()
-def matrix(anchored, guildhall: Guildhall):
+def matrix(anchored, kinbase: Kinbase):
     """All 64 ratified cells, executed natively, with per-cell witnesses."""
     world, anchors, ctx = anchored
     trust.classifier_pinned(anchors, what="V-1 native source extraction")
     cells = L.execution_cells()
     witnesses: dict[str, dict] = {}
     for cell in cells:
-        before = _status(guildhall, world.repo.path)
+        before = _status(kinbase, world.repo.path)
         witness = cell.run(ctx)
         revoked_entry = None
         if witness.get("registry_revoke"):
@@ -148,11 +148,11 @@ def matrix(anchored, guildhall: Guildhall):
             source = target_repo
         elif target_repo != world.repo.path:
             source = target_repo / source.relative_to(world.repo.path)
-        _ingest(guildhall, target_repo, cell.adapter, source)
-        after = _status(guildhall, target_repo)
+        _ingest(kinbase, target_repo, cell.adapter, source)
+        after = _status(kinbase, target_repo)
         if witness.get("repeat_ingest"):
-            _ingest(guildhall, target_repo, cell.adapter, source)
-            witness["replay_status"] = _status(guildhall, target_repo)
+            _ingest(kinbase, target_repo, cell.adapter, source)
+            witness["replay_status"] = _status(kinbase, target_repo)
         witness["derived"] = LO.derive(cell, witness, before, after)
         witnesses[cell.key] = witness
         if revoked_entry is not None:
@@ -168,9 +168,9 @@ def matrix(anchored, guildhall: Guildhall):
     return world, anchors, ctx, witnesses
 
 
-def _ingest(guildhall: Guildhall, repo: Path, adapter: str, source: Path) -> dict:
+def _ingest(kinbase: Kinbase, repo: Path, adapter: str, source: Path) -> dict:
     """Drive one adapter through the ratified ingest surface."""
-    result = guildhall.run(
+    result = kinbase.run(
         "ingest", adapter, str(source), "--repo", str(repo), "--json",
         cwd=repo, check=False,
     )
@@ -187,7 +187,7 @@ def _ingest(guildhall: Guildhall, repo: Path, adapter: str, source: Path) -> dic
     return payload
 
 
-def _ingest_all(guildhall: Guildhall, world, ctx) -> dict[str, dict]:
+def _ingest_all(kinbase: Kinbase, world, ctx) -> dict[str, dict]:
     receipts: dict[str, dict] = {}
     for adapter in ADAPTERS:
         source = ctx.sources / SOURCE_ROOTS[adapter]
@@ -195,12 +195,12 @@ def _ingest_all(guildhall: Guildhall, world, ctx) -> dict[str, dict]:
             source = world.repo.path
         elif adapter == "repo_code":
             source = world.repo.path / "src"
-        receipts[adapter] = _ingest(guildhall, world.repo.path, adapter, source)
+        receipts[adapter] = _ingest(kinbase, world.repo.path, adapter, source)
     return receipts
 
 
-def _rebuild(guildhall: Guildhall, repo: Path, store: str = "codebase") -> dict:
-    result = guildhall.run(
+def _rebuild(kinbase: Kinbase, repo: Path, store: str = "codebase") -> dict:
+    result = kinbase.run(
         "corpus", "rebuild", "--store", store, "--repo", str(repo), "--json",
         cwd=repo, check=False,
     )
@@ -212,8 +212,8 @@ def _rebuild(guildhall: Guildhall, repo: Path, store: str = "codebase") -> dict:
     return payload
 
 
-def _status(guildhall: Guildhall, repo: Path) -> dict:
-    result = guildhall.run("status", "--repo", str(repo), "--json",
+def _status(kinbase: Kinbase, repo: Path) -> dict:
+    result = kinbase.run("status", "--repo", str(repo), "--json",
                            cwd=repo, check=False)
     if result.returncode == 1:
         raise ProductFailure("`status` returned the reserved ambiguous exit 1")
@@ -236,9 +236,9 @@ def _status(guildhall: Guildhall, repo: Path) -> dict:
            "Run all ten adapters against native-format sources in isolated fixtures; at least "
            "seven participate in the recorded end-to-end build."),
 )
-def test_all_ten_adapters_run_against_native_sources(guildhall: Guildhall, native_corpus) -> None:
+def test_all_ten_adapters_run_against_native_sources(kinbase: Kinbase, native_corpus) -> None:
     world, anchors, ctx, witnesses = native_corpus
-    receipts = _ingest_all(guildhall, world, ctx)
+    receipts = _ingest_all(kinbase, world, ctx)
     require_nonempty(receipts, obligation="V-1.adapters-native",
                      why="every ratified adapter must produce a receipt",
                      origin=Origin.PRODUCT)
@@ -276,10 +276,10 @@ def test_all_ten_adapters_run_against_native_sources(guildhall: Guildhall, nativ
          "observations and derived facts."),
 )
 def test_adapter_receipt_reports_observations_not_counts(
-    guildhall: Guildhall, native_corpus
+    kinbase: Kinbase, native_corpus
 ) -> None:
     world, anchors, ctx, witnesses = native_corpus
-    receipts = _ingest_all(guildhall, world, ctx)
+    receipts = _ingest_all(kinbase, world, ctx)
     require_nonempty(receipts, obligation="V-1.receipt-not-count",
                      why="no adapter produced a receipt to inspect",
                      origin=Origin.PRODUCT)
@@ -309,11 +309,11 @@ def test_adapter_receipt_reports_observations_not_counts(
            "and fact derivations."),
 )
 def test_end_to_end_build_uses_at_least_seven_source_classes(
-    guildhall: Guildhall, native_corpus
+    kinbase: Kinbase, native_corpus
 ) -> None:
     world, anchors, ctx, witnesses = native_corpus
-    _ingest_all(guildhall, world, ctx)
-    build = _rebuild(guildhall, world.repo.path)
+    _ingest_all(kinbase, world, ctx)
+    build = _rebuild(kinbase, world.repo.path)
     manifest = build.get("build_manifest")
     if not isinstance(manifest, dict):
         raise ProductFailure(
@@ -330,13 +330,13 @@ def test_end_to_end_build_uses_at_least_seven_source_classes(
            "current views."),
 )
 def test_reingest_unchanged_is_idempotent_and_byte_identical(
-    guildhall: Guildhall, native_corpus
+    kinbase: Kinbase, native_corpus
 ) -> None:
     world, anchors, ctx, witnesses = native_corpus
-    _ingest_all(guildhall, world, ctx)
-    first = _rebuild(guildhall, world.repo.path)
-    _ingest_all(guildhall, world, ctx)
-    second = _rebuild(guildhall, world.repo.path)
+    _ingest_all(kinbase, world, ctx)
+    first = _rebuild(kinbase, world.repo.path)
+    _ingest_all(kinbase, world, ctx)
+    second = _rebuild(kinbase, world.repo.path)
 
     first_digest = first.get("current_view_digest")
     second_digest = second.get("current_view_digest")
@@ -364,10 +364,10 @@ def test_reingest_unchanged_is_idempotent_and_byte_identical(
            "current disposition changes explicitly."),
 )
 def test_change_delete_reject_revert_preserve_history_and_change_disposition(
-    guildhall: Guildhall, matrix
+    kinbase: Kinbase, matrix
 ) -> None:
     world, anchors, ctx, witnesses = matrix
-    before = _ingest_all(guildhall, world, ctx)
+    before = _ingest_all(kinbase, world, ctx)
     require_nonempty(before, obligation="V-1.disposition-change",
                      why="the pre-change ingest produced no receipt",
                      origin=Origin.PRODUCT)
@@ -375,8 +375,8 @@ def test_change_delete_reject_revert_preserve_history_and_change_disposition(
     # The change/delete/reject/revert transitions are the ratified cells that
     # perform exactly those four operations, already executed by the matrix
     # fixture in native form. Re-ingesting reads their result.
-    _ingest_all(guildhall, world, ctx)
-    status = _status(guildhall, world.repo.path)
+    _ingest_all(kinbase, world, ctx)
+    status = _status(kinbase, world.repo.path)
     changed = status.get("changed_dispositions")
     O.check(
         "V-1.disposition-change",
@@ -394,7 +394,7 @@ def test_change_delete_reject_revert_preserve_history_and_change_disposition(
            "at least one negative mutation."),
 )
 def test_lifecycle_matrix_executes_every_declared_cell(
-    guildhall: Guildhall, matrix
+    kinbase: Kinbase, matrix
 ) -> None:
     """All 64 ratified cells, natively executed, each with its own mutation."""
     world, anchors, ctx, witnesses = matrix
@@ -423,7 +423,7 @@ def test_lifecycle_matrix_executes_every_declared_cell(
            "the fact and reopens every dependent decision"),
 )
 def test_retiring_supports_one_at_a_time_recomputes_then_withdraws(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors, ctx = anchored
     key = "architecture/scheduler/retry-ceiling"
@@ -448,21 +448,21 @@ def test_retiring_supports_one_at_a_time_recomputes_then_withdraws(
         [first, second], what="multiply supported fact", minimum=2,
         why="the retirement sequence needs at least two independent supports",
     )
-    _ingest(guildhall, world.repo.path, "kindex", world.repo.path / ".kin")
+    _ingest(kinbase, world.repo.path, "kindex", world.repo.path / ".kin")
 
     world.plant_event(
         world.architect, store_kind="company", logical_key=key,
         statement="the retry ceiling is four attempts per hour",
         disposition="retracted", supersedes=(first["event_id"],),
     )
-    after_first = _status(guildhall, world.repo.path)
+    after_first = _status(kinbase, world.repo.path)
 
     world.plant_event(
         world.maintainer, store_kind="codebase", logical_key=key,
         statement="the retry ceiling is four attempts per hour",
         disposition="retracted", supersedes=(second["event_id"],),
     )
-    after_final = _status(guildhall, world.repo.path)
+    after_final = _status(kinbase, world.repo.path)
 
     reopened = after_final.get("reopened_decisions")
     O.check(
@@ -509,7 +509,7 @@ def _fact_field(status: dict, logical_key: str, field: str):
            "Company, and Codebase cursors."),
 )
 def test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors, ctx = anchored
     # R-14: mutate receipt times, never historical validity dates. Personal
@@ -533,7 +533,7 @@ def test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors(
         outcomes = {}
         # Both in-bound arrivals are delivered newest first. Two out-of-bound
         # claims exercise both polarities without depending on exact boundaries.
-        session = start_session(guildhall, world.repo.path) if cursor == "personal" else None
+        session = start_session(kinbase, world.repo.path) if cursor == "personal" else None
         for label, offset in (("newer", 0), ("older", -60), ("positive", 600), ("negative", -600)):
             token = identities.token(cursor + "/" + label)
             if cursor == "company":
@@ -554,7 +554,7 @@ def test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors(
                     "id": token, "role": "user", "text": "I prefer quiet notifications " + token,
                     "source_kind": "codex_jsonl", "observed_at": synth.receipt_stamp(offset),
                 }) + "\n", encoding="utf-8")
-                result = guildhall.run("session", "observe", session, "--event", str(path),
+                result = kinbase.run("session", "observe", session, "--event", str(path),
                                       "--json", cwd=world.repo.path, check=False)
                 payload, success = result.json, result.returncode == 0
             else:
@@ -564,7 +564,7 @@ def test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors(
                     observed_at=synth.receipt_stamp(offset),
                     environment_id="prod-eu", owner=DEPLOY_OWNER.authority_id,
                 )
-                result = guildhall.run("ingest", "runtime_evidence", str(path),
+                result = kinbase.run("ingest", "runtime_evidence", str(path),
                                       "--repo", str(world.repo.path), "--json",
                                       cwd=world.repo.path, check=False)
                 payload, success = result.json, result.returncode == 0
@@ -574,7 +574,7 @@ def test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors(
                 success and "CLOCK_SKEW" not in observed_codes)
         # Preserve the existing ordering obligation as well as witnessing both
         # valid deliveries; successful command exits alone do not prove ordering.
-        cursor_report = next((row for row in rows(_status(guildhall, world.repo.path), "cursor_skew")
+        cursor_report = next((row for row in rows(_status(kinbase, world.repo.path), "cursor_skew")
                               if field(row, "cursor") == cursor), {})
         detail.append({"cursor": cursor,
                        "positive_skew_quarantined": outcomes["positive"],
@@ -594,7 +594,7 @@ def test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors(
            "subject-matter-authority Unknown"),
 )
 def test_misextraction_notice_is_approver_owned_and_withholds_only(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors, ctx = anchored
     key = "architecture/scheduler/lookahead-owner"
@@ -612,8 +612,8 @@ def test_misextraction_notice_is_approver_owned_and_withholds_only(
         parents=(planted["event_id"],),
     )
     world.verify_planted()
-    _ingest(guildhall, world.repo.path, "kindex", world.repo.path / ".kin")
-    status = _status(guildhall, world.repo.path)
+    _ingest(kinbase, world.repo.path, "kindex", world.repo.path / ".kin")
+    status = _status(kinbase, world.repo.path)
 
     notices = status.get("misextraction_notices")
     notice = {}
@@ -648,7 +648,7 @@ def test_misextraction_notice_is_approver_owned_and_withholds_only(
            "mutation that lets the approver mint it must fail."),
 )
 def test_never_true_requires_subject_matter_authority(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors, ctx = anchored
     key = "architecture/scheduler/retry-window"
@@ -673,8 +673,8 @@ def test_never_true_requires_subject_matter_authority(
         parents=(claim["event_id"],), supersedes=(claim["event_id"],),
     )
     world.verify_planted()
-    _ingest(guildhall, world.repo.path, "kindex", world.repo.path / ".kin")
-    status = _status(guildhall, world.repo.path)
+    _ingest(kinbase, world.repo.path, "kindex", world.repo.path / ".kin")
+    status = _status(kinbase, world.repo.path)
 
     admissions = status.get("never_true_admissions")
     by_authority = {}
@@ -701,7 +701,7 @@ def test_never_true_requires_subject_matter_authority(
            "current disposition changes explicitly."),
 )
 def test_origin_trust_class_is_derived_and_bounds_trusted_direction(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors, ctx = anchored
     repo = world.repo
@@ -714,12 +714,12 @@ def test_origin_trust_class_is_derived_and_bounds_trusted_direction(
     synth.adr(repo.path / "docs/adr/0022-branch.md", number=22, title="branch decision",
               status="accepted", body="the proposed scheduling rule applies")
     repo.commit("record a branch decision")
-    _ingest(guildhall, repo.path, "docs_adr", repo.path / "docs" / "adr")
+    _ingest(kinbase, repo.path, "docs_adr", repo.path / "docs" / "adr")
     repo.checkout(repo.default_branch)
 
-    _ingest(guildhall, repo.path, "docs_adr", repo.path / "docs" / "adr")
-    _ingest(guildhall, repo.path, "git_history", repo.path)
-    status = _status(guildhall, repo.path)
+    _ingest(kinbase, repo.path, "docs_adr", repo.path / "docs" / "adr")
+    _ingest(kinbase, repo.path, "git_history", repo.path)
+    status = _status(kinbase, repo.path)
 
     listed = rows(status, "observations")
     promoted = any(

@@ -31,7 +31,7 @@ if [ -z "$PYTHON" ]; then
     PYTHON="python3"
   fi
 fi
-LEDGER="${GUILDHALL_DETECTOR_LEDGER:-$HERE/_artifacts/detector-kill-ledger.json}"
+LEDGER="${KINBASE_DETECTOR_LEDGER:-$HERE/_artifacts/detector-kill-ledger.json}"
 mkdir -p "$(dirname "$LEDGER")"
 exec "$PYTHON" - "$LEDGER" "${1:-}" <<'PYEOF'
 import hashlib, json, os, pathlib, subprocess, sys, tempfile
@@ -59,8 +59,8 @@ for mutation in sorted(DETECTOR_MUTATIONS):
 
         census_path = tmpdir / "census.json"
         env = dict(os.environ)
-        env["GUILDHALL_ACCEPT_DETECTOR_MUTATION"] = mutation
-        env["GUILDHALL_ACCEPT_GATE_VECTOR"] = str(census_path)
+        env["KINBASE_ACCEPT_DETECTOR_MUTATION"] = mutation
+        env["KINBASE_ACCEPT_GATE_VECTOR"] = str(census_path)
         proc = subprocess.run(
             [sys.executable, "-m", "pytest", "-c", "pytest.ini",
              "-p", "no:cacheprovider", "-q", "--tb=no", "-m", "selftest",
@@ -104,7 +104,7 @@ for mutation in sorted(DETECTOR_MUTATIONS):
 missing = sorted(set(DETECTOR_MUTATIONS) - {r["detector_mutation"] for r in rows})
 bad = [r for r in rows if r["result"] != KILLED]
 payload = {
-    "schema": "guildhall-acceptance-detector-kill-ledger/1",
+    "schema": "kinbase-acceptance-detector-kill-ledger/1",
     "requirement": ("require the planted defect to escape the detector's own "
                     "self-test while causing the gate to reject the instrument"),
     "total": not only,

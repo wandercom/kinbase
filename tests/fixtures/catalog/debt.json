@@ -307,6 +307,6 @@
   "gates_with_open_debt": [],
   "open": 0,
   "review": "detector-reviewer dispatch 003",
-  "schema": "guildhall-acceptance-instrument-debt/1",
+  "schema": "kinbase-acceptance-instrument-debt/1",
   "total_findings": 22
 }

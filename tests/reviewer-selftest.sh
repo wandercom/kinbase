@@ -7,7 +7,7 @@
 # Reviewer's surface.
 #
 # This entrypoint:
-#   * reads only ratified `spec/**` and `tests/**` (GUILDHALL_REVIEWER_MODE=1
+#   * reads only ratified `spec/**` and `tests/**` (KINBASE_REVIEWER_MODE=1
 #     verifies the six authority-artifact digests and stops there);
 #   * installs nothing and touches no network;
 #   * creates no file inside the repository -- pytest's cache is disabled and its
@@ -32,16 +32,16 @@ elif [ -x ".venv/bin/python" ]; then
 else
   PYTHON="python3"
 fi
-TMPROOT="$(mktemp -d "${TMPDIR:-/tmp}/guildhall-reviewer-XXXXXX")"
+TMPROOT="$(mktemp -d "${TMPDIR:-/tmp}/kinbase-reviewer-XXXXXX")"
 trap 'rm -rf "$TMPROOT"' EXIT
 
-export GUILDHALL_REVIEWER_MODE=1
-export GUILDHALL_TESTER_VAULT="$TMPROOT/vault"
+export KINBASE_REVIEWER_MODE=1
+export KINBASE_TESTER_VAULT="$TMPROOT/vault"
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONHASHSEED="${PYTHONHASHSEED:-0}"
 export TMPDIR="$TMPROOT"
 
-echo "guildhall reviewer self-test"
+echo "kinbase reviewer self-test"
 echo "  interpreter: $("$PYTHON" -V 2>&1)"
 echo "  reads:       spec/** and tests/** only"
 echo "  installs:    nothing; no network access"
@@ -55,7 +55,7 @@ echo
 # tests/requirements.txt; an interpreter without it cannot attest cleanliness
 # and the entrypoint says so rather than skipping.
 if ! "$PYTHON" -c "import pyflakes" 2>/dev/null; then
-  echo "guildhall reviewer self-test: pyflakes is not importable by $PYTHON;" >&2
+  echo "kinbase reviewer self-test: pyflakes is not importable by $PYTHON;" >&2
   echo "  install tests/requirements.txt into tests/.venv (tests/run-acceptance.sh does) or pass ACCEPT_PYTHON" >&2
   exit 70
 fi

@@ -1,7 +1,7 @@
 """The closed policy for what may reach the system under test.
 
 Detector Reviewer finding 7 and the out-of-band control inventory. The previous
-instrument passed forty ``GUILDHALL_ACCEPTANCE_*`` variables into the product
+instrument passed forty ``KINBASE_ACCEPTANCE_*`` variables into the product
 process. Most were ``result_selector`` or ``work_substitute`` class: a product
 could branch on ``DIGEST_SCENARIO``, ``TEMPORAL_CASE`` or ``V7_FIXTURE`` and emit
 the expected JSON without doing the work, and every name disclosed acceptance-run
@@ -85,7 +85,7 @@ _ENVIRONMENT = (
 #: reads a Company endpoint from the environment; an env-supplied endpoint
 #: yields ``PROCESSOR_UNAUTHORIZED`` with zero connections.
 _ATTACK_INPUT = (
-    ("GUILDHALL_COMPANY_URL",
+    ("KINBASE_COMPANY_URL",
      "an environment-supplied Company endpoint, threat-model family 14; the "
      "product must refuse it without connecting, witnessed by the listener's "
      "observed connection count"),
@@ -95,7 +95,7 @@ _ATTACK_INPUT = (
 #: perturbation happened, so a product cannot satisfy the obligation by
 #: recognising the request rather than surviving the event.
 _FAULT_SCHEDULE = (
-    ("GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS",
+    ("KINBASE_PROOF_CLOCK_OFFSET_SECONDS",
      "advances the proof clock; witnessed by an observed elapsed interval and by "
      "the expiry state the instrument reads back"),
 )
@@ -127,7 +127,7 @@ FORBIDDEN_SHAPES: tuple[tuple[str, str], ...] = (
     (r"_PRINCIPAL$", "supplies an identity that must be authenticated"),
     (r"_ALG_VERSION$", "supplies a value that belongs in the reference"),
     (r"RESOLVES_TO", "supplies a resolution result"),
-    (r"^GUILDHALL_ACCEPTANCE_", "discloses acceptance-run identity to the product"),
+    (r"^KINBASE_ACCEPTANCE_", "discloses acceptance-run identity to the product"),
 )
 
 
@@ -163,23 +163,23 @@ def violations(names: Iterable[str]) -> list[tuple[str, str]]:
 #: Harness-only variables. These never reach the product process; they configure
 #: the instrument itself and are asserted to be absent from the child environment.
 HARNESS_ONLY: frozenset[str] = frozenset({
-    "GUILDHALL_BIN",
-    "GUILDHALL_CLASSIFIER_MODEL",
-    "GUILDHALL_SPEC_ROOT",
-    "GUILDHALL_TESTER_VAULT",
-    "GUILDHALL_HOST_CODEX",
-    "GUILDHALL_HOST_CLAUDE",
-    "GUILDHALL_ACCEPT_GATE_VECTOR",
-    "GUILDHALL_ACCEPT_MUTATION",
-    "GUILDHALL_ACCEPT_DETECTOR_MUTATION",
-    "GUILDHALL_REVIEWER_MODE",
+    "KINBASE_BIN",
+    "KINBASE_CLASSIFIER_MODEL",
+    "KINBASE_SPEC_ROOT",
+    "KINBASE_TESTER_VAULT",
+    "KINBASE_HOST_CODEX",
+    "KINBASE_HOST_CLAUDE",
+    "KINBASE_ACCEPT_GATE_VECTOR",
+    "KINBASE_ACCEPT_MUTATION",
+    "KINBASE_ACCEPT_DETECTOR_MUTATION",
+    "KINBASE_REVIEWER_MODE",
     "AUTHORITY_SEED_HEX",
     "AUTHORITY_LOG",
     "AUTHORITY_CALL_CEILING",
     "AUTHORITY_HARNESS_PATH",
-    "GUILDHALL_OPERATOR_RESPONSES",
-    "GUILDHALL_KILL_LEDGER",
-    "GUILDHALL_DETECTOR_LEDGER",
+    "KINBASE_OPERATOR_RESPONSES",
+    "KINBASE_KILL_LEDGER",
+    "KINBASE_DETECTOR_LEDGER",
     "ACCEPT_PYTHON",
     "ACCEPT_NO_VENV",
 })

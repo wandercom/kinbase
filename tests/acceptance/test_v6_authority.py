@@ -28,7 +28,7 @@ import pytest
 from ._harness import authority, canonical
 from ._harness import obligations as O
 from ._harness import prereq, synth, trust
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.evidence_model import Origin, field, require_nonempty, rows
 from ._harness.requirements import (
     VERIFY,
@@ -67,12 +67,12 @@ def authority_process(roots: ProofRoots):
 
 
 @pytest.fixture()
-def registered(roots: ProofRoots, guildhall: Guildhall, authority_process):
+def registered(roots: ProofRoots, kinbase: Kinbase, authority_process):
     """A world whose registry publishes the running authority's channel."""
     world = SignedWorld.create(roots.repo_root)
     world.architect = authority_process.signer
     anchors = trust.establish(
-        guildhall, roots, world,
+        kinbase, roots, world,
         extra_authorities=((authority_process.signer, authority_process.channel),),
     )
     prereq.registered(
@@ -85,8 +85,8 @@ def registered(roots: ProofRoots, guildhall: Guildhall, authority_process):
     return world, anchors, authority_process
 
 
-def _run(guildhall: Guildhall, *argv: str, cwd: Path, **kwargs):
-    result = guildhall.run(*argv, cwd=cwd, check=False, **kwargs)
+def _run(kinbase: Kinbase, *argv: str, cwd: Path, **kwargs):
+    result = kinbase.run(*argv, cwd=cwd, check=False, **kwargs)
     if result.returncode == 1:
         raise ProductFailure(
             "`" + " ".join(argv[:2]) + "` returned the reserved ambiguous exit 1"
@@ -124,22 +124,22 @@ def _plant_ambiguity(world: SignedWorld) -> dict:
     )
 
 
-def _questions(guildhall: Guildhall, repo: Path) -> list[dict]:
-    listing = _json(_run(guildhall, "questions", "list", "--json", cwd=repo))
+def _questions(kinbase: Kinbase, repo: Path) -> list[dict]:
+    listing = _json(_run(kinbase, "questions", "list", "--json", cwd=repo))
     return rows(listing, "questions")
 
 
 @spec_ref(
     VERIFY("V-6", "registration",
-           "Start `guildhalld` and register a named Chief Architect with a test signing key and "
+           "Start `kinbased` and register a named Chief Architect with a test signing key and "
            "a live channel endpoint/process separate from the caller."),
 )
 def test_service_starts_and_registers_a_named_chief_architect(
-    guildhall: Guildhall, registered
+    kinbase: Kinbase, registered
 ) -> None:
     world, anchors, process = registered
     entry = anchors.registry.entry_for(process.signer.authority_id)
-    published = _json(_run(guildhall, "questions", "list", "--json",
+    published = _json(_run(kinbase, "questions", "list", "--json",
                            cwd=world.repo.path))
     O.check(
         "V-6.registration",
@@ -165,23 +165,23 @@ def test_service_starts_and_registers_a_named_chief_architect(
            "guidance is withheld, and another role's signature is rejected."),
 )
 def test_high_distortion_unknown_sends_a_targeted_question_and_withholds_guidance(
-    guildhall: Guildhall, registered
+    kinbase: Kinbase, registered
 ) -> None:
     world, anchors, process = registered
     _plant_ambiguity(world)
-    _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
+    _run(kinbase, "ingest", "kindex", str(world.repo.path / ".kin"),
          "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
-    projected = _json(_run(guildhall, "project", "--repo", str(world.repo.path),
+    projected = _json(_run(kinbase, "project", "--repo", str(world.repo.path),
                            "--task", TASK, "--decision", DECISION, "--json",
                            cwd=world.repo.path))
-    questions = _questions(guildhall, world.repo.path)
+    questions = _questions(kinbase, world.repo.path)
     require_nonempty(
         questions, obligation="V-6.question",
         why="an exhausted high-distortion decision must raise a question",
         origin=Origin.PRODUCT,
     )
     identifier = str(field(questions[0], "question_id"))
-    asked = _run(guildhall, "questions", "ask", identifier, "--json",
+    asked = _run(kinbase, "questions", "ask", identifier, "--json",
                  cwd=world.repo.path)
     deliveries = process.deliveries()
     witness = Witness(kind="authority_delivery")
@@ -207,38 +207,38 @@ def test_high_distortion_unknown_sends_a_targeted_question_and_withholds_guidanc
            "Unknown; rebuild; assert the projected decision changes and cites the answer."),
 )
 def test_signed_answer_from_a_separate_process_materially_changes_the_decision(
-    guildhall: Guildhall, registered, roots: ProofRoots
+    kinbase: Kinbase, registered, roots: ProofRoots
 ) -> None:
     world, anchors, process = registered
     _plant_ambiguity(world)
-    _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
+    _run(kinbase, "ingest", "kindex", str(world.repo.path / ".kin"),
          "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
-    before = _json(_run(guildhall, "project", "--repo", str(world.repo.path),
+    before = _json(_run(kinbase, "project", "--repo", str(world.repo.path),
                         "--task", TASK, "--decision", DECISION, "--json",
                         cwd=world.repo.path))
-    questions = _questions(guildhall, world.repo.path)
+    questions = _questions(kinbase, world.repo.path)
     require_nonempty(
         questions, obligation="V-6.round-trip",
         why="there must be a question for the authority to answer",
         origin=Origin.PRODUCT,
     )
     identifier = str(field(questions[0], "question_id"))
-    _run(guildhall, "questions", "ask", identifier, "--json", cwd=world.repo.path)
+    _run(kinbase, "questions", "ask", identifier, "--json", cwd=world.repo.path)
 
     signed = _fetch_signed_answer(process, identifier)
     answer_file = roots.run_root / "authority" / "answer.json"
     answer_file.write_bytes(canonical.jcs(signed))
     key_file = roots.run_root / "authority" / "signer.pub"
     key_file.write_text(process.signer.public_hex + "\n", encoding="utf-8")
-    admitted = _run(guildhall, "questions", "answer", identifier,
+    admitted = _run(kinbase, "questions", "answer", identifier,
                     "--answer-file", str(answer_file),
                     "--key-file", str(key_file), "--json", cwd=world.repo.path)
-    _run(guildhall, "corpus", "rebuild", "--store", "codebase",
+    _run(kinbase, "corpus", "rebuild", "--store", "codebase",
          "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
-    after = _json(_run(guildhall, "project", "--repo", str(world.repo.path),
+    after = _json(_run(kinbase, "project", "--repo", str(world.repo.path),
                        "--task", TASK, "--decision", DECISION, "--json",
                        cwd=world.repo.path))
-    status = _json(_run(guildhall, "questions", "status", identifier, "--json",
+    status = _json(_run(kinbase, "questions", "status", identifier, "--json",
                         cwd=world.repo.path))
     rendered_after = json.dumps(after)
     O.check(
@@ -282,15 +282,15 @@ def _fetch_signed_answer(process: authority.AuthorityProcess, question_id: str) 
            "another role's signature is rejected"),
 )
 def test_another_roles_signature_is_rejected(
-    guildhall: Guildhall, registered, roots: ProofRoots
+    kinbase: Kinbase, registered, roots: ProofRoots
 ) -> None:
     world, anchors, process = registered
     _plant_ambiguity(world)
-    _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
+    _run(kinbase, "ingest", "kindex", str(world.repo.path / ".kin"),
          "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
-    _run(guildhall, "project", "--repo", str(world.repo.path),
+    _run(kinbase, "project", "--repo", str(world.repo.path),
          "--task", TASK, "--decision", DECISION, "--json", cwd=world.repo.path)
-    questions = _questions(guildhall, world.repo.path)
+    questions = _questions(kinbase, world.repo.path)
     require_nonempty(
         questions, obligation="V-6.wrong-role",
         why="a question must exist for the wrong role to attempt to answer",
@@ -308,10 +308,10 @@ def test_another_roles_signature_is_rejected(
     answer_file.write_bytes(canonical.jcs(payload))
     key_file = roots.run_root / "authority" / "impostor.pub"
     key_file.write_text(impostor.public_hex + "\n", encoding="utf-8")
-    attempt = _run(guildhall, "questions", "answer", identifier,
+    attempt = _run(kinbase, "questions", "answer", identifier,
                    "--answer-file", str(answer_file), "--key-file", str(key_file),
                    "--json", cwd=world.repo.path)
-    status = _json(_run(guildhall, "questions", "status", identifier, "--json",
+    status = _json(_run(kinbase, "questions", "status", identifier, "--json",
                         cwd=world.repo.path))
     O.check(
         "V-6.wrong-role",
@@ -330,13 +330,13 @@ def test_another_roles_signature_is_rejected(
            "policy rather than guessed guidance."),
 )
 def test_unavailable_authority_yields_declared_degraded_policy(
-    guildhall: Guildhall, registered, roots: ProofRoots
+    kinbase: Kinbase, registered, roots: ProofRoots
 ) -> None:
     world, anchors, process = registered
     _plant_ambiguity(world)
-    _run(guildhall, "ingest", "kindex", str(world.repo.path / ".kin"),
+    _run(kinbase, "ingest", "kindex", str(world.repo.path / ".kin"),
          "--repo", str(world.repo.path), "--json", cwd=world.repo.path)
-    _run(guildhall, "project", "--repo", str(world.repo.path),
+    _run(kinbase, "project", "--repo", str(world.repo.path),
          "--task", TASK, "--decision", DECISION, "--json", cwd=world.repo.path)
     cached_files = [p for p in roots.company_cache.rglob("*")
                     if p.is_file() and p not in trust.cached_certificate_paths(roots)]
@@ -349,11 +349,11 @@ def test_unavailable_authority_yields_declared_degraded_policy(
     with Blackhole(0) as blackhole, anchors.company_endpoint(
         f"http://127.0.0.1:{blackhole.port}"
     ):
-        projected = _json(_run(guildhall, "project", "--repo", str(world.repo.path),
+        projected = _json(_run(kinbase, "project", "--repo", str(world.repo.path),
                                "--task", TASK, "--decision", DECISION,
                                "--as-of", synth.receipt_stamp(604800), "--json",
-                               cwd=world.repo.path, env=guildhall.base_env({
-                                   "GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "604800"})))
+                               cwd=world.repo.path, env=kinbase.base_env({
+                                   "KINBASE_PROOF_CLOCK_OFFSET_SECONDS": "604800"})))
     cache_expired = bool(cached_files) and process.process.returncode is not None
     rendered = json.dumps(projected).lower()
     O.check(

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.gates import (
     COMPOSITION,
     GATE_IDS,
@@ -218,13 +218,13 @@ def test_document_statuses_and_milestones_are_not_verdicts() -> None:
     ),
 )
 def test_product_verdict_states_are_exactly_the_ratified_set(
-    guildhall: Guildhall, tmp_path: Path
+    kinbase: Kinbase, tmp_path: Path
 ) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir(parents=True, exist_ok=True)
-    result = guildhall.run("experiment", "verdict", str(run_dir), "--json", check=False)
+    result = kinbase.run("experiment", "verdict", str(run_dir), "--json", check=False)
     assert result.returncode != 1
-    help_text = guildhall.run("experiment", "verdict", "--help", check=False).stdout
+    help_text = kinbase.run("experiment", "verdict", "--help", check=False).stdout
     assert "demo-success" not in help_text.lower(), (
         "spec/architecture.md section 10: threshold computation 'has no `demo-success` "
         "state'"

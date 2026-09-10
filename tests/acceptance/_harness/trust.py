@@ -19,16 +19,16 @@ builds every anchor the ratified contract names, in the order ``spec/cli.md``
 "First working session" performs them, and refuses to proceed when any one of
 them is unavailable:
 
-1. a live Company service (``guildhall company serve``);
+1. a live Company service (``kinbase company serve``);
 2. the Company root public key at an external path **outside** the worktree;
 3. the launcher-only user config at
-   ``${XDG_CONFIG_HOME:-$HOME/.config}/guildhall/config.toml`` (0600) naming the
+   ``${XDG_CONFIG_HOME:-$HOME/.config}/kinbase/config.toml`` (0600) naming the
    Company URL, the facts-token file, the root public key, the cache root, the
    Personal ``data_root``, the classifier and the host version ranges;
 4. a signed ``AuthorityRegistry`` publishing every signer's key, scope and
    delivery channel, admitted through Company's own API;
 5. a steward-signed repository certificate written **outside** the worktree and
-   installed with ``guildhall repo init --repo PATH --certificate FILE``.
+   installed with ``kinbase repo init --repo PATH --certificate FILE``.
 
 Company facts are then admitted through ``POST /facts`` (C7, C22); nothing but
 Codebase events ever enters ``.kin/events/``.
@@ -100,7 +100,7 @@ class AuthorityRegistry:
     """A steward-signed registry, published to Company and mirrored externally.
 
     Validator ruling C4: the registry is one document
-    ``{"schema": "guildhall-authority-registry/1", "authority_cursor",
+    ``{"schema": "kinbase-authority-registry/1", "authority_cursor",
     "entries": [...]}`` signed by the steward root key as message type
     ``authority-registry-entry``.
     """
@@ -139,7 +139,7 @@ class AuthorityRegistry:
 
     def document(self, *, cursor: str | None = None) -> dict[str, Any]:
         body = {
-            "schema": "guildhall-authority-registry/1",
+            "schema": "kinbase-authority-registry/1",
             "authority_cursor": cursor or self.cursor,
             "entries": [e.as_json() for e in self.entries],
         }
@@ -196,7 +196,7 @@ class TrustAnchors:
     repository_uuid: str
     classifier: Classifier
     service: Any = None
-    guildhall: Any = None
+    kinbase: Any = None
     repo_init: dict[str, Any] = field(default_factory=dict)
     #: Digest of every anchor, so a gate can bind the exact trust state it used.
     anchors_digest: str = ""
@@ -257,7 +257,7 @@ class TrustAnchors:
         """Admit one signed FactEvent through ``POST /facts``.
 
         Validator ruling C22: bodies are FactEvents (architecture section 3
-        field set, ``schema: "guildhall-event/1"``) signed as ``fact-event``.
+        field set, ``schema: "kinbase-event/1"``) signed as ``fact-event``.
         C6: admission is authorised by the registered in-scope authority's
         signature plus a valid token and request signature.
         """
@@ -323,12 +323,12 @@ class TrustAnchors:
 
     def uncertified_driver(self, name: str):
         """A driver whose roots carry no user config, cache or certificate."""
-        from .cli import Guildhall
+        from .cli import Kinbase
 
         home, xdg = self.roots.uncertified_environment(name)
-        driver = Guildhall(home=home, xdg_config_home=xdg, cwd=self.roots.repo_root)
-        if self.guildhall is not None:
-            driver.path_prefix = list(self.guildhall.path_prefix)
+        driver = Kinbase(home=home, xdg_config_home=xdg, cwd=self.roots.repo_root)
+        if self.kinbase is not None:
+            driver.path_prefix = list(self.kinbase.path_prefix)
         return driver
 
     def as_json(self) -> dict:
@@ -398,17 +398,17 @@ def write_certificate_file(
 
 
 def install_repository_certificate(
-    guildhall, roots: ProofRoots, world, certificate: Path, *,
+    kinbase, roots: ProofRoots, world, certificate: Path, *,
     driver=None,
 ) -> dict[str, Any]:
-    """``guildhall repo init --repo PATH --certificate FILE`` (Validator ruling C2).
+    """``kinbase repo init --repo PATH --certificate FILE`` (Validator ruling C2).
 
     The product copies the certificate into the out-of-worktree Company cache
     root keyed by repository UUID and reads it only from there. The instrument
     then commits only what ``spec/cli.md`` step 5 allows a maintainer to commit:
     ``.kin/config``, ``.kin/events/``, ``.kin/manifests/`` and ``.gitattributes``.
     """
-    runner = driver or guildhall
+    runner = driver or kinbase
     tree_before = _worktree_listing(world.repo.path)
     result = runner.run(
         "repo", "init", "--repo", str(world.repo.path),
@@ -535,14 +535,14 @@ def publish_registry(
 # --------------------------------------------------------------------------
 
 
-def resolve_classifier(roots: ProofRoots, guildhall, *, model: str | None = None) -> Classifier:
+def resolve_classifier(roots: ProofRoots, kinbase, *, model: str | None = None) -> Classifier:
     """R-11: pin the same executable used for product commands, without spawning it."""
     import shutil
 
-    model = os.environ.get("GUILDHALL_CLASSIFIER_MODEL", model)
-    entrypoint = tuple(guildhall.entrypoint)
+    model = os.environ.get("KINBASE_CLASSIFIER_MODEL", model)
+    entrypoint = tuple(kinbase.entrypoint)
     if len(entrypoint) != 1:
-        raise HarnessInvalid("R-11 requires GUILDHALL_BIN to name the single product executable")
+        raise HarnessInvalid("R-11 requires KINBASE_BIN to name the single product executable")
     resolved = shutil.which(entrypoint[0])
     if resolved is None:
         raise prereq.missing("binary", "product classifier", "product executable is absent")
@@ -566,13 +566,13 @@ def classifier_pinned(anchors: TrustAnchors, *, what: str) -> Classifier:
     return classifier
 
 
-def verify_classifier_spawn(guildhall, repo: Path) -> None:
+def verify_classifier_spawn(kinbase, repo: Path) -> None:
     """R-11 doctor attests the pin after an extraction has spawned the child."""
     import tomllib
 
-    config = guildhall.xdg_config_home / "guildhall" / "config.toml"
+    config = kinbase.xdg_config_home / "kinbase" / "config.toml"
     table = tomllib.loads(config.read_text(encoding="utf-8"))["classifier"]
-    doctor = guildhall.run("doctor", "--repo", str(repo), "--json",
+    doctor = kinbase.run("doctor", "--repo", str(repo), "--json",
                           cwd=repo, check=False).json
     reported = doctor.get("classifier", {}) if isinstance(doctor, dict) else {}
     pinned = doctor.get("classifier_pinned") if isinstance(doctor, dict) else None
@@ -621,7 +621,7 @@ def write_user_config(roots: ProofRoots, *, company_url: str,
 
 
 def establish(
-    guildhall,
+    kinbase,
     roots: ProofRoots,
     world,
     *,
@@ -636,7 +636,7 @@ def establish(
     """
     from . import worldbuilder
 
-    service = start_service or worldbuilder.start_company(guildhall, roots)
+    service = start_service or worldbuilder.start_company(kinbase, roots)
     prereq.listening(
         "127.0.0.1", service.port, what="Company service",
         why="V-8 and V-6 range over live Company behaviour; a gate may not "
@@ -644,7 +644,7 @@ def establish(
     )
 
     root_key = install_external_root(roots, world.steward)
-    classifier = resolve_classifier(roots, guildhall, model=classifier_model)
+    classifier = resolve_classifier(roots, kinbase, model=classifier_model)
     user_config, token_path = write_user_config(
         roots, company_url=service.url, facts_token=service.facts_token,
         root_key=root_key, classifier=classifier,
@@ -678,7 +678,7 @@ def establish(
     certificate = write_certificate_file(
         roots, world.steward, repository_uuid=worldbuilder.REPO_UUID
     )
-    repo_init = install_repository_certificate(guildhall, roots, world, certificate)
+    repo_init = install_repository_certificate(kinbase, roots, world, certificate)
 
     anchors = TrustAnchors(
         roots=roots,
@@ -694,7 +694,7 @@ def establish(
         repository_uuid=worldbuilder.REPO_UUID,
         classifier=classifier,
         service=service,
-        guildhall=guildhall,
+        kinbase=kinbase,
         repo_init=repo_init,
     ).verify()
     anchors.anchors_digest = anchors.digest()

@@ -1,5 +1,5 @@
 {
-  "schema": "guildhall-acceptance-auxiliary-corpus-request/1",
+  "schema": "kinbase-acceptance-auxiliary-corpus-request/1",
   "purpose": "Eligible pool and recording obligations for the adversarial reconstructor's auxiliary corpus.",
   "authority": "spec/threat-model.md, section 'Canary and auxiliary-corpus custody'",
   "selected_by": "detector-reviewer",

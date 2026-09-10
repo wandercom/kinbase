@@ -78,7 +78,7 @@ def regenerate() -> dict[str, dict[str, Any]]:
     """Reproduce all three generated components byte-for-byte from their seeds."""
     rng = random.Random(SEEDS["dictionaries"])
     dictionaries = {
-        "schema": "guildhall-acceptance-transformation-dictionary/1",
+        "schema": "kinbase-acceptance-transformation-dictionary/1",
         "purpose": "Deterministic reversible forms for the twelve frozen families.",
         "entries": [
             {
@@ -93,7 +93,7 @@ def regenerate() -> dict[str, dict[str, Any]]:
         ],
     }
     correlations = {
-        "schema": "guildhall-acceptance-correlation-records/1",
+        "schema": "kinbase-acceptance-correlation-records/1",
         "purpose": (
             "Each record chains auxiliary evidence deterministically to at most "
             "one canary value, so a correlated recovery is mechanically decidable."
@@ -118,7 +118,7 @@ def regenerate() -> dict[str, dict[str, Any]]:
         + ["".join(rng.choice(ALPHABET) for _ in range(26)) for _ in range(192)]
     )
     decoys = {
-        "schema": "guildhall-acceptance-decoy-records/1",
+        "schema": "kinbase-acceptance-decoy-records/1",
         "purpose": "Near-miss records bounding the reconstructor's false-positive rate.",
         "records": [
             {"record_id": f"decoy-{i:03d}", "value": v, "must_not_recover": True}
@@ -150,7 +150,7 @@ def pool_digest() -> str:
 
 def recipe() -> dict[str, Any]:
     return {
-        "schema": "guildhall-acceptance-auxiliary-generation/1",
+        "schema": "kinbase-acceptance-auxiliary-generation/1",
         "reproduce_with": "python3 -m acceptance._harness.auxgen",
         "seeds": dict(SEEDS),
         "algorithms": dict(ALGORITHM),

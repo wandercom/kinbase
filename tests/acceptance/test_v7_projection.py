@@ -26,7 +26,7 @@ import pytest
 
 from ._harness import obligations as O
 from ._harness import trust
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.evidence_model import Origin, require_all, require_nonempty
 from ._harness.hosts import PROJECTION_BYTES
 from ._harness.requirements import (
@@ -64,7 +64,7 @@ MARGINAL_TERMS: tuple[str, ...] = (
 
 
 @pytest.fixture()
-def ingested(roots: ProofRoots, guildhall: Guildhall):
+def ingested(roots: ProofRoots, kinbase: Kinbase):
     """The frozen candidate set, really planted and really ingested.
 
     Validator ruling C3: the world establishes every trust anchor first, so the
@@ -72,14 +72,14 @@ def ingested(roots: ProofRoots, guildhall: Guildhall):
     candidates are signed by a registered maintainer under a certified UUID.
     """
     world = SignedWorld.create(roots.repo_root)
-    anchors = trust.establish(guildhall, roots, world)
+    anchors = trust.establish(kinbase, roots, world)
     planted = plant_v7_corpus(world)
     world.verify_planted()
     if len(planted) != len(V7_CANDIDATES):
         raise HarnessInvalid(
             f"planted {len(planted)} of {len(V7_CANDIDATES)} frozen candidates"
         )
-    result = guildhall.run(
+    result = kinbase.run(
         "ingest", "kindex", str(world.repo.path / ".kin"),
         "--repo", str(world.repo.path), "--json",
         cwd=world.repo.path, check=False,
@@ -89,12 +89,12 @@ def ingested(roots: ProofRoots, guildhall: Guildhall):
     return world, planted, anchors
 
 
-def _project(guildhall: Guildhall, repo: Path, working_set: tuple[str, ...] = ()) -> dict:
+def _project(kinbase: Kinbase, repo: Path, working_set: tuple[str, ...] = ()) -> dict:
     argv = ["project", "--repo", str(repo), "--task", TASK, "--decision", DECISION]
     for fact_id in working_set:
         argv += ["--working-set", fact_id]
     argv.append("--json")
-    result = guildhall.run(*argv, cwd=repo, check=False)
+    result = kinbase.run(*argv, cwd=repo, check=False)
     if result.returncode == 1:
         raise ProductFailure("`project` returned the reserved ambiguous exit 1")
     if result.returncode not in (0, 3):
@@ -171,10 +171,10 @@ def _terms(step: dict) -> dict:
     ),
 )
 def test_frozen_candidate_set_contains_every_declared_role(
-    guildhall: Guildhall, ingested
+    kinbase: Kinbase, ingested
 ) -> None:
     world, planted, _anchors = ingested
-    payload = _project(guildhall, world.repo.path)
+    payload = _project(kinbase, world.repo.path)
     candidates = payload.get("candidates")
     require_nonempty(
         candidates if isinstance(candidates, list) else [],
@@ -207,10 +207,10 @@ def test_frozen_candidate_set_contains_every_declared_role(
     ),
 )
 def test_selection_changes_when_working_set_ids_change(
-    guildhall: Guildhall, ingested
+    kinbase: Kinbase, ingested
 ) -> None:
     world, _, _anchors = ingested
-    cold = _project(guildhall, world.repo.path)
+    cold = _project(kinbase, world.repo.path)
     cold_selected = cold.get("selected")
     require_nonempty(
         cold_selected if isinstance(cold_selected, list) else [],
@@ -226,7 +226,7 @@ def test_selection_changes_when_working_set_ids_change(
             f"cold projection returned {len(cold_ids)} identified facts; at least two "
             "are needed to vary the working set"
         )
-    warm = _project(guildhall, world.repo.path, working_set=cold_ids[:2])
+    warm = _project(kinbase, world.repo.path, working_set=cold_ids[:2])
     warm_selected = _list(warm, "selected")
     warm_ids = tuple(
         f["fact_id"] for f in warm_selected if isinstance(f, dict) and "fact_id" in f
@@ -258,10 +258,10 @@ def test_selection_changes_when_working_set_ids_change(
     ),
 )
 def test_duplicates_do_not_crowd_out_the_high_distortion_invariant(
-    guildhall: Guildhall, ingested
+    kinbase: Kinbase, ingested
 ) -> None:
     world, _, _anchors = ingested
-    payload = _project(guildhall, world.repo.path)
+    payload = _project(kinbase, world.repo.path)
     selected = _list(payload, "selected")
     roles = _roles(selected)
     trace = _list(payload, "selection_trace")
@@ -272,7 +272,7 @@ def test_duplicates_do_not_crowd_out_the_high_distortion_invariant(
             break
     warm_gain = None
     if first_id is not None:
-        warm = _project(guildhall, world.repo.path, working_set=(first_id,))
+        warm = _project(kinbase, world.repo.path, working_set=(first_id,))
         for step in _list(warm, "selection_trace"):
             if isinstance(step, dict) and step.get("fact_id") == first_id:
                 warm_gain = step.get("marginal_value")
@@ -297,10 +297,10 @@ def test_duplicates_do_not_crowd_out_the_high_distortion_invariant(
     ARCH("V-7", "set-conditional-projector", "The trace records the terms, not just a score."),
 )
 def test_marginal_value_is_recomputed_against_the_current_set(
-    guildhall: Guildhall, ingested
+    kinbase: Kinbase, ingested
 ) -> None:
     world, _, _anchors = ingested
-    payload = _project(guildhall, world.repo.path)
+    payload = _project(kinbase, world.repo.path)
     trace = payload.get("selection_trace")
     require_nonempty(
         trace if isinstance(trace, list) else [],
@@ -324,10 +324,10 @@ def test_marginal_value_is_recomputed_against_the_current_set(
     ),
 )
 def test_complementarity_is_visible_and_redundancy_is_penalised(
-    guildhall: Guildhall, ingested
+    kinbase: Kinbase, ingested
 ) -> None:
     world, _, _anchors = ingested
-    payload = _project(guildhall, world.repo.path)
+    payload = _project(kinbase, world.repo.path)
     selected = _list(payload, "selected")
     trace = _list(payload, "selection_trace")
     by_id = {
@@ -381,10 +381,10 @@ def test_complementarity_is_visible_and_redundancy_is_penalised(
     ),
 )
 def test_loop_stops_on_net_marginal_value_not_a_filled_window(
-    guildhall: Guildhall, ingested
+    kinbase: Kinbase, ingested
 ) -> None:
     world, _, _anchors = ingested
-    payload = _project(guildhall, world.repo.path)
+    payload = _project(kinbase, world.repo.path)
     escalation = payload.get("tier_escalation")
     require_nonempty(
         escalation if isinstance(escalation, list) else [],
@@ -436,10 +436,10 @@ def test_loop_stops_on_net_marginal_value_not_a_filled_window(
         "declared use, outcome, and cost.",
     ),
 )
-def test_query_log_records_every_declared_field(guildhall: Guildhall, ingested) -> None:
+def test_query_log_records_every_declared_field(kinbase: Kinbase, ingested) -> None:
     world, _, _anchors = ingested
-    _project(guildhall, world.repo.path)
-    result = guildhall.run(
+    _project(kinbase, world.repo.path)
+    result = kinbase.run(
         "status", "--repo", str(world.repo.path), "--json",
         cwd=world.repo.path, check=False,
     )
@@ -472,10 +472,10 @@ def test_query_log_records_every_declared_field(guildhall: Guildhall, ingested) 
     ),
 )
 def test_stale_fact_is_withheld_and_produces_an_owned_unknown(
-    guildhall: Guildhall, ingested
+    kinbase: Kinbase, ingested
 ) -> None:
     world, _, _anchors = ingested
-    payload = _project(guildhall, world.repo.path)
+    payload = _project(kinbase, world.repo.path)
     roles = _roles(_list(payload, "selected"))
     unknowns = _list(payload, "unknowns")
     require_nonempty(
@@ -510,9 +510,9 @@ def test_stale_fact_is_withheld_and_produces_an_owned_unknown(
         "and source dependence reported rather than manufactured.",
     ),
 )
-def test_no_calibrated_causal_voi_claim_is_made(guildhall: Guildhall, ingested) -> None:
+def test_no_calibrated_causal_voi_claim_is_made(kinbase: Kinbase, ingested) -> None:
     world, _, _anchors = ingested
-    payload = _project(guildhall, world.repo.path)
+    payload = _project(kinbase, world.repo.path)
     rendered = json.dumps(payload).lower()
     found = [f for f in FORBIDDEN_VOI_CLAIMS if f in rendered]
     approximation = _first(payload, "voi_approximation", "objective")

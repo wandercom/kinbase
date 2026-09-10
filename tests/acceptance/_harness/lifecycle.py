@@ -1174,7 +1174,7 @@ def by_adapter() -> dict[str, tuple[Cell, ...]]:
 
 def as_json() -> dict:
     return {
-        "schema": "guildhall-v1-lifecycle-matrix/1",
+        "schema": "kinbase-v1-lifecycle-matrix/1",
         "declared_cells": len(CELLS),
         "ratified_cells": CELL_COUNT,
         "cells": [c.as_json() for c in CELLS],

@@ -16,8 +16,8 @@ and:
 
 Location resolution:
 
-* ``GUILDHALL_TESTER_VAULT`` when set (the Validator supplies a run-scoped path);
-* otherwise ``$TMPDIR/guildhall-acceptance-vault-<uid>``.
+* ``KINBASE_TESTER_VAULT`` when set (the Validator supplies a run-scoped path);
+* otherwise ``$TMPDIR/kinbase-acceptance-vault-<uid>``.
 
 The vault refuses to sit inside any Git worktree, inside a configured agent
 home, or inside the proof repository, and refuses to operate unless its root is
@@ -41,7 +41,7 @@ from typing import Any, Iterable
 from . import crypto_box
 from .requirements import HarnessInvalid, repo_root
 
-VAULT_ENV = "GUILDHALL_TESTER_VAULT"
+VAULT_ENV = "KINBASE_TESTER_VAULT"
 REGISTRY_NAME = "canary-registry.sealed"
 KEY_NAME = "registry.key"
 RETENTION_SECONDS = 24 * 60 * 60
@@ -114,7 +114,7 @@ class CanaryVault:
         if override:
             return Path(override)
         base = Path(tempfile.gettempdir())
-        return base / f"guildhall-acceptance-vault-{os.getuid()}"
+        return base / f"kinbase-acceptance-vault-{os.getuid()}"
 
     def _prepare(self) -> None:
         spec_root = repo_root().resolve()
@@ -186,18 +186,18 @@ class CanaryVault:
         plaintext."
         """
         payload = {
-            "schema": "guildhall-acceptance-canary-registry/1",
+            "schema": "kinbase-acceptance-canary-registry/1",
             "sealed_at": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
             "entries": [e.to_json() for e in self._entries.values()],
         }
         plaintext = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-        blob = crypto_box.seal(self.key, plaintext, b"guildhall-acceptance-canary-registry/1")
+        blob = crypto_box.seal(self.key, plaintext, b"kinbase-acceptance-canary-registry/1")
         self.registry_path.write_bytes(blob)
         os.chmod(self.registry_path, 0o600)
         import hashlib
 
         return {
-            "schema": "guildhall-acceptance-canary-registry/1",
+            "schema": "kinbase-acceptance-canary-registry/1",
             "ciphertext_sha256": hashlib.sha256(blob).hexdigest(),
             "entry_count": len(self._entries),
             "transformation_families": sorted(
@@ -209,7 +209,7 @@ class CanaryVault:
         blob = self.registry_path.read_bytes()
         payload = json.loads(
             crypto_box.unseal(
-                self.key, blob, b"guildhall-acceptance-canary-registry/1"
+                self.key, blob, b"kinbase-acceptance-canary-registry/1"
             )
         )
         self._entries = {

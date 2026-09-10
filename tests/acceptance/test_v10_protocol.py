@@ -32,7 +32,7 @@ from ._harness import obligations as O
 from ._harness.evidence_model import Origin, require_all, require_total_coverage
 
 from ._harness import prereq, stats
-from ._harness.cli import EXIT_POLICY_REFUSAL, Guildhall
+from ._harness.cli import EXIT_POLICY_REFUSAL, Kinbase
 from ._harness.gates import FORBIDDEN_CLAIMS, LICENSED_CLAIM_FRAGMENT, UNFUNDED_DIAGNOSTIC
 from ._harness.ordering import (
     ARM_DIFFERENCES,
@@ -191,7 +191,7 @@ def test_corpus_builder_blindness_is_enforced() -> None:
         "V-10",
         "P-10",
         "The Oracle Curator receives a date-bounded census of every merged change in the two declared "
-        "repositories and no Guildhall schema, retrieval design, candidate, or arm output.",
+        "repositories and no Kinbase schema, retrieval design, candidate, or arm output.",
     )
 )
 def test_oracle_curator_blindness_is_enforced() -> None:
@@ -242,7 +242,7 @@ def test_reducer_repair_recovery_rule_is_frozen() -> None:
 )
 
 def test_experiment_freeze_refuses_before_gates_census_power_and_budget(
-    guildhall: Guildhall, tmp_path: Path
+    kinbase: Kinbase, tmp_path: Path
 ) -> None:
     complete = {
         "census": {"digest": "0" * 64, "signed": True},
@@ -257,7 +257,7 @@ def test_experiment_freeze_refuses_before_gates_census_power_and_budget(
         manifest.write_text(json.dumps(payload), encoding="utf-8")
         budget = tmp_path / "budget.json"
         budget.write_text(json.dumps(complete["budget"]), encoding="utf-8")
-        result = guildhall.run("experiment", "freeze", str(manifest),
+        result = kinbase.run("experiment", "freeze", str(manifest),
                                "--budget", str(budget), "--json", check=False)
         body = result.json if isinstance(result.json, dict) else {}
         preconditions.append({
@@ -292,14 +292,14 @@ def test_experiment_freeze_refuses_before_gates_census_power_and_budget(
 )
 
 def test_launch_without_a_signed_census_row_is_refused(
-    guildhall: Guildhall, tmp_path: Path
+    kinbase: Kinbase, tmp_path: Path
 ) -> None:
     frozen = tmp_path / "frozen-manifest.json"
     frozen.write_text(json.dumps({"frozen": True, "run_census": None}),
                       encoding="utf-8")
-    result = guildhall.run("experiment", "run", str(frozen), "--json", check=False)
+    result = kinbase.run("experiment", "run", str(frozen), "--json", check=False)
     body = result.json if isinstance(result.json, dict) else {}
-    smoke = guildhall.run("experiment", "run", str(frozen), "--smoke", "--json",
+    smoke = kinbase.run("experiment", "run", str(frozen), "--smoke", "--json",
                           check=False)
     O.check(
         "V10.census-row",
@@ -454,15 +454,15 @@ def test_manifest_must_bind_every_field_that_can_change_an_arm() -> None:
 )
 
 def test_human_bytes_after_freeze_must_be_zero(
-    guildhall: Guildhall, tmp_path: Path
+    kinbase: Kinbase, tmp_path: Path
 ) -> None:
     frozen = tmp_path / "frozen.json"
     frozen.write_text(json.dumps({"frozen": True}), encoding="utf-8")
-    result = guildhall.run("experiment", "census", str(frozen), "--json",
+    result = kinbase.run("experiment", "census", str(frozen), "--json",
                            check=False)
     body = result.json if isinstance(result.json, dict) else {}
     observed = body.get("human_bytes_after_freeze")
-    verdict = guildhall.run("experiment", "verdict", str(frozen), "--json",
+    verdict = kinbase.run("experiment", "verdict", str(frozen), "--json",
                             check=False)
     rendered = json.dumps(verdict.json if isinstance(verdict.json, dict) else {})
     O.check(
@@ -557,7 +557,7 @@ def test_denial_density_bounds_are_enforced() -> None:
 )
 
 def test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task(
-    guildhall: Guildhall, tmp_path: Path
+    kinbase: Kinbase, tmp_path: Path
 ) -> None:
     principals = []
     for identity in ("administrative", "broad-service-reader"):
@@ -566,7 +566,7 @@ def test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task
             json.dumps({"frozen": True, "evaluation_principal": identity}),
             encoding="utf-8",
         )
-        result = guildhall.run("experiment", "run", str(manifest), "--json",
+        result = kinbase.run("experiment", "run", str(manifest), "--json",
                                check=False)
         body = result.json if isinstance(result.json, dict) else {}
         principals.append({
@@ -580,7 +580,7 @@ def test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task
                     "authority_scopes": ["company:architecture:scheduling"]}),
         encoding="utf-8",
     )
-    accepted = guildhall.run("experiment", "run", str(least), "--json", check=False)
+    accepted = kinbase.run("experiment", "run", str(least), "--json", check=False)
     O.check(
         "V10.principal",
         {
@@ -785,7 +785,7 @@ def test_underpowered_design_terminates_not_proven_with_the_named_diagnostic() -
 )
 
 def test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised(
-    guildhall: Guildhall, tmp_path: Path
+    kinbase: Kinbase, tmp_path: Path
 ) -> None:
     manifest = tmp_path / "ceiling-manifest.json"
     manifest.write_text(json.dumps({
@@ -797,12 +797,12 @@ def test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised(
     budget = tmp_path / "budget.json"
     budget.write_text(json.dumps({"aggregate_usd": 1000, "human_ratified": True}),
                       encoding="utf-8")
-    reserved = guildhall.run("experiment", "freeze", str(manifest),
+    reserved = kinbase.run("experiment", "freeze", str(manifest),
                              "--budget", str(budget), "--json", check=False)
     raised = tmp_path / "budget-raised.json"
     raised.write_text(json.dumps({"aggregate_usd": 5000, "human_ratified": True}),
                       encoding="utf-8")
-    increase = guildhall.run("experiment", "freeze", str(manifest),
+    increase = kinbase.run("experiment", "freeze", str(manifest),
                              "--budget", str(raised), "--json", check=False)
     body = reserved.json if isinstance(reserved.json, dict) else {}
     increase_body = increase.json if isinstance(increase.json, dict) else {}
@@ -1110,11 +1110,11 @@ def test_gap_closure_is_reported_but_not_counted_as_an_independent_hurdle() -> N
 )
 
 def test_published_conclusion_uses_only_the_licensed_claim(
-    guildhall: Guildhall, tmp_path: Path
+    kinbase: Kinbase, tmp_path: Path
 ) -> None:
     run = tmp_path / "run.json"
     run.write_text(json.dumps({"frozen": True}), encoding="utf-8")
-    result = guildhall.run("experiment", "verdict", str(run), "--json", check=False)
+    result = kinbase.run("experiment", "verdict", str(run), "--json", check=False)
     body = result.json if isinstance(result.json, dict) else {}
     claim = body.get("published_conclusion")
     rendered = claim if isinstance(claim, str) else ""

@@ -1,4 +1,4 @@
-"""Instrument internals for the Guildhall acceptance suite.
+"""Instrument internals for the Kinbase acceptance suite.
 
 Modules here are the *detectors and measurement instruments*. They are subject
 to their own mutation testing, because ``spec/verification.md`` requires under

@@ -89,7 +89,7 @@ def build() -> dict:
             "canary_slots": [],
         })
     payload = {
-        "schema": "guildhall-v2-calibration-corpus/1",
+        "schema": "kinbase-v2-calibration-corpus/1",
         "shared_destination_messages_per_label": 20,
         "pooled_trials_per_shared_label_across_five_runs": 100,
         "generator": "tests/tools/freeze-calibration.py",
@@ -113,7 +113,7 @@ def canonical(payload: dict) -> bytes:
 
 def manifest_for(raw: bytes, payload: dict) -> bytes:
     document = {
-        "schema": "guildhall-v2-calibration-manifest/1",
+        "schema": "kinbase-v2-calibration-manifest/1",
         "corpus_path": "tests/fixtures/gold/calibration_corpus.json",
         "corpus_sha256": hashlib.sha256(raw).hexdigest(),
         "message_count": payload["message_count"],

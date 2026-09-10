@@ -33,7 +33,7 @@ from ._harness import matrix as MX
 from ._harness import synth
 from ._harness import obligations as O
 from ._harness import prereq, scanners, service, trust
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.evidence import sanitised_report_claims_are_qualified
 from ._harness.evidence_model import (
     Origin,
@@ -73,9 +73,9 @@ MATRIX_SEED = 20260907
 
 
 @pytest.fixture()
-def anchored(roots: ProofRoots, guildhall: Guildhall):
+def anchored(roots: ProofRoots, kinbase: Kinbase):
     world = SignedWorld.create(roots.repo_root)
-    anchors = trust.establish(guildhall, roots, world)
+    anchors = trust.establish(kinbase, roots, world)
     return world, anchors
 
 
@@ -84,9 +84,9 @@ def surfaces(roots: ProofRoots, anchored) -> MX.SurfaceRoots:
     return MX.SurfaceRoots.create(roots)
 
 
-def _run(guildhall: Guildhall, *argv: str, cwd: Path, **kwargs):
+def _run(kinbase: Kinbase, *argv: str, cwd: Path, **kwargs):
     """Forward driver keywords, including stdin/env (dispatch 008 regression)."""
-    result = guildhall.run(*argv, cwd=cwd, check=False, **kwargs)
+    result = kinbase.run(*argv, cwd=cwd, check=False, **kwargs)
     if result.returncode == 1:
         raise ProductFailure(
             "`" + " ".join(argv[:2]) + "` returned the reserved ambiguous exit 1"
@@ -94,7 +94,7 @@ def _run(guildhall: Guildhall, *argv: str, cwd: Path, **kwargs):
     return result
 
 
-def _drive_lifecycle(guildhall: Guildhall, roots: ProofRoots, world, anchors,
+def _drive_lifecycle(kinbase: Kinbase, roots: ProofRoots, world, anchors,
                      corpus: Path) -> dict[str, dict]:
     """Execute all fourteen ratified stages through the shipping surfaces.
 
@@ -104,11 +104,11 @@ def _drive_lifecycle(guildhall: Guildhall, roots: ProofRoots, world, anchors,
     """
     trust.classifier_pinned(anchors, what="V-3 lifecycle classification")
     repo = world.repo.path
-    session = start_session(guildhall, world.repo.path)
+    session = start_session(kinbase, world.repo.path)
     executed: dict[str, dict] = {}
 
     def stage(name: str, *argv: str, **kwargs) -> None:
-        result = _run(guildhall, *argv, cwd=repo, **kwargs)
+        result = _run(kinbase, *argv, cwd=repo, **kwargs)
         executed[name] = {"argv": list(argv), "exit": result.returncode}
         if argv[:2] == ("proposals", "decide") and result.returncode != 0:
             # C19: repeated use may be consumed/expired; preserve the typed
@@ -119,7 +119,7 @@ def _drive_lifecycle(guildhall: Guildhall, roots: ProofRoots, world, anchors,
 
     stage("classification", "session", "observe", session,
           "--event", str(corpus), "--json")
-    listing = _run(guildhall, "proposals", "list", "--session", session, "--json",
+    listing = _run(kinbase, "proposals", "list", "--session", session, "--json",
                    cwd=repo)
     candidates = rows(listing.json if isinstance(listing.json, dict) else {},
                       "candidates")
@@ -143,7 +143,7 @@ def _drive_lifecycle(guildhall: Guildhall, roots: ProofRoots, world, anchors,
     stage("service", "status", "--repo", str(repo), "--json")
     stage("kin", "ingest", "kindex", str(repo / ".kin"), "--repo", str(repo), "--json")
     stage("expiry", "status", "--repo", str(repo), "--json",
-          env=guildhall.base_env({"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "86400"}))
+          env=kinbase.base_env({"KINBASE_PROOF_CLOCK_OFFSET_SECONDS": "86400"}))
     stage("restart", "session", "end", session, "--json")
     stage("restart", "session", "start", "--host", "codex",
           "--repo", str(repo), "--json")
@@ -209,7 +209,7 @@ def test_positive_control_precedes_and_licenses_the_clean_assertion(
            "cleanup."),
 )
 def test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle(
-    guildhall: Guildhall, roots: ProofRoots, anchored, surfaces: MX.SurfaceRoots,
+    kinbase: Kinbase, roots: ProofRoots, anchored, surfaces: MX.SurfaceRoots,
     vault: CanaryVault
 ) -> None:
     world, anchors = anchored
@@ -231,7 +231,7 @@ def test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle(
         encoding="utf-8",
     )
 
-    executed = _drive_lifecycle(guildhall, roots, world, anchors, seeded)
+    executed = _drive_lifecycle(kinbase, roots, world, anchors, seeded)
     detector = MX.Matrix(roots=surfaces, seed=MATRIX_SEED,
                          registry={"lifecycle-1": canary}).detector()
     swept = MX.Matrix(roots=surfaces, seed=MATRIX_SEED,
@@ -260,10 +260,10 @@ def test_no_canary_reaches_any_shared_surface_across_the_full_lifecycle(
            "Verify the shared writer process/call graph has no Personal-store capability."),
 )
 def test_shared_writer_has_no_personal_capability(
-    guildhall: Guildhall, roots: ProofRoots, anchored
+    kinbase: Kinbase, roots: ProofRoots, anchored
 ) -> None:
     world, anchors = anchored
-    doctor = _run(guildhall, "doctor", "--repo", str(world.repo.path), "--json",
+    doctor = _run(kinbase, "doctor", "--repo", str(world.repo.path), "--json",
                   cwd=world.repo.path)
     payload = doctor.json if isinstance(doctor.json, dict) else {}
     processes = rows(payload, "processes")
@@ -286,13 +286,13 @@ def test_shared_writer_has_no_personal_capability(
            "threat-model distinction and outer promotion gate."),
 )
 def test_sandbox_denies_personal_root_for_shared_processes(
-    guildhall: Guildhall, roots: ProofRoots, anchored
+    kinbase: Kinbase, roots: ProofRoots, anchored
 ) -> None:
     world, anchors = anchored
     marker = roots.plant_personal_canary_file(
         "sandbox-probe.txt", "kx" + os.urandom(12).hex()
     )
-    probe = _run(guildhall, "hooks", "dispatch", "codex", "UserPromptSubmit",
+    probe = _run(kinbase, "hooks", "dispatch", "codex", "UserPromptSubmit",
                  "--json", cwd=world.repo.path,
                  stdin=json.dumps({"prompt": "read " + str(marker)}))
     payload = probe.json if isinstance(probe.json, dict) else {}
@@ -326,13 +326,13 @@ def test_sandbox_denies_personal_root_for_shared_processes(
            "descriptor enumeration/attestation must fail startup before shared work."),
 )
 def test_inherited_personal_descriptor_fails_startup(
-    guildhall: Guildhall, roots: ProofRoots, anchored
+    kinbase: Kinbase, roots: ProofRoots, anchored
 ) -> None:
     world, anchors = anchored
     handle = os.open(str(roots.personal_root), os.O_RDONLY)
     os.set_inheritable(handle, True)
     inherited = os.get_inheritable(handle)
-    result = guildhall.run(
+    result = kinbase.run(
         "status", "--repo", str(world.repo.path), "--json",
         cwd=world.repo.path, check=False, pass_fds=(handle,),
     )
@@ -359,7 +359,7 @@ def test_inherited_personal_descriptor_fails_startup(
            "child inputs for every shared process; the Personal-root canary must be absent."),
 )
 def test_process_artifacts_contain_no_personal_root_canary(
-    guildhall: Guildhall, roots: ProofRoots, anchored, vault: CanaryVault
+    kinbase: Kinbase, roots: ProofRoots, anchored, vault: CanaryVault
 ) -> None:
     world, anchors = anchored
     canary = "kx" + os.urandom(12).hex()
@@ -375,7 +375,7 @@ def test_process_artifacts_contain_no_personal_root_canary(
     records = []
     for command in (("status", "--repo", str(world.repo.path), "--json"),
                     ("doctor", "--repo", str(world.repo.path), "--json")):
-        process = guildhall.popen(*command, cwd=world.repo.path)
+        process = kinbase.popen(*command, cwd=world.repo.path)
         record = service.process_capability_record(process, command[0])
         process.wait(timeout=120)
         records.append(record)
@@ -410,7 +410,7 @@ def test_process_artifacts_contain_no_personal_root_canary(
            "clear taint after de-identification"),
 )
 def test_hard_blocking_taint_is_never_cleared_by_deidentification(
-    guildhall: Guildhall, roots: ProofRoots, anchored, vault: CanaryVault
+    kinbase: Kinbase, roots: ProofRoots, anchored, vault: CanaryVault
 ) -> None:
     world, anchors = anchored
     canary = "kx" + os.urandom(12).hex()
@@ -424,7 +424,7 @@ def test_hard_blocking_taint_is_never_cleared_by_deidentification(
     trust.classifier_pinned(anchors, what="V-3 taint classification")
     corpus = roots.run_root / "corpus" / "taint.jsonl"
     corpus.parent.mkdir(parents=True, exist_ok=True)
-    session = start_session(guildhall, world.repo.path)
+    session = start_session(kinbase, world.repo.path)
     corpus.write_text(
         json.dumps({"id": session, "role": "user",
                     "text": "hard blocking marker " + canary
@@ -433,9 +433,9 @@ def test_hard_blocking_taint_is_never_cleared_by_deidentification(
                     "source_kind": "codex_jsonl"}) + "\n",
         encoding="utf-8",
     )
-    _run(guildhall, "session", "observe", session, "--event", str(corpus),
+    _run(kinbase, "session", "observe", session, "--event", str(corpus),
          "--json", cwd=world.repo.path)
-    listing = _run(guildhall, "proposals", "list", "--session", session, "--json",
+    listing = _run(kinbase, "proposals", "list", "--session", session, "--json",
                    cwd=world.repo.path)
     payload = listing.json if isinstance(listing.json, dict) else {}
     candidates = rows(payload, "candidates")
@@ -456,7 +456,7 @@ def test_hard_blocking_taint_is_never_cleared_by_deidentification(
            "paraphrase and no matching string."),
 )
 def test_paraphrase_only_output_stays_private_by_taint_policy(
-    guildhall: Guildhall, roots: ProofRoots, anchored, vault: CanaryVault
+    kinbase: Kinbase, roots: ProofRoots, anchored, vault: CanaryVault
 ) -> None:
     world, anchors = anchored
     canary = "kx" + os.urandom(12).hex()
@@ -470,7 +470,7 @@ def test_paraphrase_only_output_stays_private_by_taint_policy(
     trust.classifier_pinned(anchors, what="V-3 paraphrase classification")
     corpus = roots.run_root / "corpus" / "paraphrase.jsonl"
     corpus.parent.mkdir(parents=True, exist_ok=True)
-    session = start_session(guildhall, world.repo.path)
+    session = start_session(kinbase, world.repo.path)
     # The native model reply contains only a paraphrase. Its private source
     # remains in the same conversation so source taint must still block fan-out.
     model_reply = "This identifier is private to the speaker."
@@ -481,9 +481,9 @@ def test_paraphrase_only_output_stays_private_by_taint_policy(
         {"id": session + "-reply", "role": "assistant", "text": model_reply,
          "observed_at": synth.receipt_stamp(), "source_kind": "codex_jsonl"},
     )) + "\n", encoding="utf-8")
-    observed = _run(guildhall, "session", "observe", session, "--event",
+    observed = _run(kinbase, "session", "observe", session, "--event",
                     str(corpus), "--json", cwd=world.repo.path)
-    listing = _run(guildhall, "proposals", "list", "--session", session, "--json",
+    listing = _run(kinbase, "proposals", "list", "--session", session, "--json",
                    cwd=world.repo.path)
     payload = listing.json if isinstance(listing.json, dict) else {}
     shared = [
@@ -526,7 +526,7 @@ def _count_offered_connections(listener: socket.socket) -> int:
            "scope-ineligible request must fail."),
 )
 def test_egress_to_unnamed_processor_fails_with_typed_refusal(
-    guildhall: Guildhall, roots: ProofRoots, anchored, vault: CanaryVault
+    kinbase: Kinbase, roots: ProofRoots, anchored, vault: CanaryVault
 ) -> None:
     world, anchors = anchored
     canary = "kx" + os.urandom(12).hex()
@@ -547,11 +547,11 @@ def test_egress_to_unnamed_processor_fails_with_typed_refusal(
     listener.settimeout(2.0)
     port = listener.getsockname()[1]
     try:
-        result = guildhall.run(
+        result = kinbase.run(
             "status", "--repo", str(world.repo.path), "--json",
             cwd=world.repo.path, check=False,
-            env=guildhall.base_env({
-                "GUILDHALL_COMPANY_URL": "http://127.0.0.1:" + str(port),
+            env=kinbase.base_env({
+                "KINBASE_COMPANY_URL": "http://127.0.0.1:" + str(port),
             }),
         )
         connections = _count_offered_connections(listener)
@@ -583,13 +583,13 @@ def test_egress_to_unnamed_processor_fails_with_typed_refusal(
     VERIFY("V-3", "claim",
            "Its public claim is limited to “zero observed unauthorized durable disclosure "
            "outside the authorized processor boundary under Acceptance Threat Model "
-           "`guildhall-atm/1`, digest `<sha256>`, across execution census `<digest>`.”"),
+           "`kinbase-atm/1`, digest `<sha256>`, across execution census `<digest>`.”"),
 )
 def test_v3_claim_is_digest_qualified_and_never_unqualified(
-    guildhall: Guildhall, roots: ProofRoots, anchored, manifest
+    kinbase: Kinbase, roots: ProofRoots, anchored, manifest
 ) -> None:
     world, anchors = anchored
-    report = _run(guildhall, "status", "--repo", str(world.repo.path), "--json",
+    report = _run(kinbase, "status", "--repo", str(world.repo.path), "--json",
                   cwd=world.repo.path)
     payload = report.json if isinstance(report.json, dict) else {}
     reported = field(payload, "privacy_claim")

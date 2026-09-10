@@ -50,14 +50,14 @@ verification.md > cli.md`.
 |---|---|
 | `_harness/requirements.py` | manifest/digest verification; `spec_ref` exact-quote binding |
 | `_harness/cli.py` | black-box driver for the `spec/cli.md` command and error contract |
-| `_harness/service.py` | loopback `guildhalld` client with individually defeatable controls |
+| `_harness/service.py` | loopback `kinbased` client with individually defeatable controls |
 | `_harness/detectors.py` | deterministic canary detector, normalisation ladder, detector mutations |
 | `_harness/scanners.py` | recursive surface sweep: files, archives, packed Git objects, SQLite blobs, process artifacts |
 | `_harness/canaries.py` | synthetic canary generation and the twelve frozen transformation families |
 | `_harness/vault.py` | Tester-custodied mode-0700 canary vault and sealed registry |
 | `_harness/crypto_box.py` | hermetic ChaCha20 + HMAC-SHA256 for the vault |
 | `_harness/ed25519_pure.py` | RFC 8032 signing, independent of any product library |
-| `_harness/canonical.py` | RFC 8785 JCS, `guildhall-sig/1` domain separation, control/bidi rejection |
+| `_harness/canonical.py` | RFC 8785 JCS, `kinbase-sig/1` domain separation, control/bidi rejection |
 | `_harness/stats.py` | Wilson, paired bootstrap, TOST, kappa, exact binomial, Monte Carlo power, call envelope |
 | `_harness/gates.py` | verdict composition transcribed from the ratified table |
 | `_harness/ordering.py` | V-10 phase ledger, blindness predicates, arm-difference bindings |

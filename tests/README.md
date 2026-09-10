@@ -1,4 +1,4 @@
-# Guildhall black-box acceptance suite (Tester lane)
+# Kinbase black-box acceptance suite (Tester lane)
 
 Authored under the Factory **Tester** dispatch against ratification manifest
 `ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db` at repository
@@ -53,7 +53,7 @@ session, native lifecycle, and hook repairs:
   certificate, and `repo init` must copy the external certificate into the cache.
 * R-11 pins the resolved product executable with args `["classifier", "--json"]`.
   V-2 defaults to `[classifier] model = "ollama:qwen2.5:7b"`. Set the harness-only
-  `GUILDHALL_CLASSIFIER_MODEL=ollama:glm-5.3:cloud` (or another available Ollama
+  `KINBASE_CLASSIFIER_MODEL=ollama:glm-5.3:cloud` (or another available Ollama
   model) to write that model into every world's user-config `[classifier]` table.
   The variable never reaches the product environment; the config chooses the
   provider per R-11. The Validator provisions the selected live model. Without
@@ -157,25 +157,25 @@ Useful subsets:
 tests/run-acceptance.sh -m selftest              # instrument validity, no product needed
 tests/run-acceptance.sh -m "v3 and not slow"     # one gate, fast subset
 tests/run-acceptance.sh -m "not slow and not soak"
-GUILDHALL_ACCEPT_GATE_VECTOR=/tmp/gates.json tests/run-acceptance.sh
+KINBASE_ACCEPT_GATE_VECTOR=/tmp/gates.json tests/run-acceptance.sh
 ```
 
 ### Environment
 
 | variable | meaning |
 |---|---|
-| `GUILDHALL_BIN` | argv prefix for the ratified CLI. Default: `guildhall` on `PATH`, then `python -m guildhall`. |
-| `GUILDHALL_SPEC_ROOT` | repository containing `spec/`. Default: discovered upward from the suite. |
-| `GUILDHALL_TESTER_VAULT` | mode-0700 canary vault root. Default: `$TMPDIR/guildhall-acceptance-vault-<uid>`. |
-| `GUILDHALL_HOST_CODEX` / `GUILDHALL_HOST_CLAUDE` | absolute paths to the pinned host executables (V-9). |
-| `GUILDHALL_ACCEPT_GATE_VECTOR` | path to write the JSON gate vector and per-node records. |
-| `GUILDHALL_ACCEPT_MUTATION` | one frozen mutation id; the named nodes must then **fail**. |
-| `GUILDHALL_ACCEPT_DETECTOR_MUTATION` | one detector mutation id (Tester-owned detectors). |
+| `KINBASE_BIN` | argv prefix for the ratified CLI. Default: `kinbase` on `PATH`, then `python -m kinbase`. |
+| `KINBASE_SPEC_ROOT` | repository containing `spec/`. Default: discovered upward from the suite. |
+| `KINBASE_TESTER_VAULT` | mode-0700 canary vault root. Default: `$TMPDIR/kinbase-acceptance-vault-<uid>`. |
+| `KINBASE_HOST_CODEX` / `KINBASE_HOST_CLAUDE` | absolute paths to the pinned host executables (V-9). |
+| `KINBASE_ACCEPT_GATE_VECTOR` | path to write the JSON gate vector and per-node records. |
+| `KINBASE_ACCEPT_MUTATION` | one frozen mutation id; the named nodes must then **fail**. |
+| `KINBASE_ACCEPT_DETECTOR_MUTATION` | one detector mutation id (Tester-owned detectors). |
 
 ## What makes this black box
 
 The suite reaches the product only through the surfaces frozen in `spec/cli.md`
-and `spec/architecture.md` section 6: the `guildhall` command, its `--json`
+and `spec/architecture.md` section 6: the `kinbase` command, its `--json`
 payloads, its typed error contract, and the loopback HTTP service. It never
 imports product modules; `test_backreference_integrity.py` asserts that
 mechanically. Nothing under `tests/` was written by reading implementation
@@ -244,7 +244,7 @@ same IDs; changing the exercise invalidates earlier recordings.
 
 Record JSONL objects in presentation order with `item_id` equal to the emitted
 `id`, `decision` (`approve` or `reject`) and `decided_at` (UTC
-`YYYY-MM-DDTHH:MM:SS.ffffffZ`). Set `GUILDHALL_OPERATOR_RESPONSES` to that file.
+`YYYY-MM-DDTHH:MM:SS.ffffffZ`). Set `KINBASE_OPERATOR_RESPONSES` to that file.
 An optional `also_belongs_in` list (`personal`, `company`, `codebase`) annotates
 other independently warranted destinations. It does not change the decision on
 the shown write and is not itself scored or executed. This binary exercise does
@@ -327,7 +327,7 @@ Validator, and the Tester is implementation-blind. So:
 * mutations that can only be a source change are *declared* with exact semantics
   and must-fail nodes for the Validator to apply.
 
-A mutation run inverts polarity: `GUILDHALL_ACCEPT_MUTATION=<id>` means the named
+A mutation run inverts polarity: `KINBASE_ACCEPT_MUTATION=<id>` means the named
 nodes must fail. If they still pass, the gate cannot detect the defect it claims
 to detect — `INVALID_HARNESS`, never a pass.
 

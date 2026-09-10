@@ -285,7 +285,7 @@ def _stale_head_as_authority(document, ctx):
 
 
 def _worktree_local_lock(document, ctx):
-    return _set(document, "lock_path", ".git/worktrees/local/guildhall.lock")
+    return _set(document, "lock_path", ".git/worktrees/local/kinbase.lock")
 
 
 def _content_path_before_revocation(document, ctx):
@@ -590,7 +590,7 @@ def require_applied() -> Application:
 
 def as_json() -> dict:
     return {
-        "schema": "guildhall-preexecution-planters/1",
+        "schema": "kinbase-preexecution-planters/1",
         "points": dict(POINTS),
         "planters": [p.as_json() for p in PLANTERS],
         "applications": [a.as_json() for a in _APPLICATIONS],

@@ -333,7 +333,7 @@ class Census:
 
     def as_json(self) -> dict:
         self_json = {
-            "schema": "guildhall-acceptance-census/1",
+            "schema": "kinbase-acceptance-census/1",
             "catalog_digest": self.catalog_digest,
             "instrument_debt_digest": self.debt_digest,
             "open_instrument_debt": self.open_debt,

@@ -203,7 +203,7 @@ _o(
               nonempty("observations", "receipt lists observations, never a bare count"),
               min_len=10),
     ),
-    surfaces=("guildhall ingest", "guildhall corpus rebuild"),
+    surfaces=("kinbase ingest", "kinbase corpus rebuild"),
     vectors=ADAPTERS,
     nodes=("test_v1_ingestion.py::test_all_ten_adapters_run_against_native_sources",),
 )
@@ -226,7 +226,7 @@ _o(
         absent("observations_count_only",
                "a bare source count may not stand in for observations"),
     ),
-    surfaces=("guildhall ingest --json",),
+    surfaces=("kinbase ingest --json",),
     vectors=ADAPTERS,
     nodes=("test_v1_ingestion.py::test_adapter_receipt_reports_observations_not_counts",),
 )
@@ -243,7 +243,7 @@ _o(
         nonempty("build_manifest.checkpoints", "manifest binds checkpoints"),
         nonempty("build_manifest.fact_derivations", "manifest binds fact derivations"),
     ),
-    surfaces=("guildhall corpus rebuild --json",),
+    surfaces=("kinbase corpus rebuild --json",),
     vectors=("end-to-end build",),
     nodes=("test_v1_ingestion.py::test_end_to_end_build_uses_at_least_seven_source_classes",),
 )
@@ -262,7 +262,7 @@ _o(
         at_least("observation_count", 1,
                  "an empty corpus cannot demonstrate idempotence"),
     ),
-    surfaces=("guildhall corpus rebuild --json",),
+    surfaces=("kinbase corpus rebuild --json",),
     vectors=("unchanged re-ingest",),
     nodes=("test_v1_ingestion.py::test_reingest_unchanged_is_idempotent_and_byte_identical",),
 )
@@ -281,7 +281,7 @@ _o(
               present("to_disposition", "new disposition"),
               min_len=1),
     ),
-    surfaces=("guildhall corpus rebuild --json",),
+    surfaces=("kinbase corpus rebuild --json",),
     vectors=("change", "delete", "reject", "revert"),
     nodes=("test_v1_ingestion.py::test_change_delete_reject_revert_preserve_history_and_change_disposition",),
 )
@@ -324,7 +324,7 @@ _o(
                       "C15: status reports receipts for the exercised adapter"),
               min_len=64),
     ),
-    surfaces=("guildhall ingest", "guildhall status --json"),
+    surfaces=("kinbase ingest", "kinbase status --json"),
     vectors=("64 frozen adapter lifecycle cells",),
     nodes=("test_v1_ingestion.py::test_lifecycle_matrix_executes_every_declared_cell",),
 )
@@ -346,7 +346,7 @@ _o(
         nonempty("after_final_retirement.reopened_decisions",
                  "every dependent decision reopens"),
     ),
-    surfaces=("guildhall explain --json",),
+    surfaces=("kinbase explain --json",),
     vectors=("multiply supported derived fact",),
     nodes=("test_v1_ingestion.py::test_retiring_supports_one_at_a_time_recomputes_then_withdraws",),
 )
@@ -368,7 +368,7 @@ _o(
               is_true("out_of_order_handled", "out-of-order delivery handled"),
               min_len=3),
     ),
-    surfaces=("guildhall ingest --json", "guildhall status --json"),
+    surfaces=("kinbase ingest --json", "kinbase status --json"),
     vectors=("positive skew", "negative skew", "out-of-order delivery"),
     nodes=("test_v1_ingestion.py::test_out_of_order_and_clock_skew_quarantine_across_all_three_cursors",),
 )
@@ -388,7 +388,7 @@ _o(
         present("reopened_unknown.owner_identity",
                 "a subject-matter-authority Unknown names a person"),
     ),
-    surfaces=("guildhall ingest authority_answer",),
+    surfaces=("kinbase ingest authority_answer",),
     vectors=("approver-signed misextraction notice",),
     nodes=("test_v1_ingestion.py::test_misextraction_notice_is_approver_owned_and_withholds_only",),
 )
@@ -405,7 +405,7 @@ _o(
         is_true("steward_minted_accepted",
                 "the in-scope steward/maintainer may perform the withdrawal"),
     ),
-    surfaces=("guildhall ingest kindex",),
+    surfaces=("kinbase ingest kindex",),
     vectors=("approver-signed never_true", "steward-signed never_true"),
     nodes=("test_v1_ingestion.py::test_never_true_requires_subject_matter_authority",),
 )
@@ -428,7 +428,7 @@ _o(
         is_false("branch_adr_promoted",
                  "an ADR on an unmerged branch must not reach trusted direction"),
     ),
-    surfaces=("guildhall ingest docs_adr", "guildhall explain --json"),
+    surfaces=("kinbase ingest docs_adr", "kinbase explain --json"),
     vectors=("merged default branch", "attacker unmerged branch"),
     nodes=("test_v1_ingestion.py::test_origin_trust_class_is_derived_and_bounds_trusted_direction",),
 )
@@ -504,7 +504,7 @@ _o(
                 "metrics are computed by the instrument from raw predictions, never "
                 "self-reported by the product"),
     ),
-    surfaces=("guildhall session observe --json",),
+    surfaces=("kinbase session observe --json",),
     vectors=("five pinned classifier runs",),
     nodes=("test_v2_classification.py::test_five_pinned_runs_lower_bound_meets_macro_f1_and_shared_precision",),
 )
@@ -525,7 +525,7 @@ _o(
               at_least("value", 0.95, "shared precision floor"),
               min_len=2),
     ),
-    surfaces=("guildhall experiment calibrate",),
+    surfaces=("kinbase experiment calibrate",),
     vectors=("excluded 60-message calibration corpus",),
     nodes=("test_v2_classification.py::test_excluded_calibration_corpus_gates_measurement",),
 )
@@ -544,7 +544,7 @@ _o(
         at_least("exact_match_atomization", 0.0,
                  "exact-match atomization is computed and reported"),
     ),
-    surfaces=("guildhall session observe --json",),
+    surfaces=("kinbase session observe --json",),
     vectors=("at least 40 mixed-scope messages",),
     nodes=("test_v2_classification.py::test_mixed_messages_atomise_rather_than_take_one_label",),
 )
@@ -586,7 +586,7 @@ _o(
                      "a low-confidence shared label demotes to none/Unknown"),
               min_len=1),
     ),
-    surfaces=("guildhall session observe --json",),
+    surfaces=("kinbase session observe --json",),
     vectors=("low-confidence shared candidates",),
     nodes=("test_v2_classification.py::test_low_confidence_shared_label_demotes_to_none_or_unknown",),
 )
@@ -608,7 +608,7 @@ _o(
                        min_len=3),
               min_len=1),
     ),
-    surfaces=("guildhall proposals list --json",),
+    surfaces=("kinbase proposals list --json",),
     vectors=("two-store fan-out", "three-store fan-out"),
     nodes=("test_v2_classification.py::test_independent_candidates_with_distinct_minimized_bytes",),
 )
@@ -635,7 +635,7 @@ _o(
                ("awaiting_reconcile_or_abandon", "reconciled", "abandoned"),
                "an explicit reconcile/abandon state is reached"),
     ),
-    surfaces=("guildhall proposals decide", "guildhall status --json"),
+    surfaces=("kinbase proposals decide", "kinbase status --json"),
     vectors=("Codebase commit then terminal Company failure",),
     nodes=("test_v2_classification.py::test_partial_fanout_failure_does_not_roll_back_committed_destination",),
 )
@@ -653,7 +653,7 @@ _o(
         is_true("retry_after_token_expiry",
                 "the retry is exercised after token expiry, per the ratified text"),
     ),
-    surfaces=("guildhall proposals decide --json",),
+    surfaces=("kinbase proposals decide --json",),
     vectors=("committed retry", "committed retry after token expiry"),
     nodes=("test_v2_classification.py::test_retry_returns_original_receipt_without_duplication",),
 )
@@ -673,7 +673,7 @@ _o(
         equals("pending_orphans_after_deadline", 0,
                "no orphan remains in an ownerless pending state"),
     ),
-    surfaces=("guildhall status --json",),
+    surfaces=("kinbase status --json",),
     vectors=("expired closing deadline",),
     nodes=("test_v2_classification.py::test_expired_closing_deadline_emits_one_signed_orphan_abandoned",),
 )
@@ -695,7 +695,7 @@ _o(
         equals("total_events_after_recovery", 1,
                "exactly one content-addressed event survives"),
     ),
-    surfaces=("guildhall proposals decide", "guildhall fsck --json"),
+    surfaces=("kinbase proposals decide", "kinbase fsck --json"),
     vectors=("nonce_reservation", "event_append", "event_rename", "manifest",
              "receipt", "apology"),
     nodes=("test_v2_classification.py::test_kill_at_every_transition_then_concurrent_retry",),
@@ -716,7 +716,7 @@ _o(
         equals("accept_all_surfaces_found", 0,
                "no accept-all surface exists in Core or CLI"),
     ),
-    surfaces=("guildhall proposals --help", "guildhall status --json"),
+    surfaces=("kinbase proposals --help", "kinbase status --json"),
     vectors=("cross-destination fan-out",),
     nodes=("test_v2_classification.py::test_no_cross_store_transaction_exists",
            "test_v2_classification.py::test_no_accept_all_path_is_reachable"),
@@ -817,7 +817,7 @@ _o(
                        "no Personal root in the serialized config"),
               min_len=1),
     ),
-    surfaces=("guildhall doctor --json",),
+    surfaces=("kinbase doctor --json",),
     vectors=("shared projector", "shared writer"),
     nodes=("test_v3_privacy.py::test_shared_writer_has_no_personal_capability",),
 )
@@ -836,7 +836,7 @@ _o(
         is_false("stolen_bytes_promoted",
                  "bytes recovered by a same-UID process are still rejected"),
     ),
-    surfaces=("guildhall doctor --json", "guildhall proposals decide"),
+    surfaces=("kinbase doctor --json", "kinbase proposals decide"),
     vectors=("sandboxed agent read", "arbitrary same-UID process"),
     nodes=("test_v3_privacy.py::test_sandbox_denies_personal_root_for_shared_processes",),
 )
@@ -855,7 +855,7 @@ _o(
                "a typed refusal from the closed taxonomy"),
         is_false("shared_work_performed", "no shared work happened first"),
     ),
-    surfaces=("guildhall project",),
+    surfaces=("kinbase project",),
     vectors=("inherited open Personal directory descriptor",),
     nodes=("test_v3_privacy.py::test_inherited_personal_descriptor_fails_startup",),
 )
@@ -898,7 +898,7 @@ _o(
         is_true("deidentify_retains_taint",
                 "de-identification does not remove the private audit record's taint"),
     ),
-    surfaces=("guildhall proposals list --json",),
+    surfaces=("kinbase proposals list --json",),
     vectors=("secret", "credential", "configured-canary", "forbidden-identifier"),
     nodes=("test_v3_privacy.py::test_hard_blocking_taint_is_never_cleared_by_deidentification",),
 )
@@ -917,7 +917,7 @@ _o(
                 "the model output carries only a paraphrase, so the scanner alone "
                 "would miss it"),
     ),
-    surfaces=("guildhall proposals list --json",),
+    surfaces=("kinbase proposals list --json",),
     vectors=("hard-blocking canary with paraphrase-only output",),
     nodes=("test_v3_privacy.py::test_paraphrase_only_output_stays_private_by_taint_policy",),
 )
@@ -935,7 +935,7 @@ _o(
         is_true("no_bytes_left_the_boundary",
                 "no private byte reached the unnamed processor"),
     ),
-    surfaces=("guildhall session observe",),
+    surfaces=("kinbase session observe",),
     vectors=("unnamed provider", "unapproved classifier provider", "scope-ineligible"),
     nodes=("test_v3_privacy.py::test_egress_to_unnamed_processor_fails_with_typed_refusal",),
 )
@@ -950,7 +950,7 @@ _o(
         present("execution_census_digest", "the frozen execution census digest"),
         equals("forbidden_phrases_found", 0, "no unqualified phrase appears"),
     ),
-    surfaces=("guildhall status --json",),
+    surfaces=("kinbase status --json",),
     vectors=("published privacy claim",),
     nodes=("test_v3_privacy.py::test_v3_claim_is_digest_qualified_and_never_unqualified",),
 )
@@ -1056,7 +1056,7 @@ _o(
                  "mutation-stage post-state digests are distinct; preserving stages are excluded",
                  min_len=3),
     ),
-    surfaces=("guildhall corpus rebuild --json", "repository state"),
+    surfaces=("kinbase corpus rebuild --json", "repository state"),
     vectors=("create", "duplicate", "edit", "supersede", "retract", "revoke",
              "expire", "branch", "merge", "conflict", "resolve", "rebuild", "restart"),
     nodes=("test_v4_maintenance.py::test_repeated_incremental_cycle_is_restart_safe_and_bounded",),
@@ -1077,7 +1077,7 @@ _o(
         is_true("authorized_parent_bound_event_resolves",
                 "an authorized parent-bound event does resolve the conflict"),
     ),
-    surfaces=("guildhall explain --json", ".kin/events"),
+    surfaces=("kinbase explain --json", ".kin/events"),
     vectors=("two clones, disjoint events, incompatible heads",),
     nodes=("test_v4_maintenance.py::test_incompatible_heads_remain_conflict_until_authorized_parent_bound_event",),
 )
@@ -1102,7 +1102,7 @@ _o(
         equals("expired_owner_role", "company-steward",
                "expired expected state is a Company-steward publication Unknown"),
     ),
-    surfaces=("guildhall fsck --json", ".kin/manifests"),
+    surfaces=("kinbase fsck --json", ".kin/manifests"),
     vectors=("equal", "strict superset", "strict subset", "incomparable"),
     nodes=("test_v4_maintenance.py::test_manifest_comparison_classifies_lag_incomplete_and_expiry",),
 )
@@ -1142,7 +1142,7 @@ _o(
                       "varying the input has an observable, recorded effect"),
               min_len=4),
     ),
-    surfaces=("guildhall corpus rebuild --json",),
+    surfaces=("kinbase corpus rebuild --json",),
     vectors=("events", "reducer version", "as_of", "authority cursor"),
     nodes=("test_v4_maintenance.py::test_rebuild_is_deterministic_over_frozen_inputs",),
 )
@@ -1158,7 +1158,7 @@ _o(
         is_true("rfc3339_millisecond_format", "the recorded value has the frozen shape"),
         is_false("ambient_clock_read", "no ambient wall-clock read occurs"),
     ),
-    surfaces=("guildhall corpus rebuild --json",),
+    surfaces=("kinbase corpus rebuild --json",),
     vectors=("omitted as_of",),
     nodes=("test_v4_maintenance.py::test_omitting_as_of_breaks_determinism_and_is_refused",),
 )
@@ -1177,7 +1177,7 @@ _o(
         present("full_rebuild_seconds", "full-rebuild time is recorded"),
         present("session_start_seconds", "SessionStart latency is recorded"),
     ),
-    surfaces=("guildhall ingest", "guildhall fsck --json"),
+    surfaces=("kinbase ingest", "kinbase fsck --json"),
     vectors=("100,000-event corpus",),
     nodes=("test_v4_maintenance.py::test_ten_times_the_admission_ceiling_refuses_writes_but_still_diagnoses",),
 )
@@ -1198,7 +1198,7 @@ _o(
         is_true("unchecked_facts_withheld",
                 "not-yet-rechecked facts are withheld, never assumed unaffected"),
     ),
-    surfaces=("guildhall corpus rebuild --json",),
+    surfaces=("kinbase corpus rebuild --json",),
     vectors=("10,000-event dense derivation graph",),
     nodes=("test_v4_maintenance.py::test_revocation_cascade_completes_in_bound_or_stays_fail_closed",),
 )
@@ -1216,7 +1216,7 @@ _o(
         is_true("returned_to_original_scoped_client_only",
                 "only the original scoped client receives the receipt"),
     ),
-    surfaces=("guildhall status --json",),
+    surfaces=("kinbase status --json",),
     vectors=("pre-revocation event replayed after the revocation cursor",),
     nodes=("test_v4_maintenance.py::test_pre_revocation_replay_returns_history_without_readmission",),
 )
@@ -1234,7 +1234,7 @@ _o(
         equals("manifest_lineages", 1, "one manifest lineage results"),
         at_least("concurrent_admissions", 2, "admission is genuinely concurrent"),
     ),
-    surfaces=("git common directory", "guildhall repo publish-manifest"),
+    surfaces=("git common directory", "kinbase repo publish-manifest"),
     vectors=("two linked worktrees admitting concurrently",),
     nodes=("test_v4_maintenance.py::test_linked_worktrees_serialize_on_one_common_dir_lock",),
 )
@@ -1244,14 +1244,14 @@ _o(
     V, "kindex-collision",
     "Initialize against a fully populated real pinned-Kindex `.kin/` inventory and "
     "prove byte preservation; inject a collision between an enumerated Kindex path and "
-    "a Guildhall reserved path and require typed no-write refusal.",
+    "a Kinbase reserved path and require typed no-write refusal.",
     clauses(
         at_least("legacy_files", 4, "a fully populated legacy inventory is present"),
         equals("legacy_bytes_changed", 0, "every legacy byte is preserved"),
         is_true("collision_refused", "the injected collision produces a typed refusal"),
         equals("bytes_changed_by_refused_init", 0, "the refusal changes no byte"),
     ),
-    surfaces=(".kin/ legacy inventory", "guildhall repo init"),
+    surfaces=(".kin/ legacy inventory", "kinbase repo init"),
     vectors=("populated pinned-Kindex repository", "reserved-path collision"),
     nodes=("test_v4_maintenance.py::test_legacy_kindex_bytes_preserved_and_collision_refuses",),
 )
@@ -1281,7 +1281,7 @@ _o(
                        "the case identity never reaches the product"),
               min_len=9),
     ),
-    surfaces=("guildhall explain --json", "planted signed event histories"),
+    surfaces=("kinbase explain --json", "planted signed event histories"),
     vectors=("nine frozen temporal rows",),
     nodes=("test_v5_temporal.py::test_frozen_temporal_case",),
 )
@@ -1297,7 +1297,7 @@ _o(
         nonempty("negative_evidence",
                  "the rejected proposal is retained as negative evidence"),
     ),
-    surfaces=("guildhall explain --json",),
+    surfaces=("kinbase explain --json",),
     vectors=("newer rejected PR versus current accepted ADR",),
     nodes=("test_v5_temporal.py::test_newest_wins_is_not_the_rule",),
 )
@@ -1314,7 +1314,7 @@ _o(
                  "a rejected change never becomes the current decision"),
         nonempty("reducer_trace", "the reducer trace must be inspectable"),
     ),
-    surfaces=("guildhall explain --json",),
+    surfaces=("kinbase explain --json",),
     vectors=("newer rejected PR", "current accepted ADR"),
     nodes=("test_v5_temporal.py::test_rejected_pr_does_not_displace_current_adr",),
 )
@@ -1330,7 +1330,7 @@ _o(
                 "copies are not counted as independent supports"),
         is_false("vote_count_winner", "there is no vote-count winner"),
     ),
-    surfaces=("guildhall explain --json",),
+    surfaces=("kinbase explain --json",),
     vectors=("ten copies of one prior versus one independent decision",),
     nodes=("test_v5_temporal.py::test_copied_chorus_does_not_outweigh_one_independent_decision",),
 )
@@ -1349,7 +1349,7 @@ _o(
               min_len=1),
         is_false("silent_local_override", "no silent local override occurs"),
     ),
-    surfaces=("guildhall explain --json",),
+    surfaces=("kinbase explain --json",),
     vectors=("repository code contradicting current Company architecture",),
     nodes=("test_v5_temporal.py::test_scope_bounds_authority_rather_than_prestige",),
 )
@@ -1367,7 +1367,7 @@ _o(
                  "the runtime observation's scope is not an architecture scope"),
         present("environment_owner", "the operational fact names its environment owner"),
     ),
-    surfaces=("guildhall explain --json",),
+    surfaces=("kinbase explain --json",),
     vectors=("deployed config 568 versus code default 90",),
     nodes=("test_v5_temporal.py::test_runtime_config_wins_diagnosis_without_acquiring_architecture_authority",),
 )
@@ -1386,7 +1386,7 @@ _o(
         is_false("free_form_owner_admitted",
                  "a free-form owner string is never admitted"),
     ),
-    surfaces=("guildhall explain --json",),
+    surfaces=("kinbase explain --json",),
     vectors=("runtime observation naming an unregistered environment",),
     nodes=("test_v5_temporal.py::test_unregistered_environment_is_untrusted_with_a_steward_unknown",),
 )
@@ -1398,10 +1398,10 @@ _o(
 _o(
     "V-6.registration", "V-6", "a named Chief Architect is really registered",
     V, "setup",
-    "Start `guildhalld` and register a named Chief Architect with a test signing key "
+    "Start `kinbased` and register a named Chief Architect with a test signing key "
     "and a live channel endpoint/process separate from the caller.",
     clauses(
-        is_true("service_started", "guildhalld is genuinely running"),
+        is_true("service_started", "kinbased is genuinely running"),
         is_true("registration_performed",
                 "the authority is registered through a shipping surface"),
         present("registry_entry.authority_id", "a stable authority ID"),
@@ -1412,7 +1412,7 @@ _o(
         absent("registry_entry.email", "contact data is not a registry value"),
         absent("registry_entry.private_key", "private keys are never registry values"),
     ),
-    surfaces=("guildhalld", "authority registry"),
+    surfaces=("kinbased", "authority registry"),
     vectors=("architecture:scheduling Chief Architect",),
     nodes=("test_v6_authority.py::test_service_starts_and_registers_a_named_chief_architect",),
 )
@@ -1434,7 +1434,7 @@ _o(
         is_false("trusted_recommendation_present",
                  "dependent trusted guidance is withheld"),
     ),
-    surfaces=("guildhall questions ask", "guildhall project --json"),
+    surfaces=("kinbase questions ask", "kinbase project --json"),
     vectors=("high-distortion architectural ambiguity",),
     nodes=("test_v6_authority.py::test_high_distortion_unknown_sends_a_targeted_question_and_withholds_guidance",),
 )
@@ -1458,7 +1458,7 @@ _o(
         present("authority_process_log_digest",
                 "the authority process independently logs the round trip"),
     ),
-    surfaces=("separate signing process", "guildhall ingest authority_answer"),
+    surfaces=("separate signing process", "kinbase ingest authority_answer"),
     vectors=("signed scoped answer",),
     nodes=("test_v6_authority.py::test_signed_answer_from_a_separate_process_materially_changes_the_decision",),
 )
@@ -1473,7 +1473,7 @@ _o(
                "a typed authority refusal"),
         is_false("unknown_closed", "the Unknown does not close"),
     ),
-    surfaces=("guildhall questions answer",),
+    surfaces=("kinbase questions answer",),
     vectors=("repository maintainer answering an architecture question",),
     nodes=("test_v6_authority.py::test_another_roles_signature_is_rejected",),
 )
@@ -1493,7 +1493,7 @@ _o(
                  "offline authority does not become permission"),
         is_false("model_prior_answer", "guidance is never filled from the model prior"),
     ),
-    surfaces=("guildhall project --json",),
+    surfaces=("kinbase project --json",),
     vectors=("authority unavailable and cache expired",),
     nodes=("test_v6_authority.py::test_unavailable_authority_yields_declared_degraded_policy",),
 )
@@ -1544,7 +1544,7 @@ _o(
         is_false("fixture_mode_selector_used",
                  "no fixture-mode flag substitutes for ingested state"),
     ),
-    surfaces=("guildhall ingest", "guildhall project --json"),
+    surfaces=("kinbase ingest", "kinbase project --json"),
     vectors=("six frozen candidate roles",),
     nodes=("test_v7_projection.py::test_frozen_candidate_set_contains_every_declared_role",),
 )
@@ -1560,7 +1560,7 @@ _o(
         equals("reselected_working_set_members", 0,
                "a fact already in the working set is not re-selected at full value"),
     ),
-    surfaces=("guildhall project --working-set",),
+    surfaces=("kinbase project --working-set",),
     vectors=("cold working set", "warm working set"),
     nodes=("test_v7_projection.py::test_selection_changes_when_working_set_ids_change",),
 )
@@ -1578,7 +1578,7 @@ _o(
         at_most("warm_readd_marginal_value", 0.05,
                 "re-adding a resident fact has near-zero marginal value"),
     ),
-    surfaces=("guildhall project --json",),
+    surfaces=("kinbase project --json",),
     vectors=("redundant paraphrases versus one invariant",),
     nodes=("test_v7_projection.py::test_duplicates_do_not_crowd_out_the_high_distortion_invariant",),
 )
@@ -1600,7 +1600,7 @@ _o(
               present("current_set_size", "the set it was scored against"),
               min_len=1),
     ),
-    surfaces=("guildhall project --json",),
+    surfaces=("kinbase project --json",),
     vectors=("greedy selection trace",),
     nodes=("test_v7_projection.py::test_marginal_value_is_recomputed_against_the_current_set",),
 )
@@ -1620,7 +1620,7 @@ _o(
               nonempty("redundancy_basis", "explicit edge, provenance or similarity"),
               min_len=1),
     ),
-    surfaces=("guildhall project --json",),
+    surfaces=("kinbase project --json",),
     vectors=("complementary test/rationale pair", "high-similarity paraphrases"),
     nodes=("test_v7_projection.py::test_complementarity_is_visible_and_redundancy_is_penalised",),
 )
@@ -1640,7 +1640,7 @@ _o(
               present("owner_identity", "owning identity"),
               min_len=1),
     ),
-    surfaces=("guildhall project --json",),
+    surfaces=("kinbase project --json",),
     vectors=("stale fact",),
     nodes=("test_v7_projection.py::"
            "test_stale_fact_is_withheld_and_produces_an_owned_unknown",),
@@ -1661,7 +1661,7 @@ _o(
         is_true("scope_limited_to_selector_mechanics",
                 "this fixture's claim is bounded to selector mechanics"),
     ),
-    surfaces=("guildhall project --json",),
+    surfaces=("kinbase project --json",),
     vectors=("selector mechanics",),
     nodes=("test_v7_projection.py::test_no_calibrated_causal_voi_claim_is_made",),
 )
@@ -1683,7 +1683,7 @@ _o(
         is_false("stopped_at_byte_ceiling",
                  "stopping only because the window filled is the forbidden case"),
     ),
-    surfaces=("guildhall project --json",),
+    surfaces=("kinbase project --json",),
     vectors=("seven frozen evidence tiers",),
     nodes=("test_v7_projection.py::test_loop_stops_on_net_marginal_value_not_a_filled_window",),
 )
@@ -1707,7 +1707,7 @@ _o(
               present("cost", "cost"),
               min_len=1),
     ),
-    surfaces=("guildhall status --json",),
+    surfaces=("kinbase status --json",),
     vectors=("projection query log",),
     nodes=("test_v7_projection.py::test_query_log_records_every_declared_field",),
 )
@@ -1730,7 +1730,7 @@ _o(
                "no Company prose is copied into any Git object"),
         equals("kin_event_prose_hits", 0, "no Company prose is copied into .kin/"),
     ),
-    surfaces=("git objects", "guildhall project --json", "Company service"),
+    surfaces=("git objects", "kinbase project --json", "Company service"),
     vectors=("fresh clone with a valid reference",),
     nodes=("test_v8_company_refs.py::test_fresh_clone_resolves_the_reference_without_copying_prose",),
 )
@@ -1785,7 +1785,7 @@ _o(
                       "both classes come from signed state, not a selector"),
               min_len=3),
     ),
-    surfaces=("guildhall explain --json", "signed Company and Codebase facts"),
+    surfaces=("kinbase explain --json", "signed Company and Codebase facts"),
     vectors=("advisory+safety", "safety+advisory", "advisory+advisory"),
     nodes=("test_v8_company_refs.py::test_stricter_of_company_and_local_class_controls_freshness",),
 )
@@ -1806,7 +1806,7 @@ _o(
         is_true("expiry_restores_company_class",
                 "expiry restores the unrelaxed Company class"),
     ),
-    surfaces=("guildhall ingest kindex", "guildhall explain --json"),
+    surfaces=("kinbase ingest kindex", "kinbase explain --json"),
     vectors=("maintainer request", "maintainer mint", "steward relaxation", "expiry"),
     nodes=("test_v8_company_refs.py::test_only_company_steward_may_sign_a_relaxation",
            "test_v8_company_refs.py::test_maintainer_may_request_but_not_mint_an_exception"),
@@ -1831,7 +1831,7 @@ _o(
         is_false("unavailable_company_accuses",
                  "an unavailable Company withholds without accusation"),
     ),
-    surfaces=("Company service", "guildhall explain --json"),
+    surfaces=("Company service", "kinbase explain --json"),
     vectors=("historical differs", "historical matches", "version missing",
              "Company unavailable"),
     nodes=("test_v8_company_refs.py::test_digest_mismatch_attribution_truth_table",),
@@ -1852,7 +1852,7 @@ _o(
         at_least("fork_foreign_event_count", 1,
                  "foreign parent events are counted and reported"),
     ),
-    surfaces=("guildhall status --json",),
+    surfaces=("kinbase status --json",),
     vectors=("uncertified clone", "attacker fork with a self-issued certificate"),
     nodes=("test_v8_company_refs.py::test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts",),
 )
@@ -1871,7 +1871,7 @@ _o(
         is_true("two_certificates_fail_fsck",
                 "two certificates for one UUID fail fsck"),
     ),
-    surfaces=("guildhall status --json", "guildhall fsck"),
+    surfaces=("kinbase status --json", "kinbase fsck"),
     vectors=("changed hint", "hint resolving to a different UUID",
              "two certificates for one UUID"),
     nodes=("test_v8_company_refs.py::test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change",),
@@ -1892,7 +1892,7 @@ _o(
         is_true("signed_rewrite_admitted",
                 "a separately signed rewrite event does explain the regression"),
     ),
-    surfaces=("guildhall repo publish-manifest", "Company service"),
+    surfaces=("kinbase repo publish-manifest", "Company service"),
     vectors=("monotonic publication", "count regression", "signed rewrite"),
     nodes=("test_v8_company_refs.py::test_publish_manifest_enforces_monotonic_counts",),
 )
@@ -1912,7 +1912,7 @@ _o(
         is_true("emitted_without_clone_activity",
                 "Company does not wait for a clone or maintainer to notice"),
     ),
-    surfaces=("Company service", "guildhall status --json"),
+    surfaces=("Company service", "kinbase status --json"),
     vectors=("fresh_until lapse",),
     nodes=("test_v8_company_refs.py::test_company_emits_its_own_observation_expired_event",),
 )
@@ -1935,7 +1935,7 @@ _o(
         is_true("stale_revocation_dominates_safety",
                 "stale revocation dominates safety projection"),
     ),
-    surfaces=("Company cache", "guildhall project --json"),
+    surfaces=("Company cache", "kinbase project --json"),
     vectors=("six frozen truth-table rows",),
     nodes=("test_v8_company_refs.py::test_cache_disagreement_truth_table",),
 )
@@ -1953,7 +1953,7 @@ _o(
         present("counts", "counts and status are present"),
         is_true("no_statement_leaked", "no unverified statement text appears"),
     ),
-    surfaces=("guildhall hooks dispatch",),
+    surfaces=("kinbase hooks dispatch",),
     vectors=("uncertified Codebase-only SessionStart",),
     nodes=("test_v8_company_refs.py::test_uncertified_codebase_only_mode_emits_counts_and_status_only",),
 )
@@ -1985,7 +1985,7 @@ _o(
         equals("bypass_flags_found", 0,
                "no --yes, silent write or permission bypass exists"),
     ),
-    surfaces=("guildhall hooks plan", "guildhall hooks install", "isolated HOME"),
+    surfaces=("kinbase hooks plan", "kinbase hooks install", "isolated HOME"),
     vectors=("codex", "claude"),
     nodes=("test_v9_host_lifecycle.py::test_hooks_plan_is_read_only_and_install_requires_native_approval",),
 )
@@ -2010,7 +2010,7 @@ _o(
         is_true("capture_continued", "capture continues during the session"),
         is_true("stop_checkpointed", "Stop/SessionEnd checkpoints observations"),
     ),
-    surfaces=("guildhall hooks dispatch", "installed host config"),
+    surfaces=("kinbase hooks dispatch", "installed host config"),
     vectors=("codex", "claude"),
     nodes=("test_v9_host_lifecycle.py::test_native_host_events_prime_capture_and_exclude_personal",),
 )
@@ -2026,7 +2026,7 @@ _o(
         is_true("decisions_match", "canonical decisions match across hosts"),
         is_true("receipts_match", "canonical receipts match across hosts"),
     ),
-    surfaces=("guildhall session observe --json",),
+    surfaces=("kinbase session observe --json",),
     vectors=("matched Codex and Claude conversation",),
     nodes=("test_v9_host_lifecycle.py::test_matched_conversations_produce_identical_canonical_payloads",),
 )
@@ -2051,7 +2051,7 @@ _o(
         present("machine.ram", "RAM is reported"),
         present("machine.filesystem", "filesystem is reported"),
     ),
-    surfaces=("guildhall hooks dispatch SessionStart",),
+    surfaces=("kinbase hooks dispatch SessionStart",),
     vectors=("warm", "cold", "invalid-cache", "full-fsck-required"),
     nodes=("test_v9_host_lifecycle.py::test_session_start_p95_under_two_seconds_in_every_state",),
 )
@@ -2071,7 +2071,7 @@ _o(
         equals("trusted_company_facts_while_refreshing", 0,
                "no fact becomes trusted while asynchronous work is running"),
     ),
-    surfaces=("guildhall hooks dispatch SessionStart",),
+    surfaces=("kinbase hooks dispatch SessionStart",),
     vectors=("blackholed Company endpoint",),
     nodes=("test_v9_host_lifecycle.py::test_blackholed_company_endpoint_degrades_loudly_inside_the_budget",),
 )
@@ -2095,7 +2095,7 @@ _o(
         equals("inherited_superproject_facts", 0,
                "nested roots never inherit superproject fact bodies"),
     ),
-    surfaces=("guildhall doctor --json",),
+    surfaces=("kinbase doctor --json",),
     vectors=("clone", "linked worktree", "submodule", "nested repository"),
     nodes=("test_v9_host_lifecycle.py::test_worktrees_share_uuid_while_nested_roots_require_their_own_certificate",),
 )
@@ -2118,7 +2118,7 @@ _o(
                  "latency may not pass by always degrading"),
         equals("refused_starts", 0, "a refusing start is not a warm start"),
     ),
-    surfaces=("guildhall hooks dispatch SessionStart",),
+    surfaces=("kinbase hooks dispatch SessionStart",),
     vectors=("append", "branch switch", "restart", "linked worktree"),
     nodes=("test_v9_host_lifecycle.py::test_twenty_session_soak_warm_path_and_fsck_incidence",),
 )
@@ -2141,7 +2141,7 @@ _o(
         is_true("unknown_global_total_warning",
                 "doctor warns that no global cross-machine total is known"),
     ),
-    surfaces=("guildhall proposals list", "guildhall doctor --json"),
+    surfaces=("kinbase proposals list", "kinbase doctor --json"),
     vectors=("company", "codebase", "interleaved Codex and Claude sessions"),
     nodes=("test_v9_fatigue.py::test_four_total_per_hour_shared_across_destinations",),
 )
@@ -2159,7 +2159,7 @@ _o(
         equals("consecutive_after_reset", 0, "the consecutive counter clears"),
         is_false("free_text_reason_accepted", "reason codes are a closed set"),
     ),
-    surfaces=("guildhall proposals reset",),
+    surfaces=("kinbase proposals reset",),
     vectors=("new-primary-task", "operator-recovery", "host-restart"),
     nodes=("test_v9_fatigue.py::test_reset_clears_only_the_consecutive_counter_once_per_hour",),
 )
@@ -2179,7 +2179,7 @@ _o(
         is_false("untrusted_churn_triggered_reissue",
                  "untrusted branch churn cannot trigger byte-change reissue"),
     ),
-    surfaces=("guildhall proposals reissue", "guildhall doctor --json"),
+    surfaces=("kinbase proposals reissue", "kinbase doctor --json"),
     vectors=("four racing reissues", "untrusted branch churn"),
     nodes=("test_v9_fatigue.py::test_reissue_and_reservation_commit_in_one_immediate_transaction",),
 )
@@ -2200,7 +2200,7 @@ _o(
                 "a crash after reservation remains counted until expiry"),
         present("delivery_loss_rate", "delivery-loss rate is explicit"),
     ),
-    surfaces=("guildhall proposals list", "guildhall doctor --json"),
+    surfaces=("kinbase proposals list", "kinbase doctor --json"),
     vectors=("Codex and Claude on one host instance",),
     nodes=("test_v9_fatigue.py::test_interleaved_sessions_never_exceed_four_prompts_per_window",),
 )
@@ -2243,7 +2243,7 @@ _o(
         is_true("gold_withheld_from_product",
                 "the gold labels never reach the product input"),
     ),
-    surfaces=("guildhall session observe", "guildhall status --json"),
+    surfaces=("kinbase session observe", "kinbase status --json"),
     vectors=("100 observations across five sliding-hour windows",),
     nodes=("test_v9_fatigue.py::test_corpus_growth_adequacy_under_the_fatigue_ceiling",),
 )
@@ -2290,7 +2290,7 @@ _o("NF.help", "NONFUNCTIONAL", "commands have bounded help", V, "packaging",
                  present("command", "command name"),
                  at_most("help_bytes", 65536, "help output is bounded"),
                  equals("exit_code", 0, "help exits zero"), min_len=5)),
-   surfaces=("guildhall --help",), vectors=("top-level commands",),
+   surfaces=("kinbase --help",), vectors=("top-level commands",),
    nodes=("test_nonfunctional.py::test_commands_have_bounded_help",))
 
 _o("NF.roots", "NONFUNCTIONAL", "roots are explicit and escapes fail closed",
@@ -2305,7 +2305,7 @@ _o("NF.roots", "NONFUNCTIONAL", "roots are explicit and escapes fail closed",
            every("escape_probes", "each escape probe fails closed",
                  present("probe", "what was attempted"),
                  is_true("refused", "the escape was refused"), min_len=2)),
-   surfaces=("guildhall status", "filesystem"), vectors=("symlink", "path escape"),
+   surfaces=("kinbase status", "filesystem"), vectors=("symlink", "path escape"),
    nodes=("test_nonfunctional.py::"
           "test_roots_are_explicit_modes_restrictive_and_escapes_fail_closed",))
 
@@ -2316,7 +2316,7 @@ _o("NF.determinism", "NONFUNCTIONAL", "validation and rebuild are deterministic"
            nonempty("rebuild_digest", "the rebuild must produce a digest"),
            is_true("canonicalisation_identical", "canonical bytes are stable"),
            equals("schema_refusals", 0, "a valid document is not refused")),
-   surfaces=("guildhall corpus rebuild",), vectors=("rebuild", "canonicalisation"),
+   surfaces=("kinbase corpus rebuild",), vectors=("rebuild", "canonicalisation"),
    nodes=("test_nonfunctional.py::test_schema_validation_and_rebuild_are_deterministic",))
 
 _o("NF.logs", "NONFUNCTIONAL", "logs are structured and carry no raw private bytes",
@@ -2325,7 +2325,7 @@ _o("NF.logs", "NONFUNCTIONAL", "logs are structured and carry no raw private byt
    clauses(at_least("log_lines", 1, "there must be log output to inspect"),
            is_true("structured", "every line parses as a structured record"),
            equals("raw_private_findings", 0, "no raw private byte appears")),
-   surfaces=("guildhall doctor", "log files"), vectors=("structured log",),
+   surfaces=("kinbase doctor", "log files"), vectors=("structured log",),
    nodes=("test_nonfunctional.py::"
           "test_logs_are_structured_and_carry_no_raw_private_messages",))
 
@@ -2338,7 +2338,7 @@ _o("NF.timeouts", "NONFUNCTIONAL", "external calls time out and failed writes do
            at_most("observed_seconds", 120.0, "the call returns within its bound"),
            equals("admitted_after_failed_write", 0,
                   "a failed write never becomes an admitted fact")),
-   surfaces=("guildhall status",), vectors=("hung dependency", "failed write"),
+   surfaces=("kinbase status",), vectors=("hung dependency", "failed write"),
    nodes=("test_nonfunctional.py::"
           "test_external_calls_have_timeouts_and_failed_writes_are_not_admitted",))
 
@@ -2351,19 +2351,19 @@ _o("NF.diagnostics", "NONFUNCTIONAL", "diagnostics are executable after restart"
                  is_true("executable", "it ran"),
                  is_true("useful", "it emitted an inspectable object"), min_len=4),
            is_true("survives_restart", "the diagnostics run after a restart")),
-   surfaces=("guildhall fsck", "guildhall doctor", "guildhall explain"),
+   surfaces=("kinbase fsck", "kinbase doctor", "kinbase explain"),
    vectors=("restart",),
    nodes=("test_nonfunctional.py::test_diagnostics_are_executable_and_useful_after_restart",))
 
 _o("NF.http", "NONFUNCTIONAL", "HTTP rejects every declared probe", V, "http",
-   "Guildhall HTTP rejects unauthenticated reads, non-loopback Host, "
+   "Kinbase HTTP rejects unauthenticated reads, non-loopback Host, "
    "Origin-bearing requests, and non-JSON writes; all receive typed "
    "remediation-safe errors.",
    clauses(every("probes", "each declared probe is refused with a typed error",
                  present("probe", "which probe"),
                  is_true("refused", "the probe was refused"),
                  is_true("bounded_body", "the error body is bounded"), min_len=4)),
-   surfaces=("guildhalld HTTP",), vectors=("unauthenticated read", "non-loopback host",
+   surfaces=("kinbased HTTP",), vectors=("unauthenticated read", "non-loopback host",
                                            "origin header", "non-JSON write"),
    nodes=("test_nonfunctional.py::test_http_rejects_every_declared_probe",))
 
@@ -2376,7 +2376,7 @@ _o("NF.ceilings", "NONFUNCTIONAL", "every ceiling refuses with an omitted count"
                  is_true("refused", "the ceiling refused"),
                  present("omitted_count", "the omitted count is reported"),
                  min_len=5)),
-   surfaces=("guildhall ingest", "guildhall project"),
+   surfaces=("kinbase ingest", "kinbase project"),
    vectors=("source body", "observation batch", "shared event", "kin intake",
             "projection call"),
    nodes=("test_nonfunctional.py::test_every_operational_ceiling_refuses_with_an_omitted_count",))
@@ -2391,7 +2391,7 @@ _o("NF.lifetimes", "NONFUNCTIONAL", "candidate lifetime and private retention ho
                   "an expired candidate refuses with its typed code"),
            is_true("raw_removed_after_retention",
                    "raw private session bytes are gone after retention")),
-   surfaces=("guildhall proposals decide",), vectors=("expiry", "retention"),
+   surfaces=("kinbase proposals decide",), vectors=("expiry", "retention"),
    nodes=("test_nonfunctional.py::test_candidate_lifetime_and_private_retention_are_enforced",))
 
 # Tester dispatch 006, item 5. The earlier form of this obligation drove one
@@ -2423,7 +2423,7 @@ _o("NF.exit-boundary", "NONFUNCTIONAL",
                   "a malformed .kin/config exits five per the first-run table"),
            present("config_probe.error.code",
                    "the malformed-config refusal is typed")),
-   surfaces=("guildhall",),
+   surfaces=("kinbase",),
    vectors=("argv metacharacters and NUL escapes", ".kin/config bytes with NUL",
             "event bytes with NUL", "stdin bytes"),
    nodes=("test_nonfunctional.py::test_hostile_bytes_never_escape_the_exception_boundary",))
@@ -2434,7 +2434,7 @@ _o("NF.token-mode", "NONFUNCTIONAL", "a broad token mode is refused with remedia
            is_true("remediation_names_chmod", "the remediation names chmod"),
            is_true("mode_observed_broad", "the mode really was broader than 0600"),
            equals("secret_bytes_leaked", 0, "the secret is not echoed")),
-   surfaces=("guildhall status",), vectors=("token mode 0644",),
+   surfaces=("kinbase status",), vectors=("token mode 0644",),
    nodes=("test_nonfunctional.py::test_broad_token_mode_is_refused_with_chmod_remediation",))
 
 # ==========================================================================
@@ -2506,7 +2506,7 @@ _o("V10.freeze-order", "V-10", "freeze refuses before gates, census, power and b
                  present("missing", "which precondition was withheld"),
                  is_true("refused", "freeze refused"),
                  present("refusal_code", "the refusal is typed"), min_len=4)),
-   surfaces=("guildhall experiment freeze",),
+   surfaces=("kinbase experiment freeze",),
    vectors=("census", "power", "calibration", "budget"),
    nodes=("test_v10_protocol.py::test_experiment_freeze_refuses_before_gates_census_power_and_budget",))
 
@@ -2516,7 +2516,7 @@ _o("V10.census-row", "V-10", "launch without a signed census row is refused",
    clauses(equals("refusal_code", "RUN_CENSUS_MISSING", "the typed code is required"),
            equals("exit_code", 70, "the ratified exit status"),
            is_false("smoke_exemption_accepted", "smoke and debug are not exemptions")),
-   surfaces=("guildhall experiment run",), vectors=("missing census row",),
+   surfaces=("kinbase experiment run",), vectors=("missing census row",),
    nodes=("test_v10_protocol.py::test_launch_without_a_signed_census_row_is_refused",))
 
 _o("V10.human-bytes", "V-10", "human bytes after freeze must be zero",
@@ -2526,7 +2526,7 @@ _o("V10.human-bytes", "V-10", "human bytes after freeze must be zero",
    clauses(equals("human_bytes_after_freeze", 0, "the required value is zero"),
            is_true("nonzero_yields_invalid_run",
                    "a nonzero value must classify the run INVALID_RUN")),
-   surfaces=("guildhall experiment run",), vectors=("post-freeze human bytes",),
+   surfaces=("kinbase experiment run",), vectors=("post-freeze human bytes",),
    nodes=("test_v10_protocol.py::test_human_bytes_after_freeze_must_be_zero",))
 
 _o("V10.principal", "V-10", "administrative principals cannot run a measurement task",
@@ -2538,7 +2538,7 @@ _o("V10.principal", "V-10", "administrative principals cannot run a measurement 
                  present("refusal_code", "the refusal is typed"), min_len=2),
            is_true("least_privilege_principal_accepted",
                    "a realistic least-privilege principal is accepted")),
-   surfaces=("guildhall experiment run",),
+   surfaces=("kinbase experiment run",),
    vectors=("administrative identity", "broad service reader"),
    nodes=("test_v10_protocol.py::"
           "test_administrative_or_broad_reader_principals_cannot_run_a_measurement_task",))
@@ -2550,7 +2550,7 @@ _o("V10.ceiling", "V-10", "the aggregate ceiling is reserved atomically",
            is_true("increase_refused", "an increase for this run is refused"),
            present("increase_refusal_code", "the refusal is typed"),
            equals("ceiling_raised", False, "the ceiling never rises mid-run")),
-   surfaces=("guildhall experiment freeze",), vectors=("aggregate budget",),
+   surfaces=("kinbase experiment freeze",), vectors=("aggregate budget",),
    nodes=("test_v10_protocol.py::test_aggregate_ceiling_is_reserved_atomically_and_cannot_be_raised",))
 
 _o("V10.claim", "V-10", "the published conclusion uses only the licensed claim",
@@ -2560,7 +2560,7 @@ _o("V10.claim", "V-10", "the published conclusion uses only the licensed claim",
    clauses(is_true("uses_licensed_template", "the licensed template is used"),
            equals("forbidden_claims_found", 0, "no broader claim appears"),
            present("run_digest", "the claim carries run-specific digests")),
-   surfaces=("guildhall experiment verdict",), vectors=("published conclusion",),
+   surfaces=("kinbase experiment verdict",), vectors=("published conclusion",),
    nodes=("test_v10_protocol.py::test_published_conclusion_uses_only_the_licensed_claim",))
 
 
@@ -2599,7 +2599,7 @@ def all_nodes() -> frozenset[str]:
 
 def catalog_json() -> dict:
     return {
-        "schema": "guildhall-acceptance-obligation-catalog/1",
+        "schema": "kinbase-acceptance-obligation-catalog/1",
         "obligation_count": len(OBLIGATIONS),
         "gates": list(GATES_COVERED),
         "obligations": [o.as_json() for o in OBLIGATIONS],

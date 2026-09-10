@@ -21,7 +21,7 @@ from . import auxgen
 
 ROOT = Path(__file__).resolve().parents[3]
 AUXILIARY = ROOT / "tests/fixtures/auxiliary"
-DOMAIN = b"guildhall-auxiliary-pool-digest/1\x00"
+DOMAIN = b"kinbase-auxiliary-pool-digest/1\x00"
 DOCUMENTS = ("RIGHTS.md", "GRANT-TEMPLATE.md", "SELECTION-PROTOCOL.md")
 FIELDS = (
     "schema", "authority", "digest_field", "grant_template",

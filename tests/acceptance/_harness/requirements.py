@@ -118,23 +118,23 @@ class ProductFailure(AssertionError):
 def repo_root() -> Path:
     """Locate the standalone proof repository containing ``spec/``.
 
-    ``GUILDHALL_SPEC_ROOT`` overrides discovery so the Validator can combine the
+    ``KINBASE_SPEC_ROOT`` overrides discovery so the Validator can combine the
     Coder snapshot and this suite in a scratch tree.
     """
-    override = os.environ.get("GUILDHALL_SPEC_ROOT")
+    override = os.environ.get("KINBASE_SPEC_ROOT")
     if override:
         candidate = Path(override).resolve()
         if (candidate / "spec" / "ratification-manifest.json").is_file():
             return candidate
         raise HarnessInvalid(
-            f"GUILDHALL_SPEC_ROOT={override!r} has no spec/ratification-manifest.json"
+            f"KINBASE_SPEC_ROOT={override!r} has no spec/ratification-manifest.json"
         )
     here = Path(__file__).resolve()
     for parent in here.parents:
         if (parent / "spec" / "ratification-manifest.json").is_file():
             return parent
     raise HarnessInvalid(
-        "cannot locate the ratified spec/ tree; set GUILDHALL_SPEC_ROOT"
+        "cannot locate the ratified spec/ tree; set KINBASE_SPEC_ROOT"
     )
 
 
@@ -231,7 +231,7 @@ def verify_manifest(reviewer_mode: bool = False) -> ManifestVerification:
             f"cannot read ratification evidence {b64_path}: {exc}. This is an "
             "instrument environment prerequisite. An implementation-blind "
             "reviewer whose lane excludes evidence/** must set "
-            "GUILDHALL_REVIEWER_MODE=1, which verifies the six ratified "
+            "KINBASE_REVIEWER_MODE=1, which verifies the six ratified "
             "authority artifacts only."
         ) from exc
     decoded = base64.b64decode(b"".join(container.split()))
@@ -252,7 +252,7 @@ def verify_manifest(reviewer_mode: bool = False) -> ManifestVerification:
         except OSError as exc:
             raise HarnessInvalid(
                 f"cannot read ratification receipt {rel}: {exc}; set "
-                "GUILDHALL_REVIEWER_MODE=1 for an implementation-blind lane"
+                "KINBASE_REVIEWER_MODE=1 for an implementation-blind lane"
             ) from exc
         payload = json.loads(raw)
         if payload.get("manifest_sha256") != RATIFICATION_MANIFEST_SHA256:

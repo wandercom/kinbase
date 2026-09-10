@@ -1,4 +1,4 @@
-"""Black-box driver for the ratified Guildhall command contract.
+"""Black-box driver for the ratified Kinbase command contract.
 
 This module is the *only* way the acceptance suite reaches the product. It
 never imports product code, never inspects product source, and knows nothing
@@ -16,9 +16,9 @@ about internal module layout. It speaks exactly the surface frozen in
 
 Resolution order for the entry point:
 
-1. ``GUILDHALL_BIN`` (absolute path or argv prefix, shell-split);
-2. ``guildhall`` on ``PATH``;
-3. ``python -m guildhall`` when that module is importable in the run
+1. ``KINBASE_BIN`` (absolute path or argv prefix, shell-split);
+2. ``kinbase`` on ``PATH``;
+3. ``python -m kinbase`` when that module is importable in the run
    interpreter.
 
 If none resolves, the suite reports a *product* condition -- the combined
@@ -139,7 +139,7 @@ ERROR_FIELDS: tuple[str, ...] = (
 
 
 class ProductEntryPointMissing(ProductFailure):
-    """No ratified ``guildhall`` entry point exists in the combined snapshot."""
+    """No ratified ``kinbase`` entry point exists in the combined snapshot."""
 
 
 @dataclass
@@ -258,32 +258,32 @@ class Result:
 
 
 def _resolve_entrypoint() -> tuple[str, ...]:
-    override = os.environ.get("GUILDHALL_BIN")
+    override = os.environ.get("KINBASE_BIN")
     if override:
         parts = tuple(shlex.split(override))
         if not parts:
-            raise HarnessInvalid("GUILDHALL_BIN is set but empty")
+            raise HarnessInvalid("KINBASE_BIN is set but empty")
         return parts
-    found = shutil.which("guildhall")
+    found = shutil.which("kinbase")
     if found:
         return (found,)
     probe = subprocess.run(
-        [sys.executable, "-c", "import guildhall"],
+        [sys.executable, "-c", "import kinbase"],
         capture_output=True,
         text=True,
         timeout=120,
     )
     if probe.returncode == 0:
-        return (sys.executable, "-m", "guildhall")
+        return (sys.executable, "-m", "kinbase")
     raise ProductEntryPointMissing(
-        "no ratified guildhall entry point resolved. spec/cli.md freezes the "
-        "command surface (`guildhall status`, `guildhall doctor`, "
-        "`guildhall company serve`, ...); the combined snapshot must expose it "
-        "on PATH, as `python -m guildhall`, or via GUILDHALL_BIN."
+        "no ratified kinbase entry point resolved. spec/cli.md freezes the "
+        "command surface (`kinbase status`, `kinbase doctor`, "
+        "`kinbase company serve`, ...); the combined snapshot must expose it "
+        "on PATH, as `python -m kinbase`, or via KINBASE_BIN."
     )
 
 
-class Guildhall:
+class Kinbase:
     """Invoke the ratified CLI in a controlled, isolated environment.
 
     Every invocation runs with a scrubbed environment. ``spec/architecture.md``

@@ -31,7 +31,7 @@ import pytest
 from ._harness import canonical, matrix as MX
 from ._harness import obligations as O
 from ._harness import hosts, scanners, synth, trust
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.evidence_model import field, rows
 from ._harness.requirements import (
     ARCH,
@@ -83,9 +83,9 @@ def ids() -> OpaqueIds:
 
 
 @pytest.fixture()
-def anchored(roots: ProofRoots, guildhall: Guildhall):
+def anchored(roots: ProofRoots, kinbase: Kinbase):
     world = SignedWorld.create(roots.repo_root)
-    anchors = trust.establish(guildhall, roots, world)
+    anchors = trust.establish(kinbase, roots, world)
     return world, anchors
 
 
@@ -99,8 +99,8 @@ def _by_signer(entries: list) -> dict:
     return out
 
 
-def _run(guildhall: Guildhall, *argv: str, cwd: Path, **kwargs):
-    result = guildhall.run(*argv, cwd=cwd, check=False, **kwargs)
+def _run(kinbase: Kinbase, *argv: str, cwd: Path, **kwargs):
+    result = kinbase.run(*argv, cwd=cwd, check=False, **kwargs)
     if result.returncode == 1:
         raise ProductFailure(
             "`" + " ".join(argv[:2]) + "` returned the reserved ambiguous exit 1"
@@ -151,7 +151,7 @@ def _published(anchors, record: dict) -> dict:
         return {
             "fact_id": receipt.get("fact_id") or record["document"]["fact_id"],
             "semantic_digest": receipt["semantic_digest"],
-            "digest_alg_version": receipt.get("digest_alg_version") or "guildhall-digest/1",
+            "digest_alg_version": receipt.get("digest_alg_version") or "kinbase-digest/1",
             "source": "admission-receipt",
             "valid_from": record["document"]["effective_from"],
             "valid_until": record["document"]["effective_until"],
@@ -171,7 +171,7 @@ def _published(anchors, record: dict) -> dict:
                         "fact_id": entry.get("fact_id") or record["document"]["fact_id"],
                         "semantic_digest": entry["semantic_digest"],
                         "digest_alg_version":
-                            entry.get("digest_alg_version") or "guildhall-digest/1",
+                            entry.get("digest_alg_version") or "kinbase-digest/1",
                         "source": "GET /facts",
                         "valid_from": record["document"]["effective_from"],
                         "valid_until": record["document"]["effective_until"],
@@ -240,8 +240,8 @@ def _plant_local_dependence(world, *, reference: dict, local_class: str) -> dict
     )
 
 
-def _ingest(guildhall: Guildhall, repo: Path):
-    return _run(guildhall, "ingest", "kindex", str(repo / ".kin"),
+def _ingest(kinbase: Kinbase, repo: Path):
+    return _run(kinbase, "ingest", "kindex", str(repo / ".kin"),
                 "--repo", str(repo), "--json", cwd=repo)
 
 
@@ -251,14 +251,14 @@ def _ingest(guildhall: Guildhall, repo: Path):
            "live statement without copying it into Git."),
 )
 def test_fresh_clone_resolves_the_reference_without_copying_prose(
-    guildhall: Guildhall, anchored, tmp_path: Path, ids: OpaqueIds
+    kinbase: Kinbase, anchored, tmp_path: Path, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
     populated = _populate_company(anchors, world)
     _plant_reference(world, anchors, published=populated["published"])
     clone = world.repo.clone(tmp_path / ids.token("fresh"))
 
-    projected = _json(_run(guildhall, "project", "--repo", str(clone.path),
+    projected = _json(_run(kinbase, "project", "--repo", str(clone.path),
                            "--task", "diagnose the wire format",
                            "--decision", "which version applies", "--json",
                            cwd=clone.path))
@@ -293,7 +293,7 @@ def test_fresh_clone_resolves_the_reference_without_copying_prose(
          "semantic-content"),
 )
 def test_reference_carries_exactly_the_company_owned_field_set(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors = anchored
     populated = _populate_company(anchors, world)
@@ -320,7 +320,7 @@ def test_reference_carries_exactly_the_company_owned_field_set(
            "dependence, and missing local owner becomes a repository Unknown."),
 )
 def test_stricter_of_company_and_local_class_controls_freshness(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors = anchored
     combinations = []
@@ -338,8 +338,8 @@ def test_stricter_of_company_and_local_class_controls_freshness(
             criticality=company_class, logical_key=key,
         )
         _plant_local_dependence(world, reference=planted, local_class=local_class)
-        _ingest(guildhall, world.repo.path)
-        observed = _json(_run(guildhall, "explain", key,
+        _ingest(kinbase, world.repo.path)
+        observed = _json(_run(kinbase, "explain", key,
                               "--repo", str(world.repo.path),
                               "--decision", "which freshness applies", "--json",
                               cwd=world.repo.path))
@@ -369,7 +369,7 @@ def test_stricter_of_company_and_local_class_controls_freshness(
            "Company class."),
 )
 def test_only_company_steward_may_sign_a_relaxation(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors = anchored
     populated = _populate_company(anchors, world)
@@ -401,13 +401,13 @@ def test_only_company_steward_may_sign_a_relaxation(
         parents=(request["event_id"], populated["second"]["event_id"]),
         logical_key=REFERENCE_KEY + "/exception",
     )
-    _ingest(guildhall, world.repo.path)
-    before = _json(_run(guildhall, "status", "--repo", str(world.repo.path),
+    _ingest(kinbase, world.repo.path)
+    before = _json(_run(kinbase, "status", "--repo", str(world.repo.path),
                         "--json", cwd=world.repo.path))
     after = _json(_run(
-        guildhall, "status", "--repo", str(world.repo.path), "--json",
+        kinbase, "status", "--repo", str(world.repo.path), "--json",
         cwd=world.repo.path,
-        env=guildhall.base_env({"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "604800"}),
+        env=kinbase.base_env({"KINBASE_PROOF_CLOCK_OFFSET_SECONDS": "604800"}),
     ))
     exceptions = _by_signer(rows(before, "exceptions"))
     O.check(
@@ -433,7 +433,7 @@ def test_only_company_steward_may_sign_a_relaxation(
            "Company class."),
 )
 def test_maintainer_may_request_but_not_mint_an_exception(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors = anchored
     populated = _populate_company(anchors, world)
@@ -461,13 +461,13 @@ def test_maintainer_may_request_but_not_mint_an_exception(
         parents=(request["event_id"], populated["second"]["event_id"]),
         logical_key=REFERENCE_KEY + "/request",
     )
-    _ingest(guildhall, world.repo.path)
-    status = _json(_run(guildhall, "status", "--repo", str(world.repo.path),
+    _ingest(kinbase, world.repo.path)
+    status = _json(_run(kinbase, "status", "--repo", str(world.repo.path),
                         "--json", cwd=world.repo.path))
     expired = _json(_run(
-        guildhall, "status", "--repo", str(world.repo.path), "--json",
+        kinbase, "status", "--repo", str(world.repo.path), "--json",
         cwd=world.repo.path,
-        env=guildhall.base_env({"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "604800"}),
+        env=kinbase.base_env({"KINBASE_PROOF_CLOCK_OFFSET_SECONDS": "604800"}),
     ))
     minted = _by_signer(rows(status, "exceptions"))
     O.check(
@@ -494,7 +494,7 @@ def test_maintainer_may_request_but_not_mint_an_exception(
            "withholds without accusation."),
 )
 def test_digest_mismatch_attribution_truth_table(
-    guildhall: Guildhall, anchored, ids: OpaqueIds, roots: ProofRoots
+    kinbase: Kinbase, anchored, ids: OpaqueIds, roots: ProofRoots
 ) -> None:
     world, anchors = anchored
     populated = _populate_company(anchors, world)
@@ -524,10 +524,10 @@ def test_digest_mismatch_attribution_truth_table(
         if relation == "unavailable":
             with Blackhole(0) as blackhole, anchors.company_endpoint(
                     f"http://127.0.0.1:{blackhole.port}"):
-                observed = _json(_run(guildhall, "fsck", "--repo", str(clone.path),
+                observed = _json(_run(kinbase, "fsck", "--repo", str(clone.path),
                                       "--json", cwd=clone.path))
         else:
-            observed = _json(_run(guildhall, "fsck", "--repo", str(clone.path),
+            observed = _json(_run(kinbase, "fsck", "--repo", str(clone.path),
                                   "--json", cwd=clone.path))
         owner = field(observed, "digest_attribution", "owner_role")
         scenarios.append({
@@ -540,7 +540,7 @@ def test_digest_mismatch_attribution_truth_table(
     with Blackhole(0) as blackhole, anchors.company_endpoint(
         f"http://127.0.0.1:{blackhole.port}"
     ):
-        unavailable = _json(_run(guildhall, "fsck", "--repo", str(world.repo.path),
+        unavailable = _json(_run(kinbase, "fsck", "--repo", str(world.repo.path),
                                  "--json", cwd=world.repo.path))
     rendered = json.dumps(unavailable).lower()
     O.check(
@@ -560,7 +560,7 @@ def test_digest_mismatch_attribution_truth_table(
            "actionable certificate Unknown."),
 )
 def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
-    guildhall: Guildhall, anchored, tmp_path: Path, ids: OpaqueIds,
+    kinbase: Kinbase, anchored, tmp_path: Path, ids: OpaqueIds,
     roots: ProofRoots
 ) -> None:
     world, anchors = anchored
@@ -583,7 +583,7 @@ def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
     fork = world.repo.clone(tmp_path / ids.token("fork"))
     fork.write(
         ".kin/config",
-        'schema_version = "guildhall-repo/1"\n'
+        'schema_version = "kinbase-repo/1"\n'
         'repository_uuid_hint = "' + other + '"\n'
         'safe_name = "example-service"\n'
         'domains = ["scheduling"]\n',
@@ -594,9 +594,9 @@ def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
     fork.commit("claim a new identity with a self-issued certificate")
     forged_file = roots.client_root / "certificates" / "forged.json"
     forged_file.write_bytes(canonical.jcs(forged))
-    install = _run(guildhall, "repo", "init", "--repo", str(fork.path),
+    install = _run(kinbase, "repo", "init", "--repo", str(fork.path),
                    "--certificate", str(forged_file), "--json", cwd=fork.path)
-    fork_status = _json(_run(guildhall, "status", "--repo", str(fork.path),
+    fork_status = _json(_run(kinbase, "status", "--repo", str(fork.path),
                              "--as-of", synth.receipt_stamp(), "--json", cwd=fork.path))
     unknowns = [
         u for u in rows(clone_status, "unknowns")
@@ -617,7 +617,7 @@ def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
     )
 
 
-def _two_certificates_fail_fsck(guildhall: Guildhall, world, anchors) -> bool:
+def _two_certificates_fail_fsck(kinbase: Kinbase, world, anchors) -> bool:
     """Isolate the duplicate-certificate corruption before any repin refusal.
 
     Discover the installed certificate by its bytes; do not guess the product's
@@ -628,7 +628,7 @@ def _two_certificates_fail_fsck(guildhall: Guildhall, world, anchors) -> bool:
     if not installed:
         raise HarnessInvalid("duplicate-certificate probe has no installed certificate")
     repo = world.repo.path
-    baseline = _run(guildhall, "fsck", "--repo", str(repo), "--json", cwd=repo)
+    baseline = _run(kinbase, "fsck", "--repo", str(repo), "--json", cwd=repo)
     if baseline.returncode != 0:
         raise ProductFailure(f"fsck refused before duplicate certificate: {_json(baseline)}")
     body = json.loads(installed[0].read_bytes())
@@ -641,10 +641,10 @@ def _two_certificates_fail_fsck(guildhall: Guildhall, world, anchors) -> bool:
     try:
         duplicate.write_bytes(canonical.jcs(document))
         duplicate.chmod(0o600)
-        refused = _run(guildhall, "fsck", "--repo", str(repo), "--json", cwd=repo)
+        refused = _run(kinbase, "fsck", "--repo", str(repo), "--json", cwd=repo)
     finally:
         duplicate.unlink(missing_ok=True)
-    restored = _run(guildhall, "fsck", "--repo", str(repo), "--json", cwd=repo)
+    restored = _run(kinbase, "fsck", "--repo", str(repo), "--json", cwd=repo)
     return refused.returncode in (2, 3, 4, 5) and restored.returncode == 0
 
 
@@ -655,12 +655,12 @@ def _two_certificates_fail_fsck(guildhall: Guildhall, world, anchors) -> bool:
     VERIFY("V-8", "identity", "Two certificates for one UUID fail `fsck`."),
 )
 def test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change(
-    guildhall: Guildhall, anchored, ids: OpaqueIds, roots: ProofRoots
+    kinbase: Kinbase, anchored, ids: OpaqueIds, roots: ProofRoots
 ) -> None:
     world, anchors = anchored
-    two_certificates_fail_fsck = _two_certificates_fail_fsck(guildhall, world, anchors)
+    two_certificates_fail_fsck = _two_certificates_fail_fsck(kinbase, world, anchors)
     _populate_company(anchors, world)
-    before = _json(_run(guildhall, "status", "--repo", str(world.repo.path),
+    before = _json(_run(kinbase, "status", "--repo", str(world.repo.path),
                         "--json", cwd=world.repo.path))
     # Validator ruling C11: the discovery hint is the Git remote URL, never a
     # `.kin/config` key (unknown keys fail closed). Change URL, protocol and
@@ -669,13 +669,13 @@ def test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change(
                    "https://elsewhere.example/renamed-owner/renamed-service.git")
     world.repo.write(
         ".kin/config",
-        'schema_version = "guildhall-repo/1"\n'
+        'schema_version = "kinbase-repo/1"\n'
         'repository_uuid_hint = "' + REPO_UUID + '"\n'
         'safe_name = "renamed-service"\n'
         'domains = ["scheduling"]\n',
     )
     world.repo.commit("rename the service")
-    after = _json(_run(guildhall, "status", "--repo", str(world.repo.path),
+    after = _json(_run(kinbase, "status", "--repo", str(world.repo.path),
                        "--json", cwd=world.repo.path))
 
     # A hint later resolving to a different UUID: a second steward-signed
@@ -685,7 +685,7 @@ def test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change(
     second = trust.write_certificate_file(
         roots, world.steward, repository_uuid=other, name="second",
     )
-    repin = _run(guildhall, "repo", "init", "--repo", str(world.repo.path),
+    repin = _run(kinbase, "repo", "init", "--repo", str(world.repo.path),
                  "--certificate", str(second), "--json", cwd=world.repo.path)
     repinned = _json(repin)
     # An in-tree certificate copy is inert: a foreign path, counted and never
@@ -693,11 +693,11 @@ def test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change(
     world.repo.write_bytes(".kin/certificate-second.json",
                            second.read_bytes())
     world.repo.commit("copy a second certificate into the tree")
-    fsck = _run(guildhall, "fsck", "--repo", str(world.repo.path), "--json",
+    fsck = _run(kinbase, "fsck", "--repo", str(world.repo.path), "--json",
                 cwd=world.repo.path)
     checked = _json(fsck)
     foreign = rows(checked, "foreign_paths")
-    final = _json(_run(guildhall, "status", "--repo", str(world.repo.path),
+    final = _json(_run(kinbase, "status", "--repo", str(world.repo.path),
                        "--json", cwd=world.repo.path))
     O.check(
         "V-8.identity",
@@ -730,7 +730,7 @@ def test_identity_is_stable_under_hint_change_and_blocks_on_uuid_change(
            "Have a maintainer run the real signed `repo publish-manifest` path."),
 )
 def test_publish_manifest_enforces_monotonic_counts(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors = anchored
     _populate_company(anchors, world)
@@ -739,10 +739,10 @@ def test_publish_manifest_enforces_monotonic_counts(
         logical_key="architecture/scheduler/manifest",
         statement="the manifest records this head",
     )
-    first = _run(guildhall, "repo", "publish-manifest", "--repo",
+    first = _run(kinbase, "repo", "publish-manifest", "--repo",
                  str(world.repo.path), "--json", cwd=world.repo.path)
     world.repo.run("reset", "--hard", "HEAD~1")
-    regression = _run(guildhall, "repo", "publish-manifest", "--repo",
+    regression = _run(kinbase, "repo", "publish-manifest", "--repo",
                       str(world.repo.path), "--json", cwd=world.repo.path)
     # ``spec/cli.md``: "Supply a maintainer-signed rollback/rewrite event". A
     # FactEvent with disposition ``reverted`` whose parents name the event the
@@ -755,7 +755,7 @@ def test_publish_manifest_enforces_monotonic_counts(
         atom_kind="decision", disposition="reverted",
         parents=(removed["event_id"],),
     )
-    rewrite = _run(guildhall, "repo", "publish-manifest", "--repo",
+    rewrite = _run(kinbase, "repo", "publish-manifest", "--repo",
                    str(world.repo.path), "--json", cwd=world.repo.path)
     remediation = json.dumps(_json(regression)).lower()
     O.check(
@@ -777,7 +777,7 @@ def test_publish_manifest_enforces_monotonic_counts(
            "without waiting for maintainer/clone activity."),
 )
 def test_company_emits_its_own_observation_expired_event(
-    guildhall: Guildhall, anchored
+    kinbase: Kinbase, anchored
 ) -> None:
     world, anchors = anchored
     fact = _company_fact(
@@ -786,7 +786,7 @@ def test_company_emits_its_own_observation_expired_event(
     )
     _plant_reference(world, anchors, published=_published(anchors, fact))
     # The dated default-branch observation whose fresh_until Company watches.
-    publication = _run(guildhall, "repo", "publish-manifest", "--repo", str(world.repo.path),
+    publication = _run(kinbase, "repo", "publish-manifest", "--repo", str(world.repo.path),
                        "--json", cwd=world.repo.path)
     if publication.returncode != 0:
         raise ProductFailure(f"manifest publication refused before expiry: {_json(publication)}")
@@ -796,9 +796,9 @@ def test_company_emits_its_own_observation_expired_event(
     import socket
     import time
     anchors.service.stop()
-    anchors.service.process = guildhall.popen(
+    anchors.service.process = kinbase.popen(
         "company", "serve", "--config", str(anchors.roots.service_config_path),
-        env=guildhall.base_env({"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "604800"}))
+        env=kinbase.base_env({"KINBASE_PROOF_CLOCK_OFFSET_SECONDS": "604800"}))
     deadline = time.monotonic() + 30
     while True:
         try:
@@ -814,9 +814,9 @@ def test_company_emits_its_own_observation_expired_event(
                        if field(e, "disposition") == "manifest_observation_expired"]
 
     observed = _json(_run(
-        guildhall, "status", "--repo", str(world.repo.path), "--json",
+        kinbase, "status", "--repo", str(world.repo.path), "--json",
         cwd=world.repo.path,
-        env=guildhall.base_env({"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": "604800"}),
+        env=kinbase.base_env({"KINBASE_PROOF_CLOCK_OFFSET_SECONDS": "604800"}),
     ))
     # Validator ruling C13: Company's own expiry event is a FactEvent whose
     # disposition is ``manifest_observation_expired``.
@@ -844,7 +844,7 @@ def test_company_emits_its_own_observation_expired_event(
            "stale revocation dominates safety projection."),
 )
 def test_cache_disagreement_truth_table(
-    guildhall: Guildhall, anchored, roots: ProofRoots
+    kinbase: Kinbase, anchored, roots: ProofRoots
 ) -> None:
     world, anchors = anchored
     _populate_company(anchors, world)
@@ -854,7 +854,7 @@ def test_cache_disagreement_truth_table(
         # a cache whose entries the harness removed after the service advanced,
         # and a stale fact is one whose valid_until the proof clock has passed.
         constructed = _construct_cache_row(
-            guildhall, anchors, world, roots, revocation, validity, dependence
+            kinbase, anchors, world, roots, revocation, validity, dependence
         )
         projection = field(constructed["observed"], "projection_state")
         expected = "projected" if revocation == "fresh" and validity == "fresh" else "withheld"
@@ -891,15 +891,15 @@ def test_cache_disagreement_truth_table(
     )
 
 
-def _construct_cache_row(guildhall, anchors, world, roots, revocation, validity,
+def _construct_cache_row(kinbase, anchors, world, roots, revocation, validity,
                          dependence) -> dict:
     """Each row has an independent signed cache, with both clocks exercised offline."""
     from ._harness.worldbuilder import start_company
 
     layout = ProofRoots.create(roots.run_root / "cache-rows" /
                                (revocation + "-" + validity + "-" + dependence))
-    driver = Guildhall(home=layout.home, xdg_config_home=layout.xdg_config_home,
-                      cwd=layout.repo_root, path_prefix=guildhall.path_prefix)
+    driver = Kinbase(home=layout.home, xdg_config_home=layout.xdg_config_home,
+                      cwd=layout.repo_root, path_prefix=kinbase.path_prefix)
     row_world = SignedWorld.create(layout.repo_root)
     service = start_company(driver, layout)
     try:
@@ -932,7 +932,7 @@ def _construct_cache_row(guildhall, anchors, world, roots, revocation, validity,
                 driver, "project", "--repo", str(row_world.repo.path),
                 "--task", "diagnose the wire format", "--decision", "which version applies",
                 "--as-of", synth.receipt_stamp(offset), "--json", cwd=row_world.repo.path,
-                env=driver.base_env({"GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": str(offset)})))
+                env=driver.base_env({"KINBASE_PROOF_CLOCK_OFFSET_SECONDS": str(offset)})))
         return {"observed": observed,
                 "state_constructed": field(warm, "company_reference_resolved") is True}
     finally:
@@ -945,7 +945,7 @@ def _construct_cache_row(guildhall, anchors, world, roots, revocation, validity,
            "counts/status only and zero unverified event bodies."),
 )
 def test_uncertified_codebase_only_mode_emits_counts_and_status_only(
-    guildhall: Guildhall, anchored, tmp_path: Path, ids: OpaqueIds
+    kinbase: Kinbase, anchored, tmp_path: Path, ids: OpaqueIds
 ) -> None:
     world, anchors = anchored
     world.plant_event(

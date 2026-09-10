@@ -16,7 +16,7 @@ set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 emit() { printf '%s\n' "$*"; }
 
-emit "schema: guildhall-acceptance-cleanliness-attestation/2"
+emit "schema: kinbase-acceptance-cleanliness-attestation/2"
 emit "head: $(git rev-parse HEAD)"
 emit "tree: $(git rev-parse 'HEAD^{tree}')"
 emit "branch: $(git rev-parse --abbrev-ref HEAD)"

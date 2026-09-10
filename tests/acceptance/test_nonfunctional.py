@@ -21,7 +21,7 @@ from ._harness import obligations as O
 
 from ._harness import synth, scale
 from ._harness import canonical
-from ._harness.cli import ERROR_CODES, ERROR_FIELDS, EXIT_MEANING, Guildhall
+from ._harness.cli import ERROR_CODES, ERROR_FIELDS, EXIT_MEANING, Kinbase
 from ._harness.hosts import (
     CANDIDATE_LIFETIME_SECONDS,
     OBSERVATION_BATCH_ITEMS,
@@ -44,7 +44,7 @@ pytestmark = [pytest.mark.nonfunctional, pytest.mark.requires_product]
 
 
 @pytest.fixture()
-def anchored(roots: ProofRoots, guildhall: Guildhall):
+def anchored(roots: ProofRoots, kinbase: Kinbase):
     """A world whose trust anchors are in place (Validator ruling C3).
 
     Every nonfunctional world that expects a trusted result --- a rebuild, a
@@ -54,7 +54,7 @@ def anchored(roots: ProofRoots, guildhall: Guildhall):
     ``UNVERIFIED`` and an empty trusted projection.
     """
     world = SignedWorld.create(roots.repo_root)
-    anchors = trust.establish(guildhall, roots, world)
+    anchors = trust.establish(kinbase, roots, world)
     return world, anchors
 
 
@@ -66,11 +66,11 @@ def anchored(roots: ProofRoots, guildhall: Guildhall):
     )
 )
 
-def test_commands_have_bounded_help(guildhall: Guildhall) -> None:
+def test_commands_have_bounded_help(kinbase: Kinbase) -> None:
     commands = []
     for name in ("status", "doctor", "fsck", "ingest", "project", "explain",
                  "proposals", "questions", "hooks"):
-        result = guildhall.run(name, "--help", check=False)
+        result = kinbase.run(name, "--help", check=False)
         commands.append({
             "command": name,
             "help_bytes": len(result.stdout) + len(result.stderr),
@@ -96,7 +96,7 @@ def test_commands_have_bounded_help(guildhall: Guildhall) -> None:
 )
 
 def test_roots_are_explicit_modes_restrictive_and_escapes_fail_closed(
-    guildhall: Guildhall, roots: ProofRoots, tmp_path: Path
+    kinbase: Kinbase, roots: ProofRoots, tmp_path: Path
 ) -> None:
     observed = []
     for label, path, expected in (
@@ -123,9 +123,9 @@ def test_roots_are_explicit_modes_restrictive_and_escapes_fail_closed(
         ("path_escape", ("ingest", "repo_code", str(tmp_path / ".." / "escape"),
                          "--repo", str(roots.repo_root), "--json")),
     ):
-        result = guildhall.run(*argv, cwd=roots.repo_root, check=False)
+        result = kinbase.run(*argv, cwd=roots.repo_root, check=False)
         probes.append({"probe": probe, "refused": result.returncode != 0})
-    status = guildhall.run("status", "--repo", str(roots.repo_root), "--json",
+    status = kinbase.run("status", "--repo", str(roots.repo_root), "--json",
                            cwd=roots.repo_root, check=False)
     payload = status.json if isinstance(status.json, dict) else {}
     bind = payload.get("bind") if isinstance(payload.get("bind"), str) else ""
@@ -150,7 +150,7 @@ def test_roots_are_explicit_modes_restrictive_and_escapes_fail_closed(
 )
 
 def test_schema_validation_and_rebuild_are_deterministic(
-    guildhall: Guildhall, roots: ProofRoots, anchored
+    kinbase: Kinbase, roots: ProofRoots, anchored
 ) -> None:
     world, anchors = anchored
     world.plant_event(
@@ -161,10 +161,10 @@ def test_schema_validation_and_rebuild_are_deterministic(
     # ``--as-of`` is optional on every reducer-invoking command (Validator
     # ruling C12); it is passed here so both rebuilds share one proof clock.
     as_of = synth._stamp(day=2, hour=6)
-    first = guildhall.run("corpus", "rebuild", "--store", "company", "--repo",
+    first = kinbase.run("corpus", "rebuild", "--store", "company", "--repo",
                           str(roots.repo_root), "--as-of", as_of, "--json",
                           cwd=roots.repo_root, check=False)
-    second = guildhall.run("corpus", "rebuild", "--store", "company", "--repo",
+    second = kinbase.run("corpus", "rebuild", "--store", "company", "--repo",
                            str(roots.repo_root), "--as-of", as_of, "--json",
                            cwd=roots.repo_root, check=False)
     left = first.json if isinstance(first.json, dict) else {}
@@ -194,7 +194,7 @@ def test_schema_validation_and_rebuild_are_deterministic(
 )
 
 def test_logs_are_structured_and_carry_no_raw_private_messages(
-    guildhall: Guildhall, roots: ProofRoots, vault
+    kinbase: Kinbase, roots: ProofRoots, vault
 ) -> None:
     from ._harness.vault import VaultEntry
 
@@ -207,7 +207,7 @@ def test_logs_are_structured_and_carry_no_raw_private_messages(
         gold_atom_label="private", gold_destination_labels=("personal",),
     ))
     vault.seal()
-    result = guildhall.run("doctor", "--repo", str(roots.repo_root), "--json",
+    result = kinbase.run("doctor", "--repo", str(roots.repo_root), "--json",
                            cwd=roots.repo_root, check=False)
     lines = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
     structured = sum(1 for line in lines if _is_json_object(line))
@@ -237,7 +237,7 @@ def test_logs_are_structured_and_carry_no_raw_private_messages(
 )
 
 def test_external_calls_have_timeouts_and_failed_writes_are_not_admitted(
-    guildhall: Guildhall, roots: ProofRoots, anchored
+    kinbase: Kinbase, roots: ProofRoots, anchored
 ) -> None:
     import socket as _socket
 
@@ -252,7 +252,7 @@ def test_external_calls_have_timeouts_and_failed_writes_are_not_admitted(
     try:
         trust.remove_cache(roots)
         with anchors.company_endpoint("http://127.0.0.1:" + str(port)):
-            result = guildhall.run(
+            result = kinbase.run(
                 "status", "--repo", str(roots.repo_root), "--json",
                 cwd=roots.repo_root, check=False, timeout=180,
             )
@@ -266,7 +266,7 @@ def test_external_calls_have_timeouts_and_failed_writes_are_not_admitted(
     unwritable.mkdir(parents=True, exist_ok=True)
     os.chmod(unwritable, 0o500)
     try:
-        write = guildhall.run(
+        write = kinbase.run(
             "ingest", "kindex", str(roots.repo_root / ".kin"), "--repo",
             str(roots.repo_root), "--json", cwd=roots.repo_root, check=False,
         )
@@ -303,7 +303,7 @@ def test_external_calls_have_timeouts_and_failed_writes_are_not_admitted(
 )
 
 def test_diagnostics_are_executable_and_useful_after_restart(
-    guildhall: Guildhall, roots: ProofRoots, anchored
+    kinbase: Kinbase, roots: ProofRoots, anchored
 ) -> None:
     world, anchors = anchored
     world.plant_event(
@@ -316,9 +316,9 @@ def test_diagnostics_are_executable_and_useful_after_restart(
         logical_key="architecture/scheduler/diagnostics",
         statement="this repository applies the diagnostics rule",
     )
-    guildhall.run("ingest", "kindex", str(roots.repo_root / ".kin"), "--repo",
+    kinbase.run("ingest", "kindex", str(roots.repo_root / ".kin"), "--repo",
                   str(roots.repo_root), "--json", cwd=roots.repo_root, check=False)
-    restarted = Guildhall(home=roots.home, xdg_config_home=roots.xdg_config_home,
+    restarted = Kinbase(home=roots.home, xdg_config_home=roots.xdg_config_home,
                           cwd=roots.repo_root)
     diagnostics = []
     for command in (
@@ -354,26 +354,26 @@ def test_diagnostics_are_executable_and_useful_after_restart(
     VERIFY(
         "NONFUNCTIONAL",
         "http",
-        "Guildhall HTTP rejects unauthenticated reads, non-loopback Host, Origin-bearing requests, and "
+        "Kinbase HTTP rejects unauthenticated reads, non-loopback Host, Origin-bearing requests, and "
         "non-JSON writes; all receive typed remediation-safe errors.",
     ),
     ARCH(
         "NONFUNCTIONAL",
-        "company-guildhall",
+        "company-kinbase",
         "Host/Origin checks are anti-CSRF hardening only; the security claim against a local same-UID "
         "process rests on scoped token plus client-key request signature, not those headers.",
     ),
 )
 
 def test_http_rejects_every_declared_probe(
-    guildhall: Guildhall, roots: ProofRoots
+    kinbase: Kinbase, roots: ProofRoots
 ) -> None:
     import secrets as _secrets
 
     from ._harness.service import ClientKey, ServiceClient
     from ._harness.worldbuilder import start_company
 
-    service = start_company(guildhall, roots)
+    service = start_company(kinbase, roots)
     try:
         client = ServiceClient(
             host="127.0.0.1", port=service.port, token=service.facts_token,
@@ -383,7 +383,7 @@ def test_http_rejects_every_declared_probe(
         probes = []
         for name, kwargs in (
             ("unauthenticated_read", {"token": "", "sign": False}),
-            ("non_loopback_host", {"host_header": "guildhall.example"}),
+            ("non_loopback_host", {"host_header": "kinbase.example"}),
             ("origin_bearing", {"origin": "https://evil.example"}),
             ("non_json_write", {"content_type": "text/plain",
                                 "raw_body": b"not json"}),
@@ -471,16 +471,16 @@ def test_acceptance_suite_declares_all_its_dependencies() -> None:
 )
 
 def test_every_operational_ceiling_refuses_with_an_omitted_count(
-    guildhall: Guildhall, roots: ProofRoots, tmp_path: Path, anchored
+    kinbase: Kinbase, roots: ProofRoots, tmp_path: Path, anchored
 ) -> None:
     world, anchors = anchored
-    session = start_session(guildhall, roots.repo_root)
+    session = start_session(kinbase, roots.repo_root)
     ceilings = []
 
     oversize = roots.repo_root / "oversize.txt"
     oversize.write_bytes(b"x" * (SOURCE_BODY_CEILING + 1024))
     ceilings.append(_ceiling_probe(
-        guildhall, roots, "source_body",
+        kinbase, roots, "source_body",
         ("ingest", "repo_code", str(oversize), "--repo", str(roots.repo_root),
          "--json"),
         constructed=oversize.stat().st_size > SOURCE_BODY_CEILING))
@@ -496,7 +496,7 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
         encoding="utf-8",
     )
     ceilings.append(_ceiling_probe(
-        guildhall, roots, "observation_batch",
+        kinbase, roots, "observation_batch",
         ("session", "observe", session, "--event", str(batch), "--json"),
         constructed=True))
 
@@ -505,7 +505,7 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
         statement="y" * (SHARED_EVENT_CEILING + 64), commit=False)
     big_event = roots.repo_root / large["path"]
     ceilings.append(_ceiling_probe(
-        guildhall, roots, "shared_event",
+        kinbase, roots, "shared_event",
         ("ingest", "kindex", str(roots.repo_root / ".kin"), "--repo",
          str(roots.repo_root), "--json"),
         constructed=big_event.stat().st_size > SHARED_EVENT_CEILING))
@@ -515,7 +515,7 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
         roots.repo_root, world.maintainer, 10001,
         logical_prefix="scheduler/ceiling", repository_id=REPO_UUID)
     ceilings.append(_ceiling_probe(
-        guildhall, roots, "kin_intake",
+        kinbase, roots, "kin_intake",
         ("ingest", "kindex", str(roots.repo_root / ".kin"), "--repo",
          str(roots.repo_root), "--json"), constructed=corpus.event_count == 10001))
     # A separate, below-intake domain with 33 independently required constraints.
@@ -530,10 +530,10 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
             distortion={"trigger": "configure all 33 scheduler shard retry ceilings",
                         "loss_if_absent": "high", "rationale": "each shard has an independent safety bound"},
             commit=False)
-    guildhall.run("ingest", "kindex", str(roots.repo_root / ".kin"),
+    kinbase.run("ingest", "kindex", str(roots.repo_root / ".kin"),
                   "--repo", str(roots.repo_root), "--json", check=False)
     ceilings.append(_ceiling_probe(
-        guildhall, roots, "projection_call",
+        kinbase, roots, "projection_call",
         ("project", "--repo", str(roots.repo_root), "--task", "configure all 33 scheduler shard retry ceilings",
          "--decision", "which exact bound applies to each of the 33 shards", "--json"),
         constructed=len(list((roots.repo_root / ".kin" / "events").rglob("*.json"))) == 33))
@@ -561,7 +561,7 @@ def test_every_operational_ceiling_refuses_with_an_omitted_count(
 )
 
 def test_candidate_lifetime_and_private_retention_are_enforced(
-    guildhall: Guildhall, roots: ProofRoots, anchored
+    kinbase: Kinbase, roots: ProofRoots, anchored
 ) -> None:
     world, anchors = anchored
     trust.classifier_pinned(anchors, what="candidate lifetime probe")
@@ -575,21 +575,21 @@ def test_candidate_lifetime_and_private_retention_are_enforced(
         encoding="utf-8",
     )
     # Validator ruling C8: SESSION is the id `session start --json` issued.
-    session = start_session(guildhall, roots.repo_root)
-    guildhall.run("session", "observe", session, "--event", str(corpus), "--json",
+    session = start_session(kinbase, roots.repo_root)
+    kinbase.run("session", "observe", session, "--event", str(corpus), "--json",
                   cwd=roots.repo_root, check=False)
-    listing = guildhall.run("proposals", "list", "--session", session, "--json",
+    listing = kinbase.run("proposals", "list", "--session", session, "--json",
                             cwd=roots.repo_root, check=False)
     payload = listing.json if isinstance(listing.json, dict) else {}
     candidates = payload.get("candidates")
     first = candidates[0] if isinstance(candidates, list) and candidates else {}
-    expired = guildhall.run(
+    expired = kinbase.run(
         "proposals", "decide", str(first.get("candidate_id")),
         "--destination", "codebase:none",
         "--approve-digest", str(first.get("payload_digest")), "--json",
         cwd=roots.repo_root, check=False,
-        env=guildhall.base_env({
-            "GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS": str(CANDIDATE_LIFETIME_SECONDS + 60),
+        env=kinbase.base_env({
+            "KINBASE_PROOF_CLOCK_OFFSET_SECONDS": str(CANDIDATE_LIFETIME_SECONDS + 60),
         }),
     )
     body = expired.json if isinstance(expired.json, dict) else {}
@@ -641,7 +641,7 @@ HOSTILE_KEY = "architecture/'; DROP TABLE facts; --/%/_/*/?/[a-z]/../..//\\u0000
 HOSTILE_BYTES = b"scheduler'; DROP TABLE facts; --\x00%_*?../\xff\xfe"
 
 
-def _argv_nul_non_probe(guildhall: Guildhall) -> dict:
+def _argv_nul_non_probe(kinbase: Kinbase) -> dict:
     """Attempt the argv-level NUL; record why it is not a probe.
 
     Validator instrument-defect report, dispatch 006, item 5: Python refuses an
@@ -650,7 +650,7 @@ def _argv_nul_non_probe(guildhall: Guildhall) -> dict:
     channel is documented as undeliverable rather than silently dropped.
     """
     try:
-        guildhall.run("explain", "\x00not-a-key", "--repo", "/nonexistent",
+        kinbase.run("explain", "\x00not-a-key", "--repo", "/nonexistent",
                       "--decision", "which rule applies", "--json", check=False)
     except ValueError as exc:
         return {"channel": "argv", "delivered": False,
@@ -709,7 +709,7 @@ def _boundary_observation(channel: str, result, *, must_refuse: bool) -> dict:
     ),
 )
 def test_hostile_bytes_never_escape_the_exception_boundary(
-    guildhall: Guildhall, roots: ProofRoots, anchored
+    kinbase: Kinbase, roots: ProofRoots, anchored
 ) -> None:
     """Frozen injection bytes, delivered on channels the product really reads.
 
@@ -726,7 +726,7 @@ def test_hostile_bytes_never_escape_the_exception_boundary(
 
     # argv: metacharacters, wildcards, separators, dot segments and the two
     # textual NUL escapes a naive unescaper would turn into a real NUL.
-    result = guildhall.run("explain", HOSTILE_KEY, "--repo", str(repo),
+    result = kinbase.run("explain", HOSTILE_KEY, "--repo", str(repo),
                            "--decision", "which rule applies", "--json",
                            cwd=repo, check=False)
     probes.append(_boundary_observation("argv:logical-key", result, must_refuse=False))
@@ -736,13 +736,13 @@ def test_hostile_bytes_never_escape_the_exception_boundary(
     config = repo / ".kin" / "config"
     pristine = config.read_bytes()
     config.write_bytes(
-        b'schema_version = "guildhall-repo/1"\n'
+        b'schema_version = "kinbase-repo/1"\n'
         b'repository_uuid_hint = "018f0000-0000-7000-8000-000000000001"\n'
         b'safe_name = "' + HOSTILE_BYTES + b'"\n'
         b'domains = ["scheduling"]\n'
     )
     try:
-        result = guildhall.run("status", "--repo", str(repo), "--json",
+        result = kinbase.run("status", "--repo", str(repo), "--json",
                                cwd=repo, check=False)
     finally:
         config.write_bytes(pristine)
@@ -756,7 +756,7 @@ def test_hostile_bytes_never_escape_the_exception_boundary(
     event_path.parent.mkdir(parents=True, exist_ok=True)
     event_path.write_bytes(hostile_event)
     try:
-        result = guildhall.run("fsck", "--repo", str(repo), "--json",
+        result = kinbase.run("fsck", "--repo", str(repo), "--json",
                                cwd=repo, check=False)
     finally:
         event_path.unlink()
@@ -764,7 +764,7 @@ def test_hostile_bytes_never_escape_the_exception_boundary(
 
     # stdin: no ratified command reads it, so hostile bytes there must simply
     # not matter. The product is not allowed to fall over on an open descriptor.
-    result = guildhall.run("status", "--repo", str(repo), "--json",
+    result = kinbase.run("status", "--repo", str(repo), "--json",
                            cwd=repo, check=False, stdin=HOSTILE_BYTES * 64)
     probes.append(_boundary_observation("stdin", result, must_refuse=False))
 
@@ -773,7 +773,7 @@ def test_hostile_bytes_never_escape_the_exception_boundary(
         {
             "probes": probes,
             "config_probe": probes[1],
-            "non_probes": [_argv_nul_non_probe(guildhall)],
+            "non_probes": [_argv_nul_non_probe(kinbase)],
         },
         label="hostile bytes never escape the exception boundary",
     )
@@ -818,7 +818,7 @@ def test_first_run_failure_table_is_transcribed(spec_root: Path) -> None:
 )
 
 def test_broad_token_mode_is_refused_with_chmod_remediation(
-    guildhall: Guildhall, roots: ProofRoots, anchored
+    kinbase: Kinbase, roots: ProofRoots, anchored
 ) -> None:
     world, anchors = anchored
     # The token the user config names (Validator ruling C1), widened to 0644.
@@ -827,7 +827,7 @@ def test_broad_token_mode_is_refused_with_chmod_remediation(
     os.chmod(token, 0o644)
     observed = stat.S_IMODE(token.stat().st_mode)
     try:
-        result = guildhall.run("status", "--repo", str(roots.repo_root), "--json",
+        result = kinbase.run("status", "--repo", str(roots.repo_root), "--json",
                                cwd=roots.repo_root, check=False)
     finally:
         os.chmod(token, 0o600)
@@ -844,10 +844,10 @@ def test_broad_token_mode_is_refused_with_chmod_remediation(
     )
 
 
-def _ceiling_probe(guildhall, roots, ceiling: str, argv, *,
+def _ceiling_probe(kinbase, roots, ceiling: str, argv, *,
                    constructed: bool) -> dict:
     """Drive one ceiling and read back its refusal and omitted count."""
-    result = guildhall.run(*argv, cwd=roots.repo_root, check=False)
+    result = kinbase.run(*argv, cwd=roots.repo_root, check=False)
     payload = result.json if isinstance(result.json, dict) else {}
     # A projection may stop with a bounded prefix and omit the tail; it need
     # not throw away that prefix. This still requires an actual ceiling stop.

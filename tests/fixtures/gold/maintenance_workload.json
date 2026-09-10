@@ -1105,7 +1105,7 @@
   }
  ],
  "provenance": "Deliberately constructed synthetic workload authored by the Tester. Structural labels only; no text derives from any real private conversation.",
- "schema": "guildhall-acceptance-maintenance-workload/1",
+ "schema": "kinbase-acceptance-maintenance-workload/1",
  "thresholds": {
   "correct_admissions_minimum": 17,
   "decision_slots_minimum": 18,

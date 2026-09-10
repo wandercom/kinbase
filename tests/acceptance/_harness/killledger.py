@@ -1,7 +1,7 @@
 """Executable, content-addressed total mutation kill ledger.
 
 Detector Reviewer finding 6: the previous catalog was declarative. Selecting
-``GUILDHALL_ACCEPT_MUTATION=v5.newest_wins`` applied nothing, checked nothing,
+``KINBASE_ACCEPT_MUTATION=v5.newest_wins`` applied nothing, checked nothing,
 and left every gate ``PASS``; five detector entries pointed at a self-test that
 *passed when the mutant was blind*.
 
@@ -233,7 +233,7 @@ class KillLedger:
     def as_json(self) -> dict:
         gates = sorted({r.gate for r in self.rows})
         return {
-            "schema": "guildhall-acceptance-kill-ledger/1",
+            "schema": "kinbase-acceptance-kill-ledger/1",
             "total": True,
             "obligation_count": len({r.oid for r in self.rows}),
             "threshold_count": len(self.rows),

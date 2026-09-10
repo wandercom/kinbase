@@ -19,7 +19,7 @@ import pytest
 from ._harness import obligations as O
 from ._harness.evidence_model import Origin, require_nonempty
 
-from ._harness.cli import Guildhall
+from ._harness.cli import Kinbase
 from ._harness.evidence import (
     FAILURE_ROW_FIELDS,
     FORBIDDEN_PACKET_FIELDS,
@@ -183,14 +183,14 @@ def test_packet_root_is_private_and_outside_git(
     THREAT(
         "EVIDENCE",
         "reporting",
-        "The sanitized report names `guildhall-atm/1` and its digest, lists every executed "
+        "The sanitized report names `kinbase-atm/1` and its digest, lists every executed "
         "family/control/ mutation and surface, preserves disagreements and adjudication receipts, and "
         "uses the qualified claim verbatim. It never says merely “privacy proved” or “zero leakage.”",
     )
 )
 def test_sanitised_report_claim_discipline_is_checkable() -> None:
     good = (
-        "Under Acceptance Threat Model guildhall-atm/1, digest "
+        "Under Acceptance Threat Model kinbase-atm/1, digest "
         "6391c14853c0bc1a059a0a4aded31c878ed74eddecb5578903717aa152f10f09, this run "
         "observed zero observed unauthorized durable disclosure outside the authorized "
         "processor boundary across the frozen execution census."
@@ -389,7 +389,7 @@ def test_author_identity_is_scrubbed_from_projected_context() -> None:
 )
 
 def test_factory_method_evidence_is_labelled_method_poc(
-    guildhall: Guildhall, tmp_path: Path
+    kinbase: Kinbase, tmp_path: Path
 ) -> None:
     packet = {
         "method_label": REQUIRED_METHOD_LABEL,
@@ -439,7 +439,7 @@ def test_only_ciphertext_metadata_reaches_the_manifest(
     ciphertext = registry.read_bytes()
     manifest_binding = {
         "ciphertext_digest": _hashlib.sha256(ciphertext).hexdigest(),
-        "schema": "guildhall-canary-registry/1",
+        "schema": "kinbase-canary-registry/1",
         "count": len(vault.entries()),
     }
     rendered = json.dumps(manifest_binding)
@@ -479,7 +479,7 @@ def test_forbidden_claims_are_enumerated_and_checkable() -> None:
     }
     report = (
         "This run met P-1 through P-9 and reported "
-        f"{V3_CLAIM_FRAGMENT} guildhall-atm/1."
+        f"{V3_CLAIM_FRAGMENT} kinbase-atm/1."
     )
     lowered = report.lower()
     for claim in FORBIDDEN_CLAIMS:

@@ -6,7 +6,7 @@
   "generator": "tests/tools/freeze-calibration.py",
   "held_out_namespace": "m*",
   "message_count": 60,
-  "schema": "guildhall-v2-calibration-manifest/1",
+  "schema": "kinbase-v2-calibration-manifest/1",
   "seed": 20260907,
   "thresholds": {
     "macro_f1_interval_method": "message_stratified_bootstrap",

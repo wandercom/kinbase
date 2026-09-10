@@ -41,7 +41,7 @@ from acceptance._harness.census import (  # noqa: E402
     PRODUCT_BEARING,
     Census,
 )
-from acceptance._harness.cli import Guildhall  # noqa: E402
+from acceptance._harness.cli import Kinbase  # noqa: E402
 from acceptance._harness.evidence_model import Outcome, content_address  # noqa: E402
 from acceptance._harness.requirements import (  # noqa: E402
     HarnessInvalid,
@@ -74,7 +74,7 @@ GATE_MARKERS: dict[str, str] = {
 def pytest_configure(config: pytest.Config) -> None:
     """Verify the ratified manifest and initialise the census as NOT_RUN.
 
-    ``GUILDHALL_REVIEWER_MODE=1`` restricts verification to the six ratified
+    ``KINBASE_REVIEWER_MODE=1`` restricts verification to the six ratified
     authority artifacts, omitting the receipt and review-evidence paths that lie
     outside an implementation-blind Detector Reviewer's permitted surface.
     """
@@ -88,17 +88,17 @@ def pytest_configure(config: pytest.Config) -> None:
         name for name in ("pytest_timeout",)
         if importlib.util.find_spec(name) is None
     ]
-    if missing_plugins and os.environ.get("GUILDHALL_ALLOW_NO_TIMEOUT", "") != "1":
+    if missing_plugins and os.environ.get("KINBASE_ALLOW_NO_TIMEOUT", "") != "1":
         raise pytest.UsageError(
             "INVALID_HARNESS: required plugin(s) "
             f"{missing_plugins} are unavailable, so the declared global timeout "
             "is not enforced. Provision tests/requirements.txt, or set "
-            "GUILDHALL_ALLOW_NO_TIMEOUT=1 to record an explicitly untimed run."
+            "KINBASE_ALLOW_NO_TIMEOUT=1 to record an explicitly untimed run."
         )
     if missing_plugins:
-        config._guildhall_untimed = True
+        config._kinbase_untimed = True
 
-    reviewer = os.environ.get("GUILDHALL_REVIEWER_MODE", "") == "1"
+    reviewer = os.environ.get("KINBASE_REVIEWER_MODE", "") == "1"
     try:
         verification = verify_manifest(reviewer_mode=reviewer)
     except HarnessInvalid as exc:
@@ -110,7 +110,7 @@ def pytest_configure(config: pytest.Config) -> None:
     census = Census.build()
     census.catalog_digest = catalog_module.catalog_digest()
     census.mutation = mutation_catalog.active_mutation() or ""
-    census.detector_mutation = os.environ.get("GUILDHALL_ACCEPT_DETECTOR_MUTATION", "")
+    census.detector_mutation = os.environ.get("KINBASE_ACCEPT_DETECTOR_MUTATION", "")
     config.stash[CENSUS_KEY] = census
 
 
@@ -118,26 +118,26 @@ def pytest_report_header(config: pytest.Config) -> list[str]:
     verification = config.stash[MANIFEST_KEY]
     census = config.stash[CENSUS_KEY]
     lines = [
-        f"guildhall acceptance: manifest {verification.manifest_sha256}",
-        f"guildhall acceptance: obligation catalog {census.catalog_digest[:16]} "
+        f"kinbase acceptance: manifest {verification.manifest_sha256}",
+        f"kinbase acceptance: obligation catalog {census.catalog_digest[:16]} "
         f"({len(catalog_module.OBLIGATIONS)} obligations, "
         f"{sum(len(o.thresholds) for o in catalog_module.OBLIGATIONS)} thresholds)",
-        "guildhall acceptance: every gate initialised NOT_RUN; only a gate whose "
+        "kinbase acceptance: every gate initialised NOT_RUN; only a gate whose "
         "catalogued nodes all executed and passed becomes green",
     ]
     if census.mutation:
         entry = mutation_catalog.CATALOG[census.mutation]
         lines.append(
-            f"guildhall acceptance: MUTATION RUN {census.mutation} ({entry.gate}) -- "
+            f"kinbase acceptance: MUTATION RUN {census.mutation} ({entry.gate}) -- "
             f"{len(entry.must_fail_nodes)} node(s) must fail"
         )
     if census.detector_mutation:
         lines.append(
-            f"guildhall acceptance: DETECTOR MUTATION RUN {census.detector_mutation}"
+            f"kinbase acceptance: DETECTOR MUTATION RUN {census.detector_mutation}"
         )
-    if os.environ.get("GUILDHALL_REVIEWER_MODE", "") == "1":
+    if os.environ.get("KINBASE_REVIEWER_MODE", "") == "1":
         lines.append(
-            "guildhall acceptance: REVIEWER MODE -- ratified spec/** and tests/** only"
+            "kinbase acceptance: REVIEWER MODE -- ratified spec/** and tests/** only"
         )
     return lines
 
@@ -327,7 +327,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # no
             census.invalidate(active_planter.mutation.gate, str(exc))
             census.invalidate("INSTRUMENT", str(exc))
 
-    terminalreporter.write_sep("=", "guildhall gate vector (observation, not a verdict)")
+    terminalreporter.write_sep("=", "kinbase gate vector (observation, not a verdict)")
     vector = census.gate_vector()
     for gate in GROUPS:
         state = census.gates[gate]
@@ -352,7 +352,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # no
         "A selftest-marked node is instrument-only and can never resolve the "
         "product channel."
     )
-    if getattr(config, "_guildhall_untimed", False):
+    if getattr(config, "_kinbase_untimed", False):
         terminalreporter.write_line(
             "WARNING: this run executed without the declared global timeout."
         )
@@ -360,7 +360,7 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # no
         "spec/verification.md reserves verdict composition to the Validator."
     )
 
-    artifact = os.environ.get("GUILDHALL_ACCEPT_GATE_VECTOR")
+    artifact = os.environ.get("KINBASE_ACCEPT_GATE_VECTOR")
     if artifact:
         target = Path(artifact)
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -383,7 +383,7 @@ def _tail(node_id: str) -> str:
 @pytest.fixture(scope="session")
 def manifest():
     return verify_manifest(
-        reviewer_mode=os.environ.get("GUILDHALL_REVIEWER_MODE", "") == "1"
+        reviewer_mode=os.environ.get("KINBASE_REVIEWER_MODE", "") == "1"
     )
 
 
@@ -415,20 +415,20 @@ def vault(tmp_path: Path, roots: ProofRoots) -> Iterator[CanaryVault]:
 
 
 @pytest.fixture()
-def guildhall(roots: ProofRoots) -> Guildhall:
+def kinbase(roots: ProofRoots) -> Kinbase:
     """The black-box CLI driver bound to the isolated roots."""
     from acceptance._harness import hosts, prereq
 
     prefixes = []
     for host in hosts.HOSTS:
-        configured = os.environ.get("GUILDHALL_HOST_" + host.upper())
+        configured = os.environ.get("KINBASE_HOST_" + host.upper())
         if configured:
             real = prereq.executable(configured, what=host + " host",
                                      why="C16 pins the invocation witness")
             directory = roots.run_root / "hostbin" / host
             hosts.install_invocation_recorder(directory, host, real)
             prefixes.append(directory)
-    return Guildhall(
+    return Kinbase(
         path_prefix=prefixes,
         home=roots.home,
         xdg_config_home=roots.xdg_config_home,
