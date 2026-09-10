@@ -275,6 +275,7 @@ pub fn scan(
         "repo_tests" | "runtime_evidence" => scan_envelopes(source_kind, source, repo)?,
         "git_history" => scan_git_history(repo)?,
         "docs_adr" => scan_docs_adr(source, repo)?,
+        "issue_tracker" => scan_issue_tracker(source, repo)?,
         "github_export" => scan_github_export(source, repo)?,
         "kindex" => scan_kindex(source, repo)?,
         "authority_answer" => scan_answers(source, repo)?,
@@ -884,6 +885,112 @@ fn scan_envelopes(
             false,
             crate::error::ExitCode::Refused,
         ));
+    }
+    Ok(scan)
+}
+
+// --------------------------------------------------------------------------
+// issue_tracker: Linear / Jira issues, one JSON object per line
+// --------------------------------------------------------------------------
+
+/// A ticket is the only artifact that reliably records *why* a change happened,
+/// and it links outward: to the pull request carrying the code, to the document
+/// that argued the design, to the thread where it was disputed. Those links are
+/// what turn scattered evidence into an association anchored on real lines.
+///
+/// Envelope, one object per line:
+///   id, title, body, state, team, creator, creator_kind, labels[],
+///   links[{type,url,title}], comments[{author,body}], created_at, updated_at, url
+fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, ContractError> {
+    let mut scan = SourceScan::default();
+    for path in source_files(source)? {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if !name.ends_with(".jsonl") {
+            continue;
+        }
+        let bytes = read_bounded(&path)?;
+        check_budget(&mut scan, bytes.len())?;
+        scan.unit_ids
+            .insert(name.trim_end_matches(".jsonl").to_owned());
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            // A malformed ticket is skipped, never guessed at: half-parsed evidence
+            // about why a change happened is worse than none.
+            let Ok(document) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let id = crate::json::get_str(&document, "id")
+                .unwrap_or_default()
+                .to_owned();
+            if id.is_empty() {
+                continue;
+            }
+            let title = crate::json::get_str(&document, "title").unwrap_or_default();
+            let body = crate::json::get_str(&document, "body").unwrap_or_default();
+            let state = crate::json::get_str(&document, "state").unwrap_or("unknown");
+
+            let mut record = SourceRecord::new(
+                &format!("issue_tracker:{id}"),
+                &format!("issue_tracker:{id}"),
+            );
+            record.logical_key = format!("issue_tracker:{id}");
+            record.statement = format!("{id}: {title}\n{body}");
+            // A ticket states a problem and its resolution; it is not itself a ruling.
+            // Whether it becomes one depends on who closed it and what they said, which
+            // is a question for the authority loop, not a guess for the adapter.
+            record.atom_kind = "claim".to_owned();
+            record.disposition = match state {
+                "completed" => "accepted",
+                "canceled" => "rejected",
+                _ => "proposed",
+            }
+            .to_owned();
+            // A ticket a person wrote is human evidence. One an agent filed is not,
+            // and `creator_kind` is the only place that distinction survives.
+            record.provenance = match crate::json::get_str(&document, "creator_kind") {
+                Some("agent") => "ai_generated".to_owned(),
+                Some("human") => "human".to_owned(),
+                _ => "unknown".to_owned(),
+            };
+            record.asserted_at = crate::json::get_str(&document, "created_at").map(str::to_owned);
+
+            // Every outbound link is an edge in the association graph. Labels are the
+            // subjects: `wandercom/app.wander.com` names a component, `Bug` names a
+            // kind, and a label that recurs across tickets pointing at one span is
+            // exactly the signal we want to accumulate.
+            let mut references = Vec::new();
+            if let Some(labels) = document.get("labels").and_then(Value::as_array) {
+                for label in labels.iter().filter_map(Value::as_str) {
+                    references.push(format!("label:{label}"));
+                }
+            }
+            if let Some(links) = document.get("links").and_then(Value::as_array) {
+                for link in links {
+                    let kind = crate::json::get_str(link, "type").unwrap_or("link");
+                    if let Some(url) = crate::json::get_str(link, "url") {
+                        references.push(format!("{kind}:{url}"));
+                    }
+                }
+            }
+            if let Some(url) = crate::json::get_str(&document, "url") {
+                references.push(format!("issue:{url}"));
+            }
+            // Carried as attributes: these are the edges of the association graph --
+            // labels name the subject, links name the artifacts that point at the code.
+            record.attributes.insert(
+                "references".to_owned(),
+                Value::Array(references.into_iter().map(Value::String).collect()),
+            );
+            record.content = line.as_bytes().to_vec();
+            record.confidence = 7_000;
+            scan.records.push(record);
+        }
     }
     Ok(scan)
 }

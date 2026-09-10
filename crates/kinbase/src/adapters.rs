@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-pub const SOURCE_KINDS: [&str; 10] = [
+pub const SOURCE_KINDS: [&str; 11] = [
     "codex_jsonl",
     "claude_jsonl",
     "repo_code",
@@ -13,6 +13,10 @@ pub const SOURCE_KINDS: [&str; 10] = [
     "runtime_evidence",
     "kindex",
     "authority_answer",
+    // Issue trackers are where the *why* lives, and they link outward to the pull
+    // request that carries the code and to the documents and threads that argued
+    // it. That makes a ticket the natural spine of the association graph.
+    "issue_tracker",
 ];
 
 /// Report the exact Kindex 0.36 seam this product reserves and supports.
