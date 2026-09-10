@@ -61,6 +61,40 @@ to stdout broke two nodes that had matched stderr), C2 (moved 97 nodes from pass
 to error until the product implemented the cache), C7/C22 (instrument re-planting), R-17
 (none observed yet).
 
+## R-21 — the blinded operator exercise is not a measurement (post-freeze, instrument)
+
+Issued 2026-09-09, after the declared freeze, against `tests/fixtures/gold/operator_exercise.json`
+at tester `fb98feb`. Trigger: failure-observed, from the founder's own run of the exercise.
+Spec locus: `spec/verification.md` V-9, "Conduct the 20-item blinded operator exercise;
+record accuracy and decision time"; `spec/product.md` P-9. Direction: **tighten (instrument)**.
+
+Three defects, each confirmed against the committed fixture bytes:
+
+1. Gold is a pure function of the displayed `proposed_destination`. All eleven
+   `codebase`/`company` items are `approve`; all nine `personal`/`none` items are
+   `reject`. An operator who reads no statement and applies one two-line rule scores
+   20/20. Accuracy under this fixture measures whether the operator noticed a lookup
+   table.
+2. The set contains no misroute. Every displayed write is correct, so the exercise
+   cannot fail an operator who approves a bad write, which is the failure V-9 exists
+   to detect. The Tester's own `OPERATOR-AUDIT.md` records the limitation: "The
+   personal/none items do not exercise a proposed private-to-shared write."
+3. The `none` items have two defensible readings and the rendering picks neither.
+   The gold reason for op12 ("none is not a writable destination") asserts the
+   system's proposal is correct while scoring the operator's agreement as `reject`.
+
+**Direction check.** Fixing (3) alone would flip six items to `approve` and score the
+founder's prior all-approve run 17/20 = 85%, still under the 0.95 floor: the
+disambiguation does not rescue the run that exposed it. Fixing (1) and (2) makes the
+exercise strictly harder. No part of this ruling loosens a gate.
+
+**Post-freeze consequence.** Per the freeze clause below, this reopens the suite. The
+run counter restarts at the first judged run under the new fixture and every V-9 green
+is provisional until re-judged. Tester dispatch 016 implements it; the Validator did not
+author the replacement gold, because the Validator observed the founder's failing run
+and must not write the fixture that scores the founder.
+
+
 ## Freeze
 
 Ruling freeze takes effect when Coder packet 12 is dispatched. Any ruling issued after

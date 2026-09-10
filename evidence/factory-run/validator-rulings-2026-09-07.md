@@ -108,3 +108,16 @@ the vector by nine nodes.
 
 Fast-follows recorded by the founder: `spec/amendment-002-emission-ledger.md`
 (candidate) and the rename to Kinbase; neither is in scope for this verdict.
+| 019 | Rust 338ac3a (Claude coders w1+w3+w4 merged) | tester c9391e6 | 299 / 14 / 0; V-6, V-7, V-10, NF green |
+| 020 | Rust 279bfac (all four Claude coders merged + R-18) | tester c9391e6 (live GLM classifier) | 306 / 7 / 0; remaining = 5 instrument items (Astra 012) + 2 human items |
+| 021 | Rust 279bfac | tester 8d9e873 (Astra 012, live GLM classifier) | 317 / 6 / 0; residue: 4 product nodes (matrix cell 55, incremental stage 3, two-certificate fsck, pinned-runs F1 bound 0.877) + 2 human |
+| 022 | Rust 019e510 | tester 76ddb30 | 335 / 5 / 0 (fast set only) |
+| 024 | Rust a47d8cf | tester 76ddb30 | 337 / 3 / 0 (fast set only) |
+| 025 | Rust efd089e (all four coder branches merged) | tester 76ddb30 | **346 / 3 / 0 over the COMPLETE suite, slow and soak included: product channel PASS on every gate V-1..V-10, nonfunctional and evidence.** The three failures are instrument-side, all downstream of the two human items: instrument-debt finding 21, the auxiliary-corpus selection record, and the operator-exercise gold join. |
+
+## Complete-suite milestone (run 025, 2026-09-09)
+
+First execution of all 349 nodes in one pass, with the live GLM classifier pinned and the
+founder's recorded operator decisions present. Product channel: PASS on V-1, V-2, V-3, V-4,
+V-5, V-6, V-7, V-8, V-9, V-10, NONFUNCTIONAL and EVIDENCE. Earlier runs excluded nine
+slow/soak nodes; that exclusion is corrected here and in the verdict.

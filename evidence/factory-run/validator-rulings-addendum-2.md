@@ -58,3 +58,20 @@
   and the product share the facts token with distinct keys). Failed signatures still count
   toward the auth-failure throttle. Residual: binding a token to one key at issuance is
   post-proof packaging.
+- **R-18 (post-freeze; suite reopened and fully re-judged).** The repository maintainer's
+  signing key reaches the product through the user config `[identity] maintainer_key_file`
+  (absolute path, mode 0600, 32-byte seed or 64-hex). `repo publish-manifest` signs with it;
+  absence is a typed `AUTHORITY_SCOPE_DENIED` naming the config key.
+- **R-19 (ceiling refusal is intake's, not diagnosis's).** At or beyond the 10,000-event /
+  128-MiB ceiling, `ingest`/admission refuses with `LIMIT_EXCEEDED` and omitted counts,
+  computed by an early-exit walk so refusal costs less than acceptance. `fsck`, `status`
+  and `explain` stay exit 0 and bounded, reporting `events_checked`, `events_deferred`,
+  `omitted_count`, `over_intake_ceiling` and `intake_state`. Verification V-4: "Intake
+  refuses new writes while bounded incremental fsck/diagnosis remains available."
+- **R-20 (cascade above the ceiling).** The revocation cascade is a real job keyed by the
+  newly observed revocation cursor. It is `REVOCATION_CASCADE_INCOMPLETE` while any
+  locally addressable fact or trace is unchecked; `unchecked_facts_withheld` means the
+  admitted set is drawn only from events the pass re-evaluated, never from the clock. At
+  the ratified 10,000-event ceiling it completes within 120 seconds; above it (the judge
+  builds 65,536 dense events) it records the remaining count, holds fail-closed state and
+  returns the typed limit failure, per architecture §3.
