@@ -2,7 +2,7 @@
 
 use serde_json::{Value, json};
 
-pub const SOURCE_KINDS: [&str; 11] = [
+pub const SOURCE_KINDS: [&str; 12] = [
     "codex_jsonl",
     "claude_jsonl",
     "repo_code",
@@ -17,6 +17,9 @@ pub const SOURCE_KINDS: [&str; 11] = [
     // request that carries the code and to the documents and threads that argued
     // it. That makes a ticket the natural spine of the association graph.
     "issue_tracker",
+    // A pull request is the only artifact that ties a stated intent to the exact
+    // lines that changed. Its diff hunks are where code anchors come from.
+    "pull_request",
 ];
 
 /// Report the exact Kindex 0.36 seam this product reserves and supports.

@@ -18,6 +18,7 @@ pub fn source_kind_is_supported(source_kind: &str) -> bool {
             | "kindex"
             | "authority_answer"
             | "issue_tracker"
+            | "pull_request"
     )
 }
 
@@ -58,7 +59,7 @@ pub fn atomize(
             }
         }
         "repo_code" | "repo_tests" | "git_history" | "docs_adr" | "github_export"
-        | "runtime_evidence" | "kindex" | "issue_tracker" => {
+        | "runtime_evidence" | "kindex" | "issue_tracker" | "pull_request" => {
             if !hard_block {
                 if let Some(repository_id) = repository_id {
                     destinations.push(format!("codebase:{repository_id}"));
@@ -112,7 +113,7 @@ pub fn provenance_taint(source_kind: &str) -> Option<Taint> {
         "codex_jsonl" | "claude_jsonl" => Some(Taint::PersonalSession),
         "company" | "authority_answer" => Some(Taint::CompanyConfidential),
         "repo_code" | "repo_tests" | "git_history" | "docs_adr" | "github_export"
-        | "runtime_evidence" | "kindex" | "issue_tracker" => Some(Taint::Codebase),
+        | "runtime_evidence" | "kindex" | "issue_tracker" | "pull_request" => Some(Taint::Codebase),
         _ => None,
     }
 }

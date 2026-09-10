@@ -57,6 +57,8 @@ pub struct SourceRecord {
     /// from this record may reach. Defaults to `unknown`, which is the honest
     /// answer for evidence that carries no authorship marker at all.
     pub provenance: String,
+    /// Spans of code this record is about, taken from a diff rather than guessed.
+    pub anchors: Vec<crate::model::CodeAnchor>,
     pub revision: Option<String>,
     pub branch: Option<String>,
     pub raw_expired: bool,
@@ -90,6 +92,7 @@ impl SourceRecord {
             attributes: Map::new(),
             origin: "merged-default".to_owned(),
             provenance: "unknown".to_owned(),
+            anchors: Vec::new(),
             revision: None,
             branch: None,
             raw_expired: false,
@@ -276,6 +279,7 @@ pub fn scan(
         "git_history" => scan_git_history(repo)?,
         "docs_adr" => scan_docs_adr(source, repo)?,
         "issue_tracker" => scan_issue_tracker(source, repo)?,
+        "pull_request" => scan_pull_request(source, repo)?,
         "github_export" => scan_github_export(source, repo)?,
         "kindex" => scan_kindex(source, repo)?,
         "authority_answer" => scan_answers(source, repo)?,
@@ -989,6 +993,152 @@ fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, C
             );
             record.content = line.as_bytes().to_vec();
             record.confidence = 7_000;
+            scan.records.push(record);
+        }
+    }
+    Ok(scan)
+}
+
+// --------------------------------------------------------------------------
+// pull_request: a stated intent bound to the exact lines that changed
+// --------------------------------------------------------------------------
+
+/// Files whose diffs are machine-written and carry no intent. A lockfile with 524
+/// changed lines would otherwise dominate every anchor set it appears in, which is
+/// the association graph's version of letting volume win.
+fn is_generated_path(path: &str) -> bool {
+    const GENERATED: [&str; 10] = [
+        "lock.yaml",
+        "lock.json",
+        ".lock",
+        "Cargo.lock",
+        "go.sum",
+        ".min.js",
+        ".min.css",
+        "/dist/",
+        "/vendor/",
+        ".snap",
+    ];
+    GENERATED.iter().any(|marker| path.contains(marker))
+}
+
+/// A pull request states why a change was made and shows exactly which lines it
+/// touched. That pairing is what an anchor is: everything else in the graph points
+/// at code by inference, and this points at it by record.
+fn scan_pull_request(source: &Path, _repo: &Repository) -> Result<SourceScan, ContractError> {
+    let mut scan = SourceScan::default();
+    for path in source_files(source)? {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if !name.ends_with(".jsonl") {
+            continue;
+        }
+        let bytes = read_bounded(&path)?;
+        check_budget(&mut scan, bytes.len())?;
+        scan.unit_ids
+            .insert(name.trim_end_matches(".jsonl").to_owned());
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        for line in text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let Ok(document) = serde_json::from_str::<Value>(line) else {
+                continue;
+            };
+            let id = crate::json::get_str(&document, "id")
+                .unwrap_or_default()
+                .to_owned();
+            if id.is_empty() {
+                continue;
+            }
+            let title = crate::json::get_str(&document, "title").unwrap_or_default();
+            let merged = document
+                .get("merged")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            let revision = crate::json::get_str(&document, "merge_commit").map(str::to_owned);
+
+            let mut record =
+                SourceRecord::new(&format!("pull_request:{id}"), &format!("pull_request:{id}"));
+            record.logical_key = format!("pull_request:{id}");
+            record.statement = format!(
+                "{id}: {title}\n{}",
+                crate::json::get_str(&document, "body").unwrap_or_default()
+            );
+            record.atom_kind = "claim".to_owned();
+            // Only a merged pull request is evidence of anything. An open or closed
+            // one is a proposal that may never have been accepted.
+            record.disposition = if merged { "accepted" } else { "proposed" }.to_owned();
+            // The author wrote the code; the merger accepted it. An agent-authored
+            // change a person merged is `human_review` -- they approved an output,
+            // which is weaker than having chosen the approach, and far from nothing.
+            record.provenance = match (
+                crate::json::get_str(&document, "author_kind"),
+                crate::json::get_str(&document, "merged_by_kind"),
+            ) {
+                (Some("human"), _) => "human".to_owned(),
+                (Some("agent"), Some("human")) => "human_review".to_owned(),
+                (Some("agent"), _) => "ai_generated".to_owned(),
+                (Some("bot"), _) => "bot".to_owned(),
+                _ => "unknown".to_owned(),
+            };
+            record.asserted_at = crate::json::get_str(&document, "merged_at").map(str::to_owned);
+            record.revision = revision.clone();
+
+            let mut anchors = Vec::new();
+            if let Some(files) = document.get("files").and_then(Value::as_array) {
+                for file in files {
+                    let Some(file_path) = crate::json::get_str(file, "path") else {
+                        continue;
+                    };
+                    if is_generated_path(file_path) {
+                        continue;
+                    }
+                    for span in file
+                        .get("spans")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten()
+                    {
+                        let start = span.get("start").and_then(Value::as_u64).unwrap_or(0) as u32;
+                        let end = span.get("end").and_then(Value::as_u64).unwrap_or(0) as u32;
+                        if start == 0 || end < start {
+                            continue;
+                        }
+                        anchors.push(crate::model::CodeAnchor {
+                            path: file_path.to_owned(),
+                            line_start: start,
+                            line_end: end,
+                            revision: revision.clone(),
+                            span_sha256: None,
+                        });
+                    }
+                }
+            }
+            record.anchors = anchors;
+
+            let mut references = Vec::new();
+            if let Some(url) = crate::json::get_str(&document, "url") {
+                references.push(format!("pull_request:{url}"));
+            }
+            for ticket in document
+                .get("tickets")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                if let Some(key) = ticket.as_str() {
+                    references.push(format!("issue_tracker:{key}"));
+                }
+            }
+            record.attributes.insert(
+                "references".to_owned(),
+                Value::Array(references.into_iter().map(Value::String).collect()),
+            );
+            record.content = line.as_bytes().to_vec();
+            record.confidence = 7_500;
             scan.records.push(record);
         }
     }
