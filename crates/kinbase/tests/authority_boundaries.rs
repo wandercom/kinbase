@@ -1,11 +1,11 @@
 //! Boundary tests for packet 12: config round-tripping, idempotent
 //! destination records, receipt identity binding, and journal recovery.
 
-use guildhall::codebase::{RepoConfig, Repository};
-use guildhall::company::db::CompanyDb;
-use guildhall::hash::sha256_bytes;
-use guildhall::json::{canonical_bytes, canonical_text, parse_strict_value};
-use guildhall::paths::sharded_relative;
+use kinbase::codebase::{RepoConfig, Repository};
+use kinbase::company::db::CompanyDb;
+use kinbase::hash::sha256_bytes;
+use kinbase::json::{canonical_bytes, canonical_text, parse_strict_value};
+use kinbase::paths::sharded_relative;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::fs;

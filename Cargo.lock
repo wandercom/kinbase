@@ -406,26 +406,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "guildhall"
-version = "0.1.0"
-dependencies = [
- "base64",
- "chrono",
- "clap",
- "ed25519-dalek",
- "libc",
- "rand",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tempfile",
- "toml",
- "unicode-normalization",
- "uuid",
-]
-
-[[package]]
 name = "hashbrown"
 version = "0.14.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -527,6 +507,26 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "kinbase"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "chrono",
+ "clap",
+ "ed25519-dalek",
+ "libc",
+ "rand",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "toml",
+ "unicode-normalization",
+ "uuid",
 ]
 
 [[package]]

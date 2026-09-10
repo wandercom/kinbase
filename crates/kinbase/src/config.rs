@@ -95,7 +95,7 @@ impl TokenRecord {
             return Err(ContractError::refused(
                 "CONFIG_INVARIANT",
                 format!("{role} file does not hold a bare bearer token"),
-                "Reissue the token file through `guildhall company init`; contents are never printed.",
+                "Reissue the token file through `kinbase company init`; contents are never printed.",
             ));
         }
         Ok(Self { token })

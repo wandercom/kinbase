@@ -87,7 +87,7 @@ impl RepoConfig {
             return Err(ContractError::integrity(
                 "DIGEST_MISMATCH",
                 ".kin/config repository_uuid_hint is not a UUID",
-                "Reinstall the steward-issued certificate with `guildhall repo init`.",
+                "Reinstall the steward-issued certificate with `kinbase repo init`.",
             ));
         }
         let safe_name = table

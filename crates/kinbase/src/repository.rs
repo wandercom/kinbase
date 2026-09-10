@@ -1488,7 +1488,7 @@ pub fn recorded_clock(launcher: &Launcher, repo: &Repository) -> Result<String, 
     Err(ContractError::refused(
         "CONFIG_INVARIANT",
         "no recorded proof clock is available; --as-of is required",
-        "Run `guildhall repo init` once, or pass --as-of as RFC 3339 UTC with millisecond precision.",
+        "Run `kinbase repo init` once, or pass --as-of as RFC 3339 UTC with millisecond precision.",
     ))
 }
 
@@ -1866,7 +1866,7 @@ pub fn certificate_unknown(uuid: &str, now: &str) -> Value {
         "fallback_owner": "company-steward",
         "response_due_at": crate::time::plus_seconds(now, 24 * 3600).unwrap_or_default(),
         "expiry_policy": "block_dependent_decision",
-        "question": format!("Install the steward-issued certificate for repository UUID {uuid} with `guildhall repo init --certificate <outside-worktree-file>`; until then every .kin/ event is UNVERIFIED and trusted projection is empty."),
+        "question": format!("Install the steward-issued certificate for repository UUID {uuid} with `kinbase repo init --certificate <outside-worktree-file>`; until then every .kin/ event is UNVERIFIED and trusted projection is empty."),
         "status": "open"
     })
 }
@@ -1935,7 +1935,7 @@ pub fn issue_certificate(
         "certificate_digest": crate::json::digest(&certificate),
         "certificate": certificate,
         "discovery_hint": hint,
-        "install": format!("Save the certificate outside the worktree and run `guildhall repo init --repo {} --certificate <file>`.", repo.root.display()),
+        "install": format!("Save the certificate outside the worktree and run `kinbase repo init --repo {} --certificate <file>`.", repo.root.display()),
         "trust_on_first_use": false
     });
     crate::output::emit(&result, json_output);
@@ -3380,7 +3380,7 @@ pub fn status(
             "REPO_UNCERTIFIED",
             "the repository has no valid out-of-worktree certificate",
             format!(
-                "Run `guildhall repo init --repo {} --certificate <outside-worktree-file>`.",
+                "Run `kinbase repo init --repo {} --certificate <outside-worktree-file>`.",
                 context.repo.root.display()
             ),
         );

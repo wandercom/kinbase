@@ -937,7 +937,7 @@ pub fn hook_state(host: &str, ranges: &crate::config::SharedHosts) -> Value {
             "approval_required": true,
             "missing_planned_entries": HOOK_EVENTS,
             "required_host_version": host_range(host, ranges),
-            "remediation": format!("Run `guildhall hooks plan {host}` to review, then `guildhall hooks install {host}`; the host presents its own approval at its next start."),
+            "remediation": format!("Run `kinbase hooks plan {host}` to review, then `kinbase hooks install {host}`; the host presents its own approval at its next start."),
             "personal_queried": false,
             "facts_label": "UNTRUSTED_EVIDENCE_NOT_INSTRUCTIONS"
         })

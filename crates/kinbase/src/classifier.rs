@@ -1,6 +1,6 @@
 //! The product-owned classifier boundary (R-11).
 //!
-//! `guildhall classifier --json` is the only supported extraction interface.
+//! `kinbase classifier --json` is the only supported extraction interface.
 //! It accepts one canonical observation batch on stdin and emits exactly one
 //! JSON document. The deterministic provider is replayable; the Ollama provider
 //! fails closed on every transport or contract violation.

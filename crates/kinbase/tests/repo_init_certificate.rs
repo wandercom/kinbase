@@ -1,4 +1,4 @@
-use guildhall::crypto::PrivateKey;
+use kinbase::crypto::PrivateKey;
 use serde_json::{Value, json};
 use std::fs::{self, OpenOptions};
 use std::io::{Read as _, Write as _};
@@ -45,7 +45,7 @@ fn run_init(
     repo: &Path,
     certificate: &Path,
 ) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_guildhall"))
+    Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(repo)
         .args([
             "repo",
@@ -60,18 +60,18 @@ fn run_init(
         .env("XDG_CONFIG_HOME", config_home)
         .env_remove("GUILDHALL_COMPANY_URL")
         .output()
-        .expect("run guildhall repo init")
+        .expect("run kinbase repo init")
 }
 
 fn run_status(home: &Path, config_home: &Path, repo: &Path) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_guildhall"))
+    Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(repo)
         .args(["status", "--repo", &repo.display().to_string(), "--json"])
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", config_home)
         .env_remove("GUILDHALL_COMPANY_URL")
         .output()
-        .expect("run guildhall status")
+        .expect("run kinbase status")
 }
 
 fn signed_certificate(root: &PrivateKey, repository_uuid: &str, issued_at: &str) -> Vec<u8> {
@@ -84,7 +84,7 @@ fn signed_certificate(root: &PrivateKey, repository_uuid: &str, issued_at: &str)
     let signed = root
         .sign_document("repo-certificate", &unsigned)
         .expect("sign certificate");
-    guildhall::json::canonical_text(&signed).into_bytes()
+    kinbase::json::canonical_text(&signed).into_bytes()
 }
 
 fn expected_worktree_paths() -> Vec<String> {
@@ -230,7 +230,7 @@ fn repo_init_caches_certificate_outside_worktree() {
     let exclude = fs::read_to_string(repo.join(".git/info/exclude")).expect("read git exclude");
     assert!(exclude.lines().any(|line| line.trim() == ".kin/local/"));
 
-    let cache = guildhall::company::cache::Cache::open(&cache_root).expect("open cache");
+    let cache = kinbase::company::cache::Cache::open(&cache_root).expect("open cache");
     let (resolved, digest) = cache
         .certificate(repository_uuid)
         .expect("resolve cached certificate")
@@ -238,7 +238,7 @@ fn repo_init_caches_certificate_outside_worktree() {
     assert_eq!(resolved["repository_uuid"], repository_uuid);
     assert_eq!(
         digest,
-        guildhall::json::digest(&serde_json::from_slice::<Value>(&certificate_bytes).unwrap())
+        kinbase::json::digest(&serde_json::from_slice::<Value>(&certificate_bytes).unwrap())
     );
 
     let certificate_before = modified(&cached_certificate);
@@ -327,7 +327,7 @@ fn repo_init_caches_certificate_outside_worktree() {
     assert_eq!(fs::read(&cached_certificate).unwrap(), certificate_bytes);
 
     let config_text = fs::read_to_string(repo.join(".kin/config")).expect("read .kin/config");
-    let config = guildhall::codebase::RepoConfig::parse(&config_text).expect("parse .kin/config");
+    let config = kinbase::codebase::RepoConfig::parse(&config_text).expect("parse .kin/config");
     assert_eq!(config.repository_uuid_hint, repository_uuid);
     assert_eq!(config.schema_version, "guildhall-repo/1");
 }
@@ -390,7 +390,7 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
         String::from_utf8_lossy(&init.stderr)
     );
 
-    let mut event = guildhall::model::FactEvent {
+    let mut event = kinbase::model::FactEvent {
         schema: "guildhall-event/1".to_owned(),
         event_id: "event_packet11_hook".to_owned(),
         store_kind: "codebase".to_owned(),
@@ -407,7 +407,7 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
         effective_from: "2026-09-08T12:00:00.000Z".to_owned(),
         effective_until: None,
         disposition: "approved".to_owned(),
-        distortion: guildhall::model::Distortion {
+        distortion: kinbase::model::Distortion {
             trigger: "dispatch SessionStart with a certified corpus".to_owned(),
             loss_if_absent: 9000,
             rationale: "packet 11 host parity check".to_owned(),
@@ -418,15 +418,15 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
         complements: Vec::new(),
         company_refs: Vec::new(),
         authority_snapshot_cursor: "0".to_owned(),
-        confidence: guildhall::model::Bp(9000),
+        confidence: kinbase::model::Bp(9000),
         unresolved_uncertainty: None,
         signer: String::new(),
         signature: String::new(),
         raw: None,
     };
     event.sign(&root_key).expect("sign packet 11 fact");
-    let event_bytes = guildhall::json::canonical_bytes(&event.document());
-    let digest = guildhall::hash::sha256_bytes(&event_bytes);
+    let event_bytes = kinbase::json::canonical_bytes(&event.document());
+    let digest = kinbase::hash::sha256_bytes(&event_bytes);
     let relative = format!("{}/{}/{}.json", &digest[..2], &digest[2..4], &digest[4..]);
     let event_path = repo.join(".kin/events").join(&relative);
     private_write(&event_path, &event_bytes);
@@ -468,7 +468,7 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
     assert_eq!(status["trusted_fact_count"], 1);
 
     let dispatch = |host: &str| {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_kinbase"))
             .current_dir(&repo)
             .args(["hooks", "dispatch", host, "SessionStart", "--json"])
             .env("HOME", &home)
@@ -515,8 +515,8 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
     );
     assert_eq!(codex["canonical_facts"], claude["canonical_facts"]);
     assert_eq!(
-        guildhall::json::canonical_text(&codex["canonical_facts"]),
-        guildhall::json::canonical_text(&claude["canonical_facts"])
+        kinbase::json::canonical_text(&codex["canonical_facts"]),
+        kinbase::json::canonical_text(&claude["canonical_facts"])
     );
 }
 #[allow(clippy::too_many_arguments)]
@@ -530,8 +530,8 @@ fn packet11_project_fact(
     trigger: &str,
     loss_if_absent: u16,
     effective_until: Option<&str>,
-) -> guildhall::model::FactEvent {
-    guildhall::model::FactEvent {
+) -> kinbase::model::FactEvent {
+    kinbase::model::FactEvent {
         schema: "guildhall-event/1".to_owned(),
         event_id: event_id.to_owned(),
         store_kind: "codebase".to_owned(),
@@ -548,7 +548,7 @@ fn packet11_project_fact(
         effective_from: "2026-09-08T12:00:00.000Z".to_owned(),
         effective_until: effective_until.map(str::to_owned),
         disposition: "approved".to_owned(),
-        distortion: guildhall::model::Distortion {
+        distortion: kinbase::model::Distortion {
             trigger: trigger.to_owned(),
             loss_if_absent,
             rationale: "packet 11 projector proof".to_owned(),
@@ -559,7 +559,7 @@ fn packet11_project_fact(
         complements: Vec::new(),
         company_refs: Vec::new(),
         authority_snapshot_cursor: "0".to_owned(),
-        confidence: guildhall::model::Bp(9000),
+        confidence: kinbase::model::Bp(9000),
         unresolved_uncertainty: None,
         signer: String::new(),
         signature: String::new(),
@@ -667,7 +667,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         .sign_document("receipt", &unsigned_snapshot)
         .expect("sign authority snapshot");
     let mut cache =
-        guildhall::company::cache::Cache::open(&cache_root).expect("open authority cache");
+        kinbase::company::cache::Cache::open(&cache_root).expect("open authority cache");
     cache
         .store_snapshot(
             &signed_snapshot,
@@ -755,7 +755,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
             None,
         ),
     ];
-    let mut unknown = guildhall::model::UnknownEvent::new(
+    let mut unknown = kinbase::model::UnknownEvent::new(
         "codebase",
         Some(repository_uuid),
         "chief-architect",
@@ -782,14 +782,14 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
             &root_key
         };
         fact.sign(signing_key).expect("sign packet 11 fact");
-        let bytes = guildhall::json::canonical_bytes(&fact.document());
-        let digest = guildhall::hash::sha256_bytes(&bytes);
+        let bytes = kinbase::json::canonical_bytes(&fact.document());
+        let digest = kinbase::hash::sha256_bytes(&bytes);
         let relative = format!("{}/{}/{}.json", &digest[..2], &digest[2..4], &digest[4..]);
         private_write(&repo.join(".kin/events").join(&relative), &bytes);
         relative_paths.push(format!(".kin/events/{relative}"));
     }
-    let unknown_bytes = guildhall::json::canonical_bytes(&unknown.document());
-    let digest = guildhall::hash::sha256_bytes(&unknown_bytes);
+    let unknown_bytes = kinbase::json::canonical_bytes(&unknown.document());
+    let digest = kinbase::hash::sha256_bytes(&unknown_bytes);
     let relative = format!("{}/{}/{}.json", &digest[..2], &digest[2..4], &digest[4..]);
     private_write(&repo.join(".kin/events").join(&relative), &unknown_bytes);
     relative_paths.push(format!(".kin/events/{relative}"));
@@ -822,7 +822,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         String::from_utf8_lossy(&git.stderr)
     );
 
-    let project = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+    let project = Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(&repo)
         .args([
             "project",
@@ -840,7 +840,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("GUILDHALL_COMPANY_URL")
         .output()
-        .expect("run guildhall project");
+        .expect("run kinbase project");
     assert!(
         project.status.success(),
         "project failed: {}",
@@ -850,14 +850,14 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
 
     // V-6: tier exhaustion raises a targeted architect question before the
     // blocked decision can be credited, and a signed answer closes the loop.
-    let questions_output = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+    let questions_output = Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(&repo)
         .args(["questions", "list", "--json"])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("GUILDHALL_COMPANY_URL")
         .output()
-        .expect("run guildhall questions list");
+        .expect("run kinbase questions list");
     assert!(
         questions_output.status.success(),
         "questions list failed: {}",
@@ -904,7 +904,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
     let answer_file = root.path().join("architect-answer.json");
     private_write(
         &answer_file,
-        &guildhall::json::canonical_bytes(&signed_answer),
+        &kinbase::json::canonical_bytes(&signed_answer),
     );
     let answer_key_file = root.path().join("architect-answer.key");
     private_write(
@@ -916,7 +916,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         )
         .as_bytes(),
     );
-    let answered = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+    let answered = Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(&repo)
         .args([
             "questions",
@@ -932,7 +932,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("GUILDHALL_COMPANY_URL")
         .output()
-        .expect("run guildhall questions answer");
+        .expect("run kinbase questions answer");
     assert!(
         answered.status.success(),
         "questions answer failed: {}",
@@ -943,7 +943,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
     assert_eq!(answered["status"], "closed");
     assert!(answered["closure_event_id"].is_string());
 
-    let resolved = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+    let resolved = Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(&repo)
         .args([
             "project",
@@ -959,7 +959,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("GUILDHALL_COMPANY_URL")
         .output()
-        .expect("run resolved guildhall project");
+        .expect("run resolved kinbase project");
     assert!(
         resolved.status.success(),
         "resolved project failed: {}",
@@ -1126,7 +1126,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .sign_document("receipt", &unsigned_snapshot)
         .expect("sign authority snapshot");
     let mut cache =
-        guildhall::company::cache::Cache::open(&cache_root).expect("open authority cache");
+        kinbase::company::cache::Cache::open(&cache_root).expect("open authority cache");
     cache
         .store_snapshot(
             &signed_snapshot,
@@ -1146,11 +1146,11 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         7000,
         None,
     );
-    fact.company_refs = vec![guildhall::model::CompanyReference {
+    fact.company_refs = vec![kinbase::model::CompanyReference {
         company_id: "company-test".to_owned(),
         fact_id: "fact_company_packet19".to_owned(),
-        semantic_digest: guildhall::model::semantic_digest(company_statement),
-        digest_alg_version: guildhall::model::DIGEST_ALG_VERSION.to_owned(),
+        semantic_digest: kinbase::model::semantic_digest(company_statement),
+        digest_alg_version: kinbase::model::DIGEST_ALG_VERSION.to_owned(),
         authority: "company-steward".to_owned(),
         valid_from: "2026-09-08T12:00:00.000Z".to_owned(),
         valid_until: None,
@@ -1159,8 +1159,8 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         fact_version: Some("current".to_owned()),
     }];
     fact.sign(&root_key).expect("sign packet 19 fact");
-    let bytes = guildhall::json::canonical_bytes(&fact.document());
-    let digest = guildhall::hash::sha256_bytes(&bytes);
+    let bytes = kinbase::json::canonical_bytes(&fact.document());
+    let digest = kinbase::hash::sha256_bytes(&bytes);
     let relative = format!("{}/{}/{}.json", &digest[..2], &digest[2..4], &digest[4..]);
     private_write(&repo.join(".kin/events").join(&relative), &bytes);
 
@@ -1187,7 +1187,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .expect("commit packet 19 corpus");
     assert!(git.status.success(), "git commit failed");
 
-    let rebuild = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+    let rebuild = Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(&repo)
         .args([
             "corpus",
@@ -1218,7 +1218,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
     // `repo publish-manifest` (and the admission path), which owns that fact.
     assert!(rebuild_result["manifest_publication"].is_null());
 
-    let publish = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+    let publish = Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(&repo)
         .args([
             "repo",
@@ -1239,7 +1239,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         String::from_utf8_lossy(&publish.stderr)
     );
 
-    let fsck = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+    let fsck = Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(&repo)
         .args([
             "fsck",
@@ -1272,7 +1272,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         "complete"
     );
 
-    let first_unpinned = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+    let first_unpinned = Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(&repo)
         .args([
             "corpus",
@@ -1297,7 +1297,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
     let first_unpinned: Value = serde_json::from_slice(&first_unpinned.stdout)
         .expect("first recorded-clock receipt is JSON");
     assert_eq!(first_unpinned["as_of_source"], "recorded-proof-clock");
-    let second_unpinned = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+    let second_unpinned = Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(&repo)
         .args([
             "corpus",
@@ -1341,7 +1341,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .expect("clone packet 19 repository");
     assert!(git.status.success(), "git clone failed");
 
-    let project = Command::new(env!("CARGO_BIN_EXE_guildhall"))
+    let project = Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(&clone)
         .args([
             "project",
@@ -1357,7 +1357,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("GUILDHALL_COMPANY_URL")
         .output()
-        .expect("run cloned guildhall project");
+        .expect("run cloned kinbase project");
     assert!(
         project.status.success(),
         "cloned project failed: {}",

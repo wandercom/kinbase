@@ -318,7 +318,7 @@ fn resolve_as_of(
         ContractError::new(
             "CONFIG_INVARIANT",
             message,
-            "Run `guildhall repo init` once, or pass --as-of as RFC 3339 UTC with millisecond precision.",
+            "Run `kinbase repo init` once, or pass --as-of as RFC 3339 UTC with millisecond precision.",
             false,
             crate::error::ExitCode::Refused,
         )

@@ -48,7 +48,7 @@ pub use crate::command_types::*;
 pub use clap::Parser;
 
 #[derive(Parser)]
-#[command(name = "guildhall", version = env!("CARGO_PKG_VERSION"), about = "Three-store knowledge system for brownfield coding")]
+#[command(name = "kinbase", version = env!("CARGO_PKG_VERSION"), about = "Three-store knowledge system for brownfield coding")]
 pub struct Cli {
     #[arg(long, global = true, help = "Emit canonical JSON receipts")]
     pub json: bool,

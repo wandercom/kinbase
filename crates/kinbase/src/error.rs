@@ -271,7 +271,7 @@ impl ContractError {
             "REPO_UNCERTIFIED",
             "the repository has no initialized .kin/ store or installed certificate",
             format!(
-                "Run `guildhall repo issue --repo {0} --company <url>` then `guildhall repo init --repo {0} --certificate <outside-worktree-file>`.",
+                "Run `kinbase repo issue --repo {0} --company <url>` then `kinbase repo init --repo {0} --certificate <outside-worktree-file>`.",
                 repo.display()
             ),
         )

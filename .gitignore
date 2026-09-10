@@ -8,7 +8,7 @@ __pycache__/
 dist/
 build/
 *.egg-info/
-.guildhall/
+.kinbase/
 .factory/
 .constrain/
 evidence/private/
