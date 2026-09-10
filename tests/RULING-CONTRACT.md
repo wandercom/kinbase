@@ -68,3 +68,8 @@ is responsible and a named destination authority closes an orphan. Receipt repla
 returns the original receipt in a fresh process without duplicating events.
 Diagnostics remain useful after restart: fsck, doctor, corpus status and question
 status. No cross-store transaction or shared private lineage token exists.
+
+The close-five brief requires a canary-bearing message with a durable architectural
+fact to yield Codebase and Personal admissions, with the canary in neither, while
+the private record retains its taint. All five existing closure tests remain;
+no candidate queue or candidate-count precondition is required.

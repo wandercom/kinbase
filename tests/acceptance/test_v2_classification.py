@@ -43,6 +43,7 @@ from ._harness import calibration, metrics
 from ._harness import obligations as O
 from ._harness import prereq, stats, trust
 from ._harness.cli import Kinbase
+from ._harness.admission import receipt_snapshot, required_rows
 from ._harness.corpora import PRODUCT_VISIBLE_KEYS, bind_routing_corpus, load_gold
 from ._harness.evidence_model import (
     Origin,
@@ -535,13 +536,23 @@ def test_expired_closing_deadline_emits_one_signed_orphan_abandoned(
 
     world, anchors = anchored
     session = start_session(kinbase, world.repo.path)
+    source = _one_fanout_source(held_out, world.repo.path)
     with Blackhole(0) as blackhole, anchors.company_endpoint(
         f"http://127.0.0.1:{blackhole.port}"
     ):
-        _observe(kinbase, world.repo.path, held_out.path, session)
-    require_nonempty(rows(_admissions(kinbase, world.repo.path, session), "apologies"),
-                     obligation="V-2.orphan-abandoned", origin=Origin.PRODUCT,
+        observed = _observe(kinbase, world.repo.path, source, session)
+    admissions = required_rows(observed, "admissions")
+    require_nonempty(admissions, obligation="V-2.orphan-abandoned", origin=Origin.PRODUCT,
+                     why="automatic fan-out must produce destination receipts")
+    status = receipt_snapshot(kinbase, world.repo.path, session, observed)
+    apologies = rows(status, "apologies")
+    require_nonempty(apologies, obligation="V-2.orphan-abandoned", origin=Origin.PRODUCT,
                      why="a partial fan-out must open an orphan before its deadline")
+    receipt_ids = {row["receipt_id"] for row in admissions}
+    require_all(apologies, lambda row: row.get("failed_receipt_id") in receipt_ids
+                and row.get("committed_receipt_id") in receipt_ids,
+                obligation="V-2.orphan-abandoned", origin=Origin.PRODUCT, minimum=1,
+                why="every orphan must bind the failed and committed admission receipts")
 
     # Advance the proof clock past the closing deadline. The witness is the
     # expiry state read back from the store, not the request itself.
@@ -739,14 +750,21 @@ def test_kill_at_every_transition_then_concurrent_retry(
                 killed = _kill_at_transition(driver, world, candidate, destination, transition)
                 first = _checkpoint_async(driver, world.repo.path, candidate, destination)
                 second = _checkpoint_async(driver, world.repo.path, candidate, destination)
-                first.communicate(timeout=120)
-                second.communicate(timeout=120)
-                status = _admissions(driver, world.repo.path, session)
+                first_output, first_error = first.communicate(timeout=120)
+                second_output, second_error = second.communicate(timeout=120)
+                if first.returncode != 0 or second.returncode != 0:
+                    raise ProductFailure(f"concurrent admission recovery failed: {first_error!r} {second_error!r}")
+                first_payload, second_payload = json.loads(first_output), json.loads(second_output)
+                first_receipts = required_rows(first_payload, "admissions")
+                second_receipts = required_rows(second_payload, "admissions")
+                if not first_receipts or sorted(row["receipt_id"] for row in first_receipts) != sorted(row["receipt_id"] for row in second_receipts):
+                    raise ProductFailure("concurrent admission recovery did not reuse the same nonempty receipt set")
+                status = receipt_snapshot(driver, world.repo.path, session, second_payload)
                 killed.update({
                     "duplicate_events": field(status, "duplicate_events"),
                     "recursive_apologies": field(status, "recursive_apologies"),
-                    "recovered": field(status, "fanout_receipts", "codebase", "state")
-                    == "committed",
+                    "recovered": any(row.get("destination") == "codebase:" + anchors.repository_uuid
+                                     and row.get("state") == "committed" for row in second_receipts),
                     "total_events_after_recovery": field(status, "committed_event_count"),
                 })
         results.append(killed)
@@ -780,17 +798,16 @@ def test_no_cross_store_transaction_exists(
 ) -> None:
     world, anchors = anchored
     session = start_session(kinbase, world.repo.path)
-    _observe(kinbase, world.repo.path, held_out.path, session)
-    listing = _admissions(kinbase, world.repo.path, session)
-    candidate = _first_candidate(listing, "codebase:" + anchors.repository_uuid)
-    for destination in ("codebase:" + anchors.repository_uuid, "company:root"):
-        _checkpoint(kinbase, world.repo.path, candidate, destination)
-    status = _admissions(kinbase, world.repo.path, session)
-    receipts = [_receipt_row(status, key) for key in ("codebase", "company")]
+    observed = _observe(kinbase, world.repo.path, _one_fanout_source(held_out, world.repo.path), session)
+    admissions = required_rows(observed, "admissions")
+    receipts = [row for row in admissions if row.get("destination") in
+                ("codebase:" + anchors.repository_uuid, "company:root")]
     O.check(
         "V-2.no-cross-store",
-        {"receipts": receipts},
-        label="two independent destination transactions",
+        {"receipts": receipts,
+         "destinations": sorted({row["destination"].split(":")[0] for row in receipts}),
+         "independent_receipts": len({row["receipt_id"] for row in receipts}) == len(receipts)},
+        label="automatic fan-out yields independent destination admission receipts",
     )
 
 

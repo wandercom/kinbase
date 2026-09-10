@@ -1614,6 +1614,33 @@
           "product_mutation": "V-2.no-cross-store#pm:every:receipts",
           "tag": "every:receipts",
           "why": "each destination returns its own saga receipt"
+        },
+        {
+          "bound": [
+            "codebase",
+            "company"
+          ],
+          "detector_mutation": "V-2.no-cross-store#dm:equals:destinations",
+          "kind": "equals",
+          "min_len": 1,
+          "negative_control": "V-2.no-cross-store#nc:equals:destinations",
+          "path": "destinations",
+          "positive_control": "V-2.no-cross-store#pc:equals:destinations",
+          "product_mutation": "V-2.no-cross-store#pm:equals:destinations",
+          "tag": "equals:destinations",
+          "why": "both shared destination receipts exist"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "V-2.no-cross-store#dm:is_true:independent_receipts",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "V-2.no-cross-store#nc:is_true:independent_receipts",
+          "path": "independent_receipts",
+          "positive_control": "V-2.no-cross-store#pc:is_true:independent_receipts",
+          "product_mutation": "V-2.no-cross-store#pm:is_true:independent_receipts",
+          "tag": "is_true:independent_receipts",
+          "why": "every destination has its own receipt identity"
         }
       ],
       "title": "independent destination transactions",
@@ -2165,42 +2192,81 @@
       ]
     },
     {
-      "anchor": "routing-policy",
-      "artifact": "spec/architecture.md",
+      "anchor": "close-five-taint",
+      "artifact": "tests/RULING-CONTRACT.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-3",
       "nodes": [
         "test_v3_privacy.py::test_hard_blocking_taint_is_never_cleared_by_deidentification"
       ],
       "oid": "V-3.taint",
-      "requirement": "Taint is never described as cleared; its policy consequence differs by class.",
+      "requirement": "The close-five brief requires a canary-bearing message with a durable architectural fact to yield Codebase and Personal admissions, with the canary in neither, while the private record retains its taint.",
       "surfaces": [
         "private admission audit ledgers"
       ],
       "thresholds": [
         {
-          "bound": 1,
-          "detector_mutation": "V-3.taint#dm:at_least:candidate_count",
-          "kind": "at_least",
+          "bound": 2,
+          "detector_mutation": "V-3.taint#dm:equals:admission_count",
+          "kind": "equals",
           "min_len": 1,
-          "negative_control": "V-3.taint#nc:at_least:candidate_count",
-          "path": "candidate_count",
-          "positive_control": "V-3.taint#pc:at_least:candidate_count",
-          "product_mutation": "V-3.taint#pm:at_least:candidate_count",
-          "tag": "at_least:candidate_count",
-          "why": "candidates must exist for the taint policy to be observed"
+          "negative_control": "V-3.taint#nc:equals:admission_count",
+          "path": "admission_count",
+          "positive_control": "V-3.taint#pc:equals:admission_count",
+          "product_mutation": "V-3.taint#pm:equals:admission_count",
+          "tag": "equals:admission_count",
+          "why": "both destinations admit the minimized fact without a queue"
+        },
+        {
+          "bound": [
+            "codebase",
+            "personal"
+          ],
+          "detector_mutation": "V-3.taint#dm:equals:destinations",
+          "kind": "equals",
+          "min_len": 1,
+          "negative_control": "V-3.taint#nc:equals:destinations",
+          "path": "destinations",
+          "positive_control": "V-3.taint#pc:equals:destinations",
+          "product_mutation": "V-3.taint#pm:equals:destinations",
+          "tag": "equals:destinations",
+          "why": "both intended stores have a receipt"
         },
         {
           "bound": null,
-          "detector_mutation": "V-3.taint#dm:every:candidates",
-          "kind": "every",
+          "detector_mutation": "V-3.taint#dm:is_true:all_committed",
+          "kind": "is_true",
           "min_len": 1,
-          "negative_control": "V-3.taint#nc:every:candidates",
-          "path": "candidates",
-          "positive_control": "V-3.taint#pc:every:candidates",
-          "product_mutation": "V-3.taint#pm:every:candidates",
-          "tag": "every:candidates",
-          "why": "hard-blocking taint yields no shared candidate"
+          "negative_control": "V-3.taint#nc:is_true:all_committed",
+          "path": "all_committed",
+          "positive_control": "V-3.taint#pc:is_true:all_committed",
+          "product_mutation": "V-3.taint#pm:is_true:all_committed",
+          "tag": "is_true:all_committed",
+          "why": "both admissions commit"
+        },
+        {
+          "bound": 0,
+          "detector_mutation": "V-3.taint#dm:equals:admitted_canary_occurrences",
+          "kind": "equals",
+          "min_len": 1,
+          "negative_control": "V-3.taint#nc:equals:admitted_canary_occurrences",
+          "path": "admitted_canary_occurrences",
+          "positive_control": "V-3.taint#pc:equals:admitted_canary_occurrences",
+          "product_mutation": "V-3.taint#pm:equals:admitted_canary_occurrences",
+          "tag": "equals:admitted_canary_occurrences",
+          "why": "the canary is absent from admitted events and receipts"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "V-3.taint#dm:is_true:private_taint_present",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "V-3.taint#nc:is_true:private_taint_present",
+          "path": "private_taint_present",
+          "positive_control": "V-3.taint#pc:is_true:private_taint_present",
+          "product_mutation": "V-3.taint#pm:is_true:private_taint_present",
+          "tag": "is_true:private_taint_present",
+          "why": "the private source record records taint"
         },
         {
           "bound": null,
@@ -2212,15 +2278,12 @@
           "positive_control": "V-3.taint#pc:is_true:deidentify_retains_taint",
           "product_mutation": "V-3.taint#pm:is_true:deidentify_retains_taint",
           "tag": "is_true:deidentify_retains_taint",
-          "why": "de-identification does not remove the private audit record's taint"
+          "why": "checkpoint/replay preserves the private taint"
         }
       ],
-      "title": "hard-blocking taint is never cleared",
+      "title": "private taint survives de-identified admission",
       "vectors": [
-        "secret",
-        "credential",
-        "configured-canary",
-        "forbidden-identifier"
+        "private marker plus architectural fact"
       ]
     },
     {
@@ -6270,6 +6333,18 @@
           "product_mutation": "V-9.parity#pm:is_true:receipts_match",
           "tag": "is_true:receipts_match",
           "why": "canonical receipts match across hosts"
+        },
+        {
+          "bound": null,
+          "detector_mutation": "V-9.parity#dm:is_true:projections_match",
+          "kind": "is_true",
+          "min_len": 1,
+          "negative_control": "V-9.parity#nc:is_true:projections_match",
+          "path": "projections_match",
+          "positive_control": "V-9.parity#pc:is_true:projections_match",
+          "product_mutation": "V-9.parity#pm:is_true:projections_match",
+          "tag": "is_true:projections_match",
+          "why": "both host projections read the same admitted corpus"
         }
       ],
       "title": "matched conversations produce identical canonical payloads",

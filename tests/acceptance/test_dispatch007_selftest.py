@@ -763,6 +763,7 @@ def test_dispatch010_completed_or_stale_journal_never_licenses_crash(roots, monk
 @spec_ref(_REMEDIATION_010)
 @pytest.mark.parametrize("event_count", [1, 2])
 def test_dispatch010_crash_gate_uses_five_fresh_worlds_and_checks_each_recovery(roots, monkeypatch, event_count):
+    import json
     from . import test_v2_classification as gate
     from ._harness import service
     from contextlib import nullcontext
@@ -784,12 +785,9 @@ def test_dispatch010_crash_gate_uses_five_fresh_worlds_and_checks_each_recovery(
     monkeypatch.setattr(gate, "_checkpoint", lambda *a: None)
     monkeypatch.setattr(service, "Blackhole", lambda *a: nullcontext(SimpleNamespace(port=0)))
     def listing(*args):
-        return {"candidates": [{"candidate_id": "fixture", "payload_digest": "f" * 64, "destination": "codebase:fixture", "message_id": "source"},
-                               {"candidate_id": "company", "payload_digest": "e" * 64, "destination": "company:root", "message_id": "source"}],
-                "duplicate_events": 0, "recursive_apologies": 0,
-                "fanout_receipts": {"codebase": {"state": "committed"}},
+        return {"duplicate_events": 0, "recursive_apologies": 0,
                 "committed_event_count": event_count if len(seen) == 1 else 1}
-    monkeypatch.setattr(gate, "_admissions", listing)
+    monkeypatch.setattr(gate, "receipt_snapshot", listing)
     def killed(*args):
         actions.clear()
         return {"transition": args[-1], "crash_witnessed": True}
@@ -799,7 +797,9 @@ def test_dispatch010_crash_gate_uses_five_fresh_worlds_and_checks_each_recovery(
         def communicate(timeout):
             assert actions[:2] == ["launch", "launch"]
             actions.append("reap")
-        return SimpleNamespace(communicate=communicate)
+            return json.dumps({"admissions": [{"receipt_id": "receipt-fixture",
+                                               "destination": "codebase:fixture", "state": "committed"}]}), ""
+        return SimpleNamespace(communicate=communicate, returncode=0)
     monkeypatch.setattr(gate, "_checkpoint_async", retry)
     args = (SimpleNamespace(path_prefix=[]), roots, SimpleNamespace(path=roots.run_root / "held-out"))
     if event_count == 1:
@@ -1154,3 +1154,26 @@ def test_dispatch013_cycle_accepts_preservation_and_rejects_idle_mutations(fault
         tag = "cycle_state_digests" if fault == "revisited-state" else "stages"
         with pytest.raises(ProductFailure, match=tag):
             clauses.check(ev)
+
+
+@spec_ref(_REMEDIATION_010)
+def test_admission_receipts_are_resolved_without_a_candidate_queue(roots):
+    from ._harness.admission import admitted_documents, canonical_admissions, receipt_snapshot
+    world = SignedWorld.create(roots.repo_root)
+    event = world.plant_event(world.maintainer, store_kind="codebase",
+                              logical_key="receipt-fixture", statement="Retries are bounded.")
+    driver = SimpleNamespace(home=roots.home, xdg_config_home=roots.xdg_config_home)
+    receipt = {"destination": "codebase:fixture", "state": "committed", "decision": "admit",
+               "digest": "a" * 64, "receipt_id": "receipt-1", "event_id": event["event_id"]}
+    state = receipt_snapshot(driver, world.repo.path, "session-1", {"admissions": [receipt]})
+    assert state["admissions"] == [receipt]
+    assert state["committed_event_count"] == 1
+    assert state["duplicate_events"] == 0
+    documents = admitted_documents(driver, world.repo.path, [receipt])
+    assert [row["statement"] for row in documents] == ["Retries are bounded."]
+    assert canonical_admissions([receipt]) == canonical_admissions([{**receipt, "receipt_id": "receipt-2", "decided_at": "later"}])
+    assert canonical_admissions([receipt]) != canonical_admissions([{**receipt, "digest": "b" * 64}])
+    with pytest.raises(ProductFailure, match="required product array"):
+        receipt_snapshot(driver, world.repo.path, "session-1", {"candidates": [receipt]})
+    with pytest.raises(ProductFailure, match="no matching durable event"):
+        admitted_documents(driver, world.repo.path, [{**receipt, "event_id": "missing"}])

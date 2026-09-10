@@ -33,10 +33,11 @@ from pathlib import Path
 
 import pytest
 
-from ._harness import hosts
+from ._harness import hosts, synth
 from ._harness import obligations as O
 from ._harness import prereq, scale, trust
 from ._harness.cli import Kinbase
+from ._harness.admission import required_rows, admitted_documents, canonical_admissions
 from ._harness.evidence_model import field, rows
 from ._harness.gitfix import GitRepo
 from ._harness.requirements import (
@@ -47,7 +48,7 @@ from ._harness.requirements import (
 )
 from ._harness.roots import ProofRoots
 from ._harness.service import Blackhole
-from ._harness.worldbuilder import OpaqueIds, SignedWorld, Witness
+from ._harness.worldbuilder import OpaqueIds, SignedWorld, Witness, start_session
 
 pytestmark = [pytest.mark.v9, pytest.mark.requires_product]
 
@@ -287,38 +288,68 @@ def test_matched_conversations_produce_identical_canonical_payloads(
 ) -> None:
     world, anchors = anchored
     observed: dict[str, dict] = {}
+    sessions = {}
+    messages = ["I prefer concise explanations.", "The scheduler must use bounded retries."]
+    stamp = synth.receipt_stamp()
     for name in HOSTS:
         variable = "KINBASE_HOST_" + name.upper()
-        configured = prereq.env_var(
-            variable, what=name + " host executable",
-            why="parity ranges over both real hosts",
-        )
+        configured = prereq.env_var(variable, what=name + " host executable",
+                                   why="parity ranges over both real hosts")
         resolved = prereq.executable(configured, what=name + " host executable",
-                                     why="parity ranges over both real hosts")
+                                    why="parity ranges over both real hosts")
         bin_dir = roots.run_root / "hostbin" / name
         hosts.install_invocation_recorder(bin_dir, name, resolved)
         kinbase.path_prefix.insert(0, bin_dir)
-        _run(kinbase, "hooks", "install", name, "--json",
-             cwd=world.repo.path)
-        session = ids.token("parity-" + name)
-        envelope = hosts.envelope_for(name, "SessionStart", session_id=session,
-                                      cwd=str(world.repo.path))
-        observed[name] = _json(_run(kinbase, "hooks", "dispatch", name,
-                                    "SessionStart", "--json", cwd=world.repo.path,
-                                    stdin=json.dumps(envelope)))
-    first, second = (observed[h] for h in HOSTS)
-    O.check(
-        "V-9.parity",
-        {
-            "hosts_observed": len(observed),
-            "canonical_facts": field(first, "canonical_facts"),
-            "facts_match": field(first, "canonical_facts")
-            == field(second, "canonical_facts"),
-            "decisions_match": field(first, "decisions") == field(second, "decisions"),
-            "receipts_match": field(first, "receipts") == field(second, "receipts"),
-        },
-        label="matched conversations agree across both real hosts",
-    )
+        _run(kinbase, "hooks", "install", name, "--json", cwd=world.repo.path).ok()
+        session = start_session(kinbase, world.repo.path, host=name)
+        sessions[name] = session
+        envelope = hosts.envelope_for(name, "SessionStart", session_id=session, cwd=str(world.repo.path))
+        _run(kinbase, "hooks", "dispatch", name, "SessionStart", "--json",
+             cwd=world.repo.path, stdin=json.dumps(envelope)).ok()
+        corpus = roots.run_root / ("parity-" + name + ".jsonl")
+        native = []
+        for index, text in enumerate(messages):
+            message_id = ids.token("parity-message-" + str(index))
+            prompt = hosts.envelope_for(name, "UserPromptSubmit", session_id=session,
+                                        cwd=str(world.repo.path), id=message_id, prompt=text, timestamp=stamp)
+            _run(kinbase, "hooks", "dispatch", name, "UserPromptSubmit", "--json",
+                 cwd=world.repo.path, stdin=json.dumps(prompt)).ok()
+            native.append({"id": message_id, "role": "user", "text": text,
+                           "observed_at": stamp, "source_kind": name + "_jsonl"})
+        corpus.write_text("".join(json.dumps(row) + "\n" for row in native))
+        ingested = kinbase.run("session", "observe", session, "--event", str(corpus),
+                              "--json", cwd=world.repo.path).ok().json
+        admissions = required_rows(ingested, "admissions")
+        if not admissions:
+            raise ProductFailure("matched conversation produced no automatic admissions for " + name)
+        stop = hosts.envelope_for(name, "Stop", session_id=session, cwd=str(world.repo.path))
+        stopped = _run(kinbase, "hooks", "dispatch", name, "Stop", "--json",
+                       cwd=world.repo.path, stdin=json.dumps(stop)).ok().json
+        recovered = required_rows(stopped, "admissions")
+        if sorted(row["receipt_id"] for row in admissions) != sorted(row["receipt_id"] for row in recovered):
+            raise ProductFailure("host Stop did not retain the observation's admission receipts")
+        documents = admitted_documents(kinbase, world.repo.path, admissions)
+        # Compare the admitted knowledge, not per-invocation signatures, clocks,
+        # event IDs or private lineage. Receipt digests bind the canonical payload.
+        facts = [{key: row[key] for key in ("store_kind", "atom_kind", "scope", "statement",
+                                           "standing", "provenance", "disposition")} for row in documents]
+        observed[name] = {"facts": sorted(facts, key=lambda row: json.dumps(row, sort_keys=True)),
+                          "receipts": canonical_admissions(recovered)}
+    projections = []
+    # Both projections now read the same fully admitted corpus.
+    for name in HOSTS:
+        envelope = hosts.envelope_for(name, "SessionStart", session_id=sessions[name], cwd=str(world.repo.path))
+        projected = _run(kinbase, "hooks", "dispatch", name, "SessionStart", "--json",
+                         cwd=world.repo.path, stdin=json.dumps(envelope)).ok().json
+        projections.append(required_rows(projected, "canonical_facts"))
+    first, second = (observed[name] for name in HOSTS)
+    O.check("V-9.parity", {
+        "hosts_observed": len(observed), "canonical_facts": first["facts"],
+        "facts_match": first["facts"] == second["facts"],
+        "decisions_match": [row["decision"] for row in first["receipts"]] == [row["decision"] for row in second["receipts"]],
+        "receipts_match": first["receipts"] == second["receipts"],
+        "projections_match": bool(projections[0]) and projections[0] == projections[1],
+    }, label="matched native conversations admit identical canonical knowledge and receipts")
 
 
 def _construct_state(kinbase: Kinbase, roots: ProofRoots, world, state: str) -> bool:

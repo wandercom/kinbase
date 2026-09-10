@@ -1,5 +1,5 @@
 {
-  "control_rows": 450,
+  "control_rows": 456,
   "obligation_count": 112,
   "obligations": [
     {
@@ -12878,6 +12878,11 @@
       "negatives": [
         {
           "benign": {
+            "destinations": [
+              "codebase",
+              "company"
+            ],
+            "independent_receipts": true,
             "receipts": [
               {
                 "destination": "present",
@@ -12893,6 +12898,11 @@
           "expected_failing_tag": "every:receipts",
           "kind": "every",
           "payload": {
+            "destinations": [
+              "codebase",
+              "company"
+            ],
+            "independent_receipts": true,
             "receipts": [
               {
                 "destination": "present",
@@ -12904,6 +12914,83 @@
             ]
           },
           "tag": "every:receipts"
+        },
+        {
+          "benign": {
+            "destinations": [
+              "codebase",
+              "company"
+            ],
+            "independent_receipts": true,
+            "receipts": [
+              {
+                "destination": "present",
+                "state": "committed"
+              },
+              {
+                "destination": "present",
+                "state": "committed"
+              }
+            ],
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "equals:destinations",
+          "kind": "equals",
+          "payload": {
+            "destinations": "['codebase', 'company']-mutated",
+            "independent_receipts": true,
+            "receipts": [
+              {
+                "destination": "present",
+                "state": "committed"
+              },
+              {
+                "destination": "present",
+                "state": "committed"
+              }
+            ]
+          },
+          "tag": "equals:destinations"
+        },
+        {
+          "benign": {
+            "destinations": [
+              "codebase",
+              "company"
+            ],
+            "independent_receipts": true,
+            "receipts": [
+              {
+                "destination": "present",
+                "state": "committed"
+              },
+              {
+                "destination": "present",
+                "state": "committed"
+              }
+            ],
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:independent_receipts",
+          "kind": "is_true",
+          "payload": {
+            "destinations": [
+              "codebase",
+              "company"
+            ],
+            "independent_receipts": false,
+            "receipts": [
+              {
+                "destination": "present",
+                "state": "committed"
+              },
+              {
+                "destination": "present",
+                "state": "committed"
+              }
+            ]
+          },
+          "tag": "is_true:independent_receipts"
         }
       ],
       "nodes": [
@@ -12911,6 +12998,11 @@
       ],
       "oid": "V-2.no-cross-store",
       "positive": {
+        "destinations": [
+          "codebase",
+          "company"
+        ],
+        "independent_receipts": true,
         "receipts": [
           {
             "destination": "present",
@@ -14818,84 +14910,166 @@
       "negatives": [
         {
           "benign": {
-            "candidate_count": 1.25,
-            "candidates": [
-              {
-                "candidate_id": "present",
-                "hard_block_respected": true,
-                "taint_cleared": false
-              }
-            ],
+            "admission_count": 2,
+            "admitted_canary_occurrences": 0,
+            "all_committed": true,
             "deidentify_retains_taint": true,
+            "destinations": [
+              "codebase",
+              "personal"
+            ],
+            "private_taint_present": true,
             "unrelated_additional_field": "must not trip the checker"
           },
-          "expected_failing_tag": "at_least:candidate_count",
-          "kind": "at_least",
+          "expected_failing_tag": "equals:admission_count",
+          "kind": "equals",
           "payload": {
-            "candidate_count": 0.999999,
-            "candidates": [
-              {
-                "candidate_id": "present",
-                "hard_block_respected": true,
-                "taint_cleared": false
-              }
+            "admission_count": "2-mutated",
+            "admitted_canary_occurrences": 0,
+            "all_committed": true,
+            "deidentify_retains_taint": true,
+            "destinations": [
+              "codebase",
+              "personal"
             ],
-            "deidentify_retains_taint": true
+            "private_taint_present": true
           },
-          "tag": "at_least:candidate_count"
+          "tag": "equals:admission_count"
         },
         {
           "benign": {
-            "candidate_count": 1.0,
-            "candidates": [
-              {
-                "candidate_id": "present",
-                "hard_block_respected": true,
-                "taint_cleared": false
-              }
-            ],
+            "admission_count": 2,
+            "admitted_canary_occurrences": 0,
+            "all_committed": true,
             "deidentify_retains_taint": true,
+            "destinations": [
+              "codebase",
+              "personal"
+            ],
+            "private_taint_present": true,
             "unrelated_additional_field": "must not trip the checker"
           },
-          "expected_failing_tag": "every:candidates",
-          "kind": "every",
+          "expected_failing_tag": "equals:destinations",
+          "kind": "equals",
           "payload": {
-            "candidate_count": 1.0,
-            "candidates": [
-              {
-                "hard_block_respected": true,
-                "taint_cleared": false
-              }
-            ],
-            "deidentify_retains_taint": true
+            "admission_count": 2,
+            "admitted_canary_occurrences": 0,
+            "all_committed": true,
+            "deidentify_retains_taint": true,
+            "destinations": "['codebase', 'personal']-mutated",
+            "private_taint_present": true
           },
-          "tag": "every:candidates"
+          "tag": "equals:destinations"
         },
         {
           "benign": {
-            "candidate_count": 1.0,
-            "candidates": [
-              {
-                "candidate_id": "present",
-                "hard_block_respected": true,
-                "taint_cleared": false
-              }
-            ],
+            "admission_count": 2,
+            "admitted_canary_occurrences": 0,
+            "all_committed": true,
             "deidentify_retains_taint": true,
+            "destinations": [
+              "codebase",
+              "personal"
+            ],
+            "private_taint_present": true,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:all_committed",
+          "kind": "is_true",
+          "payload": {
+            "admission_count": 2,
+            "admitted_canary_occurrences": 0,
+            "all_committed": false,
+            "deidentify_retains_taint": true,
+            "destinations": [
+              "codebase",
+              "personal"
+            ],
+            "private_taint_present": true
+          },
+          "tag": "is_true:all_committed"
+        },
+        {
+          "benign": {
+            "admission_count": 2,
+            "admitted_canary_occurrences": 0,
+            "all_committed": true,
+            "deidentify_retains_taint": true,
+            "destinations": [
+              "codebase",
+              "personal"
+            ],
+            "private_taint_present": true,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "equals:admitted_canary_occurrences",
+          "kind": "equals",
+          "payload": {
+            "admission_count": 2,
+            "admitted_canary_occurrences": "0-mutated",
+            "all_committed": true,
+            "deidentify_retains_taint": true,
+            "destinations": [
+              "codebase",
+              "personal"
+            ],
+            "private_taint_present": true
+          },
+          "tag": "equals:admitted_canary_occurrences"
+        },
+        {
+          "benign": {
+            "admission_count": 2,
+            "admitted_canary_occurrences": 0,
+            "all_committed": true,
+            "deidentify_retains_taint": true,
+            "destinations": [
+              "codebase",
+              "personal"
+            ],
+            "private_taint_present": true,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:private_taint_present",
+          "kind": "is_true",
+          "payload": {
+            "admission_count": 2,
+            "admitted_canary_occurrences": 0,
+            "all_committed": true,
+            "deidentify_retains_taint": true,
+            "destinations": [
+              "codebase",
+              "personal"
+            ],
+            "private_taint_present": false
+          },
+          "tag": "is_true:private_taint_present"
+        },
+        {
+          "benign": {
+            "admission_count": 2,
+            "admitted_canary_occurrences": 0,
+            "all_committed": true,
+            "deidentify_retains_taint": true,
+            "destinations": [
+              "codebase",
+              "personal"
+            ],
+            "private_taint_present": true,
             "unrelated_additional_field": "must not trip the checker"
           },
           "expected_failing_tag": "is_true:deidentify_retains_taint",
           "kind": "is_true",
           "payload": {
-            "candidate_count": 1.0,
-            "candidates": [
-              {
-                "candidate_id": "present",
-                "hard_block_respected": true,
-                "taint_cleared": false
-              }
+            "admission_count": 2,
+            "admitted_canary_occurrences": 0,
+            "all_committed": true,
+            "deidentify_retains_taint": false,
+            "destinations": [
+              "codebase",
+              "personal"
             ],
-            "deidentify_retains_taint": false
+            "private_taint_present": true
           },
           "tag": "is_true:deidentify_retains_taint"
         }
@@ -14905,15 +15079,15 @@
       ],
       "oid": "V-3.taint",
       "positive": {
-        "candidate_count": 1.0,
-        "candidates": [
-          {
-            "candidate_id": "present",
-            "hard_block_respected": true,
-            "taint_cleared": false
-          }
+        "admission_count": 2,
+        "admitted_canary_occurrences": 0,
+        "all_committed": true,
+        "deidentify_retains_taint": true,
+        "destinations": [
+          "codebase",
+          "personal"
         ],
-        "deidentify_retains_taint": true
+        "private_taint_present": true
       },
       "product_mutations": [
         "v3.clear_taint_after_deidentification"
@@ -24234,6 +24408,7 @@
             "decisions_match": true,
             "facts_match": true,
             "hosts_observed": 2,
+            "projections_match": true,
             "receipts_match": true,
             "unrelated_additional_field": "must not trip the checker"
           },
@@ -24246,6 +24421,7 @@
             "decisions_match": true,
             "facts_match": true,
             "hosts_observed": "2-mutated",
+            "projections_match": true,
             "receipts_match": true
           },
           "tag": "equals:hosts_observed"
@@ -24259,6 +24435,7 @@
             "decisions_match": true,
             "facts_match": true,
             "hosts_observed": 2,
+            "projections_match": true,
             "receipts_match": true,
             "unrelated_additional_field": "must not trip the checker"
           },
@@ -24269,6 +24446,7 @@
             "decisions_match": true,
             "facts_match": true,
             "hosts_observed": 2,
+            "projections_match": true,
             "receipts_match": true
           },
           "tag": "nonempty:canonical_facts"
@@ -24281,6 +24459,7 @@
             "decisions_match": true,
             "facts_match": true,
             "hosts_observed": 2,
+            "projections_match": true,
             "receipts_match": true,
             "unrelated_additional_field": "must not trip the checker"
           },
@@ -24293,6 +24472,7 @@
             "decisions_match": true,
             "facts_match": false,
             "hosts_observed": 2,
+            "projections_match": true,
             "receipts_match": true
           },
           "tag": "is_true:facts_match"
@@ -24305,6 +24485,7 @@
             "decisions_match": true,
             "facts_match": true,
             "hosts_observed": 2,
+            "projections_match": true,
             "receipts_match": true,
             "unrelated_additional_field": "must not trip the checker"
           },
@@ -24317,6 +24498,7 @@
             "decisions_match": false,
             "facts_match": true,
             "hosts_observed": 2,
+            "projections_match": true,
             "receipts_match": true
           },
           "tag": "is_true:decisions_match"
@@ -24329,6 +24511,7 @@
             "decisions_match": true,
             "facts_match": true,
             "hosts_observed": 2,
+            "projections_match": true,
             "receipts_match": true,
             "unrelated_additional_field": "must not trip the checker"
           },
@@ -24341,9 +24524,36 @@
             "decisions_match": true,
             "facts_match": true,
             "hosts_observed": 2,
+            "projections_match": true,
             "receipts_match": false
           },
           "tag": "is_true:receipts_match"
+        },
+        {
+          "benign": {
+            "canonical_facts": [
+              "element-0"
+            ],
+            "decisions_match": true,
+            "facts_match": true,
+            "hosts_observed": 2,
+            "projections_match": true,
+            "receipts_match": true,
+            "unrelated_additional_field": "must not trip the checker"
+          },
+          "expected_failing_tag": "is_true:projections_match",
+          "kind": "is_true",
+          "payload": {
+            "canonical_facts": [
+              "element-0"
+            ],
+            "decisions_match": true,
+            "facts_match": true,
+            "hosts_observed": 2,
+            "projections_match": false,
+            "receipts_match": true
+          },
+          "tag": "is_true:projections_match"
         }
       ],
       "nodes": [
@@ -24357,6 +24567,7 @@
         "decisions_match": true,
         "facts_match": true,
         "hosts_observed": 2,
+        "projections_match": true,
         "receipts_match": true
       },
       "product_mutations": []

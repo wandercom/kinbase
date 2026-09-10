@@ -34,7 +34,7 @@ from ._harness import synth
 from ._harness import obligations as O
 from ._harness import prereq, scanners, service, trust
 from ._harness.cli import Kinbase
-from ._harness.admission import audit
+from ._harness.admission import audit, required_rows, private_atoms, admitted_documents
 from ._harness.evidence import sanitised_report_claims_are_qualified
 from ._harness.evidence_model import (
     Origin,
@@ -406,24 +406,29 @@ def test_hard_blocking_taint_is_never_cleared_by_deidentification(
     session = start_session(kinbase, world.repo.path)
     corpus.write_text(
         json.dumps({"id": session, "role": "user",
-                    "text": "hard blocking marker " + canary
-                            + " and a general scheduling constraint",
+                    "text": "The scheduler must use bounded retries (private marker " + canary + ").",
                     "observed_at": synth.receipt_stamp(),
                     "source_kind": "codex_jsonl"}) + "\n",
         encoding="utf-8",
     )
-    _run(kinbase, "session", "observe", session, "--event", str(corpus),
-         "--json", cwd=world.repo.path)
-    payload = audit(kinbase, world.repo.path, session)
-    candidates = rows(payload, "candidates")
+    observed = _run(kinbase, "session", "observe", session, "--event", str(corpus),
+                    "--json", cwd=world.repo.path).ok().json
+    admissions = required_rows(observed, "admissions")
+    documents = admitted_documents(kinbase, world.repo.path, admissions)
+    before = private_atoms(kinbase, session)
+    kinbase.run("session", "checkpoint", session, "--json", cwd=world.repo.path).ok()
+    after = private_atoms(kinbase, session)
+    taints_before = {row["atom_id"]: row["taints"] for row in before}
+    taints_after = {row["atom_id"]: row["taints"] for row in after}
     O.check(
         "V-3.taint",
-        {
-            "candidate_count": len(candidates),
-            "candidates": candidates,
-            "deidentify_retains_taint": field(payload, "deidentify_retains_taint"),
-        },
-        label="hard-blocking taint survives de-identification",
+        {"admission_count": len(admissions),
+         "destinations": sorted(row["destination"].split(":")[0] for row in admissions),
+         "all_committed": bool(admissions) and all(row.get("state") == "committed" for row in admissions),
+         "admitted_canary_occurrences": sum(canary in json.dumps(row) for row in documents + admissions),
+         "private_taint_present": bool(before) and any(row["taints"] for row in before),
+         "deidentify_retains_taint": bool(taints_before) and taints_before == taints_after},
+        label="de-identified admissions exclude the canary while private provenance taint survives",
     )
 
 
