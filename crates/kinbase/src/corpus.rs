@@ -861,6 +861,7 @@ fn derived_fact_as_event(fact: &Value) -> Option<AdmittedEvent> {
         standing: crate::model::default_standing_pub(),
         provenance: crate::model::default_provenance_pub(),
         governs_paths: Vec::new(),
+        anchors: Vec::new(),
         unresolved_uncertainty: None,
         signer: String::new(),
         signature: String::new(),

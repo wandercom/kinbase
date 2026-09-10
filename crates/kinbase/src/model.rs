@@ -182,6 +182,114 @@ pub fn default_provenance_pub() -> String {
     default_provenance()
 }
 
+/// A location in the code that evidence can point at.
+///
+/// The unit of association is not a file but a span, because "the retry policy" is
+/// twelve lines inside a 900-line module and the twelve lines are what a PR, a
+/// ticket and a Slack thread are all actually talking about. `revision` pins which
+/// version of the file the span was taken from, so an anchor stays checkable after
+/// the lines move.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CodeAnchor {
+    pub path: String,
+    pub line_start: u32,
+    pub line_end: u32,
+    /// Commit the span was read at; an anchor without one is a guess.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+    /// Digest of the exact bytes of the span at `revision`, so drift is detectable
+    /// rather than silently assumed away when the file changes underneath.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span_sha256: Option<String>,
+}
+
+/// Where a reference to a code span came from.
+///
+/// Independence is what makes a reference worth counting. Five mentions of the same
+/// span inside one pull request are one opinion; a ticket, a PR and a design
+/// document that independently point at it are three.
+pub const REFERENCE_ORIGINS: [&str; 7] = [
+    "pull_request",
+    "issue_tracker", // Linear, Jira
+    "chat_thread",   // Slack
+    "document",      // ADR, design doc, gdoc
+    "commit",
+    "conversation", // an agent session transcript
+    "authority",    // a named human answering directly
+];
+
+/// One recorded link between a subject and a span of code.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Association {
+    /// The concept, component, or keyword being linked.
+    pub subject: String,
+    pub anchor: CodeAnchor,
+    /// One of `REFERENCE_ORIGINS`.
+    pub origin: String,
+    /// Identifier of the referring artifact: PR number, ticket key, thread ts.
+    pub origin_id: String,
+    /// One of `PROVENANCE`, for the referring artifact -- not for the code.
+    pub provenance: String,
+    pub observed_at: String,
+}
+
+/// How much one reference contributes to an association's strength.
+///
+/// Weighted by provenance for the same reason standing is: if an agent opens forty
+/// pull requests that all mention a span, that is one prompt echoed forty times,
+/// not forty independent judgments that the span matters. A human writing a ticket
+/// about it is worth more than an agent's commit message mentioning it in passing.
+pub fn reference_weight(origin: &str, provenance: &str) -> u32 {
+    let origin_weight = match origin {
+        "authority" => 8,
+        "document" => 5,
+        "issue_tracker" => 4,
+        "pull_request" => 3,
+        "chat_thread" => 2,
+        "commit" => 2,
+        _ => 1,
+    };
+    let provenance_factor = match provenance {
+        "human" => 4,
+        "human_review" => 2,
+        "unknown" => 1,
+        // An agent referring to a span is evidence the span exists, and almost no
+        // evidence that it matters.
+        "ai_generated" | "bot" => 0,
+        _ => 1,
+    };
+    origin_weight * provenance_factor
+}
+
+/// Strength of an association across everything that references it.
+///
+/// Two properties this must have. Independent origins count for more than repeats:
+/// three different kinds of artifact pointing at one span is a much stronger signal
+/// than three of the same kind, so distinct origins multiply. And repeats within a
+/// single origin saturate, because a thread with sixty messages about one function
+/// is one conversation, not sixty.
+pub fn association_strength(references: &[Association]) -> u32 {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut per_origin: BTreeMap<&str, u32> = BTreeMap::new();
+    let mut seen: BTreeSet<(&str, &str)> = BTreeSet::new();
+    for reference in references {
+        // One artifact contributes once, however many times it mentions the span.
+        if !seen.insert((reference.origin.as_str(), reference.origin_id.as_str())) {
+            continue;
+        }
+        let weight = reference_weight(&reference.origin, &reference.provenance);
+        let entry = per_origin.entry(reference.origin.as_str()).or_insert(0);
+        // Saturating within an origin: the second and later artifacts of the same
+        // kind add progressively less.
+        *entry += if *entry == 0 { weight } else { weight / 2 };
+    }
+    let distinct = per_origin.values().filter(|value| **value > 0).count() as u32;
+    let total: u32 = per_origin.values().sum();
+    // Breadth multiplies; a span that a ticket, a PR and a document all point at
+    // beats a span mentioned in three tickets.
+    total * distinct.max(1)
+}
+
 fn default_standing() -> String {
     "present".to_owned()
 }
@@ -484,6 +592,10 @@ pub struct FactEvent {
     /// retiring wander/" outweighs wander/ having the most commits.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub governs_paths: Vec<String>,
+    /// Spans of code this fact is about. An `interface` or `exemplar` fact is
+    /// meaningless without one: "use this struct" has to say which lines.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<CodeAnchor>,
     #[serde(default)]
     pub unresolved_uncertainty: Option<String>,
     pub signer: String,
@@ -539,6 +651,10 @@ pub struct UnknownEvent {
     /// retiring wander/" outweighs wander/ having the most commits.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub governs_paths: Vec<String>,
+    /// Spans of code this fact is about. An `interface` or `exemplar` fact is
+    /// meaningless without one: "use this struct" has to say which lines.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<CodeAnchor>,
     #[serde(default)]
     pub unresolved_uncertainty: Option<String>,
     pub decision_blocked: String,
@@ -862,6 +978,7 @@ impl UnknownEvent {
             standing: default_standing_pub(),
             provenance: default_provenance_pub(),
             governs_paths: Vec::new(),
+            anchors: Vec::new(),
             unresolved_uncertainty: Some(question.to_owned()),
             decision_blocked: decision_blocked.to_owned(),
             owner_role: owner_role.to_owned(),
@@ -922,5 +1039,71 @@ pub fn default_loss(atom_kind: &str) -> u16 {
         "reference" => 6_000,
         "claim" => 4_500,
         _ => 3_000,
+    }
+}
+
+#[cfg(test)]
+mod association_tests {
+    use super::*;
+
+    fn reference(origin: &str, id: &str, provenance: &str) -> Association {
+        Association {
+            subject: "retry policy".to_owned(),
+            anchor: CodeAnchor {
+                path: "src/retry.rs".to_owned(),
+                line_start: 40,
+                line_end: 52,
+                revision: None,
+                span_sha256: None,
+            },
+            origin: origin.to_owned(),
+            origin_id: id.to_owned(),
+            provenance: provenance.to_owned(),
+            observed_at: "2026-09-10T00:00:00.000Z".to_owned(),
+        }
+    }
+
+    #[test]
+    fn breadth_beats_repetition() {
+        let broad = [
+            reference("issue_tracker", "WAN-1", "human"),
+            reference("pull_request", "42", "human"),
+            reference("document", "adr-7", "human"),
+        ];
+        let deep = [
+            reference("issue_tracker", "WAN-1", "human"),
+            reference("issue_tracker", "WAN-2", "human"),
+            reference("issue_tracker", "WAN-3", "human"),
+        ];
+        assert!(association_strength(&broad) > association_strength(&deep));
+    }
+
+    #[test]
+    fn agent_references_do_not_manufacture_strength() {
+        let mut agent = Vec::new();
+        for index in 0..40 {
+            agent.push(reference(
+                "pull_request",
+                &index.to_string(),
+                "ai_generated",
+            ));
+        }
+        let one_human = [reference("chat_thread", "T1", "human")];
+        assert_eq!(association_strength(&agent), 0);
+        assert!(association_strength(&one_human) > 0);
+    }
+
+    #[test]
+    fn one_artifact_counts_once_however_often_it_mentions_the_span() {
+        let repeated = [
+            reference("chat_thread", "T1", "human"),
+            reference("chat_thread", "T1", "human"),
+            reference("chat_thread", "T1", "human"),
+        ];
+        let single = [reference("chat_thread", "T1", "human")];
+        assert_eq!(
+            association_strength(&repeated),
+            association_strength(&single)
+        );
     }
 }

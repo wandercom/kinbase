@@ -155,7 +155,91 @@ pub struct CurrentView {
 
 /// Authority rank inside one store. Higher wins a cross-rank conflict; a
 /// same-rank disagreement is a conflict, never a vote.
+/// Which paths a ruling governs, and how hard it demotes what lives under them.
+///
+/// The problem: `wander/` has more commits than any other repository at Wander and
+/// is being retired. Every one of those commits is real evidence that code exists
+/// and what it does. None of it is evidence that anyone still wants it. Outranking
+/// that crowd one comparison at a time is not enough -- a `directional` fact scoped
+/// to a path has to reach down and mark the evidence underneath it stale, or the
+/// crowd keeps winning by being a crowd.
+#[derive(Debug, Default, Clone)]
+pub struct Governance {
+    /// (path prefix, standing of the fact that governs it, id of that fact)
+    rules: Vec<(String, String, String)>,
+}
+
+impl Governance {
+    /// Collect governing facts. Only kinds that express direction govern: a
+    /// `north_star` says where we are going, `directional` says what to move
+    /// toward, `invariant` says what may not move. An `observation` about a path
+    /// governs nothing, however authoritative its source.
+    pub fn build<'a>(events: impl Iterator<Item = &'a FactEvent>) -> Self {
+        let mut rules = Vec::new();
+        for event in events {
+            if event.governs_paths.is_empty() {
+                continue;
+            }
+            if !matches!(
+                event.atom_kind.as_str(),
+                "north_star" | "directional" | "invariant"
+            ) {
+                continue;
+            }
+            let standing = crate::model::effective_standing(&event.standing, &event.provenance);
+            for path in &event.governs_paths {
+                rules.push((path.clone(), standing.clone(), event.fact_id.clone()));
+            }
+        }
+        Self { rules }
+    }
+
+    /// True when this event's evidence sits under a governed path.
+    fn governing_rule(&self, event: &FactEvent) -> Option<&(String, String, String)> {
+        self.rules.iter().find(|(path, _, fact_id)| {
+            // A ruling never demotes itself, and never demotes a sibling ruling
+            // from the same fact.
+            *fact_id != event.fact_id
+                && (event.scope.contains(path.as_str())
+                    || event
+                        .evidence_refs
+                        .iter()
+                        .any(|reference| reference.contains(path.as_str())))
+        })
+    }
+
+    /// The standing this event actually carries once governance is applied.
+    ///
+    /// Demotion is one-directional: a ruling can only weaken evidence beneath it,
+    /// never promote it. Evidence that already outranks the ruling is untouched,
+    /// because a `ratified` decision inside a deprecated directory is still a
+    /// decision -- what is stale is the ambient code around it, not every fact
+    /// that happens to live there.
+    pub fn standing_for(&self, event: &FactEvent) -> String {
+        let own = crate::model::effective_standing(&event.standing, &event.provenance);
+        let Some((_, governing, _)) = self.governing_rule(event) else {
+            return own;
+        };
+        if crate::model::outranks(governing, &own) {
+            // Governed and weaker: this is ambient evidence under a path someone
+            // has ruled on. It survives as `present` -- still retrievable, no
+            // longer a signal about direction.
+            "present".to_owned()
+        } else {
+            own
+        }
+    }
+}
+
 pub fn authority_rank(event: &FactEvent, origin_trust: Option<&str>) -> u8 {
+    authority_rank_governed(event, origin_trust, None)
+}
+
+pub fn authority_rank_governed(
+    event: &FactEvent,
+    origin_trust: Option<&str>,
+    governance: Option<&Governance>,
+) -> u8 {
     // A declared standing dominates where the fact happens to live. This is what
     // lets "we are retiring wander/" outweigh wander/ having more commits than any
     // other repository: volume produces `present` evidence, a ruling produces
@@ -163,7 +247,10 @@ pub fn authority_rank(event: &FactEvent, origin_trust: Option<&str>) -> u8 {
     //
     // Provenance is applied first, so a pattern an agent wrote forty times cannot
     // claim `prevalent` and feed itself back as direction.
-    let standing = crate::model::effective_standing(&event.standing, &event.provenance);
+    let standing = match governance {
+        Some(governance) => governance.standing_for(event),
+        None => crate::model::effective_standing(&event.standing, &event.provenance),
+    };
     match standing.as_str() {
         "authoritative" => return 12,
         "ratified" => return 11,
@@ -249,6 +336,12 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
     let bump = |counts: &mut BTreeMap<String, usize>, name: &str| {
         *counts.entry(name.to_owned()).or_insert(0) += 1;
     };
+
+    // Rulings are collected before anything is ranked, so a directional fact can
+    // demote the ambient evidence under the paths it governs rather than merely
+    // outrank it one comparison at a time.
+    let governance = Governance::build(input.events.iter().map(|admitted| &admitted.event));
+    let governance = Some(&governance);
 
     // Deterministic iteration: store cursor, then event ID.
     let mut ordered: Vec<&AdmittedEvent> = input.events.iter().collect();
@@ -383,7 +476,9 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 continue;
             }
             let trust = admitted.origin_trust.as_deref();
-            if authority_rank(event, trust) == 0 || admitted.reachable == Some(false) {
+            if authority_rank_governed(event, trust, governance) == 0
+                || admitted.reachable == Some(false)
+            {
                 untrusted_branch.push(event.event_id.clone());
                 trace.rejected.push(json!({"event_id": event.event_id, "step": 1, "reason": "UNTRUSTED_BRANCH: origin trust below merged-default or unreachable from the default lineage; ineligible for trusted durable direction"}));
                 bump(&mut counts, "untrusted_branch");
@@ -419,7 +514,8 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             // never resolves a conflict, and an unauthorized one leaves the
             // heads in place and survives only as ordinary lower evidence.
             if event.parents.len() >= 2 {
-                let new_rank = authority_rank(event, admitted.origin_trust.as_deref());
+                let new_rank =
+                    authority_rank_governed(event, admitted.origin_trust.as_deref(), governance);
                 let own_identity = statement_identity(event);
                 let mut unauthorized_disagreement: Vec<String> = Vec::new();
                 for target in &event.parents {
@@ -429,7 +525,11 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                     else {
                         continue;
                     };
-                    let old_rank = authority_rank(&old.event, old.origin_trust.as_deref());
+                    let old_rank = authority_rank_governed(
+                        &old.event,
+                        old.origin_trust.as_deref(),
+                        governance,
+                    );
                     let owns =
                         old_rank <= new_rank && old.event.authority_scope == event.authority_scope;
                     if owns {
@@ -489,8 +589,16 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                         .iter()
                         .find(|candidate| candidate.event.event_id == *target)
                     {
-                        let old_rank = authority_rank(&old.event, old.origin_trust.as_deref());
-                        let new_rank = authority_rank(event, admitted.origin_trust.as_deref());
+                        let old_rank = authority_rank_governed(
+                            &old.event,
+                            old.origin_trust.as_deref(),
+                            governance,
+                        );
+                        let new_rank = authority_rank_governed(
+                            event,
+                            admitted.origin_trust.as_deref(),
+                            governance,
+                        );
                         if new_rank >= old_rank
                             && old.event.authority_scope == event.authority_scope
                         {
@@ -766,7 +874,13 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             };
             let rank = members
                 .iter()
-                .map(|member| authority_rank(&member.event, member.origin_trust.as_deref()))
+                .map(|member| {
+                    authority_rank_governed(
+                        &member.event,
+                        member.origin_trust.as_deref(),
+                        governance,
+                    )
+                })
                 .max()
                 .unwrap_or(0);
             heads.push(Head {
@@ -1743,6 +1857,10 @@ mod packet10_tests {
             company_refs: Vec::new(),
             authority_snapshot_cursor: "0".to_owned(),
             confidence: Bp(8_000),
+            standing: crate::model::default_standing_pub(),
+            provenance: crate::model::default_provenance_pub(),
+            governs_paths: Vec::new(),
+            anchors: Vec::new(),
             unresolved_uncertainty: None,
             signer: if store_kind == "company" {
                 "chief-architect".to_owned()
