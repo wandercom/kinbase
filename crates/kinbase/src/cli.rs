@@ -62,56 +62,9 @@ fn print_error(json: bool, error: &ContractError) {
     }
 }
 
-/// Convert parser refusals to the closed contract.
-///
-/// A proposal that names no candidate is an approval problem (exit 2), not a
-/// generic parser problem. Every other malformed invocation is a configuration
-/// invariant and exits 4 without running a command.
-fn usage_error(args: &[String], _detail: String) -> ContractError {
-    if proposals_names_no_candidate(args) {
-        ContractError::user_action(
-            "APPROVAL_EXPIRED",
-            "no candidate is named",
-            "Create or review a candidate before deciding or showing it.",
-        )
-    } else {
-        ContractError::invariant("malformed command line; no state was changed")
-    }
-}
-
-fn proposals_names_no_candidate(args: &[String]) -> bool {
-    if args.first().map(String::as_str) != Some("proposals") {
-        return false;
-    }
-    if !matches!(
-        args.get(1).map(String::as_str),
-        Some("decide") | Some("show")
-    ) {
-        return false;
-    }
-    if args
-        .windows(2)
-        .any(|window| window[0] == "--destination" && window[1] == "codebase:none")
-    {
-        return true;
-    }
-
-    let rest = &args[2..];
-    let mut index = 0;
-    while index < rest.len() {
-        let arg = rest[index].as_str();
-        if arg == "--json" {
-            index += 1;
-        } else if arg.starts_with("--") {
-            match arg {
-                "--reject" | "--defer" | "--escalate" => index += 1,
-                _ => index += 2,
-            }
-        } else {
-            return false;
-        }
-    }
-    true
+/// Convert malformed invocations to the closed configuration contract.
+fn usage_error(_args: &[String], _detail: String) -> ContractError {
+    ContractError::invariant("malformed command line; no state was changed")
 }
 
 fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
@@ -277,17 +230,11 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         Command::Session(SessionCommand::End { session }) => {
             crate::session::end(&session, json).map_err(internal)?;
         }
-        Command::Proposals(command) => {
-            crate::proposals::dispatch(&launcher, command, json).map_err(internal)?;
-        }
         Command::Questions(command) => {
             crate::questions::dispatch(command, json).map_err(internal)?;
         }
         Command::Hooks(command) => {
             crate::hooks::dispatch(command, json).map_err(internal)?;
-        }
-        Command::Experiment(command) => {
-            crate::experiment::dispatch(command, json).map_err(internal)?;
         }
     }
     Ok(())

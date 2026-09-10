@@ -53,6 +53,10 @@ pub struct SourceRecord {
     pub parents: Vec<String>,
     pub attributes: Map<String, Value>,
     pub origin: String,
+    /// One of `crate::model::PROVENANCE`; caps the standing any fact derived
+    /// from this record may reach. Defaults to `unknown`, which is the honest
+    /// answer for evidence that carries no authorship marker at all.
+    pub provenance: String,
     pub revision: Option<String>,
     pub branch: Option<String>,
     pub raw_expired: bool,
@@ -85,6 +89,7 @@ impl SourceRecord {
             parents: Vec::new(),
             attributes: Map::new(),
             origin: "merged-default".to_owned(),
+            provenance: "unknown".to_owned(),
             revision: None,
             branch: None,
             raw_expired: false,
@@ -893,6 +898,52 @@ struct CommitInfo {
     tree: String,
     author_date: String,
     subject: String,
+    /// One of `crate::model::PROVENANCE`. Decides the ceiling this commit's
+    /// evidence may reach, so that agent-written code cannot enter the ranks
+    /// that mean "this is the direction".
+    provenance: String,
+}
+
+/// Agent markers that actually appear in commit metadata.
+const AGENT_MARKERS: [&str; 7] = [
+    "claude", "codex", "copilot", "cursor", "devin", "aider", "gpt-",
+];
+
+const BOT_MARKERS: [&str; 5] = [
+    "dependabot",
+    "renovate",
+    "github-actions",
+    "[bot]",
+    "semantic-release",
+];
+
+/// Classify a commit's authorship from what git actually records.
+///
+/// This is deliberately conservative in one direction: an unmarked commit is
+/// `unknown`, never `human`. Absence of an agent trailer is not proof a person
+/// wrote it -- most tools leave no marker at all, so any existing repository's
+/// history is largely unrecoverable. Claiming those commits as deliberate human
+/// direction would manufacture exactly the signal this field exists to protect.
+fn commit_provenance(author: &str, email: &str, trailers: &str, subject: &str) -> String {
+    let identity = format!("{author} {email}").to_lowercase();
+    if BOT_MARKERS.iter().any(|marker| identity.contains(marker)) {
+        return "bot".to_owned();
+    }
+    let attributed = format!("{trailers} {subject}").to_lowercase();
+    let agent = AGENT_MARKERS
+        .iter()
+        .any(|marker| attributed.contains(marker) || identity.contains(marker));
+    if !agent {
+        return "unknown".to_owned();
+    }
+    // An agent is named. If a person's identity is on the commit as well, they
+    // reviewed and took ownership of the output; that is weaker than authorship
+    // but stronger than an unattended write.
+    if AGENT_MARKERS.iter().any(|marker| identity.contains(marker)) {
+        "ai_generated".to_owned()
+    } else {
+        "human_review".to_owned()
+    }
 }
 
 fn scan_git_history(repo: &Repository) -> Result<SourceScan, ContractError> {
@@ -900,7 +951,11 @@ fn scan_git_history(repo: &Repository) -> Result<SourceScan, ContractError> {
     let default = repo.default_branch();
     let log = git(
         &repo.root,
-        &["log", "--all", "--format=%H%x00%P%x00%T%x00%aI%x00%s"],
+        &[
+            "log",
+            "--all",
+            "--format=%H%x00%P%x00%T%x00%aI%x00%an%x00%ae%x00%(trailers:key=Co-authored-by,valueonly,separator=%x2C)%x00%s",
+        ],
     )
     .map_err(|error| {
         ContractError::new(
@@ -913,8 +968,8 @@ fn scan_git_history(repo: &Repository) -> Result<SourceScan, ContractError> {
     })?;
     let mut commits = Vec::new();
     for line in log.lines() {
-        let parts: Vec<&str> = line.splitn(5, '\0').collect();
-        if parts.len() < 5 {
+        let parts: Vec<&str> = line.splitn(8, '\0').collect();
+        if parts.len() < 8 {
             continue;
         }
         commits.push(CommitInfo {
@@ -922,7 +977,8 @@ fn scan_git_history(repo: &Repository) -> Result<SourceScan, ContractError> {
             parents: parts[1].split_whitespace().map(str::to_owned).collect(),
             tree: parts[2].to_owned(),
             author_date: parts[3].to_owned(),
-            subject: parts[4].to_owned(),
+            subject: parts[7].to_owned(),
+            provenance: commit_provenance(parts[4], parts[5], parts[6], parts[7]),
         });
     }
     let by_sha: BTreeMap<&str, &CommitInfo> = commits.iter().map(|c| (c.sha.as_str(), c)).collect();
@@ -1031,6 +1087,7 @@ fn scan_git_history(repo: &Repository) -> Result<SourceScan, ContractError> {
         }
         .to_owned();
         record.content = commit.sha.as_bytes().to_vec();
+        record.provenance = commit.provenance.clone();
         record.confidence = 8_000;
         record.asserted_at = crate::time::normalize_foreign_time(&commit.author_date);
         record.origin = if reachable.contains(&commit.sha) {

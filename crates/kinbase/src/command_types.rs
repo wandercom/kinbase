@@ -72,13 +72,9 @@ pub enum Command {
     #[command(subcommand)]
     Session(SessionCommand),
     #[command(subcommand)]
-    Proposals(ProposalCommand),
-    #[command(subcommand)]
     Questions(QuestionCommand),
     #[command(subcommand)]
     Hooks(HookCommand),
-    #[command(subcommand)]
-    Experiment(ExperimentCommand),
 }
 
 #[derive(Debug, Subcommand)]
@@ -151,49 +147,6 @@ pub enum SessionCommand {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum ProposalCommand {
-    List {
-        #[arg(long)]
-        session: String,
-    },
-    Show {
-        #[arg(long)]
-        session: Option<String>,
-        candidate: String,
-        #[arg(long)]
-        destination: String,
-    },
-    Decide {
-        #[arg(long)]
-        session: Option<String>,
-        candidate: String,
-        #[arg(long)]
-        destination: String,
-        #[arg(long)]
-        approve_digest: Option<String>,
-        #[arg(long)]
-        reject: bool,
-        #[arg(long)]
-        defer: bool,
-        #[arg(long)]
-        escalate: bool,
-    },
-    Reissue {
-        #[arg(long)]
-        session: Option<String>,
-        candidate: String,
-    },
-    Reset {
-        #[arg(long)]
-        session: Option<String>,
-        #[arg(long = "after-primary-event")]
-        after_primary_event: String,
-        #[arg(long = "reason-code", value_enum)]
-        reason_code: ResetReason,
-    },
-}
-
-#[derive(Debug, Subcommand)]
 pub enum QuestionCommand {
     List {
         #[arg(long)]
@@ -221,38 +174,6 @@ pub enum HookCommand {
     Dispatch { host: Host, event: String },
 }
 
-#[derive(Debug, Subcommand)]
-pub enum ExperimentCommand {
-    Census {
-        manifest: PathBuf,
-    },
-    Pilot {
-        manifest: PathBuf,
-    },
-    Calibrate {
-        manifest: PathBuf,
-    },
-    Freeze {
-        manifest: PathBuf,
-        #[arg(long)]
-        budget: PathBuf,
-    },
-    Run {
-        frozen_manifest: PathBuf,
-        #[arg(
-            long,
-            help = "Validate admission and append the run census without launching candidates"
-        )]
-        smoke: bool,
-    },
-    Score {
-        run: PathBuf,
-    },
-    Verdict {
-        run: PathBuf,
-    },
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum Host {
     Codex,
@@ -264,11 +185,4 @@ pub enum Store {
     Personal,
     Company,
     Codebase,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum ResetReason {
-    NewPrimaryTask,
-    OperatorRecovery,
-    HostRestart,
 }

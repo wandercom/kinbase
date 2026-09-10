@@ -156,6 +156,27 @@ pub struct CurrentView {
 /// Authority rank inside one store. Higher wins a cross-rank conflict; a
 /// same-rank disagreement is a conflict, never a vote.
 pub fn authority_rank(event: &FactEvent, origin_trust: Option<&str>) -> u8 {
+    // A declared standing dominates where the fact happens to live. This is what
+    // lets "we are retiring wander/" outweigh wander/ having more commits than any
+    // other repository: volume produces `present` evidence, a ruling produces
+    // `ratified`, and the ruling wins without anyone counting.
+    //
+    // Provenance is applied first, so a pattern an agent wrote forty times cannot
+    // claim `prevalent` and feed itself back as direction.
+    let standing = crate::model::effective_standing(&event.standing, &event.provenance);
+    match standing.as_str() {
+        "authoritative" => return 12,
+        "ratified" => return 11,
+        "enforced" => return 10,
+        "exemplary" => return 9,
+        "prevalent" => return 8,
+        // `unruled` is evidence that conflicts with no ruling to settle it. It must
+        // never win a comparison; it exists to be reported and asked about.
+        "unruled" => return 0,
+        // `present` falls through to the store-shaped rank below, which is what
+        // every fact carried before standings existed.
+        _ => {}
+    }
     let scope = event.authority_scope.as_str();
     match event.store_kind.as_str() {
         "company" => {

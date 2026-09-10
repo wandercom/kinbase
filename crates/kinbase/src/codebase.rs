@@ -23,12 +23,7 @@ pub const GIT_ATTRIBUTES: [&str; 2] = [
 ];
 /// Paths Kinbase reserves under `.kin/`; a pinned-Kindex inventory that
 /// collides with one refuses `repo init` (architecture §11).
-pub const RESERVED_PATHS: [&str; 4] = [
-    "config",
-    "events",
-    "manifests",
-    "local/kinbase-index.json",
-];
+pub const RESERVED_PATHS: [&str; 4] = ["config", "events", "manifests", "local/kinbase-index.json"];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RepoConfig {

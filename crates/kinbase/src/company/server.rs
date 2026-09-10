@@ -1015,7 +1015,11 @@ fn facts(
                 "negative"
             } else if matches!(disposition, "retracted" | "withdrawn") {
                 "retracted"
-            } else if trace.steps.iter().any(|step| step.step == 2 && step.event_ids.contains(event_id)) {
+            } else if trace
+                .steps
+                .iter()
+                .any(|step| step.step == 2 && step.event_ids.contains(event_id))
+            {
                 "superseded"
             } else {
                 "withheld"
@@ -1024,7 +1028,9 @@ fn facts(
         }
         for rejected in &trace.rejected {
             if let Some(event_id) = crate::json::get_str(rejected, "event_id") {
-                let reason = crate::json::get_str(rejected, "reason").unwrap_or_default().to_owned();
+                let reason = crate::json::get_str(rejected, "reason")
+                    .unwrap_or_default()
+                    .to_owned();
                 evaluated.push((event_id.to_owned(), "rejected", reason));
             }
         }
@@ -1032,7 +1038,8 @@ fn facts(
             let Some(payload) = payloads.get(&event_id) else {
                 continue;
             };
-            let authority_scope = crate::json::get_str(payload, "authority_scope").unwrap_or_default();
+            let authority_scope =
+                crate::json::get_str(payload, "authority_scope").unwrap_or_default();
             if scope.is_empty() {
                 if !readable.contains(authority_scope) {
                     continue;

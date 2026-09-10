@@ -80,7 +80,7 @@ impl From<u16> for Bp {
 }
 
 /// Closed atom kinds (P-2).
-pub const ATOM_KINDS: [&str; 8] = [
+pub const ATOM_KINDS: [&str; 14] = [
     "claim",
     "question",
     "decision",
@@ -89,7 +89,106 @@ pub const ATOM_KINDS: [&str; 8] = [
     "observation",
     "reference",
     "relaxation",
+    // A brownfield repository contains every pattern anyone ever tried. These
+    // kinds are how a human says which of them is the one to follow.
+    "north_star",  // a document that defines direction; contradicting code is stale
+    "invariant",   // must not change; violating it is an error, not a style opinion
+    "directional", // we are moving toward this; new code must, existing is grandfathered
+    "shrug",       // explicitly nobody's call to make -- never ask about this again
+    "interface",   // a named shape at a code location: struct, signature, return type
+    "exemplar",    // of the several implementations that exist, emulate this one
 ];
+
+/// Truth-value hierarchy, strongest first.
+///
+/// The problem this solves: in a brownfield repository, frequency is not authority.
+/// `wander/` has more commits than any other repository and is being retired. Five
+/// implementations of one thing may exist and none of them be right. Nothing in the
+/// evidence itself says which signal wins, so a rank has to be carried explicitly.
+///
+/// A fact's standing is not how sure the extractor was -- that is `confidence`. It
+/// is how much weight the claim carries when evidence disagrees.
+pub const STANDINGS: [&str; 7] = [
+    "authoritative", // a named authority answered this exact question, in scope
+    "ratified",      // an approved organization decision, within its declared scope
+    "enforced",      // mechanically true right now: CI, types, lint
+    "exemplary",     // a designated canonical implementation
+    "prevalent",     // the majority pattern in merged human-authored code
+    "present",       // it exists somewhere; presence is not endorsement
+    "unruled",       // evidence conflicts and no authority has spoken -- say so, ask
+];
+
+/// How a piece of evidence came to exist.
+///
+/// This gates what standing evidence may reach, and it is the guard against a
+/// feedback loop that would otherwise eat the whole idea: an agent writes forty
+/// files in one pattern, prevalence reports that pattern as the house style, the
+/// next agent reads that as direction and writes more of it. The signal stops
+/// measuring what the company decided and starts measuring what an agent guessed.
+pub const PROVENANCE: [&str; 5] = [
+    "human",        // a person authored it deliberately
+    "human_review", // an agent wrote it, a person reviewed and merged it
+    "ai_generated", // an agent wrote it; no independent human judgment recorded
+    "bot",          // automation: dependabot, codegen, formatters
+    "unknown",      // unlabelled history; most of any existing repository
+];
+
+/// Rank of a standing; lower is stronger. Unknown standings sort last.
+pub fn standing_rank(standing: &str) -> usize {
+    STANDINGS
+        .iter()
+        .position(|value| *value == standing)
+        .unwrap_or(STANDINGS.len())
+}
+
+/// True when `a` wins against `b` on a disagreement.
+pub fn outranks(a: &str, b: &str) -> bool {
+    standing_rank(a) < standing_rank(b)
+}
+
+/// The strongest standing this provenance may reach.
+///
+/// Agent-written code is real evidence that a file exists and what it does. It is
+/// not evidence that anyone chose it, so it can never enter the ranks that mean
+/// "this is the direction". A person reviewing an agent's output approved that
+/// output; they did not thereby set a convention, so `human_review` stops one rank
+/// below `prevalent`.
+pub fn provenance_ceiling(provenance: &str) -> &'static str {
+    match provenance {
+        "human" => "authoritative",
+        "human_review" => "prevalent",
+        "ai_generated" | "bot" => "present",
+        // Unlabelled history is the bulk of any real repository and cannot be
+        // recovered retroactively. It counts as weak evidence, never as direction.
+        _ => "present",
+    }
+}
+
+/// Clamp a claimed standing to what its provenance permits.
+pub fn effective_standing(standing: &str, provenance: &str) -> String {
+    let ceiling = provenance_ceiling(provenance);
+    if standing_rank(standing) < standing_rank(ceiling) {
+        ceiling.to_owned()
+    } else {
+        standing.to_owned()
+    }
+}
+
+pub fn default_standing_pub() -> String {
+    default_standing()
+}
+
+pub fn default_provenance_pub() -> String {
+    default_provenance()
+}
+
+fn default_standing() -> String {
+    "present".to_owned()
+}
+
+fn default_provenance() -> String {
+    "unknown".to_owned()
+}
 
 /// Lifecycle actions expressed as dispositions of FactEvent messages
 /// (interface contract C13).
@@ -373,6 +472,18 @@ pub struct FactEvent {
     pub authority_snapshot_cursor: String,
     #[serde(default = "default_confidence")]
     pub confidence: Bp,
+    /// How much weight this claim carries when evidence disagrees. Distinct from
+    /// `confidence`, which is how sure the extractor was that the claim was made.
+    #[serde(default = "default_standing")]
+    pub standing: String,
+    /// How the underlying evidence came to exist. Caps `standing`.
+    #[serde(default = "default_provenance")]
+    pub provenance: String,
+    /// Paths this fact governs. A `directional` or `north_star` fact scoped to a
+    /// path demotes the weaker evidence found under it, which is how "we are
+    /// retiring wander/" outweighs wander/ having the most commits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub governs_paths: Vec<String>,
     #[serde(default)]
     pub unresolved_uncertainty: Option<String>,
     pub signer: String,
@@ -416,6 +527,18 @@ pub struct UnknownEvent {
     pub authority_snapshot_cursor: String,
     #[serde(default = "default_confidence")]
     pub confidence: Bp,
+    /// How much weight this claim carries when evidence disagrees. Distinct from
+    /// `confidence`, which is how sure the extractor was that the claim was made.
+    #[serde(default = "default_standing")]
+    pub standing: String,
+    /// How the underlying evidence came to exist. Caps `standing`.
+    #[serde(default = "default_provenance")]
+    pub provenance: String,
+    /// Paths this fact governs. A `directional` or `north_star` fact scoped to a
+    /// path demotes the weaker evidence found under it, which is how "we are
+    /// retiring wander/" outweighs wander/ having the most commits.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub governs_paths: Vec<String>,
     #[serde(default)]
     pub unresolved_uncertainty: Option<String>,
     pub decision_blocked: String,
@@ -736,6 +859,9 @@ impl UnknownEvent {
             company_refs: Vec::new(),
             authority_snapshot_cursor: cursor.to_owned(),
             confidence: Bp(0),
+            standing: default_standing_pub(),
+            provenance: default_provenance_pub(),
+            governs_paths: Vec::new(),
             unresolved_uncertainty: Some(question.to_owned()),
             decision_blocked: decision_blocked.to_owned(),
             owner_role: owner_role.to_owned(),

@@ -2555,7 +2555,7 @@ pub fn status(
 ) -> Result<(), ContractError> {
     // Overdue apologies close under the exclusive lock before this report
     // takes its shared read of the destination.
-    crate::proposals::emit_due_orphan_abandonments(&launcher, repo_path)?;
+    crate::session::emit_due_orphan_abandonments(&launcher, repo_path)?;
     // Read one consistent destination generation: the shared admission lock
     // is held for the whole report so it never straddles a writer's journal
     // transition (writers advance between reads, never under one).
@@ -2989,7 +2989,7 @@ pub fn status(
             // the saga's own state for the orphaned claim (withdrawn) and the
             // unresponsive closing authority; the fan-out saga owns that fact.
             if let Some(Value::Object(saga)) =
-                crate::proposals::saga_terminal_event_fields(&event.event_id)
+                crate::session::saga_terminal_event_fields(&event.event_id)
             {
                 for (key, value) in saga {
                     record[key] = value;
@@ -3266,7 +3266,7 @@ pub fn status(
                 .count()
         })
         .unwrap_or(0)
-        .max(crate::proposals::pending_orphan_count(repo_path));
+        .max(crate::session::pending_orphan_count(repo_path));
     let mut origin_trust_classes: BTreeMap<&str, usize> = BTreeMap::new();
     for event in &events {
         *origin_trust_classes
@@ -3357,7 +3357,7 @@ pub fn status(
         "company_references": references,
         "observation_status": if event_records.iter().any(|e| crate::json::get_str(e, "atom_kind") == Some("observation_expired")) { "historical-only" } else { "current" },
         "pending_orphans": pending_orphans,
-        "journal_state": crate::proposals::inflight_journal_state(repo_path),
+        "journal_state": crate::session::inflight_journal_state(repo_path),
         "query_log": query_log,
         "privacy_claim": PRIVACY_CLAIM,
         "threat_model": "kinbase-atm/1",
@@ -3885,46 +3885,7 @@ pub fn doctor(
     } else {
         crate::private::PrivateStore::open_memory("core")?
     };
-    let shard = core.budget_shard(launcher.principal_id(), launcher.host_instance_id(), &now)?;
-    let shard_id = format!(
-        "shard_{}",
-        &crate::hash::sha256_text(&format!(
-            "{}\0{}",
-            launcher.principal_id(),
-            launcher.host_instance_id()
-        ))[..24]
-    );
-    let signed_shard = match launcher.shared.company.as_ref().map(|c| c.client_key()) {
-        Some(Ok(key)) => key.sign_document("receipt", &json!({"schema": "kinbase-prompt-budget-shard/1", "shard_id": shard_id, "observed_at": now, "shard": shard})).ok(),
-        _ => {
-            let key = crate::crypto::PrivateKey::load_or_generate(&crate::private::state_dir().join("host-instance.key"), "host instance key")?;
-            key.sign_document("receipt", &json!({"schema": "kinbase-prompt-budget-shard/1", "shard_id": shard_id, "observed_at": now, "shard": shard})).ok()
-        }
-    };
-    // A diagnostic signs and shows the shard; it records nothing.
     let sweep = core.sweep(&now)?;
-    let metrics = shard.get("metrics").cloned().unwrap_or(Value::Null);
-    let reserved = metrics.get("reserved").and_then(Value::as_i64).unwrap_or(0);
-    let rendered_count = metrics.get("rendered").and_then(Value::as_i64).unwrap_or(0);
-    let suppressed_count = metrics
-        .get("suppressed")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-    let lost = metrics
-        .get("delivery_loss")
-        .and_then(Value::as_i64)
-        .unwrap_or(0);
-    let prompt_budget_shard = json!({
-        "principal_id": launcher.principal_id(),
-        "host_instance_id": launcher.host_instance_id(),
-        "reserved": reserved,
-        "rendered": rendered_count,
-        "suppressed": suppressed_count,
-        "delivery_loss": lost,
-        "reserved_in_window": shard.get("reserved_in_window").cloned().unwrap_or(Value::from(0)),
-        "consecutive": shard.get("consecutive").cloned().unwrap_or(Value::from(0)),
-        "warning": "no global cross-machine prompt total is known; this shard covers exactly one (principal_id, host_instance_id)"
-    });
     // C9: doctor reports HOOK_APPROVAL_REQUIRED for every host whose
     // user-level config lacks the planned entries. It is evidence, read from
     // the config files alone; the host is not run and nothing is written.
@@ -4029,14 +3990,6 @@ pub fn doctor(
         "host_versions": {"codex": crate::hooks::host_version("codex"), "claude": crate::hooks::host_version("claude"), "supported_ranges": launcher.shared.hosts},
         "hooks": hooks,
         "hooks_approval_required": hooks_approval_required,
-        "prompt_budget_shard": prompt_budget_shard,
-        "budget_shard": {"shard_id": shard_id, "signed": signed_shard.is_some(), "signature": signed_shard.as_ref().and_then(|s| s.get("signature").cloned()), "shard": shard},
-        "unknown_global_total_warning": true,
-        "hourly_prompts_consumed": shard.get("reserved_in_window").cloned().unwrap_or(Value::from(0)),
-        "consecutive_prompts": shard.get("consecutive").cloned().unwrap_or(Value::from(0)),
-        "reservations_held_after_crash": shard.get("reserved_in_window").cloned().unwrap_or(Value::from(0)),
-        "delivery_loss_rate": if reserved > 0 { format!("{}/{}", lost, reserved) } else { "0/0".to_owned() },
-        "low_authority_displaced_high_distortion": crate::proposals::low_authority_displaced_high_distortion(),
         "sweep": sweep,
         "sandbox": sandbox,
         "cache_clocks": cache_clocks,

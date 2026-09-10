@@ -362,7 +362,7 @@ pub(crate) fn ensure_question(
 ) -> Result<Option<String>, ContractError> {
     let authority = match resolve_owner_authority(repo, unknown) {
         Ok(authority) => authority,
-        Err(error) if error.code == "UNKNOWN_OWNER_UNRESOLVED" => return Ok(None),
+        Err(error) if error.code == "UNKNOWN_OWNER_UNRESOLVED" => Value::Null,
         Err(error) => return Err(error),
     };
     let authority_scope = authority
@@ -383,13 +383,22 @@ pub(crate) fn ensure_question(
             unknown.unknown_id, decision, unknown.question
         ))[..40]
     );
-    if let Some(existing) = latest_questions(repo).get(&question_id) {
-        return Ok(existing
-            .get("question_id")
-            .and_then(Value::as_str)
-            .map(str::to_owned));
+    let existing = latest_questions(repo).get(&question_id).cloned();
+    if let Some(existing) = &existing {
+        // A registry repair may supply the missing owner. Preserve answered
+        // questions and delivery state; only unresolved ownership is retried.
+        if existing.get("status").and_then(Value::as_str) != Some("awaiting_authority")
+            || authority.is_null()
+        {
+            return Ok(Some(question_id));
+        }
     }
-    if find_unknown(&unknown.unknown_id).is_err() {
+    if !company_records_with_repo(repo, "unknowns.jsonl")
+        .iter()
+        .any(|record| {
+            record.get("fact_id").and_then(Value::as_str) == Some(unknown.unknown_id.as_str())
+        })
+    {
         persist_unknown(repo, unknown, &authority_id)?;
     }
     let now = now_rfc3339_millis();
@@ -421,8 +430,8 @@ pub(crate) fn ensure_question(
         "logical_key": unknown.logical_key,
         "question_kind": question_kind,
         "channel": authority.get("channel").cloned().unwrap_or(Value::Null),
-        "status": "open",
-        "created_at": now,
+        "status": if authority.is_null() { "awaiting_authority" } else { "open" },
+        "created_at": existing.as_ref().and_then(|value| value.get("created_at")).cloned().unwrap_or_else(|| Value::String(now.clone())),
         "response_due_at": response_due_at,
         "expiry_policy": "block_dependent_decision"
     });
@@ -456,7 +465,8 @@ fn persist_unknown(
         "0",
     );
     event.fact_id = unknown.unknown_id.clone();
-    event.event_id = format!("{}:closure", unknown.unknown_id);
+    event.event_id = format!("{}:open", unknown.unknown_id);
+    event.evidence_refs = unknown.evidence.clone();
     let (private_path, _) = crate::crypto::ensure_keypair(crate::StoreKind::Company, repo)?;
     let private_key =
         crate::crypto::PrivateKey::load_or_generate(&private_path, "local Company Unknown key")?;
@@ -466,7 +476,7 @@ fn persist_unknown(
 
 fn ask(question_id: &str, json: bool) -> Result<(), ContractError> {
     let repo = repo()?;
-    let question = find_question(question_id)?;
+    let mut question = find_question(question_id)?;
     let scope = question
         .get("scope")
         .and_then(Value::as_str)
@@ -476,6 +486,18 @@ fn ask(question_id: &str, json: bool) -> Result<(), ContractError> {
         .and_then(Value::as_str)
         .unwrap_or("general");
     let authority = active_authority_with_repo(&repo, scope, question_kind)?;
+    if question.get("status").and_then(Value::as_str) == Some("awaiting_authority") {
+        question["authority_id"] = authority
+            .get("authority_id")
+            .cloned()
+            .unwrap_or(Value::Null);
+        question["owner_identity"] = question["authority_id"].clone();
+        question["authority_scope"] = authority.get("scope").cloned().unwrap_or(Value::Null);
+        question["scope"] = question["authority_scope"].clone();
+        question["channel"] = authority.get("channel").cloned().unwrap_or(Value::Null);
+        question["status"] = Value::String("open".to_owned());
+        append_company(&repo, "questions.jsonl", &question)?;
+    }
     let channel = authority
         .get("channel")
         .and_then(Value::as_str)
@@ -981,6 +1003,9 @@ fn write_authority_fact(
         signer: authority_id.to_owned(),
         signature: String::new(),
         raw: None,
+        standing: "authoritative".to_owned(),
+        provenance: "human".to_owned(),
+        governs_paths: Vec::new(),
     };
     let (private_path, _) = crate::crypto::ensure_keypair(crate::StoreKind::Company, repo)?;
     let private_key =
