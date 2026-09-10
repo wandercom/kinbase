@@ -1550,6 +1550,23 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
         .map(|unknown| unknown.fact_id.as_str())
         .collect();
     unknowns.retain(|unknown| !closed_unknown_ids.contains(unknown.unknown_id.as_str()));
+
+    // `shrug` is a ruling that no ruling is wanted. It is the difference between a
+    // tool that asks a question once and one that becomes 472 hoops: without it,
+    // every ambiguity nobody cares about resurfaces on every session, forever.
+    //
+    // Distinct from `unruled`, which means nobody has decided yet and must keep
+    // asking. A shrug is somebody deciding, and it is honoured wherever the question
+    // came from -- filtering here rather than at each of the six derivation sites,
+    // because the rule is about the key, not about how the doubt arose.
+    let shrugged: BTreeSet<&str> = facts
+        .iter()
+        .filter(|fact| fact.atom_kind == "shrug" && fact.status == "current")
+        .map(|fact| fact.logical_key.as_str())
+        .collect();
+    if !shrugged.is_empty() {
+        unknowns.retain(|unknown| !shrugged.contains(unknown.logical_key.as_str()));
+    }
     let mut open_unknown_ids = Vec::new();
     for unknown in &input.unknowns {
         if unknown.status == "open" || unknown.status == "asked" {

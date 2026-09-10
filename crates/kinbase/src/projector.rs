@@ -224,7 +224,16 @@ pub fn run(
         .collect();
     let open_unknowns: Vec<_> = unknowns
         .iter()
-        .filter(|unknown| unknown.status == "open" || unknown.status == "asked")
+        .filter(|unknown| {
+            unknown.status == "open"
+                || unknown.status == "asked"
+                // A conflict whose scope has no registered authority carries
+                // UNKNOWN_OWNER_UNRESOLVED rather than "open". Excluding it here is
+                // how contested keys went silent: the absence of an owner became the
+                // reason nobody was ever asked to become one. It is still an open
+                // question -- it is the question of who should answer it.
+                || (unknown.status == "UNKNOWN_OWNER_UNRESOLVED" && unknown.kind == "conflict")
+        })
         .cloned()
         .collect();
     // Low-distortion Unknowns are represented, but only a high-distortion
@@ -369,9 +378,22 @@ pub fn run(
             })
             .collect();
         let mut raised = None;
+        // A contested key always asks, whatever its computed loss.
+        //
+        // The loss threshold is right for uncertainty that might not matter: do not
+        // interrupt a person over a gap the projection can live without. A conflict
+        // is the opposite case. Two incompatible statements are both being carried,
+        // and every session that reads this key will pick one by accident until
+        // somebody rules. "Which of these five implementations?" is the question the
+        // loop exists to ask, and it is worth a minute of an architect's time even
+        // when the individual fact looks cheap.
+        //
+        // This holds especially when no authority is registered for the scope: that
+        // unknown carries UNKNOWN_OWNER_UNRESOLVED, and suppressing it would make
+        // the absence of an owner the reason nobody is ever asked to become one.
         for unknown in open_unknowns
             .iter()
-            .filter(|unknown| unknown.loss_if_absent >= 7_000)
+            .filter(|unknown| unknown.loss_if_absent >= 7_000 || unknown.kind == "conflict")
         {
             if let Some(id) =
                 crate::questions::ensure_question(repo, unknown, decision, &evidence, &remaining)?
