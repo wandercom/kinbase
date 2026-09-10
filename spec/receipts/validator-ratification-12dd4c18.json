@@ -1,0 +1,13 @@
+{
+ "schema": "kinbase-ratification-receipt/1",
+ "actor": "Claude (Opus 5), Validator seat",
+ "actor_kind": "ai-validator",
+ "action": "record-renamed-specification",
+ "manifest_path": "spec/ratification-manifest.json",
+ "manifest_sha256": "12dd4c18aaca12c29cc816ca4a5161b5e011814f021879897b88b0e6e85168dd",
+ "supersedes_manifest_sha256": "ac8a13d184397fef574e173b81466ff43e6b3f91f89804c7ee797cc404a622db",
+ "observed_at": "2026-09-10T00:40:05Z",
+ "statement": "I recomputed the six authority-artifact digests after the rename; five moved (product, architecture, threat-model, verification, cli) and source-request did not, because it never named the project. The substitution was a single case-preserving word mapping applied identically to the product, the specification and the acceptance suite. Symmetry is the argument that it preserves semantics; the judged run is the proof.",
+ "authority_effect": "Records the Validator's recomputation. Certification independence is not established: the Validator authored product code from 2026-09-08 by founder direction.",
+ "provenance": "Validator computation over the working tree; no external cryptographic signature is claimed."
+}

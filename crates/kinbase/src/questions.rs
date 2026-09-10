@@ -400,7 +400,7 @@ pub(crate) fn ensure_question(
         &crate::hash::sha256_text(&format!("{question_id}\0{decision}"))[..32]
     );
     let record = json!({
-        "schema": "guildhall-question/1",
+        "schema": "kinbase-question/1",
         "question_id": question_id,
         "task_id": task_id,
         "unknown_id": unknown.unknown_id,
@@ -495,7 +495,7 @@ fn ask(question_id: &str, json: bool) -> Result<(), ContractError> {
         let status = reply.status;
         let digest = crate::hash::sha256_bytes(reply.body.as_slice());
         let receipt = json!({
-            "schema": "guildhall-question-receipt/1",
+            "schema": "kinbase-question-receipt/1",
             "question_id": question.get("question_id").cloned().unwrap_or(Value::Null),
             "task_id": question.get("task_id").cloned().unwrap_or(Value::Null),
             "channel": channel,
@@ -527,7 +527,7 @@ fn ask(question_id: &str, json: bool) -> Result<(), ContractError> {
     } else {
         let outbox = write_signed_outbox(&repo, &question, &body)?;
         let receipt = json!({
-            "schema": "guildhall-question-receipt/1",
+            "schema": "kinbase-question-receipt/1",
             "question_id": question.get("question_id").cloned().unwrap_or(Value::Null),
             "task_id": question.get("task_id").cloned().unwrap_or(Value::Null),
             "channel": channel,
@@ -566,7 +566,7 @@ fn write_signed_outbox(
         crate::crypto::PrivateKey::load_or_generate(&private_path, "local question delivery key")?;
     let signature = private_key.sign("question", canonical_bytes(body).as_slice())?;
     let document = json!({
-        "schema": "guildhall-question-delivery/1",
+        "schema": "kinbase-question-delivery/1",
         "body": body,
         "signature": signature
     });
@@ -852,7 +852,7 @@ fn answer(
         Sha256::digest(format!("{scope}\0{answer_text}\0{answer_id}").as_bytes())
     );
     let answer_record = json!({
-        "schema": "guildhall-answer/1",
+        "schema": "kinbase-answer/1",
         "answer_id": answer_id,
         "event_id": event_id,
         "question_id": question.get("question_id").cloned().unwrap_or(Value::Null),

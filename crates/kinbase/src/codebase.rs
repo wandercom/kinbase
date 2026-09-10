@@ -14,20 +14,20 @@ use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-pub const REPO_CONFIG_SCHEMA: &str = "guildhall-repo/1";
+pub const REPO_CONFIG_SCHEMA: &str = "kinbase-repo/1";
 pub const EVENT_CEILING: usize = 10_000;
 pub const BYTES_CEILING: u64 = 128 * 1024 * 1024;
 pub const GIT_ATTRIBUTES: [&str; 2] = [
     ".kin/events/** -text -diff -merge",
     ".kin/manifests/** -text -diff -merge",
 ];
-/// Paths Guildhall reserves under `.kin/`; a pinned-Kindex inventory that
+/// Paths Kinbase reserves under `.kin/`; a pinned-Kindex inventory that
 /// collides with one refuses `repo init` (architecture §11).
 pub const RESERVED_PATHS: [&str; 4] = [
     "config",
     "events",
     "manifests",
-    "local/guildhall-index.json",
+    "local/kinbase-index.json",
 ];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -295,7 +295,7 @@ impl Repository {
     /// resolved from `.git` the way Git itself records them (a `.git` file
     /// names the worktree's gitdir, whose `commondir` file names the common
     /// directory). Returns `None` when the path is not an initialized
-    /// Guildhall repository, so uninitialized worktrees are never locked.
+    /// Kinbase repository, so uninitialized worktrees are never locked.
     pub fn shared_generation_lock(path: &Path) -> Result<Option<AdmissionLock>, ContractError> {
         let start = if path.is_absolute() {
             path.to_path_buf()
@@ -692,10 +692,10 @@ impl Repository {
     ) -> Result<AdmissionLock, ContractError> {
         let path = self
             .common_dir
-            .join(format!("guildhall-{repository_uuid}.lock"));
+            .join(format!("kinbase-{repository_uuid}.lock"));
         let turnstile_path = self
             .common_dir
-            .join(format!("guildhall-{repository_uuid}.turnstile.lock"));
+            .join(format!("kinbase-{repository_uuid}.turnstile.lock"));
         let open = |path: &Path| {
             std::fs::OpenOptions::new()
                 .create(true)
@@ -712,7 +712,7 @@ impl Repository {
             .and_then(|config| config.local_policy.get("admission_lock_timeout_seconds"))
             .and_then(|value| value.parse::<u64>().ok())
             .or_else(|| {
-                std::env::var("GUILDHALL_ADMISSION_LOCK_TIMEOUT_SECONDS")
+                std::env::var("KINBASE_ADMISSION_LOCK_TIMEOUT_SECONDS")
                     .ok()
                     .and_then(|value| value.parse().ok())
             });
@@ -881,7 +881,7 @@ impl Repository {
         paths::ensure_private_dir(&staging, "staging")?;
         let staged = staging.join(format!("{digest}.json"));
         let mut entry = json!({
-            "schema": "guildhall-journal/1",
+            "schema": "kinbase-journal/1",
             "generation": generation,
             "repository_uuid": repository_uuid,
             "digest": digest,
@@ -1084,18 +1084,18 @@ impl Repository {
         Ok(replayed)
     }
 
-    /// The reducer-owned compatibility cache `.kin/local/guildhall-index.json`
+    /// The reducer-owned compatibility cache `.kin/local/kinbase-index.json`
     /// (a sorted list of event digests and byte counts).
     pub fn update_index_cache(&self) -> Result<(), ContractError> {
         let files = self.stored_events()?;
         let index = index_value(&files);
-        let path = self.local_dir().join("guildhall-index.json");
+        let path = self.local_dir().join("kinbase-index.json");
         paths::write_atomic(&path, &crate::json::canonical_bytes(&index), 0o600, false)?;
         Ok(())
     }
 
     pub fn index_cache_matches(&self) -> Result<Option<bool>, ContractError> {
-        let path = self.local_dir().join("guildhall-index.json");
+        let path = self.local_dir().join("kinbase-index.json");
         if !path.exists() {
             return Ok(None);
         }
@@ -1191,7 +1191,7 @@ impl Repository {
 
     /// Where this repository's worktrees register the manifests they publish.
     pub fn lineage_register_dir(&self) -> PathBuf {
-        self.common_dir.join("guildhall").join("manifests")
+        self.common_dir.join("kinbase").join("manifests")
     }
 
     /// Manifests known to this repository's lineage: those stored in this
@@ -1326,7 +1326,7 @@ fn stored_files(root: &Path) -> Result<Vec<StoredFile>, ContractError> {
 
 fn index_value(files: &[StoredFile]) -> Value {
     json!({
-        "schema": "guildhall-index/1",
+        "schema": "kinbase-index/1",
         "event_count": files.len(),
         "events": files.iter().map(|file| json!({"digest": file.digest, "bytes": file.bytes.len()})).collect::<Vec<_>>()
     })

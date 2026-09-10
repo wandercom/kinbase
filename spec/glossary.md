@@ -19,7 +19,7 @@ Status: candidate. Authority: product and architecture specifications.
   or projector.
 - **Codebase**: repository-scoped Kindex product whose shared events travel in Git
   under `.kin/`.
-- **Company**: organization-wide knowledge authority exposed by Guildhall.
+- **Company**: organization-wide knowledge authority exposed by Kinbase.
 - **Corpus Builder**: schema-blind role that deterministically seals historical
   Company/Codebase snapshots for the whole candidate-revision census before learning
   tasks, ground truth, eligibility, arms, or scores.
@@ -52,20 +52,20 @@ Status: candidate. Authority: product and architecture specifications.
 - **F1**: harmonic mean of precision and recall for a classification label.
 - **Full system**: experimental arm using maintained corpus, temporal/authority
   reduction, Unknown loop, and set-conditional selection.
-- **Null system**: full Guildhall host/hook/tool/policy/timing machinery with an empty
+- **Null system**: full Kinbase host/hook/tool/policy/timing machinery with an empty
   corpus, empty projection, and typed empty authority response; it falsifies benefit
   attributable only to integration scaffolding.
 - **Static prior**: one small task-independent generic conventions document with no
   maintained store, retrieval, temporal logic, or authority loop; it controls the
   cheapest constant-context explanation.
-- **Guildhall**: the Company-memory service and client implemented in this repository.
+- **Kinbase**: the Company-memory service and client implemented in this repository.
 - **Kindex**: the existing local persistent knowledge-graph package in `../kindex`;
-  Guildhall integrates it rather than redefining every graph operation.
+  Kinbase integrates it rather than redefining every graph operation.
 - **Oracle-spec**: fully informed experimental comparator containing exactly the
   pre-change authoritative load-bearing facts, not an accepted patch or hidden test.
 - **Oracle Curator**: schema-blind role that freezes the repository-history census,
   neutral pre-change fact-only comparator, authority replies, and load-bearing labels
-  without seeing Guildhall design or candidate outputs.
+  without seeing Kinbase design or candidate outputs.
 - **Personal**: principal-private Kindex product, never mounted into coding queries.
 - **Logical key**: stable fact subject within one authority scope whose surviving
   immutable event heads are reduced into a current fact or conflict.

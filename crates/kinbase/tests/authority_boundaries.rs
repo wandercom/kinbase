@@ -35,7 +35,7 @@ fn repo_config_round_trips_and_fails_closed() {
     local_policy.insert("admission_lock_timeout_seconds".to_owned(), "30".to_owned());
     local_policy.insert("retention_policy".to_owned(), "seven-days".to_owned());
     let config = RepoConfig {
-        schema_version: "guildhall-repo/1".to_owned(),
+        schema_version: "kinbase-repo/1".to_owned(),
         repository_uuid_hint: "01234567-89ab-cdef-0123-456789abcdef".to_owned(),
         safe_name: "boundary-repo".to_owned(),
         domains: vec!["architecture".to_owned(), "runtime".to_owned()],
@@ -46,12 +46,12 @@ fn repo_config_round_trips_and_fails_closed() {
     assert_eq!(parsed, config);
 
     let malformed = [
-        r##"schema_version = "guildhall-repo/1"
+        r##"schema_version = "kinbase-repo/1"
 repository_uuid_hint = "01234567-89ab-cdef-0123-456789abcdef"
 safe_name = "boundary-repo"
 domains = [1]
 "##,
-        r##"schema_version = "guildhall-repo/1"
+        r##"schema_version = "kinbase-repo/1"
 repository_uuid_hint = "01234567-89ab-cdef-0123-456789abcdef"
 safe_name = "boundary-repo"
 domains = ["architecture"]
@@ -59,13 +59,13 @@ domains = ["architecture"]
 [local_policy]
 retention = 7
 "##,
-        r##"schema_version = "guildhall-repo/1"
+        r##"schema_version = "kinbase-repo/1"
 repository_uuid_hint = "01234567-89ab-cdef-0123-456789abcdef"
 safe_name = "boundary-repo"
 unknown_root = "cannot introduce trust"
 domains = ["architecture"]
 "##,
-        r##"schema_version = "guildhall-repo/1"
+        r##"schema_version = "kinbase-repo/1"
 repository_uuid_hint = "01234567-89ab-cdef-0123-456789abcdef"
 safe_name = "boundary-repo"
 "##,
@@ -82,7 +82,7 @@ fn destination_nonce_is_unique_and_matching_retry_reads_stored_receipt() {
     let temp = TempDir::new().expect("temporary Company directory");
     let db = CompanyDb::open(&temp.path().join("company.sqlite")).expect("open Company database");
     let receipt =
-        json!({"schema": "guildhall-receipt/1", "destination": "company", "status": "reserved"});
+        json!({"schema": "kinbase-receipt/1", "destination": "company", "status": "reserved"});
     let inserted = db
         .connection
         .execute(
@@ -153,7 +153,7 @@ fn codebase_receipt_is_bound_to_repository_and_destination() {
     let repository = init_git_repository(&temp.path().join("repository"));
     let uuid = "01234567-89ab-cdef-0123-456789abcdef";
     let canonical =
-        canonical_bytes(&json!({"schema": "guildhall-event/1", "event_id": "evt-boundary"}));
+        canonical_bytes(&json!({"schema": "kinbase-event/1", "event_id": "evt-boundary"}));
     let receipt = repository
         .admit_event(uuid, &canonical, "fact-event", Value::Null)
         .expect("admit codebase event");
@@ -222,7 +222,7 @@ fn write_journal_state(
         fs::write(
             &receipt_path,
             canonical_bytes(&json!({
-                "schema": "guildhall-receipt/1",
+                "schema": "kinbase-receipt/1",
                 "destination": format!("codebase:{repository_uuid}"),
                 "repository_uuid": repository_uuid,
                 "status": "committed",
@@ -232,7 +232,7 @@ fn write_journal_state(
         .expect("write receipt");
     }
     let entry = json!({
-        "schema": "guildhall-journal/1",
+        "schema": "kinbase-journal/1",
         "generation": generation,
         "repository_uuid": repository_uuid,
         "digest": digest,

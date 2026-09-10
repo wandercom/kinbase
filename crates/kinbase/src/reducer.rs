@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const REDUCER_VERSION: &str = "guildhall-reducer/2";
+pub const REDUCER_VERSION: &str = "kinbase-reducer/2";
 /// Transient evidence (draft/proposed/incident/experiment/workaround)
 /// without a declared lifetime expires this long after it became effective.
 pub const DEFAULT_TRANSIENT_LIFETIME_SECONDS: i64 = 7 * 24 * 60 * 60;

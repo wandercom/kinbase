@@ -1,4 +1,4 @@
-//! `guildhalld` SQLite state (architecture §6 "Company / Guildhall"): an
+//! `kinbased` SQLite state (architecture §6 "Company / Kinbase"): an
 //! append-only event table with a monotonic cursor, authority registry,
 //! directory, questions/answers/Unknowns, consumed nonces, tokens with
 //! first-use client-key binding, throttles, certificates, manifest

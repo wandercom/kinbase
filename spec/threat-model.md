@@ -1,4 +1,4 @@
-# Acceptance Threat Model — Guildhall proving ground
+# Acceptance Threat Model — Kinbase proving ground
 
 Status: **candidate for review and exact-byte ratification**
 
@@ -11,7 +11,7 @@ allowed to make an evidence claim.
 The only permitted passing claim is:
 
 > Zero observed unauthorized durable disclosure outside the authorized processor
-> boundary under Acceptance Threat Model `guildhall-atm/1`, identified by its exact
+> boundary under Acceptance Threat Model `kinbase-atm/1`, identified by its exact
 > SHA-256 digest, across the frozen execution census.
 
 That is not a claim of universal confidentiality or a zero population rate. It means
@@ -67,7 +67,7 @@ That authorization covers only bytes the user submitted to that host in the curr
 session and benchmark repository bytes whose provider-transmission rights are bound
 in the task manifest. It never covers historical Personal-store recall, secrets,
 canary registries, hidden tests, or Company bodies not already authorized for that
-host. Guildhall may not send any such bytes to a separate classifier provider merely
+host. Kinbase may not send any such bytes to a separate classifier provider merely
 because the host has a provider relationship.
 
 Private-message classification therefore uses a local model, or the already
@@ -101,7 +101,7 @@ The acceptance adversary may:
   promotion boundary.
 
 The application boundary does not claim to stop a compromised kernel, root, a user
-who deliberately copies approved Personal content outside Guildhall, or an arbitrary
+who deliberately copies approved Personal content outside Kinbase, or an arbitrary
 same-UID process from reading user-readable files. The acceptance claim still
 requires the promotion gates to reject protected bytes obtained by that process.
 Production identity, hardware key custody, remote service compromise, traffic
@@ -222,7 +222,7 @@ interpretation. Any mechanically positive recovery is an immediate product failu
 
 The private run evidence root and incident vault obey
 [`verification.md`](verification.md) retention and withdrawal rules. The sanitized
-report names `guildhall-atm/1` and its digest, lists every executed family/control/
+report names `kinbase-atm/1` and its digest, lists every executed family/control/
 mutation and surface, preserves disagreements and adjudication receipts, and uses
 the qualified claim verbatim. It never says merely “privacy proved” or “zero
 leakage.”

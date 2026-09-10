@@ -1,14 +1,14 @@
-# Guildhall proving ground
+# Kinbase proving ground
 
-Guildhall is the company-memory member of a three-product Kindex system:
+Kinbase is the company-memory member of a three-product Kindex system:
 
 - **Kindex Personal** remembers private conversations and personal context.
-- **Guildhall / Kindex Company** carries organization-wide architectural and
+- **Kinbase / Kindex Company** carries organization-wide architectural and
   operational knowledge into every authorized coding task.
 - **Kindex Codebase** carries repository-specific knowledge in Git under `.kin/`.
 
 A coding agent dropped into an unfamiliar repository lacks the constraints and
-rationale a long-tenured engineer carries. Guildhall captures that context from
+rationale a long-tenured engineer carries. Kinbase captures that context from
 conversations, code, Git, tests, operations, and named authorities; keeps it current;
 and supplies the smallest decision-relevant set without copying private notes into
 Company or repository state.

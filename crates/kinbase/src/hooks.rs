@@ -138,7 +138,7 @@ fn version_in_range(version: &str, range: &str) -> bool {
 fn current_program() -> String {
     std::env::current_exe()
         .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| "guildhall".to_owned())
+        .unwrap_or_else(|_| "kinbase".to_owned())
 }
 
 fn shell_quote(value: &str) -> String {
@@ -156,7 +156,7 @@ struct ScratchHome {
 impl ScratchHome {
     fn create() -> Result<Self, ContractError> {
         let root = std::env::temp_dir().join(format!(
-            "guildhall-host-probe-{}-{}",
+            "kinbase-host-probe-{}-{}",
             std::process::id(),
             &crate::crypto::random_token()[..16]
         ));
@@ -173,7 +173,7 @@ impl ScratchHome {
             .env("XDG_CACHE_HOME", self.root.join("cache"))
             .env("CODEX_HOME", self.root.join(".codex"))
             .env("CLAUDE_CONFIG_DIR", self.root.join(".claude"))
-            .env_remove("GUILDHALL_COMPANY_URL")
+            .env_remove("KINBASE_COMPANY_URL")
             .stdin(std::process::Stdio::null());
     }
 }
@@ -514,8 +514,8 @@ fn dispatch_event(
                 && let Ok(config) = crate::codebase::RepoConfig::parse(&text)
             {
                 canonical_facts.push(json!({
-                    "schema": "guildhall-repository/1",
-                    "logical_key": "guildhall/repository-identity",
+                    "schema": "kinbase-repository/1",
+                    "logical_key": "kinbase/repository-identity",
                     "atom_kind": "observation",
                     "state": "current",
                     "schema_version": config.schema_version,

@@ -82,13 +82,13 @@ impl Client {
                 "Authorization".to_owned(),
                 format!("Bearer {}", self.token.token),
             ),
-            ("X-Guildhall-Nonce".to_owned(), nonce),
-            ("X-Guildhall-Expires-At".to_owned(), expires_at),
+            ("X-Kinbase-Nonce".to_owned(), nonce),
+            ("X-Kinbase-Expires-At".to_owned(), expires_at),
             (
-                "X-Guildhall-Client-Key".to_owned(),
+                "X-Kinbase-Client-Key".to_owned(),
                 self.key.public().to_hex(),
             ),
-            ("X-Guildhall-Signature".to_owned(), signature),
+            ("X-Kinbase-Signature".to_owned(), signature),
         ];
         self.bytes_sent
             .set(self.bytes_sent.get() + body_bytes.len() as u64 + 256);
@@ -319,8 +319,8 @@ pub fn deliver_to_channel(
     let bytes = crate::json::canonical_bytes(body);
     let signature = key.sign("question", &bytes)?;
     let headers = vec![
-        ("X-Guildhall-Client-Key".to_owned(), key.public().to_hex()),
-        ("X-Guildhall-Signature".to_owned(), signature),
+        ("X-Kinbase-Client-Key".to_owned(), key.public().to_hex()),
+        ("X-Kinbase-Signature".to_owned(), signature),
     ];
     let path = if path.is_empty() {
         "/".to_owned()

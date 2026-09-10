@@ -1338,7 +1338,7 @@ fn classifier_fingerprint(
             }
         ),
         None => {
-            let executable = std::env::current_exe().unwrap_or_else(|_| "guildhall".into());
+            let executable = std::env::current_exe().unwrap_or_else(|_| "kinbase".into());
             let digest = std::fs::read(&executable)
                 .map(|bytes| sha256_bytes(&bytes))
                 .unwrap_or_default();
@@ -1449,8 +1449,8 @@ fn build_candidate(
         "destination": destination,
         "canonical": canonical,
         "payload_digest": payload_digest,
-        "principal": std::env::var("GUILDHALL_PRINCIPAL").unwrap_or_else(|_| "local-user".to_owned()),
-        "host_instance_id": std::env::var("GUILDHALL_HOST_INSTANCE").unwrap_or_else(|_| "local-host".to_owned()),
+        "principal": std::env::var("KINBASE_PRINCIPAL").unwrap_or_else(|_| "local-user".to_owned()),
+        "host_instance_id": std::env::var("KINBASE_HOST_INSTANCE").unwrap_or_else(|_| "local-host".to_owned()),
         "source_revision": crate::repository::git_revision(&repo).unwrap_or_default(),
         "created_at": now_rfc3339_millis(),
         "expires_at": format_rfc3339_millis(Utc::now() + Duration::seconds(900)),
@@ -1632,7 +1632,7 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
             continue;
         }
         let fact = json!({
-            "schema": "guildhall-personal-fact/1",
+            "schema": "kinbase-personal-fact/1",
             "fact_id": format!("fact_{}", atom.get("atom_id").and_then(Value::as_str).unwrap_or_default()),
             "logical_key": format!("logical_{}", atom.get("atom_id").and_then(Value::as_str).unwrap_or_default()),
             "session_id": session,

@@ -2,7 +2,7 @@
 //!
 //! `PrivateStore` is one SQLite database under a mode-0700 directory that is
 //! never inside a worktree: the Personal data root when a user config
-//! exists, otherwise `${XDG_STATE_HOME:-~/.local/state}/guildhall`. It holds
+//! exists, otherwise `${XDG_STATE_HOME:-~/.local/state}/kinbase`. It holds
 //! raw private provenance under retention, session runs, candidates,
 //! decisions, receipts, and the serialized prompt-budget shard. No shared
 //! process ever receives its path.
@@ -33,7 +33,7 @@ pub fn state_dir() -> PathBuf {
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| paths::home_dir().join(".local").join("state"))
-        .join("guildhall")
+        .join("kinbase")
 }
 
 fn sqlite_error(context: &str) -> impl Fn(rusqlite::Error) -> ContractError + '_ {
@@ -44,14 +44,14 @@ impl PrivateStore {
     /// Open the Personal store under `data_root` (mode 0700 enforced).
     pub fn open_personal(data_root: &Path) -> Result<Self, ContractError> {
         paths::ensure_private_dir(data_root, "Personal data root")?;
-        Self::open_at(data_root, "guildhall-personal.sqlite3", "personal")
+        Self::open_at(data_root, "kinbase-personal.sqlite3", "personal")
     }
 
     /// Open the host-wide Core store (prompt budget, session runs in
     /// Codebase-only mode).
     pub fn open_core() -> Result<Self, ContractError> {
         let root = state_dir();
-        paths::ensure_private_dir(&root, "Guildhall state directory")?;
+        paths::ensure_private_dir(&root, "Kinbase state directory")?;
         Self::open_at(&root, "core.sqlite3", "core")
     }
 

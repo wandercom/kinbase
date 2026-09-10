@@ -1,5 +1,5 @@
 //! Ed25519 signing with domain separation (architecture §3): every signer
-//! signs `SHA-256("guildhall-sig/1" || 0x00 || message_type || 0x00 ||
+//! signs `SHA-256("kinbase-sig/1" || 0x00 || message_type || 0x00 ||
 //! jcs_bytes)` and `message_type` is one closed enum. Keys are held in
 //! memory; verification never writes a key to a temporary file. Wire
 //! encoding (Validator addendum): public keys are 64-hex, signatures are
@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 
-pub const SIGNING_DOMAIN: &str = "guildhall-sig/1";
+pub const SIGNING_DOMAIN: &str = "kinbase-sig/1";
 pub const MESSAGE_TYPES: [&str; 12] = [
     "fact-event",
     "unknown-event",
@@ -137,7 +137,7 @@ impl PrivateKey {
         Self::from_seed_text(&text)
     }
 
-    /// Load from an already-open descriptor number (`GUILDHALL_*_FD`), the
+    /// Load from an already-open descriptor number (`KINBASE_*_FD`), the
     /// keychain/descriptor supply path of architecture §6.
     pub fn load_fd(fd: i32, role: &str) -> Result<Self, ContractError> {
         use std::io::Read;

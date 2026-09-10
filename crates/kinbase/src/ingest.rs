@@ -718,7 +718,7 @@ fn read_source(source_kind: &str, source: &Path) -> Result<Vec<u8>, ContractErro
                         .and_then(|value| value.as_object().cloned())
                 })
                 .is_some_and(|map| {
-                    map.get("schema").and_then(Value::as_str) == Some("guildhall-command-result/1")
+                    map.get("schema").and_then(Value::as_str) == Some("kinbase-command-result/1")
                         || map.get("command").is_some_and(Value::is_array)
                         || map.get("stdout").is_some_and(Value::is_string)
                 })

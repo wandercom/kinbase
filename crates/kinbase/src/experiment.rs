@@ -118,7 +118,7 @@ fn census(manifest_path: &Path, json: bool) -> Result<(), ContractError> {
         deterministic_draw(&eligible, requested, public_seed)
     };
     let result = json!({
-        "schema": "guildhall-experiment-census/1",
+        "schema": "kinbase-experiment-census/1",
         "status": "census-complete",
         "manifest_digest": digest_input(manifest_path)?,
         "human_bytes_after_freeze": 0,
@@ -246,7 +246,7 @@ fn pilot(manifest_path: &Path, json: bool) -> Result<(), ContractError> {
         )
         .collect();
     let result = json!({
-        "schema": "guildhall-experiment-pilot/1",
+        "schema": "kinbase-experiment-pilot/1",
         "status": "pilot-complete",
         "census_digest": digest_value(&census),
         "task_count": tasks.len(),
@@ -296,7 +296,7 @@ fn calibrate(manifest_path: &Path, json: bool) -> Result<(), ContractError> {
         return Err(invariant("detector controls do not meet the frozen bounds"));
     }
     let result = json!({
-        "schema": "guildhall-experiment-calibration/1",
+        "schema": "kinbase-experiment-calibration/1",
         "status": "calibrated",
         "scorer_digests": calibration.get("scorer_digests").cloned().unwrap_or(Value::Null),
         "detector_digest": digest_value(detector),
@@ -358,7 +358,7 @@ fn freeze(manifest_path: &Path, budget_path: &Path, json: bool) -> Result<(), Co
         ));
     }
     let frozen = json!({
-        "schema": "guildhall-frozen-experiment/1",
+        "schema": "kinbase-frozen-experiment/1",
         "status": "frozen",
         "frozen": true,
         "manifest_digest": digest_input(manifest_path)?,
@@ -388,7 +388,7 @@ fn freeze(manifest_path: &Path, budget_path: &Path, json: bool) -> Result<(), Co
     let artifact_root = manifest_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .join(".guildhall-experiment-artifacts");
+        .join(".kinbase-experiment-artifacts");
     let relative = crate::paths::sharded_relative(&frozen_digest)?;
     let frozen_artifact_path = artifact_root.join(relative);
     let database_path = manifest_path.with_extension("experiment.sqlite");
@@ -439,7 +439,7 @@ fn freeze(manifest_path: &Path, budget_path: &Path, json: bool) -> Result<(), Co
         .map_err(|error| error)?;
     transaction.commit().map_err(sqlite_error)?;
     let result = json!({
-        "schema": "guildhall-frozen-experiment/1",
+        "schema": "kinbase-frozen-experiment/1",
         "status": "frozen",
         "frozen_manifest": frozen_artifact_path.to_string_lossy(),
         "frozen_manifest_digest": frozen_digest,
@@ -528,7 +528,7 @@ fn run(frozen_path: &Path, smoke: bool, json: bool) -> Result<(), ContractError>
             ExitCode::Refused,
         );
         let document = json!({
-            "schema": "guildhall-experiment-run/1",
+            "schema": "kinbase-experiment-run/1",
             "status": "authority-refused",
             "least_privilege_principal_accepted": false,
             "evaluation_principal": principal,
@@ -546,7 +546,7 @@ fn run(frozen_path: &Path, smoke: bool, json: bool) -> Result<(), ContractError>
             ExitCode::Refused,
         );
         let document = json!({
-            "schema": "guildhall-experiment-run/1",
+            "schema": "kinbase-experiment-run/1",
             "status": "authority-refused",
             "least_privilege_principal_accepted": false,
             "evaluation_principal": principal,
@@ -662,7 +662,7 @@ fn run(frozen_path: &Path, smoke: bool, json: bool) -> Result<(), ContractError>
         }
     }
     let result = json!({
-        "schema": "guildhall-experiment-run/1",
+        "schema": "kinbase-experiment-run/1",
         "status": if smoke { "smoke-admitted" } else { "run-complete" },
         "frozen_manifest": frozen_path.to_string_lossy(),
         "frozen_manifest_digest": frozen_digest,
@@ -717,7 +717,7 @@ fn score(run_path: &Path, json: bool) -> Result<(), ContractError> {
     } else {
         read_json(&run_path.with_extension("run.json"))?
     };
-    if run.get("schema").and_then(Value::as_str) != Some("guildhall-experiment-run/1") {
+    if run.get("schema").and_then(Value::as_str) != Some("kinbase-experiment-run/1") {
         return Err(invariant("score requires a completed run artifact"));
     }
     let run_dir = PathBuf::from(
@@ -732,7 +732,7 @@ fn score(run_path: &Path, json: bool) -> Result<(), ContractError> {
     );
     let frozen = read_json(&frozen_path)?;
     let manifest = required_object(&frozen, "manifest")?;
-    let scorer = checked_executable("GUILDHALL_EXPERIMENT_SCORER", manifest, "scorer_sha256")?;
+    let scorer = checked_executable("KINBASE_EXPERIMENT_SCORER", manifest, "scorer_sha256")?;
     let signer = signing_key(&run_dir)?;
     let candidates = read_json(&run_dir.join("candidates"))?;
     let candidates = candidates.as_array().cloned().unwrap_or_default();
@@ -745,7 +745,7 @@ fn score(run_path: &Path, json: bool) -> Result<(), ContractError> {
         let record = json!({"candidate_id": packet["candidate_id"], "metrics": metrics, "composite": composite});
         append_json_line(&scores_path, &record)?;
     }
-    let result = json!({"schema":"guildhall-experiment-scores/1","status":"scored","run_digest":digest_value(&run),"score_count":candidates.len()});
+    let result = json!({"schema":"kinbase-experiment-scores/1","status":"scored","run_digest":digest_value(&run),"score_count":candidates.len()});
     write_json(&run_dir.join("scored.json"), &result)?;
     print_result(&result, json)
 }
@@ -757,7 +757,7 @@ fn run_result(
     candidate_ids: Vec<String>,
 ) -> Value {
     json!({
-        "schema": "guildhall-experiment-run/1",
+        "schema": "kinbase-experiment-run/1",
         "status": "run-complete",
         "frozen_digest": digest_value(frozen),
         "frozen_manifest": frozen_artifact_path.to_string_lossy(),
@@ -901,7 +901,7 @@ fn verdict(run_path: &Path, json: bool) -> Result<(), ContractError> {
             (_, _) => "INVALID_RUN",
         }
     };
-    let licensed_template = "On the digest-identified task population, repositories, model/provider fingerprint, budgets, authority service, and finite threat model in this run, Guildhall met P-1 through P-9 and raised blinded brownfield quality to the preregistered P-10 equivalence band.";
+    let licensed_template = "On the digest-identified task population, repositories, model/provider fingerprint, budgets, authority service, and finite threat model in this run, Kinbase met P-1 through P-9 and raised blinded brownfield quality to the preregistered P-10 equivalence band.";
     // The interface contract requires the licensed P-10 sentence verbatim in
     // every verdict document.  The terminal verdict remains the separate,
     // binding claim; no unlicensed proof language is added.
@@ -943,7 +943,7 @@ fn verdict(run_path: &Path, json: bool) -> Result<(), ContractError> {
         crate::hash::sha256_text("no-run")
     };
     let result = json!({
-        "schema": "guildhall-experiment-verdict/1",
+        "schema": "kinbase-experiment-verdict/1",
         "status": "verdict-complete",
         "published_conclusion": published_conclusion,
         "uses_licensed_template": true,
@@ -989,7 +989,7 @@ fn checked_executable(
 }
 
 fn signing_key(directory: &Path) -> Result<PathBuf, ContractError> {
-    Ok(std::env::var_os("GUILDHALL_EXPERIMENT_SIGNING_KEY")
+    Ok(std::env::var_os("KINBASE_EXPERIMENT_SIGNING_KEY")
         .map(PathBuf::from)
         .unwrap_or_else(|| directory.join("signing.key")))
 }

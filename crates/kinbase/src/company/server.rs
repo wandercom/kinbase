@@ -1,4 +1,4 @@
-//! `guildhalld`: the loopback Company service (architecture §6, §7, §2).
+//! `kinbased`: the loopback Company service (architecture §6, §7, §2).
 //! Every accepted connection receives exactly one bounded typed JSON
 //! response, including auth failures, malformed bodies, oversized bodies,
 //! wrong Host/Origin/content type, and internal errors.
@@ -258,7 +258,7 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
     if route == "/status"
         && request.method == "GET"
         && request.header("authorization").is_none()
-        && request.header("x-guildhall-signature").is_none()
+        && request.header("x-kinbase-signature").is_none()
     {
         // Unauthenticated status is refused like every other read.
         db.record_auth_failure(now_minute())
@@ -495,19 +495,19 @@ fn authenticate(
         return Err(fail(db));
     };
     let nonce = request
-        .header("x-guildhall-nonce")
+        .header("x-kinbase-nonce")
         .unwrap_or_default()
         .to_owned();
     let expires_at = request
-        .header("x-guildhall-expires-at")
+        .header("x-kinbase-expires-at")
         .unwrap_or_default()
         .to_owned();
     let client_key = request
-        .header("x-guildhall-client-key")
+        .header("x-kinbase-client-key")
         .unwrap_or_default()
         .to_owned();
     let signature = request
-        .header("x-guildhall-signature")
+        .header("x-kinbase-signature")
         .unwrap_or_default()
         .to_owned();
     if nonce.is_empty()
@@ -1200,7 +1200,7 @@ fn admit_fact(
         return Err(refuse(
             400,
             ContractError::invariant(
-                "body is neither a guildhall-event/1 document nor a Company fact document",
+                "body is neither a kinbase-event/1 document nor a Company fact document",
             ),
         ));
     };
@@ -1219,7 +1219,7 @@ fn admit_fact(
             400,
             ContractError::integrity(
                 "DIGEST_MISMATCH",
-                format!("event does not parse as a canonical guildhall-event/1 document ({error})"),
+                format!("event does not parse as a canonical kinbase-event/1 document ({error})"),
                 "Send the exact canonical signed event bytes.",
             ),
         )
@@ -1710,7 +1710,7 @@ fn company_fact_document_to_event(
         return Err(ContractError::integrity(
             "DIGEST_MISMATCH",
             "semantic_digest does not match the published digest algorithm over the statement",
-            "Recompute sha256(JCS({\"statement\"})) with guildhall-digest/1.",
+            "Recompute sha256(JCS({\"statement\"})) with kinbase-digest/1.",
         ));
     }
     let alg = crate::json::get_str(document, "digest_alg_version")
@@ -1719,7 +1719,7 @@ fn company_fact_document_to_event(
         return Err(ContractError::degraded(
             "DIGEST_ALGORITHM_UNSUPPORTED",
             format!("digest algorithm {alg} is unknown"),
-            "Use guildhall-digest/1.",
+            "Use kinbase-digest/1.",
         ));
     }
     let criticality = crate::json::get_str(document, "company_criticality").unwrap_or("advisory");
@@ -1892,7 +1892,7 @@ fn snapshot(
         .sum();
     charge_read(db, state, auth, facts.len().max(1), bytes)?;
     let snapshot = json!({
-        "schema": "guildhall-snapshot/1",
+        "schema": "kinbase-snapshot/1",
         "company_id": state.config.company_id,
         "cursor": trust_state.cursor.to_string(),
         "authority_cursor": trust_state.authority_cursor.clone(),
@@ -2027,7 +2027,7 @@ fn publish_registry(
         return Err(refuse(
             400,
             ContractError::invariant(
-                "registry document schema must be guildhall-authority-registry/1",
+                "registry document schema must be kinbase-authority-registry/1",
             ),
         ));
     }
@@ -2155,7 +2155,7 @@ fn publish_registry(
                 .unwrap_or_default()
                 .to_owned();
             let revocation = json!({
-                "schema": "guildhall-revocation/1",
+                "schema": "kinbase-revocation/1",
                 "revoked_key": public_key,
                 "revoked_authority_id": identity.0,
                 "scope": identity.1,
@@ -2872,7 +2872,7 @@ fn post_manifest(
     if crate::json::get_str(&document, "schema") != Some(crate::model::MANIFEST_SCHEMA) {
         return Err(refuse(
             400,
-            ContractError::invariant("manifest schema must be guildhall-manifest/1"),
+            ContractError::invariant("manifest schema must be kinbase-manifest/1"),
         ));
     }
     let key = PublicKey::verify_document("manifest", &document).ok_or_else(|| {
@@ -3083,7 +3083,7 @@ fn revocation_cascade(
         }
     }
     let residual = json!({
-        "schema": "guildhall-unreachable-clone-residual/1",
+        "schema": "kinbase-unreachable-clone-residual/1",
         "revoked_key": revoked,
         "cursor": cursor.to_string(),
         "authority_cursor": authority_cursor,
@@ -3292,7 +3292,7 @@ mod packet03_tests {
         let token = "facts-packet03";
         let root_path = temp.path().join("company-root.key");
         let token_path = temp.path().join("facts.token");
-        let config_path = temp.path().join("guildhalld.toml");
+        let config_path = temp.path().join("kinbased.toml");
         root_key.save_new(&root_path, "Company root key").unwrap();
         crate::crypto::write_0600(&token_path, token.as_bytes(), "facts token").unwrap();
         let config = format!(
@@ -3566,10 +3566,10 @@ mod packet11_tests {
                     "authorization".to_owned(),
                     "Bearer facts-packet11".to_owned(),
                 ),
-                ("x-guildhall-nonce".to_owned(), nonce.to_owned()),
-                ("x-guildhall-expires-at".to_owned(), expires_at.to_owned()),
-                ("x-guildhall-client-key".to_owned(), key.public().to_hex()),
-                ("x-guildhall-signature".to_owned(), signature),
+                ("x-kinbase-nonce".to_owned(), nonce.to_owned()),
+                ("x-kinbase-expires-at".to_owned(), expires_at.to_owned()),
+                ("x-kinbase-client-key".to_owned(), key.public().to_hex()),
+                ("x-kinbase-signature".to_owned(), signature),
             ],
             body,
             peer: None,
@@ -3585,7 +3585,7 @@ mod packet11_tests {
         let token_path = temp.path().join("facts.token");
         crate::crypto::write_0600(&token_path, b"facts-packet11", "facts token").unwrap();
         let config = ServiceConfig {
-            path: temp.path().join("guildhalld.toml"),
+            path: temp.path().join("kinbased.toml"),
             company_id: "packet11".to_owned(),
             sqlite_path: temp.path().join("company.sqlite"),
             bind: "127.0.0.1:0".parse().unwrap(),

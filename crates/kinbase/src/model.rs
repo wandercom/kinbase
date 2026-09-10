@@ -8,21 +8,21 @@ use crate::error::ContractError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub const EVENT_SCHEMA: &str = "guildhall-event/1";
-pub const UNKNOWN_SCHEMA: &str = "guildhall-unknown/1";
-pub const MANIFEST_SCHEMA: &str = "guildhall-manifest/1";
-pub const CERTIFICATE_SCHEMA: &str = "guildhall-repo-certificate/1";
-pub const REGISTRY_SCHEMA: &str = "guildhall-authority-registry/1";
-pub const ANSWER_SCHEMA: &str = "guildhall-answer/1";
-pub const QUESTION_SCHEMA: &str = "guildhall-question/1";
-pub const TOMBSTONE_SCHEMA: &str = "guildhall-tombstone/1";
-pub const REVOCATION_SCHEMA: &str = "guildhall-revocation/1";
-pub const ROTATION_SCHEMA: &str = "guildhall-rotation/1";
-pub const RECEIPT_SCHEMA: &str = "guildhall-receipt/1";
-pub const CURRENT_VIEW_SCHEMA: &str = "guildhall-current-view/1";
+pub const EVENT_SCHEMA: &str = "kinbase-event/1";
+pub const UNKNOWN_SCHEMA: &str = "kinbase-unknown/1";
+pub const MANIFEST_SCHEMA: &str = "kinbase-manifest/1";
+pub const CERTIFICATE_SCHEMA: &str = "kinbase-repo-certificate/1";
+pub const REGISTRY_SCHEMA: &str = "kinbase-authority-registry/1";
+pub const ANSWER_SCHEMA: &str = "kinbase-answer/1";
+pub const QUESTION_SCHEMA: &str = "kinbase-question/1";
+pub const TOMBSTONE_SCHEMA: &str = "kinbase-tombstone/1";
+pub const REVOCATION_SCHEMA: &str = "kinbase-revocation/1";
+pub const ROTATION_SCHEMA: &str = "kinbase-rotation/1";
+pub const RECEIPT_SCHEMA: &str = "kinbase-receipt/1";
+pub const CURRENT_VIEW_SCHEMA: &str = "kinbase-current-view/1";
 pub const MAX_CONFIDENCE: u16 = 10_000;
 pub const MAX_EVENT_BYTES: usize = 64 * 1024;
-pub const DIGEST_ALG_VERSION: &str = "guildhall-digest/1";
+pub const DIGEST_ALG_VERSION: &str = "kinbase-digest/1";
 
 /// Basis-point score field that also accepts the qualitative vocabulary
 /// (`high`/`medium`/`low`) planted by fixtures; serialized as an integer.
@@ -622,7 +622,7 @@ impl FactEvent {
         PublicKey::verify_document("fact-event", &self.document())
     }
 
-    /// Semantic content digest (P-8), algorithm `guildhall-digest/1`:
+    /// Semantic content digest (P-8), algorithm `kinbase-digest/1`:
     /// `sha256(JCS({"statement": statement}))`.
     pub fn semantic_digest(&self) -> String {
         semantic_digest(&self.statement)

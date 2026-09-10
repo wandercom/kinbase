@@ -704,7 +704,7 @@ fn validate_certificate(document: &Value) -> Result<(), ContractError> {
     };
     if crate::json::get_str(document, "schema") != Some(crate::model::CERTIFICATE_SCHEMA) {
         return Err(malformed(
-            "certificate schema is not guildhall-repo-certificate/1",
+            "certificate schema is not kinbase-repo-certificate/1",
         ));
     }
     let uuid = crate::json::get_str(document, "repository_uuid").unwrap_or_default();

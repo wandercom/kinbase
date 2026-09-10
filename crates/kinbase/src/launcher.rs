@@ -1,5 +1,5 @@
 //! The launcher (architecture §1, §6; cli.md "Configuration"): resolves the
-//! user config from `${XDG_CONFIG_HOME:-~/.config}/guildhall/config.toml`
+//! user config from `${XDG_CONFIG_HOME:-~/.config}/kinbase/config.toml`
 //! only, attests inherited descriptors before any side effect, opens the
 //! Personal store for Personal work, and derives the shared configuration
 //! that carries no Personal capability.
@@ -40,7 +40,7 @@ impl Launcher {
             Some(user) => user.shared()?,
             None => crate::config::codebase_only_shared(),
         };
-        let company_env_present = std::env::var_os("GUILDHALL_COMPANY_URL").is_some();
+        let company_env_present = std::env::var_os("KINBASE_COMPANY_URL").is_some();
         Ok(Self {
             mode: shared.mode,
             user,
@@ -101,7 +101,7 @@ impl Launcher {
         if self.company_env_present {
             return Err(ContractError::new(
                 "PROCESSOR_UNAUTHORIZED",
-                "GUILDHALL_COMPANY_URL names a processor outside the configured authorization; no bytes were sent",
+                "KINBASE_COMPANY_URL names a processor outside the configured authorization; no bytes were sent",
                 "Configure the Company endpoint in the launcher user config; the environment cannot supply a processor.",
                 false,
                 crate::error::ExitCode::IntegrityFailure,

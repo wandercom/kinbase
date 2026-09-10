@@ -1,4 +1,4 @@
-//! Company / Guildhall service commands: `company init` (steward preview and
+//! Company / Kinbase service commands: `company init` (steward preview and
 //! key/token/schema creation), `company serve` (loopback HTTP service; schema
 //! self-initializes per Validator ruling R-2), and steward helpers that sign
 //! and publish documents with the root key.

@@ -507,12 +507,12 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
 }
 
 fn default_principal() -> String {
-    std::env::var("GUILDHALL_PRINCIPAL")
+    std::env::var("KINBASE_PRINCIPAL")
         .unwrap_or_else(|_| std::env::var("USER").unwrap_or_else(|_| "local-principal".to_owned()))
 }
 
 fn default_host_instance() -> String {
-    std::env::var("GUILDHALL_HOST_INSTANCE").unwrap_or_else(|_| {
+    std::env::var("KINBASE_HOST_INSTANCE").unwrap_or_else(|_| {
         let host = std::fs::read_to_string("/etc/hostname")
             .ok()
             .map(|text| text.trim().to_owned())
@@ -569,10 +569,10 @@ impl UserConfig {
                 let root_public_key =
                     PublicKey::load(&company.root_public_key_file, "Company root public key")?;
                 paths::ensure_private_dir(&company.cache_root, "Company cache root")?;
-                let client_key = match std::env::var("GUILDHALL_CLIENT_KEY_FD") {
+                let client_key = match std::env::var("KINBASE_CLIENT_KEY_FD") {
                     Ok(fd) => {
                         let fd: i32 = fd.parse().map_err(|_| {
-                            config_error("GUILDHALL_CLIENT_KEY_FD must be an integer")
+                            config_error("KINBASE_CLIENT_KEY_FD must be an integer")
                         })?;
                         PrivateKey::load_fd(fd, "client key")?
                     }
@@ -657,7 +657,7 @@ pub fn codebase_only_shared() -> SharedConfig {
     }
 }
 
-/// Service configuration (`guildhalld.toml`).
+/// Service configuration (`kinbased.toml`).
 #[derive(Debug, Clone)]
 pub struct ServiceConfig {
     pub path: PathBuf,

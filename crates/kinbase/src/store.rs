@@ -174,7 +174,7 @@ pub fn parse_event(bytes: &[u8]) -> Result<FactEvent, ContractError> {
 }
 
 pub fn manifest_placeholder() -> Value {
-    json!({"schema":"guildhall-manifest/1"})
+    json!({"schema":"kinbase-manifest/1"})
 }
 
 fn collect_files(path: &Path, output: &mut Vec<String>) -> Result<(), ContractError> {

@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 /// Parse the CLI while preserving the process contract.
 ///
-/// Clap's default parser exits with its own usage code and prose. Guildhall
+/// Clap's default parser exits with its own usage code and prose. Kinbase
 /// instead maps every refusal to the closed error taxonomy before any
 /// launcher or repository state is touched.
 pub fn parse_or_exit() -> Cli {

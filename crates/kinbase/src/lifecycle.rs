@@ -791,7 +791,7 @@ fn scan_envelopes(
             continue;
         };
         let is_envelope = map.get("schema").and_then(Value::as_str)
-            == Some("guildhall-command-result/1")
+            == Some("kinbase-command-result/1")
             || map.get("command").is_some_and(Value::is_array)
             || map.get("stdout").is_some_and(Value::is_string);
         if !is_envelope {
@@ -1449,7 +1449,7 @@ fn scan_answers(source: &Path, repo: &Repository) -> Result<SourceScan, Contract
         let Some(map) = value.as_object() else {
             continue;
         };
-        let is_answer = map.get("schema").and_then(Value::as_str) == Some("guildhall-answer/1")
+        let is_answer = map.get("schema").and_then(Value::as_str) == Some("kinbase-answer/1")
             || map.get("message_type").and_then(Value::as_str) == Some("answer")
             || (map.get("question_id").is_some() && map.get("answer").is_some());
         if !is_answer {
@@ -2921,7 +2921,7 @@ mod tests {
             disposition: disposition.to_owned(),
             observed_at: "2026-09-08T00:00:00.000Z".to_owned(),
             body_ref: String::new(),
-            extraction_version: "guildhall-extract/1".to_owned(),
+            extraction_version: "kinbase-extract/1".to_owned(),
             origin_trust: Some("merged-default".to_owned()),
             lifecycle: "observed".to_owned(),
             statement: Some(statement.to_owned()),

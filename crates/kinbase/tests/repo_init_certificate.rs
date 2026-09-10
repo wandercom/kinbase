@@ -58,7 +58,7 @@ fn run_init(
         ])
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", config_home)
-        .env_remove("GUILDHALL_COMPANY_URL")
+        .env_remove("KINBASE_COMPANY_URL")
         .output()
         .expect("run kinbase repo init")
 }
@@ -69,14 +69,14 @@ fn run_status(home: &Path, config_home: &Path, repo: &Path) -> std::process::Out
         .args(["status", "--repo", &repo.display().to_string(), "--json"])
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", config_home)
-        .env_remove("GUILDHALL_COMPANY_URL")
+        .env_remove("KINBASE_COMPANY_URL")
         .output()
         .expect("run kinbase status")
 }
 
 fn signed_certificate(root: &PrivateKey, repository_uuid: &str, issued_at: &str) -> Vec<u8> {
     let unsigned = json!({
-        "schema": "guildhall-repo-certificate/1",
+        "schema": "kinbase-repo-certificate/1",
         "repository_uuid": repository_uuid,
         "issued_at": issued_at,
         "company_id": "company-test"
@@ -126,23 +126,23 @@ fn repo_init_caches_certificate_outside_worktree() {
     let root = TempDir::new().expect("temporary root");
     let home = root.path().join("home");
     let config_home = root.path().join("config-home");
-    let guildhall_config = config_home.join("guildhall");
+    let kinbase_config = config_home.join("kinbase");
     let cache_root = root.path().join("company-cache");
     let personal_root = root.path().join("personal");
     let repo = root.path().join("repository");
     fs::create_dir_all(&home).expect("create home");
-    fs::create_dir_all(&guildhall_config).expect("create config directory");
+    fs::create_dir_all(&kinbase_config).expect("create config directory");
     fs::create_dir_all(&personal_root).expect("create personal root");
 
     let root_key = PrivateKey::generate();
-    let root_public_key_file = guildhall_config.join("root-public.key");
-    let facts_token_file = guildhall_config.join("facts.token");
+    let root_public_key_file = kinbase_config.join("root-public.key");
+    let facts_token_file = kinbase_config.join("facts.token");
     private_write(
         &root_public_key_file,
         format!("{}\n", root_key.public().to_hex()).as_bytes(),
     );
     private_write(&facts_token_file, b"facts-token\n");
-    let user_config = guildhall_config.join("config.toml");
+    let user_config = kinbase_config.join("config.toml");
     private_write(
         &user_config,
         format!(
@@ -329,7 +329,7 @@ fn repo_init_caches_certificate_outside_worktree() {
     let config_text = fs::read_to_string(repo.join(".kin/config")).expect("read .kin/config");
     let config = kinbase::codebase::RepoConfig::parse(&config_text).expect("parse .kin/config");
     assert_eq!(config.repository_uuid_hint, repository_uuid);
-    assert_eq!(config.schema_version, "guildhall-repo/1");
+    assert_eq!(config.schema_version, "kinbase-repo/1");
 }
 
 #[test]
@@ -337,24 +337,24 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
     let root = TempDir::new().expect("temporary root");
     let home = root.path().join("home");
     let config_home = root.path().join("config-home");
-    let guildhall_config = config_home.join("guildhall");
+    let kinbase_config = config_home.join("kinbase");
     let cache_root = root.path().join("company-cache");
     let personal_root = root.path().join("personal");
     let repo = root.path().join("repository");
     fs::create_dir_all(&home).expect("create home");
-    fs::create_dir_all(&guildhall_config).expect("create config directory");
+    fs::create_dir_all(&kinbase_config).expect("create config directory");
     fs::create_dir_all(&personal_root).expect("create personal root");
 
     let root_key = PrivateKey::generate();
-    let root_public_key_file = guildhall_config.join("root-public.key");
-    let facts_token_file = guildhall_config.join("facts.token");
+    let root_public_key_file = kinbase_config.join("root-public.key");
+    let facts_token_file = kinbase_config.join("facts.token");
     private_write(
         &root_public_key_file,
         format!("{}\n", root_key.public().to_hex()).as_bytes(),
     );
     private_write(&facts_token_file, b"facts-token\n");
     private_write(
-        &guildhall_config.join("config.toml"),
+        &kinbase_config.join("config.toml"),
         format!(
             "schema_version = \"1\"\n\n[personal]\ndata_root = {}\n\n[company]\nurl = \"http://127.0.0.1:1\"\nfacts_token_file = {}\nroot_public_key_file = {}\ncache_root = {}\n",
             quoted(&personal_root),
@@ -391,7 +391,7 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
     );
 
     let mut event = kinbase::model::FactEvent {
-        schema: "guildhall-event/1".to_owned(),
+        schema: "kinbase-event/1".to_owned(),
         event_id: "event_packet11_hook".to_owned(),
         store_kind: "codebase".to_owned(),
         authority_id: "root-steward".to_owned(),
@@ -473,7 +473,7 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
             .args(["hooks", "dispatch", host, "SessionStart", "--json"])
             .env("HOME", &home)
             .env("XDG_CONFIG_HOME", &config_home)
-            .env_remove("GUILDHALL_COMPANY_URL")
+            .env_remove("KINBASE_COMPANY_URL")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -532,7 +532,7 @@ fn packet11_project_fact(
     effective_until: Option<&str>,
 ) -> kinbase::model::FactEvent {
     kinbase::model::FactEvent {
-        schema: "guildhall-event/1".to_owned(),
+        schema: "kinbase-event/1".to_owned(),
         event_id: event_id.to_owned(),
         store_kind: "codebase".to_owned(),
         authority_id: "root-steward".to_owned(),
@@ -572,28 +572,28 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
     let root = TempDir::new().expect("temporary root");
     let home = root.path().join("home");
     let config_home = root.path().join("config-home");
-    let guildhall_config = config_home.join("guildhall");
+    let kinbase_config = config_home.join("kinbase");
     let cache_root = root.path().join("company-cache");
     let personal_root = root.path().join("personal");
     let repo = root.path().join("repository");
     fs::create_dir_all(&home).expect("create home");
-    fs::create_dir_all(&guildhall_config).expect("create config directory");
+    fs::create_dir_all(&kinbase_config).expect("create config directory");
     fs::create_dir_all(&personal_root).expect("create personal root");
 
     let root_key = PrivateKey::generate();
     let maintainer_key = PrivateKey::generate();
     private_write(
-        &guildhall_config.join("root-public.key"),
+        &kinbase_config.join("root-public.key"),
         format!("{}\n", root_key.public().to_hex()).as_bytes(),
     );
-    private_write(&guildhall_config.join("facts.token"), b"facts-token\n");
+    private_write(&kinbase_config.join("facts.token"), b"facts-token\n");
     private_write(
-        &guildhall_config.join("config.toml"),
+        &kinbase_config.join("config.toml"),
         format!(
             "schema_version = \"1\"\n\n[personal]\ndata_root = {}\n\n[company]\nurl = \"http://127.0.0.1:1\"\nfacts_token_file = {}\nroot_public_key_file = {}\ncache_root = {}\n",
             quoted(&personal_root),
-            quoted(&guildhall_config.join("facts.token")),
-            quoted(&guildhall_config.join("root-public.key")),
+            quoted(&kinbase_config.join("facts.token")),
+            quoted(&kinbase_config.join("root-public.key")),
             quoted(&cache_root)
         )
         .as_bytes(),
@@ -626,7 +626,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
     // authority snapshot. Seed the offline cache with the same steward root
     // used for this test's certificate and codebase facts.
     let unsigned_snapshot = json!({
-        "schema": "guildhall-snapshot/1",
+        "schema": "kinbase-snapshot/1",
         "company_id": "company-test",
         "cursor": "1000",
         "authority_cursor": "1000",
@@ -838,7 +838,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         ])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
-        .env_remove("GUILDHALL_COMPANY_URL")
+        .env_remove("KINBASE_COMPANY_URL")
         .output()
         .expect("run kinbase project");
     assert!(
@@ -855,7 +855,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         .args(["questions", "list", "--json"])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
-        .env_remove("GUILDHALL_COMPANY_URL")
+        .env_remove("KINBASE_COMPANY_URL")
         .output()
         .expect("run kinbase questions list");
     assert!(
@@ -930,7 +930,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         ])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
-        .env_remove("GUILDHALL_COMPANY_URL")
+        .env_remove("KINBASE_COMPANY_URL")
         .output()
         .expect("run kinbase questions answer");
     assert!(
@@ -957,7 +957,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         ])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
-        .env_remove("GUILDHALL_COMPANY_URL")
+        .env_remove("KINBASE_COMPANY_URL")
         .output()
         .expect("run resolved kinbase project");
     assert!(
@@ -1039,27 +1039,27 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
     let root = TempDir::new().expect("temporary root");
     let home = root.path().join("home");
     let config_home = root.path().join("config-home");
-    let guildhall_config = config_home.join("guildhall");
+    let kinbase_config = config_home.join("kinbase");
     let cache_root = root.path().join("company-cache");
     let personal_root = root.path().join("personal");
     let repo = root.path().join("repository");
     fs::create_dir_all(&home).expect("create home");
-    fs::create_dir_all(&guildhall_config).expect("create config directory");
+    fs::create_dir_all(&kinbase_config).expect("create config directory");
     fs::create_dir_all(&personal_root).expect("create personal root");
 
     let root_key = PrivateKey::generate();
     private_write(
-        &guildhall_config.join("root-public.key"),
+        &kinbase_config.join("root-public.key"),
         format!("{}\n", root_key.public().to_hex()).as_bytes(),
     );
-    private_write(&guildhall_config.join("facts.token"), b"facts-token\n");
+    private_write(&kinbase_config.join("facts.token"), b"facts-token\n");
     private_write(
-        &guildhall_config.join("config.toml"),
+        &kinbase_config.join("config.toml"),
         format!(
             "schema_version = \"1\"\n\n[personal]\ndata_root = {}\n\n[company]\nurl = \"http://127.0.0.1:1\"\nfacts_token_file = {}\nroot_public_key_file = {}\ncache_root = {}\n",
             quoted(&personal_root),
-            quoted(&guildhall_config.join("facts.token")),
-            quoted(&guildhall_config.join("root-public.key")),
+            quoted(&kinbase_config.join("facts.token")),
+            quoted(&kinbase_config.join("root-public.key")),
             quoted(&cache_root)
         )
         .as_bytes(),
@@ -1102,7 +1102,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .expect("sign packet 19 Company fact");
     let company_fact = company_fact.document();
     let unsigned_snapshot = json!({
-        "schema": "guildhall-snapshot/1",
+        "schema": "kinbase-snapshot/1",
         "company_id": "company-test",
         "cursor": "1000",
         "authority_cursor": "1000",
@@ -1202,7 +1202,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         ])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
-        .env_remove("GUILDHALL_COMPANY_URL")
+        .env_remove("KINBASE_COMPANY_URL")
         .output()
         .expect("run packet 19 corpus rebuild");
     assert!(
@@ -1229,7 +1229,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         ])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
-        .env_remove("GUILDHALL_COMPANY_URL")
+        .env_remove("KINBASE_COMPANY_URL")
         .output()
         .expect("run packet 19 manifest publication");
     assert!(
@@ -1250,7 +1250,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         ])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
-        .env_remove("GUILDHALL_COMPANY_URL")
+        .env_remove("KINBASE_COMPANY_URL")
         .output()
         .expect("run packet 19 fsck");
     assert!(
@@ -1285,7 +1285,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         ])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
-        .env_remove("GUILDHALL_COMPANY_URL")
+        .env_remove("KINBASE_COMPANY_URL")
         .output()
         .expect("run first recorded-clock rebuild");
     assert!(
@@ -1310,7 +1310,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         ])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
-        .env_remove("GUILDHALL_COMPANY_URL")
+        .env_remove("KINBASE_COMPANY_URL")
         .output()
         .expect("run second recorded-clock rebuild");
     assert!(
@@ -1355,7 +1355,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         ])
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
-        .env_remove("GUILDHALL_COMPANY_URL")
+        .env_remove("KINBASE_COMPANY_URL")
         .output()
         .expect("run cloned kinbase project");
     assert!(

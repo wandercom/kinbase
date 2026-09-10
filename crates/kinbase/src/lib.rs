@@ -1,6 +1,6 @@
 #![recursion_limit = "256"]
 
-//! Guildhall: the Company-memory member of the three-store Kindex system.
+//! Kinbase: the Company-memory member of the three-store Kindex system.
 //!
 //! Foundation rewrite (dispatch 009): the modules below implement the
 //! ratified data model, canonicalization, signing, scanners, the private

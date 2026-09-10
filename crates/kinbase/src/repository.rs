@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-pub const PRIVACY_CLAIM: &str = "Zero observed unauthorized durable disclosure outside the authorized processor boundary under Acceptance Threat Model guildhall-atm/1, identified by its exact SHA-256 digest, across the frozen execution census.";
+pub const PRIVACY_CLAIM: &str = "Zero observed unauthorized durable disclosure outside the authorized processor boundary under Acceptance Threat Model kinbase-atm/1, identified by its exact SHA-256 digest, across the frozen execution census.";
 
 /// Everything needed to decide whether a `.kin/` event is trusted.
 #[derive(Debug, Clone)]
@@ -1461,7 +1461,7 @@ pub fn trust_facts(
 }
 
 /// Replay the proof clock recorded at repository creation, advanced by this
-/// invocation's `GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS` (ruling R-14).
+/// invocation's `KINBASE_PROOF_CLOCK_OFFSET_SECONDS` (ruling R-14).
 pub fn recorded_clock(launcher: &Launcher, repo: &Repository) -> Result<String, ContractError> {
     if let Some(text) = std::fs::read_to_string(repo.local_dir().join("proof-clock"))
         .ok()
@@ -1884,7 +1884,7 @@ pub fn issue_certificate(
     if launcher.company_env_present {
         return Err(ContractError::new(
             "PROCESSOR_UNAUTHORIZED",
-            "GUILDHALL_COMPANY_URL names a processor outside the configured authorization; no bytes were sent",
+            "KINBASE_COMPANY_URL names a processor outside the configured authorization; no bytes were sent",
             "Configure the Company endpoint in the launcher user config.",
             false,
             crate::error::ExitCode::IntegrityFailure,
@@ -1979,7 +1979,7 @@ pub fn init(
         return Err(ContractError::refused(
             "CONFIG_INVARIANT",
             format!(
-                "{} path(s) under .kin/ collide with Guildhall reserved paths; no byte was changed",
+                "{} path(s) under .kin/ collide with Kinbase reserved paths; no byte was changed",
                 collisions.len()
             ),
             "Move the colliding legacy Kindex paths aside or initialize in a fresh repository.",
@@ -2135,7 +2135,7 @@ fn planned_init_paths(repo: &Repository) -> Vec<String> {
 }
 
 /// Enumerate paths a pinned Kindex may own under `.kin/` and compare with
-/// Guildhall's reserved paths (architecture §11).
+/// Kinbase's reserved paths (architecture §11).
 fn kindex_collisions(repo: &Repository) -> Result<Vec<String>, ContractError> {
     let mut collisions = Vec::new();
     if !repo.kin.exists() {
@@ -2168,7 +2168,7 @@ fn kindex_collisions(repo: &Repository) -> Result<Vec<String>, ContractError> {
             collisions.push(".kin/config".to_owned());
         }
     }
-    for reserved in ["manifests", "local/guildhall-index.json"] {
+    for reserved in ["manifests", "local/kinbase-index.json"] {
         let path = repo.kin.join(reserved);
         if path.exists() && path.is_file() && reserved == "manifests" {
             collisions.push(".kin/manifests".to_owned());
@@ -3360,7 +3360,7 @@ pub fn status(
         "journal_state": crate::proposals::inflight_journal_state(repo_path),
         "query_log": query_log,
         "privacy_claim": PRIVACY_CLAIM,
-        "threat_model": "guildhall-atm/1",
+        "threat_model": "kinbase-atm/1",
         "execution_census_digest": crate::hash::sha256_text(&format!("{}\0{}", context.trust.repository_uuid.clone().unwrap_or_default(), counts.total_files)),
         "shared_work_performed": true,
         "personal_mounted": false,
@@ -3895,10 +3895,10 @@ pub fn doctor(
         ))[..24]
     );
     let signed_shard = match launcher.shared.company.as_ref().map(|c| c.client_key()) {
-        Some(Ok(key)) => key.sign_document("receipt", &json!({"schema": "guildhall-prompt-budget-shard/1", "shard_id": shard_id, "observed_at": now, "shard": shard})).ok(),
+        Some(Ok(key)) => key.sign_document("receipt", &json!({"schema": "kinbase-prompt-budget-shard/1", "shard_id": shard_id, "observed_at": now, "shard": shard})).ok(),
         _ => {
             let key = crate::crypto::PrivateKey::load_or_generate(&crate::private::state_dir().join("host-instance.key"), "host instance key")?;
-            key.sign_document("receipt", &json!({"schema": "guildhall-prompt-budget-shard/1", "shard_id": shard_id, "observed_at": now, "shard": shard})).ok()
+            key.sign_document("receipt", &json!({"schema": "kinbase-prompt-budget-shard/1", "shard_id": shard_id, "observed_at": now, "shard": shard})).ok()
         }
     };
     // A diagnostic signs and shows the shard; it records nothing.
@@ -3967,7 +3967,7 @@ pub fn doctor(
             "pinned": classifier_pinned
         }),
         None => {
-            let executable = std::env::current_exe().unwrap_or_else(|_| "guildhall".into());
+            let executable = std::env::current_exe().unwrap_or_else(|_| "kinbase".into());
             let digest = std::fs::read(&executable)
                 .map(|bytes| crate::hash::sha256_bytes(&bytes))
                 .unwrap_or_default();
@@ -4022,7 +4022,7 @@ pub fn doctor(
         "mode": launcher.mode,
         "fd_attestation": capabilities["fd_attestation"],
         "capabilities": ["company", "codebase"],
-        "personal": {"granted_to_shared": false, "configured": launcher.user.is_some(), "environment_variable_present": std::env::var_os("GUILDHALL_PERSONAL_ROOT").is_some()},
+        "personal": {"granted_to_shared": false, "configured": launcher.user.is_some(), "environment_variable_present": std::env::var_os("KINBASE_PERSONAL_ROOT").is_some()},
         "company": {"configured": launcher.shared.company.is_some(), "url": launcher.shared.company.as_ref().map(|c| c.url.clone()), "env_endpoint_present": launcher.company_env_present},
         "codebase": {"initialized": repo.as_ref().is_some_and(|r| r.config.is_some())},
         "host": host,
@@ -4288,7 +4288,7 @@ pub fn fsck(
     // left unchecked is never counted as unaffected.
     let checked_facts = counts.total_files.saturating_sub(unchecked_facts);
     let unchecked_facts_withheld = admitted_paths.len() <= checked_facts;
-    let lock_path = repo.common_dir.join(format!("guildhall-{uuid}.lock"));
+    let lock_path = repo.common_dir.join(format!("kinbase-{uuid}.lock"));
     crate::paths::write_atomic(
         &cache_checkpoint,
         &crate::json::canonical_bytes(
@@ -4575,7 +4575,7 @@ mod company_reference_tests {
                 "Company unavailable; withheld without accusation"
             )
         );
-        let unknown = make_reference("guildhall-digest/9", "aa");
+        let unknown = make_reference("kinbase-digest/9", "aa");
         assert_eq!(
             unsupported_digest_algorithm(&unknown),
             Some((

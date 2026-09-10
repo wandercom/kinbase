@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use unicode_normalization::UnicodeNormalization;
 
-pub const SCANNER_VERSION: &str = "guildhall-scanner/2";
+pub const SCANNER_VERSION: &str = "kinbase-scanner/2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "kebab-case")]
@@ -128,7 +128,7 @@ pub fn squeeze(value: &str) -> String {
 }
 
 pub fn canary_digest(value: &str) -> String {
-    crate::hash::sha256_text(&format!("guildhall-canary/1\0{}", squeeze(value)))
+    crate::hash::sha256_text(&format!("kinbase-canary/1\0{}", squeeze(value)))
 }
 
 /// Every deterministic view of the text that a detector examines.
@@ -512,7 +512,7 @@ fn credential_formats(view: &str, family: &str, findings: &mut Vec<Finding>) {
             || (t.starts_with("AIza") && t.len() == 39)
             || (t.starts_with("eyJ") && t.matches('.').count() == 2 && t.len() >= 40)
             || (t.starts_with("glpat-") && t.len() >= 20)
-            || (t.starts_with("guildhall_") && t.len() >= 40);
+            || (t.starts_with("kinbase_") && t.len() >= 40);
         if matched {
             add(findings, "credential-format", family, Taint::Credential);
         }

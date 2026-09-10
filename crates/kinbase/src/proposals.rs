@@ -818,7 +818,7 @@ fn merge_receipt(receipt: &mut Value, saga: &Value) {
 // writers on one repository identity.
 // ---------------------------------------------------------------------------
 
-const FANOUT_JOURNAL_SCHEMA: &str = "guildhall-fanout-journal/1";
+const FANOUT_JOURNAL_SCHEMA: &str = "kinbase-fanout-journal/1";
 const APOLOGY_RESPONSE_WINDOW_HOURS: i64 = 24;
 
 /// The closed transition enum of the destination journal (architecture §3:
@@ -1110,7 +1110,7 @@ fn commit_codebase(
         let _generation = repository.admission_lock(repository_uuid)?;
         journal.begin(
             "manifest",
-            json!({"index": ".kin/local/guildhall-index.json"}),
+            json!({"index": ".kin/local/kinbase-index.json"}),
         )?;
         repository.update_index_cache()?;
         journal.complete("manifest", json!({}))?;
@@ -2249,11 +2249,11 @@ fn create_unknown(
 }
 
 fn principal_id() -> String {
-    std::env::var("GUILDHALL_PRINCIPAL").unwrap_or_else(|_| "local-user".to_owned())
+    std::env::var("KINBASE_PRINCIPAL").unwrap_or_else(|_| "local-user".to_owned())
 }
 
 fn host_instance_id() -> String {
-    std::env::var("GUILDHALL_HOST_INSTANCE").unwrap_or_else(|_| "local-host".to_owned())
+    std::env::var("KINBASE_HOST_INSTANCE").unwrap_or_else(|_| "local-host".to_owned())
 }
 
 fn print_value(value: &Value, json: bool) {

@@ -491,7 +491,7 @@ pub fn explain(
         "free_form_owner_admitted": free_form_owner_admitted,
         "unknown_owner_roles": unknown_owner_roles,
         "selection_reason": format!("exact logical-key reduction by authority, scope, lifecycle disposition, declared validity, parent-bound supersession and conflict rules; recency was used only inside an authority-equivalent set; discriminating evidence: {discriminating}"),
-        "selected_by": "guildhall-reducer/2",
+        "selected_by": "kinbase-reducer/2",
         "current_statement": current.map(|fact| fact.statement.clone()).unwrap_or_default(),
         "current": current,
         "projection": current.map(|fact| fact.trust.clone()),

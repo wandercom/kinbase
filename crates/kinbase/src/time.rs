@@ -61,7 +61,7 @@ impl AsOf {
     }
 
     /// Replay a proof-clock value that was persisted at repository creation,
-    /// advanced by this invocation's `GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS`
+    /// advanced by this invocation's `KINBASE_PROOF_CLOCK_OFFSET_SECONDS`
     /// (interface contract §0, ruling R-14: the offset applies to the proof
     /// clock every command compares against).
     pub fn recorded(value: &str) -> Result<Self, String> {
@@ -86,18 +86,18 @@ pub fn recorded_with_offset(value: &str) -> Result<String, String> {
     ))
 }
 
-/// `GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS` advances the proof clock by a
+/// `KINBASE_PROOF_CLOCK_OFFSET_SECONDS` advances the proof clock by a
 /// signed integer number of seconds for one invocation (interface contract
 /// §0); it is recorded in every `as_of_source`.
 fn clock_offset_seconds() -> i64 {
-    std::env::var("GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS")
+    std::env::var("KINBASE_PROOF_CLOCK_OFFSET_SECONDS")
         .ok()
         .and_then(|value| value.trim().parse::<i64>().ok())
         .unwrap_or(0)
 }
 
 fn proof_clock_instant() -> DateTime<Utc> {
-    let base = if let Some(pinned) = std::env::var_os("GUILDHALL_PROOF_CLOCK") {
+    let base = if let Some(pinned) = std::env::var_os("KINBASE_PROOF_CLOCK") {
         parse_rfc3339_millis(pinned.to_string_lossy().trim()).unwrap_or_else(|_| Utc::now())
     } else {
         Utc::now()
@@ -106,17 +106,17 @@ fn proof_clock_instant() -> DateTime<Utc> {
     DateTime::from_timestamp_millis(shifted.timestamp_millis()).unwrap_or(shifted)
 }
 
-/// The proof clock: the explicit `GUILDHALL_PROOF_CLOCK` instant when an
+/// The proof clock: the explicit `KINBASE_PROOF_CLOCK` instant when an
 /// acceptance run pins one, otherwise the host wall clock at millisecond
 /// precision. Callers must record which one they used.
 pub fn proof_clock() -> AsOf {
     let offset = clock_offset_seconds();
-    let pinned = std::env::var_os("GUILDHALL_PROOF_CLOCK")
+    let pinned = std::env::var_os("KINBASE_PROOF_CLOCK")
         .map(|value| parse_rfc3339_millis(value.to_string_lossy().trim()).is_ok())
         .unwrap_or(false);
     let source = match (pinned, offset) {
-        (true, 0) => "proof-clock:GUILDHALL_PROOF_CLOCK".to_owned(),
-        (true, offset) => format!("proof-clock:GUILDHALL_PROOF_CLOCK+{offset}s"),
+        (true, 0) => "proof-clock:KINBASE_PROOF_CLOCK".to_owned(),
+        (true, offset) => format!("proof-clock:KINBASE_PROOF_CLOCK+{offset}s"),
         (false, 0) => "proof-clock:wall".to_owned(),
         (false, offset) => format!("proof-clock:wall+{offset}s"),
     };
@@ -167,7 +167,7 @@ pub fn receipt_clock_skew(claim: &str, proof_clock: &str) -> Option<(&'static st
 /// quarantined (architecture §6, ruling R-14: five minutes either way).
 ///
 /// The bound is widened by this invocation's own declared proof-clock advance.
-/// `GUILDHALL_PROOF_CLOCK_OFFSET_SECONDS` is a perturbation the *receiver*
+/// `KINBASE_PROOF_CLOCK_OFFSET_SECONDS` is a perturbation the *receiver*
 /// applies to simulate elapsed time; evidence collected before that advance is
 /// older, not skewed, and the receiver never charges its own simulated time
 /// travel to the source's clock. With no offset the bound is exactly the

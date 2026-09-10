@@ -332,11 +332,11 @@ pub fn home_dir() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("/nonexistent"))
 }
 
-/// `${XDG_CONFIG_HOME:-~/.config}/guildhall`
+/// `${XDG_CONFIG_HOME:-~/.config}/kinbase`
 pub fn config_dir() -> PathBuf {
     std::env::var_os("XDG_CONFIG_HOME")
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| home_dir().join(".config"))
-        .join("guildhall")
+        .join("kinbase")
 }

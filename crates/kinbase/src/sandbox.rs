@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 /// explicitly declared launcher descriptors.
 pub fn allowlist() -> Vec<i32> {
     let mut list = vec![0, 1, 2];
-    for name in ["GUILDHALL_CLIENT_KEY_FD", "GUILDHALL_SHARED_CONFIG_FD"] {
+    for name in ["KINBASE_CLIENT_KEY_FD", "KINBASE_SHARED_CONFIG_FD"] {
         if let Ok(value) = std::env::var(name) {
             if let Ok(fd) = value.trim().parse::<i32>() {
                 list.push(fd);
@@ -119,7 +119,7 @@ pub fn attest_descriptors(personal_root: Option<&Path>) -> Result<Value, Contrac
         return Err(ContractError::refused(
             "CONFIG_INVARIANT",
             format!("{} inherited descriptor(s) outside the frozen allowlist; shared work refused before any side effect", extra.len()),
-            "Launch with only the declared descriptors (stdio plus explicit GUILDHALL_*_FD values).",
+            "Launch with only the declared descriptors (stdio plus explicit KINBASE_*_FD values).",
         )
         .with_detail(json!({"shared_work_performed": false, "descriptors": extra})));
     }
@@ -296,7 +296,7 @@ pub fn run_shared(
         .env_clear()
         .env("PATH", "/usr/bin:/bin:/opt/homebrew/bin")
         .env("HOME", "/nonexistent")
-        .env("GUILDHALL_SHARED_CONFIG_FD", reader_fd.to_string())
+        .env("KINBASE_SHARED_CONFIG_FD", reader_fd.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -437,7 +437,7 @@ pub fn run_verified_executable(
         .env_clear()
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", "/nonexistent")
-        .env("GUILDHALL_SHARED_CONFIG_FD", fd.to_string())
+        .env("KINBASE_SHARED_CONFIG_FD", fd.to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -477,7 +477,7 @@ pub fn run_verified_executable(
                 .env_clear()
                 .env("PATH", "/usr/bin:/bin")
                 .env("HOME", "/nonexistent")
-                .env("GUILDHALL_SHARED_CONFIG_FD", fd.to_string())
+                .env("KINBASE_SHARED_CONFIG_FD", fd.to_string())
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());

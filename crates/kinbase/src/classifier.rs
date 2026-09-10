@@ -14,7 +14,7 @@ use std::io::{Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
-pub const CLASSIFIER_VERSION: &str = "guildhall-classifier/1";
+pub const CLASSIFIER_VERSION: &str = "kinbase-classifier/1";
 const ALLOWED_KINDS: [&str; 6] = [
     "claim",
     "question",
@@ -211,7 +211,7 @@ pub(crate) fn deterministic(document: &Value) -> Result<Value, ContractError> {
 
 /// The routing instruction, written from the ratified store meanings
 /// (product.md "Concrete store meanings" and P-2) rather than any corpus.
-const OLLAMA_INSTRUCTION: &str = r#"You are the routing classifier of Guildhall, a knowledge system with three physically separate stores. You read messages a software developer typed (or received) in a coding session and split each message into knowledge atoms, giving every atom exactly one destination.
+const OLLAMA_INSTRUCTION: &str = r#"You are the routing classifier of Kinbase, a knowledge system with three physically separate stores. You read messages a software developer typed (or received) in a coding session and split each message into knowledge atoms, giving every atom exactly one destination.
 
 Destinations (choose exactly one per atom):
 - "personal": the principal's private conversational memory. Anything about the person rather than the work: their life, family, health, feelings, plans, schedule, opinions, habits, preferences; private identifiers, account details, secrets, credentials, access tokens, opaque private codes or reference strings (a random-looking token such as an API key, a license key, a ticket or booking code, a device or account identifier belongs to the person's private memory). Also personal working notes that are about the person's own situation rather than the repository.

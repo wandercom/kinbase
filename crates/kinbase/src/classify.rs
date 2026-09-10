@@ -2,7 +2,7 @@ use crate::model::Atom;
 use crate::scanner::{ScanResult, Taint, scanner};
 use sha2::{Digest, Sha256};
 
-pub const EXTRACTION_VERSION: &str = "guildhall-extract/1";
+pub const EXTRACTION_VERSION: &str = "kinbase-extract/1";
 
 pub fn source_kind_is_supported(source_kind: &str) -> bool {
     matches!(
