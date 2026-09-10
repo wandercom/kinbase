@@ -1,4 +1,4 @@
-# Architecture Specification — Guildhall proving ground
+# Architecture Specification — Kinbase proving ground
 
 Status: **candidate for review and exact-byte ratification**
 
@@ -15,11 +15,11 @@ uses one canonical event/projection protocol but never one universal graph.
 ```text
 private principal boundary     company authority boundary       Git boundary
 
-Kindex Personal          --[no shared capability]--  Guildhall / Kindex Company
+Kindex Personal          --[no shared capability]--  Kinbase / Kindex Company
 SQLite event+graph store                            service + SQLite event store
 raw private provenance                              org facts / authority registry
 
-Guildhall / Kindex Company --[references, no shared rows]-- Kindex Codebase
+Kinbase / Kindex Company --[references, no shared rows]-- Kindex Codebase
 service + SQLite event store                           repo/.kin/events
 org facts / authority registry                         repo facts / references
 ```
@@ -40,7 +40,7 @@ startup. If no supported kernel enforcement is available or the probe succeeds i
 reading Personal, shared projection/publication is disabled with a typed failure.
 
 The existing Kindex package is integrated behind `PersonalKindexAdapter` and
-`CodebaseKindexAdapter`; Guildhall does not fork its generic graph/search code.
+`CodebaseKindexAdapter`; Kinbase does not fork its generic graph/search code.
 Adapters use public Store/export/import surfaces or subprocess JSON contracts. Any
 missing public seam is isolated in the adapter and recorded rather than answered by
 writing Kindex SQLite tables directly.
@@ -55,18 +55,18 @@ event adapter is the explicit compatibility gap this proof exercises. A startup
 compatibility test checks each named seam and blocks the affected adapter on
 conformance failure.
 
-Guildhall owns protocol `guildhall-event/1` under `.kin/events/` and
+Kinbase owns protocol `kinbase-event/1` under `.kin/events/` and
 `.kin/manifests/`; it does not claim existing Kindex owns or already writes that
 format. A pre-existing `.kin/index.json` is a legacy source observation owned by the
 `kindex` adapter: it is preserved, never treated as a reducer cache, and never becomes
-signed direction automatically. Guildhall's derived compatibility view has the
-distinct ignored path `.kin/local/guildhall-index.json`. `repo init` is additive and
+signed direction automatically. Kinbase's derived compatibility view has the
+distinct ignored path `.kin/local/kinbase-index.json`. `repo init` is additive and
 refuses a conflicting path.
 Kindex 0.36.0 is the known-good proof baseline, but the executable gate is the frozen
 public-seam conformance suite, not version-string equality. A different version may
 run only after passing that suite byte-for-byte. Failure is a loud degraded product
 state and blocks P-1/P-2/P-9 proof dispatch—Personal is not silently removed while the
-system presents itself as complete. Native Guildhall events remain inspectable. A
+system presents itself as complete. Native Kinbase events remain inspectable. A
 future migration tool is post-proof packaging work, not an excuse to overwrite an
 existing `.kin/`.
 
@@ -190,7 +190,7 @@ and every other code point, quote, backslash, CR/LF, or non-printable byte is es
 round-tripping that view must reproduce the exact signed UTF-8 buffer and digest.
 
 Signatures are domain separated. Every signer signs
-`SHA-256("guildhall-sig/1" || 0x00 || message_type || 0x00 || jcs_bytes)` where
+`SHA-256("kinbase-sig/1" || 0x00 || message_type || 0x00 || jcs_bytes)` where
 `message_type` is one closed enum: `fact-event`, `unknown-event`, `manifest`,
 `approval-token`, `repo-certificate`, `authority-registry-entry`, `rotation`,
 `revocation`, `tombstone`, `question`, `answer`, or `receipt`. Verification and
@@ -463,9 +463,9 @@ only a frozen `CLOEXEC`-by-default allowlist. The launcher independently attests
 same allowlist. Passing an already-open Personal directory/file descriptor is a hard
 startup failure even when path access remains denied.
 
-### Company / Guildhall
+### Company / Kinbase
 
-`guildhalld` is a real loopback-capable HTTP service with an append-only SQLite event
+`kinbased` is a real loopback-capable HTTP service with an append-only SQLite event
 table, authority registry, source observations, current-view cache, Unknown queue,
 and monotonic change cursor. The proof runs service and client as separate processes.
 Every endpoint, including reads, requires a per-instance bearer token loaded from a
@@ -516,7 +516,7 @@ only repository metadata and safe client hints. Signed, parent-linked,
 content-addressed `.kin/manifests/<hex-0:2>/<hex-2:4>/<remaining-60-hex>.json` events publish complete event counts
 and Merkle roots for repository revisions; concurrent branch manifests therefore
 union rather than fight over one pointer. An in-scope repository maintainer executes
-`guildhall repo publish-manifest`, signing `(repository_uuid, branch,
+`kinbase repo publish-manifest`, signing `(repository_uuid, branch,
 observed_default_branch_revision, manifest_head_set, event_count, merkle_root,
 observed_at, fresh_until)` and sending it to Company. Company stores and republishes
 that dated observation; it does not become Git authority. Server-side monotonicity
@@ -539,7 +539,7 @@ unreachable applies the cache truth table. Foreign events are counted separately
 never trusted.
 
 The current view is regenerated under ignored `.kin/local/current.json`; no derived
-index participates in Git merge. `.kin/local/guildhall-index.json` is a reducer-owned
+index participates in Git merge. `.kin/local/kinbase-index.json` is a reducer-owned
 cache and `fsck` requires byte-equivalence to a rebuild before use. The tracked legacy
 `.kin/index.json`, when present, remains adapter-owned input and is never compared to
 that view. Runtime state, candidates, raw source, caches, and private data live under
@@ -695,7 +695,7 @@ the repository in advance.
 
 ## 9. Host lifecycle and permission contract
 
-The internal executable `guildhall hooks dispatch <host> <event>` accepts Codex and Claude native hook
+The internal executable `kinbase hooks dispatch <host> <event>` accepts Codex and Claude native hook
 envelopes and emits the host's required response. Host setup commands perform a dry
 run, print the exact files/commands and permissions, and require the host/user's own
 approval path; no `--yes`, silent config write, or permission bypass is provided.
@@ -723,10 +723,10 @@ host adapter. It has no command/tool/policy/system fields; delimiter text inside
 evidence cannot escape its length. In-band framing is mitigation, not a security
 boundary, so acceptance also measures that signed insider prompt-injection facts do
 not alter the allowed action/tool trace. The wrapper labels every decoded body
-`UNTRUSTED_EVIDENCE_NOT_INSTRUCTIONS`; Guildhall facts cannot carry host permission,
+`UNTRUSTED_EVIDENCE_NOT_INSTRUCTIONS`; Kinbase facts cannot carry host permission,
 tool-call, policy, system, destination, or approval capabilities, and every actual
 tool/edit still traverses the host's native permission policy. No fact is executable
-by Guildhall itself. A changed action trace in the frozen malicious-fact probe is a
+by Kinbase itself. A changed action trace in the frozen malicious-fact probe is a
 product failure rather than proof that the framing boundary worked. Actual host integration is tested in
 temporary homes by invoking installed hook commands and config, not by passing
 `host="codex"` to a unit function. The evidence packet pins exact host versions and
@@ -746,7 +746,7 @@ still running.
 
 ## 10. Brownfield proof harness
 
-`guildhall experiment` consumes a preregistered manifest. Each benchmark task binds:
+`kinbase experiment` consumes a preregistered manifest. Each benchmark task binds:
 repository URL/path, commit, issue text, allowed tools, budget, source corpus,
 load-bearing facts, dependent-edit detectors, hidden test command, architecture
 rubric, judging-only accepted patch/decision evidence, pre-change authoritative fact
@@ -754,7 +754,7 @@ set, least-privilege evaluation principal, exact authority scopes and denial lab
 screening and measurement seed schedules, and frozen authority replies. Administrative
 or broad service-reader identities cannot run a measurement task. The
 schema-blind Oracle Curator receives the date-bounded repository-history census and
-judging-only accepted outcomes but no Guildhall design/schema or candidate output. It
+judging-only accepted outcomes but no Kinbase design/schema or candidate output. It
 freezes the eligible census, seeded draw, neutral pre-change `oracle-spec`, authority
 replies, source citations, and load-bearing labels before Coder outputs are visible.
 Tester freezes hidden acceptance artifacts independently.
@@ -803,7 +803,7 @@ The `null-system` arm traverses the same full-system host adapter, native hooks,
 observation protocol, tool schema, permission policy, timing envelope, and telemetry,
 but its content-addressed corpus/index is empty, its selector yields no facts, and its
 authority service returns the typed empty response. It isolates the causal value of
-knowledge from the mere presence of Guildhall-shaped machinery. `static-prior` injects
+knowledge from the mere presence of Kinbase-shaped machinery. `static-prior` injects
 one task-independent repository-agnostic conventions document and has no store,
 retrieval, maintenance, temporal reducer, or authority loop. `codebase-only` and
 `company-only` run full machinery while structurally withholding the opposite shared
@@ -842,15 +842,15 @@ passing product result.
 ## 11. Repository compatibility
 
 `repo init` edits an existing `.gitattributes` additively and refuses contradictory
-rules; it never replaces the file. Existing `.kin/config` or Guildhall event paths
+rules; it never replaces the file. Existing `.kin/config` or Kinbase event paths
 with an incompatible schema block and preserve bytes. A legacy Kindex
 `.kin/index.json` remains adapter-owned source input as defined above. Collaborators
-without Guildhall see ordinary inert JSON event files and need no filter/driver; Git
+without Kinbase see ordinary inert JSON event files and need no filter/driver; Git
 never invokes executable merge logic for the event/manifests paths. The proof reports
 repository-size growth and enforces the 10,000-event/128-MiB ceiling.
 
 Before init, the pinned Kindex seam-conformance suite enumerates every path that the
-installed Kindex may read or write under `.kin/`. Guildhall compares that inventory
+installed Kindex may read or write under `.kin/`. Kinbase compares that inventory
 with its reserved paths; any actual collision produces a typed refusal and changes no
 byte. Acceptance initializes against a fully populated real pinned-Kindex repository,
 proves every legacy byte is preserved, and injects one deliberate path collision that
