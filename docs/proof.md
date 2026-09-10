@@ -1,6 +1,24 @@
 # The condition we'd concede on
 
-Status: specification ratified; proof of concept not yet run. This page restates the
+Status, in two parts, because they are different claims.
+
+**The acceptance suite has run and passes.** 371 nodes, 0 failures, on 2026-09-09
+against product commit `f7696c5` and instrument `f571517`. Every product gate reports
+`PASS`: V-1 through V-10, nonfunctional, and evidence. That establishes the system does
+what the specification says — it ingests, classifies, maintains three separated stores,
+asks named authorities when evidence is insufficient, and refuses to leak private
+material into shared ones, all under the failure conditions the specification enumerates.
+The verdict, its residuals and the disclosed limits on lane independence are in
+[`evidence/factory-run/validator-verdict-2026-09-09.md`](../evidence/factory-run/validator-verdict-2026-09-09.md).
+
+**The experiment on this page has not run.** Everything below — the eleven arms, the real
+inherited codebases, the blinded graders — is the measurement that would show Kinbase
+*helps*, and it is `NOT_RUN`. The terminal verdict is therefore not `PROVEN`, and a
+passing suite does not substitute for it. A system can satisfy every clause of its own
+specification and still not improve anyone's work; separating these two claims is the
+whole point of stating them before running.
+
+This page restates the
 proof conditions from [`spec/product.md`](../spec/product.md) and
 [`spec/verification.md`](../spec/verification.md) in plain words. Where the two
 disagree, the specification wins. The same conditions are published at

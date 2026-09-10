@@ -6,7 +6,11 @@ The pre-rename generation was `ac8a13d1`, and rows below that name it mean it.*
 Validator: Claude, in the founder's Claude Code session. Mode: AI-rendered verdict, no
 human signature.
 
-> **VERDICT: PENDING — final judged run in flight under ruling R-21.** Rendered by an AI
+> **VERDICT: the frozen acceptance suite passes in full — 371 nodes, 0 failures, 0 errors
+> (run 031). Every product gate reports `PASS`: V-1 through V-10, NONFUNCTIONAL and
+> EVIDENCE. The terminal product verdict is NOT `PROVEN`, because `measurement_result`
+> for the P-10 brownfield outcome experiment is `NOT_RUN` and no amount of green
+> elsewhere substitutes for it.** Rendered by an AI
 > validator with no human countersignature. The induced-behavior ledger was ratified by
 > AI, diverging from the playbook's assignment of that ratification to a human (Ch. 0;
 > Ch. 1 Step 1d). Lane independence: authorship is cross-family (Claude coders, Codex
@@ -41,14 +45,37 @@ are in this directory as `validator-judge-run-0NN-gates.json`.
 | 019 | `338ac3a` | `c9391e6` | 299 / 14 / 0 |
 | 021 | `279bfac` | `8d9e873` | 317 / 6 / 0 |
 | 025 | `efd089e` | `76ddb30` | 346 / 3 / 0 |
+| 030 | `f7696c5` (renamed) | `d997146` | 363 / 2 / 6 |
+| **031** | **`f7696c5`** | **`f571517`** | **371 / 0 / 0** |
 
 Run 025 was the first execution of the complete suite including the slow and soak nodes,
-with the live classifier. Every gate reported `PASS` on the **product** channel. The three
-reds were instrument-side and human-owned: the unsigned rights grant, the unreproducible
-corpus digest, and the operator exercise.
+with the live classifier. Every gate reported `PASS` on the **product** channel; the three
+reds were instrument-side and human-owned. Ruling R-21 then reopened the suite, and the
+wholesale rename reopened it again. Run 030's eight reds were entirely rename cascade —
+two further frozen-digest fixtures whose schema strings had moved — and none was a product
+regression. Run 031 is the settled result: same product commit, every string renamed,
+nothing red.
 
-**The run counter restarts here.** Ruling R-21 (below) was issued after the declared
-freeze, so every V-9 green is provisional until re-judged under the rebuilt fixture.
+The node count rises from 349 to 371 because the Tester added selftests for its own
+dispatch-016 work.
+
+### The two entries that are not PASS, stated rather than glossed
+
+- **`INSTRUMENT`: `INVALID_HARNESS`.** This is the instrument auditing *itself*, and it
+  fails: seven of the Tester's own dispatch selftests evaluate obligations that the
+  catalog assigns to real acceptance nodes, and one evaluation digest is claimed by two
+  nodes. That is a defect in the instrument's self-accounting, present since run 025 and
+  not introduced by the rename. It is not a product observation and no product gate
+  depends on it — but an instrument that cannot cleanly account for which node discharges
+  which obligation is weaker evidence than one that can, and that is the honest reading.
+- **`VERDICT`: `NOT_RUN`, 0 of 0 nodes.** By design: `spec/verification.md` reserves
+  verdict composition to the Validator, so the suite declines to compose one.
+
+**`V-10` reports `PASS` on 8 of 8 nodes, and this must not be misread.** Those nodes check
+the *scaffolding* the brownfield experiment requires — census freezing, arm construction,
+manifest binding, blinding. They do not run the experiment. The experiment needs two real
+repositories, pilot tasks, eleven arms, two calibrated graders and a funded budget. A
+green V-10 means the apparatus is ready, not that the product helps anyone ship code.
 
 ## R-21 — the gate that measured nothing
 
