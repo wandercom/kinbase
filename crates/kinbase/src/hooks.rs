@@ -498,7 +498,7 @@ fn dispatch_event(
         .and_then(Value::as_str)
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let repository_initialized = cwd.join(".kin").join("config").exists();
+    let repository_initialized = cwd.join(".kin").join(crate::codebase::CONFIG_FILE).exists();
     let mut canonical_facts = Vec::new();
     let mut unknowns = Vec::new();
     let mut start = StartState::default();
@@ -510,7 +510,8 @@ fn dispatch_event(
         // supplies that bootstrap fact without inventing prose or reading the
         // ambient clock.
         if canonical_facts.is_empty() && start.certified {
-            if let Ok(text) = std::fs::read_to_string(cwd.join(".kin").join("config"))
+            if let Ok(text) =
+                std::fs::read_to_string(cwd.join(".kin").join(crate::codebase::CONFIG_FILE))
                 && let Ok(config) = crate::codebase::RepoConfig::parse(&text)
             {
                 canonical_facts.push(json!({

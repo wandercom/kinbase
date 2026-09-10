@@ -229,6 +229,36 @@ pub fn git_ok(repo: &Path, args: &[&str]) -> bool {
         .is_ok_and(|output| output.status.success())
 }
 
+/// Kinbase's own config file inside `.kin/`.
+///
+/// Kindex already owns `.kin/config`, in YAML, and 87 of the 159 repositories at
+/// Wander carry one. Both products are part of the same family and are meant to
+/// share the directory, so kinbase takes a distinct filename rather than fighting
+/// over a shared one -- reading a sibling product's YAML as a malformed kinbase
+/// config produced a quarantine error that told nobody what was actually wrong.
+///
+/// A repository initialised before this change still has its TOML at `.kin/config`,
+/// so that path is honoured when the new one is absent and the bytes parse.
+pub const CONFIG_FILE: &str = "kinbase.toml";
+
+/// The config path to read, preferring ours and falling back to the legacy name
+/// only when it is genuinely a kinbase config.
+fn config_path_for(kin: &std::path::Path) -> Option<std::path::PathBuf> {
+    let ours = kin.join(CONFIG_FILE);
+    if ours.exists() {
+        return Some(ours);
+    }
+    let legacy = kin.join("config");
+    if legacy.exists()
+        && std::fs::read_to_string(&legacy)
+            .ok()
+            .is_some_and(|text| RepoConfig::parse(&text).is_ok())
+    {
+        return Some(legacy);
+    }
+    None
+}
+
 impl Repository {
     /// Resolve the worktree root and Git common directory; linked worktrees
     /// share the common directory (and therefore the certified UUID).
@@ -258,9 +288,9 @@ impl Repository {
         let common_dir = common_dir.canonicalize().unwrap_or(common_dir);
         let kin = root.join(".kin");
         paths::reject_symlink(&kin, ".kin")?;
-        let config = if kin.join("config").exists() {
-            paths::reject_symlink(&kin.join("config"), ".kin/config")?;
-            let text = std::fs::read_to_string(kin.join("config")).map_err(|error| {
+        let config = if let Some(path) = config_path_for(&kin) {
+            paths::reject_symlink(&path, ".kin/config")?;
+            let text = std::fs::read_to_string(&path).map_err(|error| {
                 ContractError::integrity(
                     "DIGEST_MISMATCH",
                     format!(".kin/config bytes are unreadable ({})", error.kind()),
@@ -309,7 +339,9 @@ impl Repository {
             };
             root = parent.to_path_buf();
         }
-        let config_path = root.join(".kin").join("config");
+        let Some(config_path) = config_path_for(&root.join(".kin")) else {
+            return Ok(None);
+        };
         let Ok(text) = std::fs::read_to_string(&config_path) else {
             return Ok(None);
         };

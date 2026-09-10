@@ -2074,7 +2074,7 @@ pub fn init(
         private.set_meta("proof-clock:default", &recorded_clock)?;
     }
     let _ = local_dir;
-    let config_path = repo.kin.join("config");
+    let config_path = repo.kin.join(crate::codebase::CONFIG_FILE);
     let config_existed = config_path.exists();
     if !config_existed {
         let safe_name = repo
@@ -2096,7 +2096,7 @@ pub fn init(
             local_policy: BTreeMap::new(),
         };
         crate::paths::write_atomic(&config_path, config.to_toml().as_bytes(), 0o644, false)?;
-        worktree_paths_written.push(".kin/config".to_owned());
+        worktree_paths_written.push(format!(".kin/{}", crate::codebase::CONFIG_FILE));
     }
     let attributes_existed = repo.root.join(".gitattributes").exists();
     let attributes_added = repo.ensure_git_attributes()?;
@@ -2113,7 +2113,7 @@ pub fn init(
         "planned_paths": planned,
         "worktree_paths_written": worktree_paths_written,
         "gitattributes_lines_added": attributes_added,
-        "commit_only": [".kin/config", ".kin/events/", ".kin/manifests/", ".gitattributes"],
+        "commit_only": [format!(".kin/{}", crate::codebase::CONFIG_FILE), ".kin/events/".to_owned(), ".kin/manifests/".to_owned(), ".gitattributes".to_owned()],
         "trust_on_first_use": false,
         "authority_snapshot": match &authority_snapshot {
             Ok((cursor, source)) => json!({"cursor": cursor, "source": source}),
@@ -2126,7 +2126,11 @@ pub fn init(
 
 fn planned_init_paths(repo: &Repository) -> Vec<String> {
     vec![
-        format!("{}/.kin/config", repo.root.display()),
+        format!(
+            "{}/.kin/{}",
+            repo.root.display(),
+            crate::codebase::CONFIG_FILE
+        ),
         format!("{}/.kin/events/", repo.root.display()),
         format!("{}/.kin/manifests/", repo.root.display()),
         format!("{}/.kin/local/", repo.root.display()),
@@ -2161,7 +2165,7 @@ fn kindex_collisions(repo: &Repository) -> Result<Vec<String>, ContractError> {
             }
         }
     }
-    let config = repo.kin.join("config");
+    let config = repo.kin.join(crate::codebase::CONFIG_FILE);
     if config.exists() {
         let text = std::fs::read_to_string(&config).unwrap_or_default();
         if crate::codebase::RepoConfig::parse(&text).is_err() {
