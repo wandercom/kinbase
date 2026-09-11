@@ -953,8 +953,25 @@ pub fn admit(
             .map(|event| event.logical_key)
             .collect();
 
-    let (key_path, _) = crate::crypto::ensure_keypair(store, repo)?;
-    let key = crate::crypto::PrivateKey::load_or_generate(&key_path, "admission key")?;
+    // Sign as the maintainer, not with a freshly minted local key.
+    //
+    // A repository trusts its configured maintainer key once it holds a valid
+    // certificate, and trusts nothing else it has not registered. Signing bulk
+    // admissions with a generated key produced events that were structurally
+    // perfect and entirely untrusted: the reducer rejected all 1,262 as
+    // ineligible, the projector reported every one as `stale`, and a corpus that
+    // looked fully ingested returned nothing. Authorship the store cannot attribute
+    // is not knowledge.
+    let key = match launcher.shared.company.as_ref() {
+        Some(access) => access.maintainer_key()?,
+        None => {
+            return Err(ContractError::user_action(
+                "REPO_UNCERTIFIED",
+                "bulk admission signs as the repository maintainer and needs Company access from the user config",
+                "Create the launcher user config with [company] maintainer_key_file, or admit through a session.",
+            ));
+        }
+    };
     let discovered = Repository::discover(repo)?;
     let now = crate::repository::recorded_clock(launcher, &discovered)?;
     let repository_id = discovered.uuid_hint().map(str::to_owned);
