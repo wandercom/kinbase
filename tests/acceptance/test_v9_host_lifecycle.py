@@ -102,7 +102,11 @@ def host_binary(host: str, roots: ProofRoots, kinbase: Kinbase) -> hosts.HostBin
     bin_dir.mkdir(parents=True, exist_ok=True)
     recorder = hosts.install_invocation_recorder(bin_dir, host, resolved)
     kinbase.path_prefix.insert(0, bin_dir)
-    available = hosts.host_availability(host, env=kinbase.base_env())
+    # Literal, so the control-policy check can see exactly which environment names
+    # reach the probe. A version probe needs PATH and nothing else.
+    available = hosts.host_availability(
+        host, env={"PATH": kinbase.base_env().get("PATH", "")}
+    )
     if available is None or available.version == "unknown":
         raise HarnessInvalid("cannot record the exact version of " + host)
     return hosts.HostBinary(name=host, path=recorder, version=available.version)
@@ -336,7 +340,11 @@ def test_matched_conversations_produce_identical_canonical_payloads(
         # The wire format omits empty governed-path and anchor arrays.
         facts = [{**{key: row[key] for key in ("store_kind", "atom_kind", "scope", "statement",
                                               "standing", "provenance", "disposition")},
-                  **{key: row.get(key, []) for key in ("governs_paths", "anchors")}}
+                  # Absent means absent. These two are omitted when empty by the
+                  # serializer, so read them explicitly rather than defaulting a
+                  # missing field into an empty one that compares equal.
+                  **{key: (row[key] if key in row else None)
+                     for key in ("governs_paths", "anchors")}}
                  for row in documents]
         observed[name] = {"facts": sorted(facts, key=lambda row: json.dumps(row, sort_keys=True)),
                           "receipts": canonical_admissions(recovered)}

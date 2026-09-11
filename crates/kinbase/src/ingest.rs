@@ -187,7 +187,13 @@ pub fn ingest(
         }
         scan
     } else {
-        crate::lifecycle::scan(source_kind, source, &discovered_repository, &now)?
+        crate::lifecycle::scan(
+            source_kind,
+            source,
+            &discovered_repository,
+            &now,
+            checkpoint,
+        )?
     };
     if scan.records.len() + quarantine_records.len() > MAX_ITEMS {
         let observed = scan.records.len() + quarantine_records.len();

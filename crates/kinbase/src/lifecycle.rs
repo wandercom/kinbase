@@ -271,12 +271,13 @@ pub fn scan(
     source: &Path,
     repo: &Repository,
     now: &str,
+    checkpoint: Option<&str>,
 ) -> Result<SourceScan, ContractError> {
     let mut scan = match source_kind {
         "codex_jsonl" | "claude_jsonl" => scan_transcripts(source_kind, source, now)?,
         "repo_code" => scan_repo_code(source, repo)?,
         "repo_tests" | "runtime_evidence" => scan_envelopes(source_kind, source, repo)?,
-        "git_history" => scan_git_history(repo)?,
+        "git_history" => scan_git_history(repo, checkpoint)?,
         "docs_adr" => scan_docs_adr(source, repo)?,
         "issue_tracker" => scan_issue_tracker(source, repo)?,
         "pull_request" => scan_pull_request(source, repo)?,
@@ -1479,7 +1480,10 @@ fn commit_provenance(author: &str, email: &str, trailers: &str, subject: &str) -
     }
 }
 
-fn scan_git_history(repo: &Repository) -> Result<SourceScan, ContractError> {
+fn scan_git_history(
+    repo: &Repository,
+    checkpoint: Option<&str>,
+) -> Result<SourceScan, ContractError> {
     let mut scan = SourceScan::default();
     let default = repo.default_branch();
     // Ingest refuses a batch over 10,000 observations, and the adapter cannot page:
@@ -1492,16 +1496,20 @@ fn scan_git_history(repo: &Repository) -> Result<SourceScan, ContractError> {
     // history is the least informative part of a brownfield repository anyway, and
     // some history beats none by a wide margin. Paging by checkpoint is the better
     // answer and wants `scan` to carry it.
-    // Paging bound. `scan` still does not receive the ingest checkpoint, so this is
-    // read from the environment to let an operator walk a large history in slices
-    // rather than silently keeping only the newest slice forever. KINBASE_GIT_SKIP
-    // moves the window back; KINBASE_GIT_MAX sizes it.
-    let max: usize = std::env::var("KINBASE_GIT_MAX")
-        .ok()
-        .and_then(|value| value.parse().ok())
-        .unwrap_or(6_000);
-    let skip: usize = std::env::var("KINBASE_GIT_SKIP")
-        .ok()
+    // Paging window, taken from the ingest checkpoint. Ingest refuses a batch over
+    // 10,000 observations, so an unbounded walk over a repository with 148,004
+    // commits was refused entirely and that repository ended up with no code history
+    // at all. `--checkpoint skip:N` moves the window back; the size is fixed below
+    // the batch ceiling with headroom for the ref and merge records emitted with the
+    // commits.
+    //
+    // Deliberately not environment variables: the control policy forbids the product
+    // branching on environment names that are not permitted controls, and it is
+    // right -- a documented argument is inspectable and reproducible where an
+    // ambient variable is neither.
+    let max: usize = 6_000;
+    let skip: usize = checkpoint
+        .and_then(|value| value.strip_prefix("skip:"))
         .and_then(|value| value.parse().ok())
         .unwrap_or(0);
     let max_flag = format!("-{max}");

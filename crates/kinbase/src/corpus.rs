@@ -947,11 +947,16 @@ pub fn admit(
     let private = crate::private::PrivateStore::open_personal(&journal_root)?;
     let observations = private.all_observations()?;
     let destination_root = crate::store::ensure_store_root(store, repo)?;
-    let existing: std::collections::BTreeSet<String> =
-        crate::store::read_events(&destination_root)?
-            .into_iter()
-            .map(|event| event.logical_key)
-            .collect();
+    // Tolerant pre-read. This list exists only to skip logical keys that are already
+    // admitted, so one unreadable event must not stop a whole corpus from being
+    // admitted -- the same disposition the observation ledger takes. Verification
+    // still refuses a malformed event wherever trust is actually decided; being
+    // permissive here would be wrong, being permissive about *listing* is not.
+    let existing: std::collections::BTreeSet<String> = crate::store::read_events(&destination_root)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|event| event.logical_key)
+        .collect();
 
     // Sign as the maintainer, not with a freshly minted local key.
     //
@@ -1105,7 +1110,21 @@ pub fn admit(
             company_refs: Vec::new(),
             authority_snapshot_cursor: current_authority_cursor(),
             confidence: crate::model::Bp(6_000),
-            standing: "present".to_owned(),
+            // Bulk evidence enters at `present`: that something exists is not a
+            // ruling that it is right. The exception is a direction-bearing kind a
+            // person authored deliberately -- a north star, an invariant, a
+            // directional statement. Those are the vocabulary a human uses to rule,
+            // and admitting them at `present` alongside the code they supersede
+            // would mean the hierarchy could never be exercised at all: every
+            // document would arrive with exactly the weight of the commits it is
+            // meant to outrank. Provenance still clamps this, so an agent-written
+            // document claiming `north_star` cannot reach `ratified`.
+            standing: match observation.atom_kind.as_deref() {
+                Some("north_star") | Some("invariant") | Some("directional") => {
+                    "ratified".to_owned()
+                }
+                _ => "present".to_owned(),
+            },
             provenance: observation.provenance.clone(),
             governs_paths: Vec::new(),
             anchors: Vec::new(),

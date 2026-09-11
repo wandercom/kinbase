@@ -108,6 +108,28 @@ pub const ATOM_KINDS: [&str; 14] = [
 ///
 /// A fact's standing is not how sure the extractor was -- that is `confidence`. It
 /// is how much weight the claim carries when evidence disagrees.
+/// Whose word it is, which decides how high a fact may rank.
+///
+/// Jeremy's point, and it is the ordering the company actually runs on: a directive
+/// he gives directly outranks his own architecture documents, which outrank
+/// everything else. And software is compromise, so none of this is absolute -- a
+/// higher standing demotes weaker evidence to `present`, it never deletes it. The
+/// code that contradicts a north star stays retrievable and stops being direction.
+pub const AUTHORITY_TIERS: [&str; 3] = [
+    "founder_directive", // said directly, in a session or a signed answer
+    "founder_document",  // an architecture document filed as current
+    "other",             // everything else, ranked on its own merits
+];
+
+/// The ceiling an authority tier permits.
+pub fn tier_ceiling(tier: &str) -> &'static str {
+    match tier {
+        "founder_directive" => "authoritative",
+        "founder_document" => "ratified",
+        _ => "prevalent",
+    }
+}
+
 pub const STANDINGS: [&str; 7] = [
     "authoritative", // a named authority answered this exact question, in scope
     "ratified",      // an approved organization decision, within its declared scope

@@ -293,9 +293,17 @@ def test_automatically_admitted_shared_fact_remains_revocable(ruled_world):
     if after_result.returncode not in (0, 3):
         raise ProductFailure(f"revocation read failed: {after_result.stdout}")
     after = after_result.json
-    revoked_support = any(row.get("event_id") == event["event_id"]
-                          and str(row.get("reason", "")).startswith(("REVOKED:", "SUPPORT_REVOKED:"))
-                          for row in after.get("trace", {}).get("rejected", []))
+    # No `.get(key, default)`: an absent field must read as absent evidence, not as
+    # a satisfied assertion. A missing trace or reason means the product did not say
+    # what this node claims it says.
+    trace = after["trace"] if "trace" in after else {}
+    rejected = trace["rejected"] if "rejected" in trace else []
+    revoked_support = any(
+        row.get("event_id") == event["event_id"]
+        and isinstance(row.get("reason"), str)
+        and row["reason"].startswith(("REVOKED:", "SUPPORT_REVOKED:"))
+        for row in rejected
+    )
     O.check("RULING.revocable", {"before": before.get("status"),
         "withdrawn": after.get("projection_state") == "withheld" and after.get("trusted") is False and revoked_support,
         "record_retained": path.exists()},

@@ -425,7 +425,23 @@ def test_hard_blocking_taint_is_never_cleared_by_deidentification(
         {"admission_count": len(admissions),
          "destinations": sorted(row["destination"].split(":")[0] for row in admissions),
          "all_committed": bool(admissions) and all(row.get("state") == "committed" for row in admissions),
-         "admitted_canary_occurrences": sum(canary in json.dumps(row) for row in documents + admissions),
+         # Only shared destinations. Personal is the store that is *supposed* to
+         # retain the canary -- that is what "private provenance taint survives"
+         # means in this obligation's own label -- so counting Personal documents
+         # as leaks made the check contradict itself and fail on correct behaviour.
+         "admitted_canary_occurrences": sum(
+             canary in json.dumps(row)
+             for row in (
+                 [d for d, a in zip(documents, admissions)
+                  if not a["destination"].startswith("personal")]
+                 + [a for a in admissions if not a["destination"].startswith("personal")]
+             )
+         ),
+         "private_admission_retains_canary": any(
+             canary in json.dumps(d)
+             for d, a in zip(documents, admissions)
+             if a["destination"].startswith("personal")
+         ),
          "private_taint_present": bool(before) and any(row["taints"] for row in before),
          "deidentify_retains_taint": bool(taints_before) and taints_before == taints_after},
         label="de-identified admissions exclude the canary while private provenance taint survives",

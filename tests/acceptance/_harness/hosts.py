@@ -106,9 +106,14 @@ def host_availability(name: str, *, env: dict[str, str] | None = None) -> HostBi
     if resolved is None or not resolved.exists():
         return None
     try:
+        # A version probe needs PATH and nothing else. Forwarding the caller's whole
+        # environment made the name set opaque to the control-policy check, which
+        # exists so a product cannot branch on an unlisted environment variable
+        # instead of doing the work. Naming the one variable literally keeps that
+        # check able to see what reaches the system under test.
         proc = subprocess.run(
             [str(resolved), "--version"], capture_output=True, text=True, timeout=120,
-            env=env,
+            env={"PATH": (env or {}).get("PATH", os.environ.get("PATH", ""))},
         )
         proc.check_returncode()
         version = (proc.stdout or proc.stderr).strip().splitlines()[0][:200]
