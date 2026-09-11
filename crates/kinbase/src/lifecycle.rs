@@ -1456,11 +1456,23 @@ fn commit_provenance(author: &str, email: &str, trailers: &str, subject: &str) -
 fn scan_git_history(repo: &Repository) -> Result<SourceScan, ContractError> {
     let mut scan = SourceScan::default();
     let default = repo.default_branch();
+    // Ingest refuses a batch over 10,000 observations, and the adapter cannot page:
+    // `scan` never receives the checkpoint. Wander's largest repository has 148,004
+    // commits, so an unbounded walk produced nothing at all -- the whole batch was
+    // refused and the repository ended up with no code history whatsoever.
+    //
+    // Bounding to the most recent commits is a sampling decision, not an authority
+    // one: what a commit is worth is still decided by standing and provenance. Old
+    // history is the least informative part of a brownfield repository anyway, and
+    // some history beats none by a wide margin. Paging by checkpoint is the better
+    // answer and wants `scan` to carry it.
+    const COMMIT_SCAN_LIMIT: &str = "-6000";
     let log = git(
         &repo.root,
         &[
             "log",
             "--all",
+            COMMIT_SCAN_LIMIT,
             "--format=%H%x00%P%x00%T%x00%aI%x00%an%x00%ae%x00%(trailers:key=Co-authored-by,valueonly,separator=%x2C)%x00%s",
         ],
     )
