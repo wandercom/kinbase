@@ -998,6 +998,18 @@ pub fn admit(
             skipped_wrong_store += 1;
             continue;
         }
+        // The observation ledger is Personal and therefore shared across every
+        // repository on this machine. Admitting without this check gave each
+        // repository every other repository's facts -- `payment` ended up holding
+        // `pricing`'s history -- which is precisely the boundary this product
+        // exists to hold. An observation belongs to the repository it was read
+        // from, and to no other.
+        if store == crate::StoreKind::Codebase
+            && observation.repository_id.as_deref() != repository_id.as_deref()
+        {
+            skipped_wrong_store += 1;
+            continue;
+        }
         let Some(logical_key) = observation.logical_key.clone() else {
             continue;
         };
