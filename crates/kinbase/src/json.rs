@@ -129,7 +129,17 @@ pub fn validate_json(value: &Value) -> Result<(), String> {
         Value::Object(map) => {
             for (key, value) in map {
                 validate_text(key)?;
-                validate_json(value)?;
+                // Name the field. A canonical-model refusal three layers from its
+                // cause is a bug report nobody can act on: the same rejection took
+                // four guesses to localise because it only said which rule broke,
+                // never which field broke it.
+                validate_json(value).map_err(|error| {
+                    if error.contains(" at field ") {
+                        error
+                    } else {
+                        format!("{error} at field `{key}`")
+                    }
+                })?;
             }
             Ok(())
         }

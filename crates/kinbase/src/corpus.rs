@@ -1033,7 +1033,7 @@ pub fn admit(
                 end -= 1;
             }
             statement.truncate(end);
-            statement.push_str("\n[excerpt; full source retained by content digest]");
+            statement.push_str(" [excerpt; full source retained by content digest]");
         }
         let mut event = crate::model::FactEvent {
             schema: crate::model::EVENT_SCHEMA.to_owned(),

@@ -920,6 +920,32 @@ fn scan_envelopes(
 /// and leaves the full bytes addressable through the observation's content digest.
 /// Truncating at a character boundary keeps the text valid UTF-8.
 fn bounded_statement(text: &str) -> String {
+    // The canonical data model rejects every character at or below 0x1f, newlines
+    // and tabs included, so a statement assembled as "title\nbody" is refused. Real
+    // text from real systems is full of both. Collapse all control characters to a
+    // single space at the adapter -- the boundary that meets the outside world --
+    // rather than letting the store refuse an observation whose cause is three
+    // layers away from the error.
+    let mut cleaned = String::with_capacity(text.len());
+    let mut last_was_space = false;
+    for character in text.chars() {
+        let replaced = if (character as u32) <= 0x1f || (0x7f..=0x9f).contains(&(character as u32))
+        {
+            ' '
+        } else {
+            character
+        };
+        if replaced == ' ' {
+            if last_was_space {
+                continue;
+            }
+            last_was_space = true;
+        } else {
+            last_was_space = false;
+        }
+        cleaned.push(replaced);
+    }
+    let text = cleaned.trim();
     const LIMIT: usize = 15_000;
     if text.len() <= LIMIT {
         return text.to_owned();
@@ -929,7 +955,7 @@ fn bounded_statement(text: &str) -> String {
         end -= 1;
     }
     format!(
-        "{}\n[excerpt; full source retained by content digest]",
+        "{} [excerpt; full source retained by content digest]",
         &text[..end]
     )
 }

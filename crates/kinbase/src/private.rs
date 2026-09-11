@@ -279,7 +279,47 @@ impl PrivateStore {
     }
 
     pub fn insert_observation(&self, observation: &Observation) -> Result<bool, ContractError> {
-        let record = crate::json::canonical_text(&crate::model::value_of(observation));
+        // `value_of` yields Null and `canonical_text` yields "" when serialisation
+        // fails, so a failure here used to be written into the ledger as an empty
+        // record and discovered much later as an unreadable row. Five of 1,297
+        // observations in Wander's corpus were lost that way. Refuse instead: an
+        // observation that cannot be serialised is a defect to surface, never a
+        // blank to store.
+        let value = serde_json::to_value(observation).map_err(|error| {
+            ContractError::internal(format!(
+                "observation {} is not serialisable: {error}",
+                observation.observation_id
+            ))
+        })?;
+        if let Err(problem) = crate::json::validate_json(&value) {
+            if let Some(s) = value.get("statement").and_then(|v| v.as_str()) {
+                let bad: Vec<String> = s
+                    .chars()
+                    .filter(|c| (*c as u32) <= 0x1f || (0x80..=0x9f).contains(&(*c as u32)))
+                    .map(|c| format!("U+{:04X}", c as u32))
+                    .take(5)
+                    .collect();
+                eprintln!(
+                    "[debug] {problem}; statement control chars: {bad:?}; head={:?}",
+                    &s[..s.len().min(120)]
+                );
+            }
+        }
+        let record = crate::json::try_canonical_bytes(&value)
+            .map_err(|error| {
+                ContractError::internal(format!(
+                    "observation {} violates the canonical data model: {error}",
+                    observation.observation_id
+                ))
+            })
+            .and_then(|bytes| {
+                String::from_utf8(bytes).map_err(|error| {
+                    ContractError::internal(format!(
+                        "observation {} canonical bytes are not UTF-8: {error}",
+                        observation.observation_id
+                    ))
+                })
+            })?;
         let inserted = self
             .connection
             .execute(
