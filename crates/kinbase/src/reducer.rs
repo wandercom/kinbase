@@ -247,6 +247,22 @@ pub fn authority_rank_governed(
     //
     // Provenance is applied first, so a pattern an agent wrote forty times cannot
     // claim `prevalent` and feed itself back as direction.
+    // Trust first, standing second. Standing is a claim the event makes about
+    // itself, so consulting it before the origin-trust check let an untrusted event
+    // declare `standing: "authoritative"` and skip the check entirely -- an attacker
+    // fork with a self-issued certificate minted a trusted fact that way. An event
+    // whose origin is not trusted ranks zero no matter what it claims about its own
+    // importance.
+    if event.store_kind == "codebase"
+        && origin_trust.is_some_and(|trust| trust != "merged-default")
+        && !(origin_trust == Some("approved-pr")
+            && event
+                .evidence_refs
+                .iter()
+                .any(|reference| reference.starts_with("authorization:")))
+    {
+        return 0;
+    }
     let standing = match governance {
         Some(governance) => governance.standing_for(event),
         None => crate::model::effective_standing(&event.standing, &event.provenance),

@@ -973,6 +973,27 @@ pub fn admit(
         }
     };
     let discovered = Repository::discover(repo)?;
+    // Refuse to admit into a shared store unless this repository's certificate
+    // actually verifies against the configured Company root. Signing with the
+    // maintainer key is what makes admitted facts trusted, so doing it without
+    // checking the certificate let an attacker fork self-issue one and mint trusted
+    // facts -- the acceptance suite caught exactly that (`fork_trusted_facts` 1,
+    // must be 0). The session path never had this hole because it goes through
+    // trust resolution first.
+    if store != crate::StoreKind::Personal {
+        let trust = crate::repository::build_trust(launcher, &discovered, false, None)?;
+        if !trust.certificate_valid {
+            return Err(ContractError::user_action(
+                "REPO_UNCERTIFIED",
+                format!(
+                    "bulk admission into {} requires a certificate that verifies against the Company root ({})",
+                    store_name(store),
+                    trust.certificate_reason
+                ),
+                "Obtain a steward-issued certificate and run `kinbase repo init` before admitting.",
+            ));
+        }
+    }
     let now = crate::repository::recorded_clock(launcher, &discovered)?;
     let repository_id = discovered.uuid_hint().map(str::to_owned);
 
@@ -1022,6 +1043,16 @@ pub fn admit(
             // not admissible to a shared store and is not an error.
             continue;
         };
+        // De-identify every shared-store write, exactly as the session path does.
+        // `session observe` runs `deidentify_statement` before a candidate reaches a
+        // Company or Codebase store; bulk admission copied the observation's text
+        // straight through, so a canary planted in a private source reached an
+        // admitted event. The suite caught it (`admitted_canary_occurrences` 1, must
+        // be 0). Personal keeps its own bytes -- that store is the one allowed to.
+        if store != crate::StoreKind::Personal {
+            let (clean, _removed) = crate::session::deidentify_statement(&statement);
+            statement = clean;
+        }
         // The store bounds a statement at 16 KiB. Adapters bound their own output,
         // but this path admits whatever is already in the ledger -- including
         // observations recorded before that was true -- so it bounds again rather

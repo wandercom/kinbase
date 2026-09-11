@@ -581,8 +581,12 @@ def test_uncertified_clone_and_attacker_fork_both_yield_zero_trusted_facts(
     # because its signer is not the Company root.
     other = "018f0000-0000-7000-8000-0000000000aa"
     fork = world.repo.clone(tmp_path / ids.token("fork"))
+    # Kinbase's config is `.kin/kinbase.toml`; `.kin/config` belongs to Kindex and
+    # is not read. An attacker rewrites the file the product actually reads, so the
+    # fixture must too -- writing the legacy name left the fork inheriting the
+    # original's valid binding and quietly passing.
     fork.write(
-        ".kin/config",
+        ".kin/kinbase.toml",
         'schema_version = "kinbase-repo/1"\n'
         'repository_uuid_hint = "' + other + '"\n'
         'safe_name = "example-service"\n'
