@@ -1492,13 +1492,27 @@ fn scan_git_history(repo: &Repository) -> Result<SourceScan, ContractError> {
     // history is the least informative part of a brownfield repository anyway, and
     // some history beats none by a wide margin. Paging by checkpoint is the better
     // answer and wants `scan` to carry it.
-    const COMMIT_SCAN_LIMIT: &str = "-6000";
+    // Paging bound. `scan` still does not receive the ingest checkpoint, so this is
+    // read from the environment to let an operator walk a large history in slices
+    // rather than silently keeping only the newest slice forever. KINBASE_GIT_SKIP
+    // moves the window back; KINBASE_GIT_MAX sizes it.
+    let max: usize = std::env::var("KINBASE_GIT_MAX")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(6_000);
+    let skip: usize = std::env::var("KINBASE_GIT_SKIP")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0);
+    let max_flag = format!("-{max}");
+    let skip_flag = format!("--skip={skip}");
     let log = git(
         &repo.root,
         &[
             "log",
             "--all",
-            COMMIT_SCAN_LIMIT,
+            &max_flag,
+            &skip_flag,
             "--format=%H%x00%P%x00%T%x00%aI%x00%an%x00%ae%x00%(trailers:key=Co-authored-by,valueonly,separator=%x2C)%x00%s",
         ],
     )
