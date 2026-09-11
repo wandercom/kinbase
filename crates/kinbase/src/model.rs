@@ -463,6 +463,15 @@ pub struct Observation {
     /// The record is a signed `.kin/events` FactEvent the reducer owns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reducer_owned: Option<bool>,
+    /// Spans of code this observation is about. Carried from the adapter, which
+    /// is the only place that knows: a commit knows the paths it touched, a pull
+    /// request knows its diff hunks. Ingest used to drop them, so every fact in
+    /// the store was unlocatable in the code it described.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub anchors: Vec<CodeAnchor>,
+    /// Paths this observation rules over, for the direction-bearing kinds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub governs_paths: Vec<String>,
     /// Ledger admission cursor (opaque, monotonic); never part of the record.
     #[serde(default, skip)]
     pub cursor: Option<u64>,

@@ -59,6 +59,8 @@ pub struct SourceRecord {
     pub provenance: String,
     /// Spans of code this record is about, taken from a diff rather than guessed.
     pub anchors: Vec<crate::model::CodeAnchor>,
+    /// Paths this record rules over, when it is a record that rules at all.
+    pub governs_paths: Vec<String>,
     pub revision: Option<String>,
     pub branch: Option<String>,
     pub raw_expired: bool,
@@ -93,6 +95,7 @@ impl SourceRecord {
             origin: "merged-default".to_owned(),
             provenance: "unknown".to_owned(),
             anchors: Vec::new(),
+            governs_paths: Vec::new(),
             revision: None,
             branch: None,
             raw_expired: false,
@@ -1400,16 +1403,16 @@ fn scan_document(source: &Path, _repo: &Repository) -> Result<SourceScan, Contra
             if let Some(url) = crate::json::get_str(&document, "url") {
                 references.push(format!("document:{url}"));
             }
-            for governed in document
+            // Governance is a field, not an evidence reference. Smuggling it
+            // through `evidence_refs` meant two rulings that governed the same
+            // path each looked like evidence sitting under the other one.
+            record.governs_paths = document
                 .get("governs_paths")
                 .and_then(Value::as_array)
                 .into_iter()
                 .flatten()
-            {
-                if let Some(path_value) = governed.as_str() {
-                    references.push(format!("governs:{path_value}"));
-                }
-            }
+                .filter_map(|value| value.as_str().map(str::to_owned))
+                .collect();
             record.attributes.insert(
                 "references".to_owned(),
                 Value::Array(references.into_iter().map(Value::String).collect()),
@@ -1480,6 +1483,12 @@ fn commit_provenance(author: &str, email: &str, trailers: &str, subject: &str) -
     }
 }
 
+/// A sweeping refactor touches hundreds of files and says very little about any
+/// one of them. Anchoring every path would let one such commit dominate the
+/// association graph for a whole service, so the record keeps the first few and
+/// the commit stays addressable by sha for anyone who wants the rest.
+const MAX_COMMIT_ANCHORS: usize = 32;
+
 fn scan_git_history(
     repo: &Repository,
     checkpoint: Option<&str>,
@@ -1521,7 +1530,14 @@ fn scan_git_history(
             "--all",
             &max_flag,
             &skip_flag,
-            "--format=%H%x00%P%x00%T%x00%aI%x00%an%x00%ae%x00%(trailers:key=Co-authored-by,valueonly,separator=%x2C)%x00%s",
+            // The changed paths ride along in the same walk rather than costing
+            // one `git` process per commit. Without them a commit fact knows
+            // nothing about where it happened, so no ruling about a directory
+            // could reach it and no caller could ask "what is known about this
+            // file" -- the association between knowledge and code was missing
+            // at its largest source.
+            "--name-only",
+            "--format=%x01%H%x00%P%x00%T%x00%aI%x00%an%x00%ae%x00%(trailers:key=Co-authored-by,valueonly,separator=%x2C)%x00%s",
         ],
     )
     .map_err(|error| {
@@ -1534,11 +1550,32 @@ fn scan_git_history(
         )
     })?;
     let mut commits = Vec::new();
+    // `--name-only` interleaves the changed paths after each commit's format
+    // line. 0x01 marks a format line: a path can contain anything a filename
+    // can, so the separator has to be something git will not emit as content.
+    let mut paths_by_sha: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut current: Option<String> = None;
     for line in log.lines() {
-        let parts: Vec<&str> = line.splitn(8, '\0').collect();
+        let Some(header) = line.strip_prefix('\u{1}') else {
+            let path = line.trim();
+            // A path git had to quote (non-UTF-8 or control bytes) is skipped
+            // rather than guessed at: a wrong path is worse than no path.
+            if path.is_empty() || path.starts_with('"') {
+                continue;
+            }
+            if let Some(sha) = &current {
+                paths_by_sha
+                    .entry(sha.clone())
+                    .or_default()
+                    .push(path.to_owned());
+            }
+            continue;
+        };
+        let parts: Vec<&str> = header.splitn(8, '\0').collect();
         if parts.len() < 8 {
             continue;
         }
+        current = Some(parts[0].to_owned());
         commits.push(CommitInfo {
             sha: parts[0].to_owned(),
             parents: parts[1].split_whitespace().map(str::to_owned).collect(),
@@ -1663,6 +1700,28 @@ fn scan_git_history(
             "unreviewed-branch".to_owned()
         };
         record.revision = Some(commit.sha.clone());
+        // A whole-file anchor: the commit touched this path at this revision.
+        // Line 0 to 0 is the file-level span -- a commit is evidence about the
+        // file, and narrowing it to hunks would cost a diff per commit for a
+        // precision nothing downstream asks for yet. A generated file is not
+        // evidence of anyone's intent, so it anchors nothing.
+        record.anchors = paths_by_sha
+            .get(&commit.sha)
+            .map(|paths| {
+                paths
+                    .iter()
+                    .filter(|path| !is_generated_path(path))
+                    .take(MAX_COMMIT_ANCHORS)
+                    .map(|path| crate::model::CodeAnchor {
+                        path: path.clone(),
+                        line_start: 0,
+                        line_end: 0,
+                        revision: Some(commit.sha.clone()),
+                        span_sha256: None,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         record
             .attributes
             .insert("parents".to_owned(), json!(commit.parents));
@@ -3644,7 +3703,14 @@ mod tests {
             format!("{line1}\n{edited}\n{line1}\n"),
         )
         .unwrap();
-        let scan = scan("codex_jsonl", &root, &repo, "2026-09-08T00:00:00.000Z").expect("scan");
+        let scan = scan(
+            "codex_jsonl",
+            &root,
+            &repo,
+            "2026-09-08T00:00:00.000Z",
+            None,
+        )
+        .expect("scan");
         let ids: Vec<&str> = scan.records.iter().map(|r| r.native_id.as_str()).collect();
         assert_eq!(ids, ["s1/s1-0000", "s1/s1-0000", "s1/s1-0000"]);
         let digests: BTreeSet<String> = scan.records.iter().map(|r| r.content_digest()).collect();
@@ -3670,6 +3736,7 @@ mod tests {
             &dir.path().join("sources/adr"),
             &repo,
             "2026-09-08T00:00:00.000Z",
+            None,
         )
         .expect("scan");
         assert_eq!(scan.records.len(), 1);
@@ -3697,7 +3764,14 @@ mod tests {
             .unwrap()
             .set_modified(future)
             .unwrap();
-        let scan = scan("github_export", &root, &repo, "2026-09-08T00:00:00.000Z").expect("scan");
+        let scan = scan(
+            "github_export",
+            &root,
+            &repo,
+            "2026-09-08T00:00:00.000Z",
+            None,
+        )
+        .expect("scan");
         let present: BTreeMap<&str, bool> = scan
             .records
             .iter()

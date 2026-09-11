@@ -342,6 +342,8 @@ pub fn ingest(
         };
         let fresh = Observation {
             provenance: record.provenance.clone(),
+            anchors: record.anchors.clone(),
+            governs_paths: record.governs_paths.clone(),
             observation_id: observation_id.clone(),
             source_kind: source_kind.to_owned(),
             source_identity: source_identity.clone(),

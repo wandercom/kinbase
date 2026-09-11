@@ -195,12 +195,32 @@ impl Governance {
     }
 
     /// True when this event's evidence sits under a governed path.
+    ///
+    /// A governed path is matched against every place an event records where it
+    /// came from, because different adapters record location differently: a code
+    /// anchor carries a real file path, a repository-scoped fact carries only its
+    /// repository UUID, and a document fact carries the source in `scope` or an
+    /// evidence reference. Matching only the last of those was the reason
+    /// governance never fired on real ingested corpora -- the repository adapter
+    /// writes `scope: "repository"` and opaque `observation:` references, so no
+    /// ruling about `wandercom/property` could ever reach the facts it governs.
     fn governing_rule(&self, event: &FactEvent) -> Option<&(String, String, String)> {
         self.rules.iter().find(|(path, _, fact_id)| {
             // A ruling never demotes itself, and never demotes a sibling ruling
             // from the same fact.
             *fact_id != event.fact_id
                 && (event.scope.contains(path.as_str())
+                    // Repository-wide governance: the ruling names the repository
+                    // by the identity the event actually carries. Exact, never a
+                    // prefix -- one repository UUID is not a parent of another.
+                    || event.repository_id.as_deref() == Some(path.as_str())
+                    // A path rule is a prefix of a path, not a substring of one:
+                    // `src/pay` governs `src/payment/x.ts` and must not be reached
+                    // by a file that merely mentions it.
+                    || event
+                        .anchors
+                        .iter()
+                        .any(|anchor| anchor.path.starts_with(path.as_str()))
                     || event
                         .evidence_refs
                         .iter()
@@ -220,7 +240,16 @@ impl Governance {
         let Some((_, governing, _)) = self.governing_rule(event) else {
             return own;
         };
-        if crate::model::outranks(governing, &own) {
+        // Only *ambient* evidence is demoted. `prevalent` is "the majority
+        // pattern", which is precisely the noise a ruling exists to overrule:
+        // the retired repository has the most commits. Everything stronger was
+        // assigned deliberately -- `enforced` is mechanically true right now and
+        // a target-state document does not stop CI from failing your build
+        // today; `exemplary` is a human naming the implementation to copy. A
+        // ruling that contradicts one of those is a conflict to surface, not a
+        // standing to quietly lower.
+        let ambient = matches!(own.as_str(), "prevalent" | "present");
+        if ambient && crate::model::outranks(governing, &own) {
             // Governed and weaker: this is ambient evidence under a path someone
             // has ruled on. It survives as `present` -- still retrievable, no
             // longer a signal about direction.
@@ -2431,5 +2460,152 @@ mod packet10_tests {
             view.facts[0].effective_until.as_deref(),
             Some("2026-03-01T00:00:00.000Z")
         );
+    }
+
+    /// A ruling about a repository must reach the facts that repository actually
+    /// emits. The repository adapter records location as a UUID and opaque
+    /// observation references, never as a path, so matching evidence strings
+    /// alone left every ingested fact ungoverned.
+    #[test]
+    fn a_repository_ruling_demotes_facts_carrying_only_that_repository_id() {
+        let mut ruling = event(
+            "retire-legacy",
+            "we are retiring this service; new code goes to the replacement",
+            "company",
+            "company:architecture",
+            "current",
+            None,
+            Vec::new(),
+        );
+        ruling.atom_kind = "directional".to_owned();
+        ruling.standing = "ratified".to_owned();
+        ruling.provenance = "human".to_owned();
+        ruling.governs_paths = vec!["5e3211e9-3637-47f8-ba3c-38cf31dcf417".to_owned()];
+
+        let mut ambient = event(
+            "ambient-commit",
+            "the prevailing pattern in the legacy service",
+            "codebase",
+            "repository",
+            "current",
+            None,
+            Vec::new(),
+        );
+        ambient.repository_id = Some("5e3211e9-3637-47f8-ba3c-38cf31dcf417".to_owned());
+        ambient.standing = "prevalent".to_owned();
+        ambient.provenance = "human".to_owned();
+        ambient.evidence_refs = vec!["observation:obs_037c5555".to_owned()];
+
+        let mut elsewhere = ambient.clone();
+        elsewhere.event_id = "other-repo".to_owned();
+        elsewhere.fact_id = "fact_other-repo".to_owned();
+        elsewhere.repository_id = Some("11111111-2222-3333-4444-555555555555".to_owned());
+
+        let governance = Governance::build([&ruling, &ambient, &elsewhere].into_iter());
+        assert_eq!(governance.standing_for(&ambient), "present");
+        assert_eq!(governance.standing_for(&elsewhere), "prevalent");
+        // A ruling never demotes itself.
+        assert_eq!(governance.standing_for(&ruling), "ratified");
+    }
+
+    /// Path governance is a prefix of a path, not a substring of arbitrary text:
+    /// a rule about `src/pay` governs files under it and nothing that merely
+    /// mentions the string.
+    #[test]
+    fn an_anchor_path_is_governed_by_prefix_not_by_substring() {
+        let mut ruling = event(
+            "payment-is-the-exemplar",
+            "copy Payment's reconcilers",
+            "company",
+            "company:architecture",
+            "current",
+            None,
+            Vec::new(),
+        );
+        ruling.atom_kind = "north_star".to_owned();
+        ruling.standing = "ratified".to_owned();
+        ruling.provenance = "human".to_owned();
+        ruling.governs_paths = vec!["src/pay".to_owned()];
+
+        let mut under = event(
+            "under-path",
+            "a helper inside the governed tree",
+            "codebase",
+            "repository",
+            "current",
+            None,
+            Vec::new(),
+        );
+        under.standing = "prevalent".to_owned();
+        under.provenance = "human".to_owned();
+        under.anchors = vec![crate::model::CodeAnchor {
+            path: "src/payment/reconcile.ts".to_owned(),
+            line_start: 10,
+            line_end: 20,
+            revision: None,
+            span_sha256: None,
+        }];
+
+        let mut mentions = under.clone();
+        mentions.event_id = "mentions-path".to_owned();
+        mentions.fact_id = "fact_mentions-path".to_owned();
+        mentions.anchors = vec![crate::model::CodeAnchor {
+            path: "docs/notes-about-src/pay.md".to_owned(),
+            line_start: 1,
+            line_end: 2,
+            revision: None,
+            span_sha256: None,
+        }];
+
+        let governance = Governance::build([&ruling, &under, &mentions].into_iter());
+        assert_eq!(governance.standing_for(&under), "present");
+        assert_eq!(governance.standing_for(&mentions), "prevalent");
+    }
+
+    /// A ruling overrules the majority pattern, not a mechanically-verified
+    /// fact. CI enforcing something today is true today, whatever the target
+    /// state says, and an agent that stops seeing it will write code that does
+    /// not build.
+    #[test]
+    fn governance_demotes_the_prevalent_pattern_but_not_enforced_truth() {
+        let mut ruling = event(
+            "target-state",
+            "the target architecture for this service",
+            "company",
+            "company:architecture",
+            "current",
+            None,
+            Vec::new(),
+        );
+        ruling.atom_kind = "north_star".to_owned();
+        ruling.standing = "ratified".to_owned();
+        ruling.provenance = "human".to_owned();
+        ruling.governs_paths = vec!["wandercom/property".to_owned()];
+
+        let make = |id: &str, standing: &str| {
+            let mut fact = event(
+                id,
+                "a fact inside the governed repository",
+                "codebase",
+                "repository",
+                "current",
+                None,
+                Vec::new(),
+            );
+            fact.fact_id = format!("fact_{id}");
+            fact.standing = standing.to_owned();
+            fact.provenance = "human".to_owned();
+            fact.evidence_refs = vec!["source:wandercom/property/src/x.ts".to_owned()];
+            fact
+        };
+        let prevalent = make("majority", "prevalent");
+        let enforced = make("ci", "enforced");
+        let exemplary = make("copy-this", "exemplary");
+
+        let governance =
+            Governance::build([&ruling, &prevalent, &enforced, &exemplary].into_iter());
+        assert_eq!(governance.standing_for(&prevalent), "present");
+        assert_eq!(governance.standing_for(&enforced), "enforced");
+        assert_eq!(governance.standing_for(&exemplary), "exemplary");
     }
 }

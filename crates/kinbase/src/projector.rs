@@ -253,9 +253,24 @@ pub fn run(
     // The current set S starts as the caller-declared working set: facts
     // already resident at the dependent edit. They condition every marginal
     // but are never re-selected; re-adding a resident fact has zero value.
+    // A working-set entry is either a fact id or a file path. Requiring fact ids
+    // only was unusable from the seat that matters: an agent about to edit
+    // `src/pay/reconcile.ts` knows the path and not which facts describe it, and
+    // had to be told "unresolved" for every entry. A path entry resolves to every
+    // fact anchored in that file or under that directory.
+    let resolves = |fact: &CurrentFact, entry: &str| -> bool {
+        fact.fact_id == entry
+            || fact.anchors.iter().any(|anchor| {
+                anchor.path == entry
+                    // A directory entry covers the files beneath it; a file entry
+                    // covers anchors into that file. Both need the separator so
+                    // `src/pay` never reaches `src/payments-legacy`.
+                    || anchor.path.starts_with(&format!("{}/", entry.trim_end_matches('/')))
+            })
+    };
     let residents: Vec<CurrentFact> = candidates
         .iter()
-        .filter(|fact| working.contains(fact.fact_id.as_str()))
+        .filter(|fact| working.iter().any(|entry| resolves(fact, entry)))
         .map(|fact| (*fact).clone())
         .collect();
     let resident_ids: BTreeSet<String> =
@@ -263,7 +278,7 @@ pub fn run(
     let working_set_unresolved: Vec<&str> = working_set
         .iter()
         .map(String::as_str)
-        .filter(|id| !resident_ids.contains(*id))
+        .filter(|entry| !residents.iter().any(|fact| resolves(fact, entry)))
         .collect();
     let mut context: Vec<CurrentFact> = residents.clone();
     let mut selected: Vec<CurrentFact> = Vec::new();
@@ -521,6 +536,16 @@ pub fn run(
             "logical_key": fact.logical_key,
             "role": roles.name(fact),
             "store_kind": fact.store_kind,
+            // The point of selecting a fact is to act on it, and how much weight
+            // it carries is the first thing the caller needs. Without these the
+            // consumer sees a flat list and cannot tell a ratified architecture
+            // ruling from the majority pattern in a directory being retired --
+            // which is the entire distinction this system exists to draw.
+            "atom_kind": fact.atom_kind,
+            "standing": fact.standing,
+            "provenance": fact.provenance,
+            "governs_paths": fact.governs_paths,
+            "anchors": fact.anchors,
             "resident": resident_ids.contains(&fact.fact_id),
             "selection_reason": if resident_ids.contains(&fact.fact_id) { "working_set_resident" } else { "positive_conditional_marginal_value" }
         })
