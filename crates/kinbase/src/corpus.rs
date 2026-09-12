@@ -1355,18 +1355,16 @@ const BULK_CHUNK_CHARS: usize = 2_500;
 /// however small the request, so a pass is bought with workers, not time;
 /// forty-eight in flight is well inside what the provider serves, and the
 /// budget is long enough that a pass loses no draw to it.
-const BULK_DOCUMENTS_PER_PASS: usize = 16;
-/// Ollama cloud serves a handful of requests at a time and answers the rest
-/// with 429; thirty-two workers produced fifteen thousand retries in one
-/// pass and then a pass in which every document abstained. Six stays inside
-/// what the provider serves, and wall time is the same because the provider,
-/// not the worker count, sets the pace.
-const BULK_CLASSIFIER_WORKERS: usize = 6;
+const BULK_DOCUMENTS_PER_PASS: usize = 24;
+/// Sixteen classifier processes in flight. Ollama cloud throttled anything
+/// past a handful; Antigravity does not, and each of its calls is a short
+/// process, so the ceiling here is the machine, not the provider.
+const BULK_CLASSIFIER_WORKERS: usize = 16;
 const BULK_EXTRACTION_BUDGET_SECONDS: u64 = 900;
-/// Chunks per classifier request. Four per request made the model's answer
-/// long enough that one in three failed the strict output check on real
-/// documents; two keeps each answer short and each failure cheap to retry.
-const BULK_OBSERVATIONS_PER_REQUEST: usize = 2;
+/// Chunks per classifier request. Every Antigravity turn carries a fixed
+/// overhead of tens of thousands of tokens, so a request is worth filling;
+/// the enforced answer schema keeps the longer answer well-formed.
+const BULK_OBSERVATIONS_PER_REQUEST: usize = 4;
 /// Personal-store journal of classified documents: the atoms, their
 /// destinations and the classifier that produced them. Admission to any
 /// store reads from here, so a document is classified once, not once per

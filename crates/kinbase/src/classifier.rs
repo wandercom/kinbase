@@ -50,16 +50,24 @@ pub fn run(
         ))
     })?;
     let selected_provider = provider.map(str::to_owned).unwrap_or_else(|| {
-        if configured_model.starts_with("ollama:")
-            || model.is_some_and(|model| model.starts_with("ollama:"))
-        {
+        let name = model.unwrap_or(configured_model);
+        if name.starts_with("ollama:") {
             "ollama".to_owned()
+        } else if name.starts_with("agy:") {
+            "agy".to_owned()
         } else {
             "deterministic".to_owned()
         }
     });
     let output = match selected_provider.as_str() {
         "deterministic" => deterministic(&document)?,
+        "agy" => {
+            let name = model
+                .map(|model| model.trim_start_matches("agy:"))
+                .or_else(|| configured_model.strip_prefix("agy:"))
+                .unwrap_or("default");
+            antigravity(name.trim(), &document)?
+        }
         "ollama" => {
             let name = model
                 .map(|model| model.trim_start_matches("ollama:"))
@@ -76,7 +84,7 @@ pub fn run(
         }
         other => {
             return Err(ContractError::invariant(format!(
-                "unsupported classifier provider `{other}`; use deterministic or ollama"
+                "unsupported classifier provider `{other}`; use deterministic, ollama or agy"
             )));
         }
     };
@@ -259,6 +267,146 @@ pub(crate) fn ollama_model_available(model: &str) -> Result<(), String> {
             "Ollama does not serve the configured model `{model}`"
         ))
     }
+}
+
+/// Where the Antigravity CLI lives. It is a routing classifier here, not a
+/// coder: the same instruction Ollama gets, one non-interactive turn, a JSON
+/// schema enforced on the answer, and limits high enough that a corpus load
+/// is not throttled into abstaining.
+const AGY_PATHS: [&str; 2] = ["/opt/homebrew/bin/agy", "/usr/local/bin/agy"];
+
+/// The invoking user's home directory from the password database, since the
+/// sandboxed child's environment deliberately does not carry it.
+fn real_home_dir() -> String {
+    // SAFETY: getpwuid returns a pointer to static storage or null; the
+    // fields are read immediately and copied out before any other call.
+    unsafe {
+        let entry = libc::getpwuid(libc::getuid());
+        if !entry.is_null() && !(*entry).pw_dir.is_null() {
+            let dir = std::ffi::CStr::from_ptr((*entry).pw_dir);
+            return dir.to_string_lossy().into_owned();
+        }
+    }
+    "/nonexistent".to_owned()
+}
+
+pub(crate) fn agy_available() -> Result<(), String> {
+    for path in AGY_PATHS {
+        if std::path::Path::new(path).is_file() {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "Antigravity CLI not found at {}",
+        AGY_PATHS.join(" or ")
+    ))
+}
+
+fn antigravity(model: &str, document: &Value) -> Result<Value, ContractError> {
+    let input_observations = observations(document)?;
+    for observation in input_observations {
+        require_observation(
+            observation
+                .as_object()
+                .ok_or_else(|| invariant("each observation must be an object"))?,
+        )?;
+    }
+    let messages: Vec<Value> = input_observations
+        .iter()
+        .map(|observation| {
+            json!({
+                "id": observation.get("observation_id").cloned().unwrap_or(Value::Null),
+                "text": observation.get("body").cloned().unwrap_or(Value::String(String::new()))
+            })
+        })
+        .collect();
+    let prompt = format!(
+        "{OLLAMA_INSTRUCTION}\n\nInput:\n{}",
+        serde_json::to_string(&json!({"messages": messages})).unwrap_or_default()
+    );
+    let schema = json!({
+        "type": "object",
+        "properties": {
+            "atoms": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "text": {"type": "string"},
+                        "destination": {"type": "string", "enum": ["personal", "company", "codebase", "none"]},
+                        "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+                    },
+                    "required": ["id", "text", "destination", "confidence"]
+                }
+            }
+        },
+        "required": ["atoms"]
+    });
+    let binary = AGY_PATHS
+        .iter()
+        .find(|path| std::path::Path::new(path).is_file())
+        .ok_or_else(|| unauthorized("Antigravity CLI is not installed"))?;
+    // The pinned classifier child runs with HOME=/nonexistent and a bare
+    // PATH, which is right for a processor that must not read the user's
+    // files. Antigravity cannot start without its state directory under the
+    // real home, so the routing turn gets the home back, inside Antigravity's
+    // own sandbox, with slash commands off and a single non-interactive turn:
+    // the only thing it can do with that home is find its credentials.
+    let mut command = std::process::Command::new(binary);
+    command
+        .env_clear()
+        .env("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+        .env("HOME", real_home_dir())
+        .env("TMPDIR", "/tmp")
+        .arg("--sandbox")
+        .arg("--effort")
+        .arg("low")
+        .arg("--output-format")
+        .arg("json")
+        .arg("--disable-slash-commands")
+        .arg("--json-schema")
+        .arg(schema.to_string());
+    if model != "default" && !model.is_empty() {
+        command.arg("--model").arg(model);
+    }
+    command.arg(format!("--print={prompt}"));
+    let output = command
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|error| unauthorized(format!("Antigravity CLI failed to start: {error}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let first = stderr
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or_default();
+        return Err(unauthorized(format!(
+            "Antigravity CLI exited with {}: {}",
+            output.status,
+            first.chars().take(200).collect::<String>()
+        )));
+    }
+    let envelope: Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| unauthorized(format!("Antigravity response is not JSON: {error}")))?;
+    if envelope.get("status").and_then(Value::as_str) != Some("SUCCESS") {
+        return Err(unauthorized(format!(
+            "Antigravity turn did not succeed: {}",
+            envelope
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown")
+        )));
+    }
+    let content = envelope
+        .get("response")
+        .and_then(Value::as_str)
+        .ok_or_else(|| unauthorized("Antigravity envelope carries no response"))?;
+    let candidate = extract_json_object(content)
+        .ok_or_else(|| unauthorized("Antigravity response carries no JSON object"))?;
+    let normalized = normalize_ollama_output(document, &candidate)?;
+    validate_output(&normalized)?;
+    Ok(normalized)
 }
 
 fn ollama(model: &str, document: &Value) -> Result<Value, ContractError> {

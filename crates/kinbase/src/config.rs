@@ -351,9 +351,12 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                 .and_then(toml::Value::as_str)
                 .unwrap_or("deterministic")
                 .to_owned();
-            if !model.starts_with("deterministic") && !model.starts_with("ollama:") {
+            if !model.starts_with("deterministic")
+                && !model.starts_with("ollama:")
+                && !model.starts_with("agy:")
+            {
                 return Err(config_error(
-                    "classifier.model must be \"deterministic\" or \"ollama:<name>\"",
+                    "classifier.model must be \"deterministic\", \"ollama:<name>\" or \"agy:<name>\"",
                 ));
             }
             let executable = absolute(

@@ -489,10 +489,10 @@ pub(crate) struct SelectedProvider {
 
 impl SelectedProvider {
     pub(crate) fn name(&self) -> &'static str {
-        if self.live_model.is_some() {
-            "ollama"
-        } else {
-            "deterministic"
+        match self.live_model.as_deref() {
+            Some(model) if model.starts_with("agy:") => "agy",
+            Some(_) => "ollama",
+            None => "deterministic",
         }
     }
 }
@@ -502,7 +502,7 @@ pub(crate) fn select_provider(
 ) -> SelectedProvider {
     let configured = classifier
         .map(|classifier| classifier.model.clone())
-        .filter(|model| model.starts_with("ollama:"));
+        .filter(|model| model.starts_with("ollama:") || model.starts_with("agy:"));
     let Some(model) = configured.clone() else {
         return SelectedProvider {
             configured_model: classifier.map(|classifier| classifier.model.clone()),
@@ -511,7 +511,12 @@ pub(crate) fn select_provider(
             fallback_reason: None,
         };
     };
-    match crate::classifier::ollama_model_available(model.trim_start_matches("ollama:")) {
+    let available = if model.starts_with("agy:") {
+        crate::classifier::agy_available()
+    } else {
+        crate::classifier::ollama_model_available(model.trim_start_matches("ollama:"))
+    };
+    match available {
         Ok(()) => SelectedProvider {
             configured_model: Some(model.clone()),
             live_model: Some(model),
