@@ -1356,10 +1356,11 @@ const BULK_CHUNK_CHARS: usize = 2_500;
 /// forty-eight in flight is well inside what the provider serves, and the
 /// budget is long enough that a pass loses no draw to it.
 const BULK_DOCUMENTS_PER_PASS: usize = 24;
-/// Sixteen classifier processes in flight. Ollama cloud throttled anything
-/// past a handful; Antigravity does not, and each of its calls is a short
-/// process, so the ceiling here is the machine, not the provider.
-const BULK_CLASSIFIER_WORKERS: usize = 16;
+/// Four classifier processes in flight. Antigravity does not throttle, but
+/// each of its calls is a process carrying a 17k-token prompt, and sixteen
+/// of them pegged the machine; four leaves the laptop usable and finishes
+/// a corpus in the background.
+const BULK_CLASSIFIER_WORKERS: usize = 4;
 const BULK_EXTRACTION_BUDGET_SECONDS: u64 = 900;
 /// Chunks per classifier request. Every Antigravity turn carries a fixed
 /// overhead of tens of thousands of tokens, so a request is worth filling;
