@@ -279,6 +279,7 @@ pub fn scan(
     let mut scan = match source_kind {
         "codex_jsonl" | "claude_jsonl" => scan_transcripts(source_kind, source, now)?,
         "repo_code" => scan_repo_code(source, repo)?,
+        "repo_symbols" => scan_repo_symbols(source, repo)?,
         "repo_tests" | "runtime_evidence" => scan_envelopes(source_kind, source, repo)?,
         "git_history" => scan_git_history(repo, checkpoint)?,
         "docs_adr" => scan_docs_adr(source, repo)?,
@@ -591,12 +592,318 @@ fn divergent_heads(
 
 /// The commit that last touched a path: the path's source revision, which
 /// moves only when the path changes (never with unrelated commits).
+/// Last commit to touch each tracked path, in one walk.
+///
+/// `path_revision` spawns a `git log` per file. A survey of a service with 477
+/// source files therefore spawned 477 subprocesses and took minutes, which
+/// across a 32-repository estate is hours of process startup and nothing else.
+/// One `--name-only` walk answers the same question for every file at once.
+fn revisions_by_path(repo: &Repository) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    let Ok(log) = git(
+        &repo.root,
+        &["log", "--name-only", "--format=%x01%H", "-8000"],
+    ) else {
+        return map;
+    };
+    let mut current: Option<String> = None;
+    for line in log.lines() {
+        if let Some(sha) = line.strip_prefix('\u{1}') {
+            current = Some(sha.trim().to_owned());
+            continue;
+        }
+        let path = line.trim();
+        if path.is_empty() || path.starts_with('"') {
+            continue;
+        }
+        if let Some(sha) = &current {
+            // First mention wins: the log walks newest first, so the first
+            // commit naming a path is the last commit to have touched it.
+            map.entry(path.to_owned()).or_insert_with(|| sha.clone());
+        }
+    }
+    map
+}
+
 fn path_revision(repo: &Repository, relpath: &str) -> Option<String> {
     git(&repo.root, &["log", "-1", "--format=%H", "--", relpath])
         .ok()
         .map(|text| text.trim().to_owned())
         .filter(|text| !text.is_empty())
         .or_else(|| repo.revision().ok())
+}
+
+/// One record per exported declaration, keyed on the *symbol* rather than the
+/// file it lives in.
+///
+/// Every other bulk adapter gives each observation a unique logical key --
+/// `git_history:commit:<sha>`, `repo_code:<path>` -- so two facts never contest
+/// the same key, no conflict is ever detected, and the ruling loop cannot fire
+/// on ingested evidence at all. Wander's 83,655 facts produced zero questions.
+/// A symbol name is a subject that several definitions can genuinely disagree
+/// about, and disagreement is what the reducer needs to see before it can ask a
+/// human which definition is current. Measured across seven Wander services:
+/// `Db` is defined six times in five shapes, `ObservabilityLayer` seven times
+/// in seven shapes. That is the founder's "which of the five ways do I
+/// emulate, or is it none of them" as data rather than as a complaint.
+fn scan_repo_symbols(source: &Path, repo: &Repository) -> Result<SourceScan, ContractError> {
+    let mut scan = SourceScan::default();
+    let mut skipped_oversize = 0usize;
+    let revisions = revisions_by_path(repo);
+    let fallback_revision = repo.revision().ok();
+    // Git's tracked set, not the filesystem. Walking the working tree meant
+    // enumerating `node_modules` -- 8,072 of payment's 8,550 TypeScript files
+    // belong to dependencies -- before filtering any of it out, and the scan
+    // timed out before reaching the repository's own 477. Untracked files are
+    // not part of what the repository has committed to anyway.
+    for path in tracked_source_files(repo, source)? {
+        let relpath = relative_to(&repo.root, &path);
+        if !is_source_language(&relpath)
+            || is_vendored_path(&relpath)
+            || is_generated_path(&relpath)
+            || is_test_path(&relpath)
+        {
+            continue;
+        }
+        // A survey skips what it cannot read; it does not refuse the survey.
+        // One generated schema over the per-file bound would otherwise abort the
+        // scan and leave the repository with no symbols at all -- the same shape
+        // as the commit walk that refused 148,004 commits and ingested none.
+        let Ok(bytes) = read_bounded(&path) else {
+            skipped_oversize += 1;
+            continue;
+        };
+        check_budget(&mut scan, bytes.len())?;
+        let text = String::from_utf8_lossy(&bytes).into_owned();
+        let lines: Vec<&str> = text.lines().collect();
+        let revision = revisions
+            .get(&relpath)
+            .cloned()
+            .or_else(|| fallback_revision.clone());
+        for (index, line) in lines.iter().enumerate() {
+            let Some((kind, name)) = exported_declaration(line) else {
+                continue;
+            };
+            let start = index + 1;
+            let (end, shape) = declaration_shape(&lines, index);
+            let native_id = format!("symbol:{relpath}:{start}:{name}");
+            let mut record = SourceRecord::new(&native_id, &relpath);
+            // Shared on purpose: this is the one key in the system that several
+            // records are meant to land on.
+            record.logical_key = format!("symbol:{kind}:{name}");
+            record.atom_kind = "interface".to_owned();
+            record.statement = bounded_statement(&format!(
+                "{kind} {name} is defined at {relpath}:{start} with shape {shape}"
+            ));
+            // The shape, not the file bytes: re-reading an unchanged declaration
+            // must be the same observation even if the file around it moved.
+            record.content = shape.as_bytes().to_vec();
+            record.origin = repo.origin_trust(&path);
+            record.revision = revision.clone();
+            record.branch = repo.branch().ok();
+            record.confidence = 7_000;
+            record.anchors = vec![crate::model::CodeAnchor {
+                path: relpath.clone(),
+                line_start: start as u32,
+                line_end: end as u32,
+                revision: revision.clone(),
+                span_sha256: Some(shape.clone()),
+            }];
+            record
+                .attributes
+                .insert("symbol_kind".to_owned(), json!(kind));
+            record.attributes.insert("symbol".to_owned(), json!(name));
+            record.attributes.insert("shape".to_owned(), json!(shape));
+            scan.unit_ids.insert(native_id);
+            scan.records.push(record);
+        }
+    }
+    if skipped_oversize > 0 {
+        crate::output::diagnostic(
+            "symbols-file-skipped",
+            json!({
+                "code": "LIMIT_EXCEEDED",
+                "message": format!(
+                    "{skipped_oversize} source file(s) exceed the per-file bound and were not scanned for symbols"
+                ),
+                "remediation": "Read those files directly; every other file in the repository was scanned.",
+                "retryable": false,
+                "evidence_id": "err_symbols_oversize",
+                "omitted_count": skipped_oversize
+            }),
+        );
+    }
+    Ok(scan)
+}
+
+/// Files git tracks under `source`, falling back to a filesystem walk when the
+/// repository has no git index to ask.
+fn tracked_source_files(repo: &Repository, source: &Path) -> Result<Vec<PathBuf>, ContractError> {
+    let Ok(listing) = git(&repo.root, &["ls-files", "-z"]) else {
+        return source_files(source);
+    };
+    let mut paths: Vec<PathBuf> = listing
+        .split('\0')
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| repo.root.join(entry))
+        .filter(|path| path.starts_with(source) && path.is_file())
+        .collect();
+    if paths.is_empty() {
+        return source_files(source);
+    }
+    paths.sort();
+    Ok(paths)
+}
+
+/// Dependencies and build output, which are somebody else's code.
+///
+/// `node_modules` holds thousands of `.ts` files, and counting a library's
+/// exports as this repository's own would drown every real symbol and make
+/// every common name look contested by vendored copies of itself.
+fn is_vendored_path(relpath: &str) -> bool {
+    const VENDORED: [&str; 9] = [
+        "node_modules/",
+        "target/",
+        ".venv/",
+        "venv/",
+        "site-packages/",
+        ".next/",
+        "build/",
+        "coverage/",
+        ".cache/",
+    ];
+    VENDORED
+        .iter()
+        .any(|marker| relpath.starts_with(marker.trim_end_matches('/')) || relpath.contains(marker))
+}
+
+/// Languages whose declarations this adapter can read. Anything else is skipped
+/// rather than guessed at: a wrong symbol is worse than a missing one.
+fn is_source_language(relpath: &str) -> bool {
+    [".ts", ".tsx", ".js", ".jsx", ".rs", ".py", ".go"]
+        .iter()
+        .any(|extension| relpath.ends_with(extension))
+        && !relpath.ends_with(".d.ts")
+}
+
+/// A test declares fixtures, not house style, and counting them as competing
+/// definitions would make every helper look contested.
+fn is_test_path(relpath: &str) -> bool {
+    relpath.contains("__tests__")
+        || relpath.contains("/test/")
+        || relpath.contains("/tests/")
+        || relpath.ends_with(".spec.ts")
+        || relpath.ends_with(".test.ts")
+        || relpath.ends_with("_test.go")
+        || relpath.starts_with("test_")
+}
+
+/// `(kind, name)` for a line that exports a declaration, in the handful of
+/// forms that are unambiguous from one line. Deliberately conservative: a
+/// pattern that needs a parser to read correctly is not matched at all.
+fn exported_declaration(line: &str) -> Option<(&'static str, String)> {
+    let trimmed = line.trim_start();
+    const FORMS: [(&str, &str); 14] = [
+        ("export async function ", "function"),
+        ("export function ", "function"),
+        ("export class ", "class"),
+        ("export interface ", "interface"),
+        ("export type ", "type"),
+        ("export const ", "const"),
+        ("export enum ", "enum"),
+        ("pub async fn ", "function"),
+        ("pub fn ", "function"),
+        ("pub struct ", "struct"),
+        ("pub enum ", "enum"),
+        ("pub trait ", "trait"),
+        ("def ", "function"),
+        ("class ", "class"),
+    ];
+    for (prefix, kind) in FORMS {
+        let Some(rest) = trimmed.strip_prefix(prefix) else {
+            continue;
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+            .collect();
+        // A leading underscore is a deliberate "do not use me"; a one-character
+        // name carries no subject anyone could rule on.
+        if name.len() < 2 || name.starts_with('_') {
+            return None;
+        }
+        return Some((kind, name));
+    }
+    None
+}
+
+/// The declaration's extent and a digest of its normalised text.
+///
+/// Normalisation strips comments and collapses whitespace, so two services that
+/// copied the same implementation and then reformatted it still agree. That
+/// agreement is the whole signal: five identical copies mean the pattern is
+/// settled, six copies in six shapes mean nobody has decided.
+fn declaration_shape(lines: &[&str], start_index: usize) -> (usize, String) {
+    const MAX_DECLARATION_LINES: usize = 200;
+    let mut depth: i32 = 0;
+    let mut seen_open = false;
+    let mut end = start_index;
+    let mut body = String::new();
+    for (offset, line) in lines[start_index..]
+        .iter()
+        .take(MAX_DECLARATION_LINES)
+        .enumerate()
+    {
+        body.push_str(line);
+        body.push(' ');
+        end = start_index + offset;
+        depth += line.matches('{').count() as i32;
+        depth -= line.matches('}').count() as i32;
+        if line.contains('{') {
+            seen_open = true;
+        }
+        if seen_open && depth <= 0 {
+            break;
+        }
+        // A declaration with no block at all ends at its terminator.
+        if !seen_open && (line.trim_end().ends_with(';') || line.trim_end().ends_with(',')) {
+            break;
+        }
+    }
+    let mut normalised = String::with_capacity(body.len());
+    let mut last_was_space = false;
+    for character in strip_line_comments(&body).chars() {
+        if character.is_whitespace() {
+            if !last_was_space && !normalised.is_empty() {
+                normalised.push(' ');
+            }
+            last_was_space = true;
+        } else {
+            normalised.push(character);
+            last_was_space = false;
+        }
+    }
+    (
+        end + 1,
+        crate::hash::sha256_text(normalised.trim())[..16].to_owned(),
+    )
+}
+
+fn strip_line_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(character) = chars.next() {
+        if character == '/' && chars.peek() == Some(&'/') {
+            for next in chars.by_ref() {
+                if next == '\n' {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(character);
+    }
+    out
 }
 
 fn scan_repo_code(source: &Path, repo: &Repository) -> Result<SourceScan, ContractError> {

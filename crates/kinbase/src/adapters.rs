@@ -2,10 +2,15 @@
 
 use serde_json::{Value, json};
 
-pub const SOURCE_KINDS: [&str; 14] = [
+pub const SOURCE_KINDS: [&str; 15] = [
     "codex_jsonl",
     "claude_jsonl",
     "repo_code",
+    // Exported declarations, keyed on the symbol instead of the file. The only
+    // adapter whose logical keys are meant to collide: a name several
+    // definitions disagree about is a subject a human can rule on, and until
+    // something contested the same key the ruling loop had nothing to ask about.
+    "repo_symbols",
     "repo_tests",
     "git_history",
     "docs_adr",
