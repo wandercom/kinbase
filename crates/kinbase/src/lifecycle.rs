@@ -651,13 +651,20 @@ fn scan_repo_symbols(source: &Path, repo: &Repository) -> Result<SourceScan, Con
     let mut skipped_oversize = 0usize;
     let revisions = revisions_by_path(repo);
     let fallback_revision = repo.revision().ok();
-    // Count first, key second. A name that appears in many files of one
-    // repository is that repository's idiom, not an argument: fifty-four files
-    // exporting `Props`, or every route exporting `GET` and `metadata`, is a
-    // framework requiring a name, and reporting it as fifty-four competing
-    // definitions buries the handful of real disagreements under convention.
-    // Conflict is a few definitions that differ, not many that conform.
-    let occurrences = symbol_occurrences(repo, source)?;
+    // Read once, count, then emit. Counting in a separate pass re-read every
+    // file and opened a window in which the two passes could disagree about a
+    // file that changed between them.
+    #[allow(clippy::type_complexity)]
+    let mut found: Vec<(
+        String,
+        &'static str,
+        String,
+        usize,
+        usize,
+        String,
+        Option<String>,
+    )> = Vec::new();
+    let mut occurrences: BTreeMap<String, usize> = BTreeMap::new();
     // Git's tracked set, not the filesystem. Walking the working tree meant
     // enumerating `node_modules` -- 8,072 of payment's 8,550 TypeScript files
     // belong to dependencies -- before filtering any of it out, and the scan
@@ -693,6 +700,26 @@ fn scan_repo_symbols(source: &Path, repo: &Repository) -> Result<SourceScan, Con
             };
             let start = index + 1;
             let (end, shape) = declaration_shape(&lines, index);
+            *occurrences.entry(name.clone()).or_insert(0) += 1;
+            found.push((
+                relpath.clone(),
+                kind,
+                name,
+                start,
+                end,
+                shape,
+                revision.clone(),
+            ));
+        }
+    }
+    // A name that appears in many files of one repository is that repository's
+    // idiom, not an argument: fifty-four files exporting `Props`, or every
+    // route exporting `GET` and `metadata`, is a framework requiring a name,
+    // and reporting it as fifty-four competing definitions buries the handful
+    // of real disagreements under convention. Conflict is a few definitions
+    // that differ, not many that conform.
+    {
+        for (relpath, kind, name, start, end, shape, revision) in found {
             let native_id = format!("symbol:{relpath}:{start}:{name}");
             let mut record = SourceRecord::new(&native_id, &relpath);
             // Shared on purpose -- this is the one key in the system that several
@@ -711,7 +738,7 @@ fn scan_repo_symbols(source: &Path, repo: &Repository) -> Result<SourceScan, Con
             // The shape, not the file bytes: re-reading an unchanged declaration
             // must be the same observation even if the file around it moved.
             record.content = shape.as_bytes().to_vec();
-            record.origin = repo.origin_trust(&path);
+            record.origin = repo.origin_trust(&repo.root.join(&relpath));
             record.revision = revision.clone();
             record.branch = repo.branch().ok();
             record.confidence = 7_000;
@@ -754,33 +781,6 @@ fn scan_repo_symbols(source: &Path, repo: &Repository) -> Result<SourceScan, Con
 /// key. Chosen from the data: real duplications at Wander run two to eight
 /// (`Db` eight, `ObservabilityLayer` seven), while conventions run to fifty.
 const CONVENTION_THRESHOLD: usize = 8;
-
-/// How many times each exported name is declared in this repository.
-fn symbol_occurrences(
-    repo: &Repository,
-    source: &Path,
-) -> Result<BTreeMap<String, usize>, ContractError> {
-    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-    for path in tracked_source_files(repo, source)? {
-        let relpath = relative_to(&repo.root, &path);
-        if !is_source_language(&relpath)
-            || is_vendored_path(&relpath)
-            || is_generated_path(&relpath)
-            || is_test_path(&relpath)
-        {
-            continue;
-        }
-        let Ok(bytes) = read_bounded(&path) else {
-            continue;
-        };
-        for line in String::from_utf8_lossy(&bytes).lines() {
-            if let Some((_, name)) = exported_declaration(line) {
-                *counts.entry(name).or_insert(0) += 1;
-            }
-        }
-    }
-    Ok(counts)
-}
 
 /// Files git tracks under `source`, falling back to a filesystem walk when the
 /// repository has no git index to ask.
