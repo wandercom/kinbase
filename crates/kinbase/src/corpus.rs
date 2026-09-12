@@ -1427,13 +1427,14 @@ fn classify_bulk(
     let classifier = launcher.shared.classifier.as_ref();
     let provider = crate::session::select_provider(classifier);
     let fingerprint = crate::session::classifier_fingerprint(classifier, &provider);
+    // A document classified once is classified. The receipt records which
+    // classifier did it; it does not make the work void when the binary is
+    // rebuilt, which is what keying on the fingerprint did: every rebuild
+    // re-sent the whole corpus and the run made no progress on what was left.
     let done: BTreeSet<String> =
         crate::store::read_records(crate::StoreKind::Personal, repo, BULK_RECEIPTS)
             .unwrap_or_default()
             .iter()
-            .filter(|receipt| {
-                crate::json::get_str(receipt, "fingerprint") == Some(fingerprint.as_str())
-            })
             .filter_map(|receipt| {
                 crate::json::get_str(receipt, "observation_id").map(str::to_owned)
             })
