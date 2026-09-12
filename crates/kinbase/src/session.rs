@@ -228,6 +228,7 @@ pub fn observe(
             for item in external {
                 atoms.push(atom_from_classifier(
                     item,
+                    "codex_jsonl",
                     native_id,
                     &observation.observation_id,
                     &observation.content_digest,
@@ -487,7 +488,7 @@ pub(crate) struct SelectedProvider {
 }
 
 impl SelectedProvider {
-    fn name(&self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         if self.live_model.is_some() {
             "ollama"
         } else {
@@ -496,7 +497,9 @@ impl SelectedProvider {
     }
 }
 
-fn select_provider(classifier: Option<&crate::config::SharedClassifier>) -> SelectedProvider {
+pub(crate) fn select_provider(
+    classifier: Option<&crate::config::SharedClassifier>,
+) -> SelectedProvider {
     let configured = classifier
         .map(|classifier| classifier.model.clone())
         .filter(|model| model.starts_with("ollama:"));
@@ -534,11 +537,11 @@ fn select_provider(classifier: Option<&crate::config::SharedClassifier>) -> Sele
     }
 }
 
-struct Extraction {
-    atoms: BTreeMap<String, Vec<Value>>,
-    abstained: BTreeSet<String>,
-    requests: usize,
-    retries: usize,
+pub(crate) struct Extraction {
+    pub(crate) atoms: BTreeMap<String, Vec<Value>>,
+    pub(crate) abstained: BTreeSet<String>,
+    pub(crate) requests: usize,
+    pub(crate) retries: usize,
 }
 
 /// Bounded parallelism for live single-observation requests: enough to keep
@@ -559,6 +562,17 @@ const LIVE_MINIMUM_REQUEST_SECONDS: u64 = 3;
 
 /// How much of the extraction budget is left, or `None` when what remains is
 /// too little to finish a request inside it.
+fn remaining_budget_for(
+    started: &std::time::Instant,
+    budget_seconds: u64,
+) -> Option<std::time::Duration> {
+    let spent = started.elapsed();
+    let budget = std::time::Duration::from_secs(budget_seconds);
+    let remaining = budget.checked_sub(spent)?;
+    (remaining.as_secs() >= LIVE_MINIMUM_REQUEST_SECONDS).then_some(remaining)
+}
+
+#[allow(dead_code)]
 fn remaining_budget(started: &std::time::Instant) -> Option<std::time::Duration> {
     let elapsed = started.elapsed().as_secs();
     let remaining = LIVE_EXTRACTION_BUDGET_SECONDS.saturating_sub(elapsed);
@@ -581,10 +595,30 @@ fn is_budget_closed(error: &ContractError) -> bool {
         .contains("wall budget closed the sample queue")
 }
 
-fn extract_atoms(
+pub(crate) fn extract_atoms(
     classifier: Option<&crate::config::SharedClassifier>,
     provider: &SelectedProvider,
     observations: Vec<Value>,
+) -> Result<Extraction, ContractError> {
+    extract_atoms_bounded(
+        classifier,
+        provider,
+        observations,
+        LIVE_CLASSIFIER_WORKERS,
+        LIVE_EXTRACTION_BUDGET_SECONDS,
+    )
+}
+
+/// The same extraction under a caller-chosen concurrency and wall budget. A
+/// host hook must answer inside its own two minutes; a bulk corpus load has
+/// no such bound and a cloud provider that is latency-bound per request, so
+/// it buys throughput with workers rather than losing draws to the budget.
+pub(crate) fn extract_atoms_bounded(
+    classifier: Option<&crate::config::SharedClassifier>,
+    provider: &SelectedProvider,
+    observations: Vec<Value>,
+    workers: usize,
+    budget_seconds: u64,
 ) -> Result<Extraction, ContractError> {
     let mut extraction = Extraction {
         atoms: BTreeMap::new(),
@@ -624,6 +658,8 @@ fn extract_atoms(
         LIVE_BASE_SAMPLES,
         &started,
         &mut extraction,
+        workers,
+        budget_seconds,
     )?;
     wanted += live_batches(&observations)?.len() * LIVE_BASE_SAMPLES;
     taken += base.0;
@@ -648,6 +684,8 @@ fn extract_atoms(
             LIVE_TIEBREAK_SAMPLES,
             &started,
             &mut extraction,
+            workers,
+            budget_seconds,
         )?;
         wanted += live_batches(&contested)?.len() * LIVE_TIEBREAK_SAMPLES;
         taken += tiebreak.0;
@@ -665,7 +703,7 @@ fn extract_atoms(
                 "requests_taken": taken,
                 "observations": observations.len(),
                 "contested_observations": contested.len(),
-                "budget_seconds": LIVE_EXTRACTION_BUDGET_SECONDS
+                "budget_seconds": budget_seconds
             }),
         );
     }
@@ -732,6 +770,8 @@ fn live_sample_pass(
     samples: usize,
     started: &std::time::Instant,
     extraction: &mut Extraction,
+    workers: usize,
+    budget_seconds: u64,
 ) -> Result<(usize, Vec<(usize, BTreeMap<String, Vec<Value>>)>), ContractError> {
     let batches = live_batches(observations)?;
     let work = batches.len() * samples;
@@ -742,7 +782,7 @@ fn live_sample_pass(
     let closed = std::sync::atomic::AtomicBool::new(false);
     let results: std::sync::Mutex<Vec<SampleOutcome>> = std::sync::Mutex::new(Vec::new());
     std::thread::scope(|scope| {
-        for _ in 0..LIVE_CLASSIFIER_WORKERS.min(work) {
+        for _ in 0..workers.max(1).min(work) {
             scope.spawn(|| {
                 loop {
                     if closed.load(std::sync::atomic::Ordering::Relaxed) {
@@ -763,18 +803,17 @@ fn live_sample_pass(
                         // started: the queue closes instead, so the cost of a
                         // slow provider is a later sample, not a request the
                         // caller must wait past its deadline for.
-                        let Some(remaining) = remaining_budget(started) else {
+                        let Some(remaining) = remaining_budget_for(started, budget_seconds) else {
                             closed.store(true, std::sync::atomic::Ordering::Relaxed);
                             break Err(budget_closed());
                         };
-                        let allowed =
-                            if remaining.as_secs() > LIVE_EXTRACTION_BUDGET_SECONDS * 2 / 3 {
-                                3
-                            } else if remaining.as_secs() > LIVE_EXTRACTION_BUDGET_SECONDS / 3 {
-                                2
-                            } else {
-                                1
-                            };
+                        let allowed = if remaining.as_secs() > budget_seconds * 2 / 3 {
+                            3
+                        } else if remaining.as_secs() > budget_seconds / 3 {
+                            2
+                        } else {
+                            1
+                        };
                         attempts += 1;
                         match pinned_classifier_atoms(classifier, provider, batch, Some(remaining))
                         {
@@ -1030,8 +1069,9 @@ fn pinned_classifier_atoms(
     Ok(result)
 }
 
-fn atom_from_classifier(
+pub(crate) fn atom_from_classifier(
     external: &Value,
+    source_kind: &str,
     native_id: &str,
     observation_id: &str,
     content_digest: &str,
@@ -1057,7 +1097,7 @@ fn atom_from_classifier(
         _ => 3_000,
     };
     let mut atom = crate::classify::atomize(
-        "codex_jsonl",
+        source_kind,
         native_id,
         text,
         scope,
@@ -1149,7 +1189,7 @@ fn atom_from_classifier(
     Ok(atom)
 }
 
-fn classifier_fingerprint(
+pub(crate) fn classifier_fingerprint(
     classifier: Option<&crate::config::SharedClassifier>,
     provider: &SelectedProvider,
 ) -> String {

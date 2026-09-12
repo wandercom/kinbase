@@ -955,6 +955,7 @@ pub fn admit(
     repo: &std::path::Path,
     store: crate::StoreKind,
     limit: Option<usize>,
+    classify_limit: Option<usize>,
     json: bool,
 ) -> Result<(), ContractError> {
     let journal_root = crate::store::ensure_store_root(crate::StoreKind::Personal, repo)?;
@@ -1021,14 +1022,27 @@ pub fn admit(
     let mut skipped_wrong_store = 0usize;
     let mut by_provenance: std::collections::BTreeMap<String, usize> =
         std::collections::BTreeMap::new();
+    let mut existing = existing;
+    let mut atomizable_observations: Vec<crate::model::Observation> = Vec::new();
 
     for observation in observations {
         if limit.is_some_and(|cap| admitted >= cap) {
             break;
         }
+        // Prose people wrote about the organisation is not routed by its source
+        // kind. Each document is split into claims and every claim is placed by
+        // its content (P-2), below, after the source-keyed observations.
+        if atomizable(&observation.source_kind) {
+            if observation.repository_id.as_deref() == repository_id.as_deref() {
+                atomizable_observations.push(observation);
+            } else {
+                skipped_wrong_store += 1;
+            }
+            continue;
+        }
         // The source kind decides which store may hold it, exactly as it does on
         // the session path. An adapter never routes across that boundary, so a
-        // Slack thread cannot land in Codebase and a commit cannot land in Company.
+        // commit cannot land in Company.
         let permitted = match crate::classify::provenance_taint(&observation.source_kind) {
             Some(crate::scanner::Taint::Codebase) => crate::StoreKind::Codebase,
             Some(crate::scanner::Taint::CompanyConfidential) => crate::StoreKind::Company,
@@ -1162,6 +1176,151 @@ pub fn admit(
         admitted += 1;
     }
 
+    let classified = classify_bulk(launcher, repo, &atomizable_observations, classify_limit)?;
+    let mut atoms_by_destination: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for receipt in crate::store::read_records(crate::StoreKind::Personal, repo, BULK_RECEIPTS)
+        .unwrap_or_default()
+    {
+        if crate::json::get_str(&receipt, "repository_id") != repository_id.as_deref() {
+            continue;
+        }
+        let Some(atoms) = receipt.get("atoms").and_then(Value::as_array) else {
+            continue;
+        };
+        let receipt_key = crate::json::get_str(&receipt, "logical_key").unwrap_or_default();
+        for atom in atoms {
+            if limit.is_some_and(|cap| admitted >= cap) {
+                break;
+            }
+            if atom.get("hard_blocked").and_then(Value::as_bool) == Some(true) {
+                continue;
+            }
+            let Some(statement) = crate::json::get_str(atom, "statement") else {
+                continue;
+            };
+            let destinations: Vec<&str> = atom
+                .get("eligible_destinations")
+                .and_then(Value::as_array)
+                .map(|values| values.iter().filter_map(Value::as_str).collect())
+                .unwrap_or_default();
+            for destination in &destinations {
+                *atoms_by_destination
+                    .entry(destination_label(destination))
+                    .or_insert(0) += 1;
+            }
+            let bound_here = destinations.iter().any(|destination| match store {
+                crate::StoreKind::Personal => *destination == "personal",
+                crate::StoreKind::Company => {
+                    *destination == "company" || *destination == "company:root"
+                }
+                crate::StoreKind::Codebase => repository_id
+                    .as_deref()
+                    .is_some_and(|id| *destination == format!("codebase:{id}")),
+            });
+            if !bound_here {
+                continue;
+            }
+            let logical_key = format!(
+                "{receipt_key}:a{}",
+                &crate::hash::sha256_text(statement)[..12]
+            );
+            if existing.contains(&logical_key) {
+                skipped_existing += 1;
+                continue;
+            }
+            let mut statement = statement.to_owned();
+            if store != crate::StoreKind::Personal {
+                let (clean, _removed) = crate::session::deidentify_statement(&statement);
+                statement = clean;
+            }
+            let confidence = atom
+                .get("confidence")
+                .and_then(Value::as_u64)
+                .map(|value| value.min(10_000) as u16)
+                .unwrap_or(6_000);
+            let mut event = crate::model::FactEvent {
+                schema: crate::model::EVENT_SCHEMA.to_owned(),
+                event_id: format!("event_{}", &crate::hash::sha256_text(&logical_key)[..40]),
+                store_kind: store_name(store).to_owned(),
+                authority_id: crate::json::get_str(&receipt, "owner_id")
+                    .unwrap_or_default()
+                    .to_owned(),
+                authority_scope: crate::json::get_str(&receipt, "scope")
+                    .unwrap_or_default()
+                    .to_owned(),
+                repository_id: repository_id.clone(),
+                fact_id: format!("fact_{}", &crate::hash::sha256_text(&logical_key)[..40]),
+                logical_key: logical_key.clone(),
+                atom_kind: crate::json::get_str(atom, "atom_kind")
+                    .filter(|kind| !kind.is_empty())
+                    .unwrap_or("claim")
+                    .to_owned(),
+                scope: crate::json::get_str(&receipt, "scope")
+                    .unwrap_or_default()
+                    .to_owned(),
+                statement,
+                evidence_refs: vec![format!(
+                    "observation:{}",
+                    crate::json::get_str(&receipt, "observation_id").unwrap_or_default()
+                )],
+                asserted_at: crate::json::get_str(&receipt, "asserted_at")
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| now.clone()),
+                effective_from: crate::json::get_str(&receipt, "effective_from")
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| now.clone()),
+                effective_until: crate::json::get_str(&receipt, "effective_until")
+                    .map(str::to_owned),
+                disposition: crate::json::get_str(&receipt, "disposition")
+                    .unwrap_or("proposed")
+                    .to_owned(),
+                distortion: crate::model::Distortion {
+                    trigger: format!(
+                        "source:{}",
+                        crate::json::get_str(&receipt, "source_kind").unwrap_or_default()
+                    ),
+                    // One claim lifted out of a document by the classifier: evidence
+                    // that someone said it, never a ruling that it holds.
+                    loss_if_absent: 4_000,
+                    rationale: "claim extracted from an ingested document, not a ruling".to_owned(),
+                },
+                parents: Vec::new(),
+                supersedes: Vec::new(),
+                redundancy_with: Vec::new(),
+                complements: Vec::new(),
+                company_refs: Vec::new(),
+                authority_snapshot_cursor: current_authority_cursor(),
+                confidence: crate::model::Bp(confidence),
+                standing: "present".to_owned(),
+                provenance: crate::json::get_str(&receipt, "provenance")
+                    .unwrap_or("unknown")
+                    .to_owned(),
+                governs_paths: Vec::new(),
+                anchors: Vec::new(),
+                unresolved_uncertainty: crate::json::get_str(atom, "unresolved_uncertainty")
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned),
+                signer: String::new(),
+                signature: String::new(),
+                raw: None,
+            };
+            event.standing = crate::model::effective_standing(&event.standing, &event.provenance);
+            let signed = key.sign_document("fact-event", &event.to_value())?;
+            crate::store::write_content_addressed_event(
+                &destination_root,
+                &serde_json::from_value(signed).map_err(|error| {
+                    ContractError::invariant(format!(
+                        "admitted atom event is not a fact event: {error}"
+                    ))
+                })?,
+            )?;
+            existing.insert(logical_key);
+            *by_provenance.entry(event.provenance.clone()).or_insert(0) += 1;
+            admitted += 1;
+        }
+    }
+
     crate::output::emit(
         &serde_json::json!({
             "status": "admitted",
@@ -1170,8 +1329,267 @@ pub fn admit(
             "skipped_already_admitted": skipped_existing,
             "skipped_other_store": skipped_wrong_store,
             "by_provenance": by_provenance,
+            "classified": classified,
+            "atoms_by_destination": atoms_by_destination,
         }),
         json,
     );
     Ok(())
+}
+
+/// Prose written by people about the organisation. A whole document is not
+/// one claim and its source kind is not its store: each is split into claims
+/// and every claim is placed by its content, the way a session message is
+/// (P-2, architecture section 5). The source kind sets only the provenance
+/// each claim carries, which caps its standing.
+fn atomizable(source_kind: &str) -> bool {
+    matches!(source_kind, "document" | "chat_thread")
+}
+
+/// Largest slice of a document sent to the classifier as one observation.
+/// The routing instruction asks for one claim per atom; a 60 KB transcript in
+/// one request gets a summary back, not claims.
+const BULK_CHUNK_CHARS: usize = 2_500;
+/// Documents classified per extraction pass, and the concurrency and wall
+/// budget of a pass. A cloud model answers one request in tens of seconds
+/// however small the request, so a pass is bought with workers, not time;
+/// forty-eight in flight is well inside what the provider serves, and the
+/// budget is long enough that a pass loses no draw to it.
+const BULK_DOCUMENTS_PER_PASS: usize = 32;
+const BULK_CLASSIFIER_WORKERS: usize = 48;
+const BULK_EXTRACTION_BUDGET_SECONDS: u64 = 600;
+/// Personal-store journal of classified documents: the atoms, their
+/// destinations and the classifier that produced them. Admission to any
+/// store reads from here, so a document is classified once, not once per
+/// store, and a re-run with the same classifier changes nothing.
+const BULK_RECEIPTS: &str = "bulk-classifications.jsonl";
+/// Claims the classifier bound for Company. Company is entered only through a
+/// named authority's publication, so these wait here for review rather than
+/// being written into a local store nothing serves.
+const COMPANY_CANDIDATES: &str = "company-candidates.jsonl";
+
+fn destination_label(destination: &str) -> String {
+    if destination.starts_with("codebase:") {
+        "codebase".to_owned()
+    } else if destination == "company:root" {
+        "company".to_owned()
+    } else {
+        destination.to_owned()
+    }
+}
+
+fn chunk_statement(statement: &str) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    for sentence in crate::classifier::sentences(statement) {
+        if sentence.chars().count() > BULK_CHUNK_CHARS {
+            if !current.is_empty() {
+                chunks.push(std::mem::take(&mut current));
+            }
+            let characters: Vec<char> = sentence.chars().collect();
+            for piece in characters.chunks(BULK_CHUNK_CHARS) {
+                chunks.push(piece.iter().collect());
+            }
+            continue;
+        }
+        if !current.is_empty()
+            && current.chars().count() + sentence.chars().count() + 1 > BULK_CHUNK_CHARS
+        {
+            chunks.push(std::mem::take(&mut current));
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(&sentence);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    chunks
+}
+
+/// Classify every atomizable observation that has no receipt under the current
+/// classifier, and journal the result. Returns a summary for the receipt.
+fn classify_bulk(
+    launcher: &Launcher,
+    repo: &Path,
+    observations: &[crate::model::Observation],
+    classify_limit: Option<usize>,
+) -> Result<Value, ContractError> {
+    let classifier = launcher.shared.classifier.as_ref();
+    let provider = crate::session::select_provider(classifier);
+    let fingerprint = crate::session::classifier_fingerprint(classifier, &provider);
+    let done: BTreeSet<String> =
+        crate::store::read_records(crate::StoreKind::Personal, repo, BULK_RECEIPTS)
+            .unwrap_or_default()
+            .iter()
+            .filter(|receipt| {
+                crate::json::get_str(receipt, "fingerprint") == Some(fingerprint.as_str())
+            })
+            .filter_map(|receipt| {
+                crate::json::get_str(receipt, "observation_id").map(str::to_owned)
+            })
+            .collect();
+    let pending: Vec<&crate::model::Observation> = observations
+        .iter()
+        .filter(|observation| !done.contains(&observation.observation_id))
+        .filter(|observation| observation.statement.is_some())
+        .take(classify_limit.unwrap_or(usize::MAX))
+        .collect();
+
+    let mut classified = 0usize;
+    let mut abstained = 0usize;
+    let mut atoms_total = 0usize;
+    let mut requests = 0usize;
+    let mut retries = 0usize;
+    let mut by_destination: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for group in pending.chunks(BULK_DOCUMENTS_PER_PASS) {
+        let mut requests_in = Vec::new();
+        let mut chunk_owner: BTreeMap<String, String> = BTreeMap::new();
+        for observation in group {
+            let statement = observation.statement.as_deref().unwrap_or_default();
+            for (index, chunk) in chunk_statement(statement).into_iter().enumerate() {
+                let chunk_id = format!("{}:c{index}", observation.observation_id);
+                chunk_owner.insert(chunk_id.clone(), observation.observation_id.clone());
+                requests_in.push(json!({
+                    "observation_id": chunk_id,
+                    "source_kind": observation.source_kind,
+                    "source_identity": observation.source_identity,
+                    "content_digest": observation.content_digest,
+                    "observed_at": observation.observed_at,
+                    "disposition": observation.disposition,
+                    "extraction_version": observation.extraction_version,
+                    "body": crate::classifier::request_body(&chunk),
+                    "scope": "document",
+                    "confidence": 8_000
+                }));
+            }
+        }
+        let extraction = crate::session::extract_atoms_bounded(
+            classifier,
+            &provider,
+            requests_in,
+            BULK_CLASSIFIER_WORKERS,
+            BULK_EXTRACTION_BUDGET_SECONDS,
+        )?;
+        requests += extraction.requests;
+        retries += extraction.retries;
+        for observation in group {
+            let mut abstained_here = false;
+            let mut atoms = Vec::new();
+            let mut chunk_ids: Vec<&String> = chunk_owner
+                .iter()
+                .filter(|(_, owner)| **owner == observation.observation_id)
+                .map(|(id, _)| id)
+                .collect();
+            chunk_ids.sort();
+            for chunk_id in chunk_ids {
+                if extraction.abstained.contains(chunk_id) {
+                    abstained_here = true;
+                    continue;
+                }
+                for item in extraction.atoms.get(chunk_id).into_iter().flatten() {
+                    let atom = crate::session::atom_from_classifier(
+                        item,
+                        &observation.source_kind,
+                        &observation.native_id,
+                        &observation.observation_id,
+                        &observation.content_digest,
+                        observation.repository_id.as_deref(),
+                    )?;
+                    atoms.push(atom);
+                }
+            }
+            if abstained_here {
+                // A document the classifier could not finish is left for the
+                // next run rather than journaled half-read.
+                abstained += 1;
+                continue;
+            }
+            let receipt_atoms: Vec<Value> = atoms
+                .iter()
+                .map(|atom| {
+                    for destination in &atom.eligible_destinations {
+                        if destination != "none" {
+                            *by_destination
+                                .entry(destination_label(destination))
+                                .or_insert(0) += 1;
+                        }
+                    }
+                    json!({
+                        "atom_id": atom.atom_id,
+                        "statement": atom.statement,
+                        "atom_kind": atom.atom_kind,
+                        "confidence": atom.confidence,
+                        "proposed_destinations": atom.proposed_destinations,
+                        "eligible_destinations": atom.eligible_destinations,
+                        "taints": atom.taints,
+                        "hard_blocked": atom.hard_blocked,
+                        "unresolved_uncertainty": atom.unresolved_uncertainty,
+                    })
+                })
+                .collect();
+            atoms_total += receipt_atoms.len();
+            let receipt = json!({
+                "observation_id": observation.observation_id,
+                "logical_key": observation.logical_key,
+                "repository_id": observation.repository_id,
+                "source_kind": observation.source_kind,
+                "native_id": observation.native_id,
+                "provenance": observation.provenance,
+                "scope": observation.scope,
+                "owner_id": observation.owner_id,
+                "asserted_at": observation.asserted_at,
+                "effective_from": observation.effective_from,
+                "effective_until": observation.effective_until,
+                "disposition": observation.disposition,
+                "fingerprint": fingerprint,
+                "provider": provider.name(),
+                "model": provider.live_model,
+                "classified_at": crate::time::now_rfc3339_millis(),
+                "atoms": receipt_atoms,
+            });
+            crate::store::append_record(crate::StoreKind::Personal, repo, BULK_RECEIPTS, &receipt)?;
+            for atom in &atoms {
+                let company_bound = atom
+                    .eligible_destinations
+                    .iter()
+                    .any(|destination| destination == "company" || destination == "company:root");
+                if company_bound && !atom.hard_blocked {
+                    crate::store::append_record(
+                        crate::StoreKind::Personal,
+                        repo,
+                        COMPANY_CANDIDATES,
+                        &json!({
+                            "observation_id": observation.observation_id,
+                            "logical_key": observation.logical_key,
+                            "native_id": observation.native_id,
+                            "provenance": observation.provenance,
+                            "statement": atom.statement,
+                            "atom_kind": atom.atom_kind,
+                            "confidence": atom.confidence,
+                            "classified_at": crate::time::now_rfc3339_millis(),
+                        }),
+                    )?;
+                }
+            }
+            classified += 1;
+        }
+    }
+    Ok(json!({
+        "observations": observations.len(),
+        "already_classified": observations.len().saturating_sub(pending.len()),
+        "classified_now": classified,
+        "abstained": abstained,
+        "atoms": atoms_total,
+        "atoms_by_destination": by_destination,
+        "provider": provider.name(),
+        "model": provider.live_model,
+        "configured_model": provider.configured_model,
+        "fallback_reason": provider.fallback_reason,
+        "fingerprint": fingerprint,
+        "requests": requests,
+        "retries": retries,
+    }))
 }

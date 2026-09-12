@@ -943,7 +943,7 @@ fn is_codebase_statement(lower: &str) -> bool {
 /// file names such as `config.py`, decimals and abbreviations do not split;
 /// the terminator stays on the sentence so that a question is still a
 /// question when its confidence is judged.
-fn sentences(body: &str) -> Vec<String> {
+pub(crate) fn sentences(body: &str) -> Vec<String> {
     let normalized = body.replace("\r\n", "\n").replace(['\r', '\n'], "\n");
     let mut output = Vec::new();
     let mut current = String::new();

@@ -131,6 +131,10 @@ pub enum CorpusCommand {
         repo: Option<PathBuf>,
         #[arg(long)]
         limit: Option<usize>,
+        /// At most this many not-yet-classified documents are sent to the
+        /// classifier this run; the rest wait for the next run.
+        #[arg(long = "classify-limit")]
+        classify_limit: Option<usize>,
     },
 }
 
