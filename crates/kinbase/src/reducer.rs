@@ -371,6 +371,45 @@ fn expiry_of(event: &FactEvent) -> Option<String> {
     None
 }
 
+/// The question a person is actually asked when heads disagree.
+///
+/// It used to name the candidates by event id and nothing else: "Candidates:
+/// event_obs_6c8b9e4b…, event_obs_a7a6f779…, event_obs_ba93bf33…". Nobody can
+/// answer that. A ruling loop whose entire purpose is to let a human give a
+/// definitive answer has to show the human what they are choosing between, so
+/// the question carries the competing statements themselves, each labelled and
+/// paired with the id an answer must name.
+fn conflict_question(logical_key: &str, conflict_ids: &[String], heads: &[Head]) -> String {
+    const MAX_CANDIDATES: usize = 6;
+    const MAX_STATEMENT: usize = 240;
+    let mut question = format!(
+        "Which of the {} incompatible statements for logical key {logical_key} is current?",
+        conflict_ids.len()
+    );
+    for (index, id) in conflict_ids.iter().take(MAX_CANDIDATES).enumerate() {
+        let statement = heads
+            .iter()
+            .find(|head| head.representative.event.event_id == *id)
+            .map(|head| head.representative.event.statement.as_str())
+            .unwrap_or("");
+        let label = (b'a' + index as u8) as char;
+        let shown: String = statement.chars().take(MAX_STATEMENT).collect();
+        let ellipsis = if statement.chars().count() > MAX_STATEMENT {
+            "…"
+        } else {
+            ""
+        };
+        question.push_str(&format!(" ({label}) {shown}{ellipsis} [{id}]"));
+    }
+    if conflict_ids.len() > MAX_CANDIDATES {
+        question.push_str(&format!(
+            " and {} more, listed in full under discriminating_evidence.",
+            conflict_ids.len() - MAX_CANDIDATES
+        ));
+    }
+    question
+}
+
 fn statement_identity(event: &FactEvent) -> String {
     crate::scanner::squeeze(&event.statement)
 }
@@ -1217,10 +1256,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 &decision_blocked,
                 owner_role,
                 owner_identity.as_deref(),
-                &format!(
-                    "Which of the incompatible statements for logical key {logical_key} is current? Candidates: {}",
-                    conflict_ids.join(", ")
-                ),
+                &conflict_question(&logical_key, &conflict_ids, &heads),
                 heads
                     .iter()
                     .map(|head| head.representative.event.distortion.loss_if_absent)
