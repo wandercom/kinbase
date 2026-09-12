@@ -210,6 +210,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             task,
             decision,
             working_set,
+            evidence_repos,
             as_of,
         } => {
             let repo = repo
@@ -221,6 +222,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
                 &task,
                 &decision,
                 &working_set,
+                &evidence_repos,
                 &as_of,
                 json,
             )

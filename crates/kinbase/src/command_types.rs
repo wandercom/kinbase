@@ -66,6 +66,12 @@ pub enum Command {
         decision: String,
         #[arg(long = "working-set", value_delimiter = ',')]
         working_set: Vec<String>,
+        /// Other certified repositories whose Codebase stores are read as
+        /// evidence alongside this repository's own (repeatable). A corpus
+        /// repository holding tickets, pull requests, threads and documents
+        /// is evidence for every service, not only for itself.
+        #[arg(long = "evidence-repo")]
+        evidence_repos: Vec<PathBuf>,
         #[arg(long = "as-of")]
         as_of: Option<String>,
     },

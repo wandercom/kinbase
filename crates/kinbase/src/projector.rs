@@ -125,6 +125,7 @@ pub fn run(
     task: &str,
     decision: &str,
     working_set: &[String],
+    evidence_repos: &[std::path::PathBuf],
     as_of: &crate::time::AsOf,
     json: bool,
 ) -> Result<(), ContractError> {
@@ -137,8 +138,21 @@ pub fn run(
     let mut conflict_event_ids = BTreeSet::new();
     let mut view_unknowns = Vec::new();
     let mut references = Vec::new();
-    for store in [crate::StoreKind::Company, crate::StoreKind::Codebase] {
-        let store_view = load_view(launcher, repo, store, as_of)?;
+    // Company direction, this repository's own evidence, and the evidence
+    // held by any repository named as evidence for it. Tickets, pull
+    // requests, threads and documents live in a corpus repository that
+    // nobody codes in; a projection that only read the repository in front
+    // of it never saw any of them.
+    let mut sources: Vec<(std::path::PathBuf, crate::StoreKind)> = vec![
+        (repo.to_path_buf(), crate::StoreKind::Company),
+        (repo.to_path_buf(), crate::StoreKind::Codebase),
+    ];
+    for evidence in evidence_repos {
+        sources.push((evidence.clone(), crate::StoreKind::Codebase));
+    }
+    let mut evidence_fact_count = 0usize;
+    for (index, (source, store)) in sources.iter().enumerate() {
+        let store_view = load_view(launcher, source, *store, as_of)?;
         conflict_event_ids.extend(
             store_view
                 .view
@@ -146,6 +160,9 @@ pub fn run(
                 .iter()
                 .flat_map(|trace| trace.conflict_event_ids.iter().cloned()),
         );
+        if index >= 2 {
+            evidence_fact_count += store_view.view.facts.len();
+        }
         facts.extend(store_view.view.facts);
         view_unknowns.extend(store_view.view.unknowns);
         ingested_events.extend(store_view.events);
@@ -578,6 +595,8 @@ pub fn run(
         "ambient_clock_read": false,
         "candidates": candidate_values.into_iter().chain(unknowns.iter().map(unknown_value)).collect::<Vec<_>>(),
         "working_set": working_set,
+        "evidence_repos": evidence_repos,
+        "evidence_repo_fact_count": evidence_fact_count,
         "resident_working_set": residents.iter().map(selected_value).collect::<Vec<_>>(),
         "working_set_unresolved": working_set_unresolved,
         "selected": selected.iter().map(selected_value).collect::<Vec<_>>(),
@@ -625,6 +644,8 @@ pub fn run(
         "selected": selected.iter().map(|fact| fact.fact_id.clone()).collect::<Vec<_>>(),
         "selected_ids": selected.iter().map(|fact| fact.fact_id.clone()).collect::<Vec<_>>(),
         "working_set": working_set,
+        "evidence_repos": evidence_repos,
+        "evidence_repo_fact_count": evidence_fact_count,
         "resident_at_dependent_edit": working_set,
         "resident_ids": residents.iter().map(|fact| fact.fact_id.clone()).collect::<Vec<_>>(),
         "declared_use": decision,
