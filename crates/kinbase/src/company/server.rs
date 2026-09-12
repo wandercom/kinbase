@@ -1094,14 +1094,49 @@ fn facts(
         .map(|fact| crate::json::canonical_bytes(fact).len())
         .sum();
     charge_read(db, state, auth, selected.len().max(1), bytes)?;
+    // Paged, because a reader that cannot enumerate the whole set cannot tell a
+    // fact that does not exist from one it was not shown. Without `after` the
+    // response silently stopped at 500 and a client correcting its own
+    // publication superseded nothing beyond that point -- the failure is
+    // invisible from the caller's side, which is what makes it dangerous.
+    // `after` is the `logical_key` of the last fact already read; ordering is
+    // by logical_key so the page boundary is stable across calls.
+    selected.sort_by(|left, right| {
+        crate::json::get_str(left, "logical_key")
+            .unwrap_or_default()
+            .cmp(crate::json::get_str(right, "logical_key").unwrap_or_default())
+    });
+    let after = request.query.get("after").cloned().unwrap_or_default();
+    if !after.is_empty() {
+        let start = selected
+            .iter()
+            .position(|fact| {
+                crate::json::get_str(fact, "logical_key").unwrap_or_default() > after.as_str()
+            })
+            .unwrap_or(selected.len());
+        selected.drain(..start);
+    }
     let truncated = selected.len() > MAX_READ_ITEMS;
+    let remaining = selected.len().saturating_sub(MAX_READ_ITEMS);
     let facts: Vec<Value> = selected.into_iter().take(MAX_READ_ITEMS).collect();
+    let next_after = if truncated {
+        facts
+            .last()
+            .and_then(|fact| crate::json::get_str(fact, "logical_key"))
+            .unwrap_or_default()
+            .to_owned()
+    } else {
+        String::new()
+    };
     Ok((
         200,
         json!({
             "facts": facts,
             "denied_count": denied_count,
-            "omitted_count": if truncated { 1 } else { 0 },
+            "omitted_count": remaining,
+            // Present and non-empty exactly when more pages remain; pass it back
+            // as `?after=` to continue.
+            "next_after": next_after,
             "as_of": as_of,
             "authority_cursor": trust_state.cursor.to_string(),
             "unknowns": view.unknowns.iter().filter(|u| scope.is_empty() || u.scope == scope).map(crate::model::value_of).collect::<Vec<_>>()
@@ -2056,7 +2091,7 @@ fn snapshot_events(
     readable: &BTreeSet<String>,
     since: i64,
 ) -> Result<(Vec<Value>, usize, String), ContractError> {
-    let mut selected = Vec::new();
+    let mut selected: Vec<(i64, Value, usize)> = Vec::new();
     let mut omitted = 0usize;
     for kind in ["fact-event", "unknown-event"] {
         for (cursor, payload, verification) in db.events_of_kind(kind)? {
@@ -2068,15 +2103,17 @@ fn snapshot_events(
                 // Already sealed by this client at an earlier refresh.
                 continue;
             }
-            selected.push((
-                cursor,
-                json!({
-                    "cursor": cursor.to_string(),
-                    "kind": kind,
-                    "verification": verification,
-                    "document": payload
-                }),
-            ));
+            let record = json!({
+                "cursor": cursor.to_string(),
+                "kind": kind,
+                "verification": verification,
+                "document": payload
+            });
+            // Size it once, here. Measuring in a second pass re-serialized every
+            // record on every snapshot request, which a soak test that polls the
+            // endpoint feels immediately.
+            let size = crate::json::canonical_bytes(&record).len();
+            selected.push((cursor, record, size));
         }
     }
     // Newest first, so a truncated window carries the most recent history
@@ -2088,8 +2125,7 @@ fn snapshot_events(
     }
     let mut spent = 0usize;
     let mut kept = 0usize;
-    for (_, value) in &selected {
-        let size = crate::json::canonical_bytes(value).len();
+    for (_, _, size) in &selected {
         if kept > 0 && spent + size > SNAPSHOT_EVENT_BYTES {
             break;
         }
@@ -2104,13 +2140,13 @@ fn snapshot_events(
     // older was omitted and must still be reachable from `/events`.
     let sealed = selected
         .iter()
-        .map(|(cursor, _)| *cursor)
+        .map(|(cursor, _, _)| *cursor)
         .min()
         .map(|cursor| (cursor - 1).max(since))
         .unwrap_or(since);
-    selected.sort_by_key(|(cursor, _)| *cursor);
+    selected.sort_by_key(|(cursor, _, _)| *cursor);
     Ok((
-        selected.into_iter().map(|(_, value)| value).collect(),
+        selected.into_iter().map(|(_, value, _)| value).collect(),
         omitted,
         sealed.to_string(),
     ))
