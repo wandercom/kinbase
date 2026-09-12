@@ -1355,9 +1355,14 @@ const BULK_CHUNK_CHARS: usize = 2_500;
 /// however small the request, so a pass is bought with workers, not time;
 /// forty-eight in flight is well inside what the provider serves, and the
 /// budget is long enough that a pass loses no draw to it.
-const BULK_DOCUMENTS_PER_PASS: usize = 32;
-const BULK_CLASSIFIER_WORKERS: usize = 32;
-const BULK_EXTRACTION_BUDGET_SECONDS: u64 = 600;
+const BULK_DOCUMENTS_PER_PASS: usize = 16;
+/// Ollama cloud serves a handful of requests at a time and answers the rest
+/// with 429; thirty-two workers produced fifteen thousand retries in one
+/// pass and then a pass in which every document abstained. Six stays inside
+/// what the provider serves, and wall time is the same because the provider,
+/// not the worker count, sets the pace.
+const BULK_CLASSIFIER_WORKERS: usize = 6;
+const BULK_EXTRACTION_BUDGET_SECONDS: u64 = 900;
 /// Chunks per classifier request. Four per request made the model's answer
 /// long enough that one in three failed the strict output check on real
 /// documents; two keeps each answer short and each failure cheap to retry.
