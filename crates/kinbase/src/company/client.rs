@@ -134,8 +134,20 @@ impl Client {
 
     /// Fetch and verify a signed snapshot bound to a fresh client nonce.
     pub fn snapshot(&self) -> Result<Value, ContractError> {
+        self.snapshot_for("")
+    }
+
+    /// The snapshot a repository needs: company-wide direction plus the rulings
+    /// that govern this repository. Asking for everything is how the response
+    /// outgrew the body ceiling and froze every cache in the estate.
+    pub fn snapshot_for(&self, repository_uuid: &str) -> Result<Value, ContractError> {
         let nonce = crate::crypto::random_token();
-        let snapshot = self.get_ok(&format!("/snapshot?nonce={nonce}"))?;
+        let path = if repository_uuid.is_empty() {
+            format!("/snapshot?nonce={nonce}")
+        } else {
+            format!("/snapshot?nonce={nonce}&repository={repository_uuid}")
+        };
+        let snapshot = self.get_ok(&path)?;
         let root = self.root.as_ref().ok_or_else(|| {
             ContractError::invariant("a Company root public key is required to verify snapshots")
         })?;

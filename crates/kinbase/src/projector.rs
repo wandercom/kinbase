@@ -28,6 +28,17 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub const PROJECTION_LIMIT: usize = 32;
+/// At most this share of a projection may be company direction.
+///
+/// Direction and evidence are complementary, not competing, and a single ranked
+/// list cannot express that: a company fact outscores a repository fact on every
+/// term in the formula -- higher declared distortion, higher authority gain,
+/// higher confidence -- so without a reserve it takes all thirty-two slots. An
+/// agent handed thirty-two rulings and no code cannot act; one handed
+/// thirty-two commits and no ruling acts wrong. The cap is declared and
+/// reported rather than tuned into the weights, because a caller is entitled to
+/// know that facts were withheld by policy and not by score.
+pub const PROJECTION_DIRECTION_SLOTS: usize = PROJECTION_LIMIT / 2;
 pub const PROJECTION_BYTE_LIMIT: usize = 128 * 1024;
 /// How many rejected evaluations of the stopping round the trace retains.
 const STOP_ROUND_TRACE_LIMIT: usize = 16;
@@ -305,6 +316,8 @@ pub fn run(
     let mut sufficiency = false;
     let mut byte_ceiling_hit = false;
     let mut stop_round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
+    let mut direction_slots_used = 0usize;
+    let mut direction_slots_withheld = 0usize;
     while context.len() < PROJECTION_LIMIT {
         let mut round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
         for fact in &candidates {
@@ -312,6 +325,10 @@ pub fn run(
                 .iter()
                 .any(|existing| existing.fact_id == fact.fact_id)
             {
+                continue;
+            }
+            if is_direction(fact) && direction_slots_used >= PROJECTION_DIRECTION_SLOTS {
+                direction_slots_withheld += 1;
                 continue;
             }
             let evaluation = evaluate(fact, &context, task, decision);
@@ -349,6 +366,9 @@ pub fn run(
             "selected",
             "positive_conditional_marginal_value",
         ));
+        if is_direction(fact) {
+            direction_slots_used += 1;
+        }
         selected.push(fact.clone());
         context.push(fact.clone());
         if is_authority_answer(fact) && !has_blocking_unknown {
@@ -591,6 +611,11 @@ pub fn run(
         "dominating_input": dominating_input,
         "projection_state": if projection_withheld { "withheld" } else { "projected" },
         "question_id": question_id,
+        // Facts withheld by policy rather than by score: a caller comparing two
+        // projections needs to see the reserve, not infer it.
+        "direction_slots_used": direction_slots_used,
+        "direction_slots_cap": PROJECTION_DIRECTION_SLOTS,
+        "direction_withheld_evaluations": direction_slots_withheld,
         "omitted_count": omitted_count
     });
 
@@ -605,6 +630,11 @@ pub fn run(
         "declared_use": decision,
         "task": task,
         "stopping_reason": stopping_reason,
+        "direction_slots_used": direction_slots_used,
+        "direction_slots_cap": PROJECTION_DIRECTION_SLOTS,
+        // Counted per round, so it is a measure of pressure on the reserve
+        // rather than a count of distinct facts.
+        "direction_withheld_evaluations": direction_slots_withheld,
         "outcome": stopping_reason,
         "question_id": question_id,
         "task_outcome": "pending",
@@ -1115,17 +1145,34 @@ fn evaluate(
     let statement_terms = terms(&fact.statement);
     let decision_overlap = statement_terms.intersection(&decision_terms).count().min(4) as i64;
     let task_overlap = statement_terms.intersection(&task_terms).count().min(4) as i64;
+    // Range matters more than the shape: at 3000 + small increments every
+    // candidate landed within a third of every other, so `loss_if_absent`
+    // decided the order and the most emphatic fact won every question whatever
+    // was asked. A fact that shares nothing with the question keeps a floor --
+    // context without lexical overlap is still context -- but it must not
+    // outrank one that answers it.
     let relevance =
-        3_000 + decision_overlap.saturating_mul(1_000) + task_overlap.saturating_mul(500);
+        (2_000 + decision_overlap.saturating_mul(1_500) + task_overlap.saturating_mul(1_000))
+            .min(10_000);
     // Distortion already covered by an equivalent member of S is not newly
     // covered: a paraphrase of a resident fact covers nothing new.
     let covered_by_set = current_set.iter().any(|existing| {
         existing.logical_key == fact.logical_key
             || normalized_statement(&existing.statement) == normalized_statement(&fact.statement)
     });
+    // The trigger names the decision a fact exists to settle. Full weight goes
+    // to a fact whose *trigger* the question is about -- not one whose own
+    // statement merely mentions its own trigger, which every honestly written
+    // fact does by construction and which therefore granted the bypass to
+    // everything. Asking about reconcilers must not hand full weight to an
+    // invariant about pricing simply because the invariant is well-formed.
+    let trigger_terms = terms(&fact.distortion.trigger);
+    let question_is_about_this = trigger_terms.intersection(&decision_terms).count()
+        + trigger_terms.intersection(&task_terms).count()
+        > 0;
     let newly_covered = if covered_by_set {
         0
-    } else if covers_own_trigger(fact) {
+    } else if covers_own_trigger(fact) && question_is_about_this {
         i64::from(fact.distortion.loss_if_absent)
     } else {
         i64::from(fact.distortion.loss_if_absent)
@@ -1167,6 +1214,11 @@ fn evaluate(
     }
 }
 
+/// Company-owned direction, as opposed to evidence from this repository.
+fn is_direction(fact: &CurrentFact) -> bool {
+    fact.store_kind == "company"
+}
+
 fn covers_own_trigger(fact: &CurrentFact) -> bool {
     let trigger = terms(&fact.distortion.trigger);
     if trigger.is_empty() {
@@ -1196,6 +1248,19 @@ fn key_subject(logical_key: &str) -> Option<&str> {
         Some(subject)
     }
 }
+
+/// Three-letter grammar. The list above is applied where a four-character floor
+/// already excludes these; `terms` admits three-character words because real
+/// vocabulary lives there (`api`, `sql`, `dao`, `fee`), so it needs both.
+const SHORT_STOPWORDS: [&str; 36] = [
+    // "the" above all: it is three letters, so the four-character floor the
+    // other list assumes never excluded it, and every candidate scored a free
+    // relevance point for sharing it with the question. Two facts about nothing
+    // in common looked equally on-topic and `loss_if_absent` broke the tie.
+    "the", "and", "for", "are", "but", "not", "you", "all", "any", "can", "had", "was", "one",
+    "our", "out", "get", "has", "how", "its", "new", "now", "see", "two", "way", "who", "did",
+    "she", "her", "him", "his", "why", "yes", "off", "too", "yet", "let",
+];
 
 const STOPWORDS: [&str; 44] = [
     "this", "that", "with", "from", "than", "then", "they", "them", "have", "been", "were", "will",
@@ -1361,11 +1426,22 @@ fn company_reference(selected: &[CurrentFact], all_facts: &[CurrentFact]) -> Opt
     None
 }
 
+/// Topical words only.
+///
+/// Relevance is measured as term overlap, and until this filter existed the
+/// overlap was mostly grammar: "what pattern should the reconciler follow"
+/// shares "the" and "should" with almost any statement, so nearly every
+/// candidate reached the same relevance and `loss_if_absent` became the only
+/// thing ordering a projection. The most emphatic facts then won every
+/// question regardless of what was asked -- sixteen invariants and not one
+/// mention of the subject.
 fn terms(value: &str) -> BTreeSet<String> {
     value
         .to_lowercase()
         .split(|character: char| !character.is_alphanumeric())
-        .filter(|part| part.len() > 2)
+        .filter(|part| {
+            part.len() > 2 && !STOPWORDS.contains(part) && !SHORT_STOPWORDS.contains(part)
+        })
         .map(str::to_owned)
         .collect()
 }

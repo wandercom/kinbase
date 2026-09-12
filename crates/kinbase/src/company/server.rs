@@ -9,7 +9,7 @@ use crate::config::ServiceConfig;
 use crate::crypto::{PrivateKey, PublicKey};
 use crate::error::ContractError;
 use crate::http::{self, Request};
-use crate::model::FactEvent;
+use crate::model::{CurrentFact, FactEvent};
 use crate::reducer::{AdmittedEvent, ReducerInput, Verification};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -179,6 +179,25 @@ pub fn serve(
         println!("status: company-serving");
         println!("bind: {}", state.config.bind);
     }
+    // A service whose database has been deleted is serving nothing and should
+    // say so by exiting. Without this a `serve` outlives its own state forever:
+    // one acceptance run left 3,800 orphaned daemons holding ports and memory,
+    // each one pointed at a temporary directory that no longer existed. The
+    // check is cheap, it is the service's own liveness rather than a caller's,
+    // and it never fires for a real deployment whose database stays put.
+    let watched = state.config.sqlite_path.clone();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(30));
+            if !watched.exists() {
+                eprintln!(
+                    "company store {} no longer exists; exiting rather than serving a store that is gone",
+                    watched.display()
+                );
+                std::process::exit(0);
+            }
+        }
+    });
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
         let state = Arc::clone(&state);
@@ -1875,12 +1894,31 @@ fn snapshot(
     }
     let readable = readable_scopes(auth, trust_state);
     let view = current_view(db, trust_state, now).map_err(|error| refuse(500, error))?;
-    let facts: Vec<Value> = view
+    // A repository asks for its own direction, not the company's entire corpus.
+    // A ruling that governs `wandercom/sync` is not direction for `booking`:
+    // shipping it anyway made the snapshot grow with the estate until it passed
+    // the client's body ceiling and no repository could refresh at all, and in
+    // the meantime it filled every projection with other services' rulings. A
+    // fact that governs nothing in particular is company-wide and always sent.
+    let repository = request.query.get("repository").cloned().unwrap_or_default();
+    let governs_this_repository = |fact: &CurrentFact| -> bool {
+        repository.is_empty()
+            || fact.governs_paths.is_empty()
+            || fact.governs_paths.iter().any(|path| path == &repository)
+    };
+    let readable_facts: Vec<&CurrentFact> = view
         .facts
         .iter()
         .filter(|fact| readable.contains(&fact.authority_scope))
-        .map(crate::model::value_of)
         .collect();
+    let facts: Vec<Value> = readable_facts
+        .iter()
+        .filter(|fact| governs_this_repository(fact))
+        .map(|fact| crate::model::value_of(*fact))
+        .collect();
+    // Stated, never silent: a fact withheld because it governs somewhere else
+    // is reported by count, and `GET /facts` still serves the whole set.
+    let facts_elsewhere_count = readable_facts.len() - facts.len();
     let denied: Vec<Value> = view
         .facts
         .iter()
@@ -1893,7 +1931,34 @@ fn snapshot(
     // signed events (architecture §6: the reducer is a pure function of the
     // admitted event set). Company remains the authority for its own current
     // view; the events are the inputs it reduced, not a second opinion.
-    let events = snapshot_events(db, &readable).map_err(|error| refuse(500, error))?;
+    let events_since = request
+        .query
+        .get("events_since")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0);
+    let (mut events, events_omitted_count, events_sealed_cursor) =
+        snapshot_events(db, &readable, events_since).map_err(|error| refuse(500, error))?;
+    // A partial window is one the client must not reduce over -- it would drop
+    // the supersession that retired a head -- so it falls back to the derived
+    // `facts`. Sending it anyway is a third of a megabyte the reader is
+    // contractually required to ignore, and it was the difference between a
+    // snapshot that fits the body ceiling and one that does not.
+    if events_omitted_count > 0 {
+        events.clear();
+    }
+    // The version index answers "what else has been said about this fact", so it
+    // covers the facts actually sent and not the ones withheld as another
+    // repository's business.
+    let mut fact_versions = fact_versions_index(db, &view).map_err(|error| refuse(500, error))?;
+    if !repository.is_empty() {
+        let sent: BTreeSet<String> = facts
+            .iter()
+            .filter_map(|fact| crate::json::get_str(fact, "fact_id").map(str::to_owned))
+            .collect();
+        if let Some(map) = fact_versions.as_object_mut() {
+            map.retain(|fact_id, _| sent.contains(fact_id.as_str()));
+        }
+    }
     let bytes: usize = facts
         .iter()
         .chain(events.iter())
@@ -1912,14 +1977,21 @@ fn snapshot(
         "revocation_valid_until": crate::time::plus_seconds(now, state.config.revocation_freshness_seconds).unwrap_or_default(),
         "fact_valid_until": crate::time::plus_seconds(now, state.config.default_fact_freshness_seconds).unwrap_or_default(),
         "facts": facts,
+        "facts_scope": if repository.is_empty() { String::new() } else { format!("repository:{repository}") },
+        "facts_governing_elsewhere_count": facts_elsewhere_count,
         "events": events,
+        // Stated, never silent: a client that needs the omitted history pages
+        // `GET /events?since=<events_sealed_cursor>` for it.
+        "events_omitted_count": events_omitted_count,
+        "events_since": events_since,
+        "events_sealed_cursor": events_sealed_cursor,
         "denied": denied,
         "unknowns": unknowns,
         "registry": trust_state.public_registry(),
         "revocations": trust_state.revocations,
         "relaxations": db.relaxations().map_err(|error| refuse(500, error))?,
         "certificates": db.all_certificates().map_err(|error| refuse(500, error))?,
-        "fact_versions": fact_versions_index(db, &view).map_err(|error| refuse(500, error))?,
+        "fact_versions": fact_versions,
         "lifecycle_admissions": lifecycle_admissions(db, trust_state),
         // Every revocation ever recorded, including keys the steward later
         // republished: a later epoch authorizes new events, but facts asserted
@@ -1963,26 +2035,85 @@ fn snapshot(
 /// token may read, each with the store cursor and the verification recorded
 /// at admission. Unknown events ride along so a client sees the same Unknown
 /// queue Company reduced.
+/// How many admitted events one snapshot carries. The snapshot's `facts` are
+/// Company's current view and are always complete; `events` are the inputs that
+/// view reduced, and an append-only log has no upper bound. Wander's Company
+/// store reached 1.7 MB and the client's body ceiling refused every refresh --
+/// the cache froze at the last snapshot that happened to fit, which is the worst
+/// possible failure because it looks like nothing is wrong. Older events stay
+/// reachable through `GET /events?since=`, which has always paged.
+const SNAPSHOT_EVENT_LIMIT: usize = 400;
+/// And a byte budget, which is the ceiling that actually binds. The client
+/// refuses a response over `MAX_BODY_BYTES * 4` (1 MiB); the rest of the
+/// snapshot -- the current view, certificates, registry, revocation history --
+/// is what a client needs to establish trust and must always fit, so the event
+/// window gets what is left rather than the other way round. A count limit
+/// alone let 400 multi-kilobyte architecture statements blow the body ceiling.
+const SNAPSHOT_EVENT_BYTES: usize = 384 * 1024;
+
 fn snapshot_events(
     db: &CompanyDb,
     readable: &BTreeSet<String>,
-) -> Result<Vec<Value>, ContractError> {
-    let mut events = Vec::new();
+    since: i64,
+) -> Result<(Vec<Value>, usize, String), ContractError> {
+    let mut selected = Vec::new();
+    let mut omitted = 0usize;
     for kind in ["fact-event", "unknown-event"] {
         for (cursor, payload, verification) in db.events_of_kind(kind)? {
             let scope = crate::json::get_str(&payload, "authority_scope").unwrap_or_default();
             if !readable.contains(scope) {
                 continue;
             }
-            events.push(json!({
-                "cursor": cursor.to_string(),
-                "kind": kind,
-                "verification": verification,
-                "document": payload
-            }));
+            if cursor <= since {
+                // Already sealed by this client at an earlier refresh.
+                continue;
+            }
+            selected.push((
+                cursor,
+                json!({
+                    "cursor": cursor.to_string(),
+                    "kind": kind,
+                    "verification": verification,
+                    "document": payload
+                }),
+            ));
         }
     }
-    Ok(events)
+    // Newest first, so a truncated window carries the most recent history
+    // rather than whichever kind sorted first.
+    selected.sort_by(|left, right| right.0.cmp(&left.0));
+    if selected.len() > SNAPSHOT_EVENT_LIMIT {
+        omitted = selected.len() - SNAPSHOT_EVENT_LIMIT;
+        selected.truncate(SNAPSHOT_EVENT_LIMIT);
+    }
+    let mut spent = 0usize;
+    let mut kept = 0usize;
+    for (_, value) in &selected {
+        let size = crate::json::canonical_bytes(value).len();
+        if kept > 0 && spent + size > SNAPSHOT_EVENT_BYTES {
+            break;
+        }
+        spent += size;
+        kept += 1;
+    }
+    if kept < selected.len() {
+        omitted += selected.len() - kept;
+        selected.truncate(kept);
+    }
+    // The client may seal up to the oldest event it actually received; anything
+    // older was omitted and must still be reachable from `/events`.
+    let sealed = selected
+        .iter()
+        .map(|(cursor, _)| *cursor)
+        .min()
+        .map(|cursor| (cursor - 1).max(since))
+        .unwrap_or(since);
+    selected.sort_by_key(|(cursor, _)| *cursor);
+    Ok((
+        selected.into_iter().map(|(_, value)| value).collect(),
+        omitted,
+        sealed.to_string(),
+    ))
 }
 
 fn fact_versions_index(

@@ -778,7 +778,21 @@ fn snapshot_company_events(
 ) -> (Vec<AdmittedEvent>, Vec<crate::model::UnknownEvent>) {
     let mut events = Vec::new();
     let mut unknowns = Vec::new();
-    if let Some(records) = snapshot.get("events").and_then(Value::as_array) {
+    // A truncated event window is not a smaller log, it is a different one:
+    // reducing over it would drop the supersession that retired a head and
+    // republish a fact Company has already replaced. When the snapshot says it
+    // omitted events, take Company's own derived `facts` instead -- the same
+    // path an older cache without an `events` field already uses.
+    let complete = snapshot
+        .get("events_omitted_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        == 0;
+    if let Some(records) = snapshot
+        .get("events")
+        .and_then(Value::as_array)
+        .filter(|_| complete)
+    {
         for record in records {
             let Some(document) = record.get("document") else {
                 continue;

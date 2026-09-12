@@ -386,6 +386,16 @@ pub fn ingest(
                 merged.branch = fresh.branch.clone();
             }
             merged.attributes = fresh.attributes.clone();
+            // Derived from the adapter's reading of the same immutable content,
+            // so a better extractor supersedes a worse one. Leaving these on the
+            // first reading meant every repository ingested before the commit
+            // adapter learned to emit anchors stayed permanently unanchored: the
+            // re-ingest ran, reported success, and changed nothing. Identity is
+            // the content digest; these are conclusions about it.
+            merged.anchors = fresh.anchors.clone();
+            merged.governs_paths = fresh.governs_paths.clone();
+            merged.provenance = fresh.provenance.clone();
+            merged.extraction_version = fresh.extraction_version.clone();
             merged.raw_withheld = fresh.raw_withheld;
             merged.origin_trust = fresh.origin_trust.clone();
             merged.effective_until = fresh.effective_until.clone();

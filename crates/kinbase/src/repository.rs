@@ -1579,7 +1579,14 @@ pub fn build_trust(
 
         let started = std::time::Instant::now();
         trust.company_query_attempted = true;
-        match company.client.snapshot() {
+        // The certified identity if we have it, otherwise the configured hint:
+        // either way the service filters to the direction that governs here.
+        let asking_as = trust
+            .repository_uuid
+            .clone()
+            .or_else(|| repo.uuid_hint().map(str::to_owned))
+            .unwrap_or_default();
+        match company.client.snapshot_for(&asking_as) {
             Ok(snapshot) => {
                 trust.company_reachable = Some(true);
                 if let Err(error) = company.cache.store_snapshot(&snapshot, &company.root, &now) {
