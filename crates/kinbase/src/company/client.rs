@@ -42,7 +42,13 @@ impl Client {
             key,
             root,
             cache_root,
-            read_timeout: Duration::from_millis(1_500),
+            // A snapshot is a reduction over the whole Company event log, so it
+            // costs what the log costs: 2.5 s against Wander's 2,720 events and
+            // rising. At 1,500 ms -- a bound sized for proof fixtures -- every
+            // repository in the estate reported COMPANY_UNREACHABLE against a
+            // service that was answering perfectly well, which reads as an
+            // outage rather than as the ceiling it is.
+            read_timeout: Duration::from_secs(20),
             bytes_sent: std::cell::Cell::new(0),
         })
     }

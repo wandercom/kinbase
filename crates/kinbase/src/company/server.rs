@@ -1984,14 +1984,37 @@ fn snapshot(
     // The version index answers "what else has been said about this fact", so it
     // covers the facts actually sent and not the ones withheld as another
     // repository's business.
-    let mut fact_versions = fact_versions_index(db, &view).map_err(|error| refuse(500, error))?;
-    if !repository.is_empty() {
-        let sent: BTreeSet<String> = facts
+    // Everything derived from the view is scoped the same way the view is: a
+    // repository that is not sent a fact has no use for that fact's version
+    // history or its reduction trace, and shipping them anyway put the response
+    // back over the body ceiling from a different direction.
+    let sent_ids: BTreeSet<String> = facts
+        .iter()
+        .filter_map(|fact| crate::json::get_str(fact, "fact_id").map(str::to_owned))
+        .collect();
+    let sent_keys: BTreeSet<&str> = if repository.is_empty() {
+        BTreeSet::new()
+    } else {
+        facts
             .iter()
-            .filter_map(|fact| crate::json::get_str(fact, "fact_id").map(str::to_owned))
-            .collect();
-        if let Some(map) = fact_versions.as_object_mut() {
-            map.retain(|fact_id, _| sent.contains(fact_id.as_str()));
+            .filter_map(|fact| crate::json::get_str(fact, "logical_key"))
+            .collect()
+    };
+    let mut fact_versions = fact_versions_index(db, &view).map_err(|error| refuse(500, error))?;
+    if let Some(map) = fact_versions.as_object_mut() {
+        if !repository.is_empty() {
+            map.retain(|fact_id, _| sent_ids.contains(fact_id.as_str()));
+        }
+        // A client needs to know a fact has been revised and what the newest
+        // revisions were, not every revision ever made. Four republications of
+        // 563 claims put 315 KiB of superseded history into every snapshot.
+        for versions in map.values_mut() {
+            if let Some(list) = versions.as_array_mut() {
+                if list.len() > FACT_VERSIONS_KEPT {
+                    let start = list.len() - FACT_VERSIONS_KEPT;
+                    list.drain(..start);
+                }
+            }
         }
     }
     let bytes: usize = facts
@@ -2050,7 +2073,7 @@ fn snapshot(
             })
             .collect::<Vec<_>>(),
         "fact_parents": fact_parents(db, &view),
-        "traces": view.traces.iter().map(|trace| json!({
+        "traces": view.traces.iter().filter(|trace| sent_keys.is_empty() || sent_keys.contains(trace.logical_key.as_str())).map(|trace| json!({
             "logical_key": trace.logical_key,
             "state": trace.state,
             "admitted_event_ids": trace.admitted_event_ids,
@@ -2085,6 +2108,9 @@ const SNAPSHOT_EVENT_LIMIT: usize = 400;
 /// window gets what is left rather than the other way round. A count limit
 /// alone let 400 multi-kilobyte architecture statements blow the body ceiling.
 const SNAPSHOT_EVENT_BYTES: usize = 384 * 1024;
+/// Newest revisions of a fact carried in a snapshot. `GET /facts/<id>` serves
+/// the rest.
+const FACT_VERSIONS_KEPT: usize = 3;
 
 fn snapshot_events(
     db: &CompanyDb,
