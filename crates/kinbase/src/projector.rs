@@ -1249,6 +1249,17 @@ fn key_subject(logical_key: &str) -> Option<&str> {
     }
 }
 
+/// Two-letter grammar. Almost every two-character English word is grammar, and
+/// almost every two-character identifier is not: `Db`, `Tx`, `Id`, `Ok`. A
+/// length floor cannot tell them apart, so it dropped both -- which meant a
+/// fact about `Db` could not match a question about `Db`, and the census
+/// measurement of the most-copied class in the estate was unreachable by name.
+/// Drop grammar by name instead.
+const TINY_STOPWORDS: [&str; 30] = [
+    "of", "to", "in", "is", "it", "as", "at", "by", "on", "or", "an", "be", "we", "do", "if", "no",
+    "so", "up", "my", "me", "he", "us", "am", "re", "vs", "et", "al", "eg", "ie", "the",
+];
+
 /// Three-letter grammar. The list above is applied where a four-character floor
 /// already excludes these; `terms` admits three-character words because real
 /// vocabulary lives there (`api`, `sql`, `dao`, `fee`), so it needs both.
@@ -1440,7 +1451,10 @@ fn terms(value: &str) -> BTreeSet<String> {
         .to_lowercase()
         .split(|character: char| !character.is_alphanumeric())
         .filter(|part| {
-            part.len() > 2 && !STOPWORDS.contains(part) && !SHORT_STOPWORDS.contains(part)
+            part.len() >= 2
+                && !TINY_STOPWORDS.contains(part)
+                && !STOPWORDS.contains(part)
+                && !SHORT_STOPWORDS.contains(part)
         })
         .map(str::to_owned)
         .collect()
