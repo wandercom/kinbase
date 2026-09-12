@@ -1356,8 +1356,12 @@ const BULK_CHUNK_CHARS: usize = 2_500;
 /// forty-eight in flight is well inside what the provider serves, and the
 /// budget is long enough that a pass loses no draw to it.
 const BULK_DOCUMENTS_PER_PASS: usize = 32;
-const BULK_CLASSIFIER_WORKERS: usize = 48;
+const BULK_CLASSIFIER_WORKERS: usize = 32;
 const BULK_EXTRACTION_BUDGET_SECONDS: u64 = 600;
+/// Chunks per classifier request. Four per request made the model's answer
+/// long enough that one in three failed the strict output check on real
+/// documents; two keeps each answer short and each failure cheap to retry.
+const BULK_OBSERVATIONS_PER_REQUEST: usize = 2;
 /// Personal-store journal of classified documents: the atoms, their
 /// destinations and the classifier that produced them. Admission to any
 /// store reads from here, so a document is classified once, not once per
@@ -1472,6 +1476,7 @@ fn classify_bulk(
             requests_in,
             BULK_CLASSIFIER_WORKERS,
             BULK_EXTRACTION_BUDGET_SECONDS,
+            BULK_OBSERVATIONS_PER_REQUEST,
         )?;
         requests += extraction.requests;
         retries += extraction.retries;

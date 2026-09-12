@@ -551,11 +551,28 @@ pub fn run_verified_executable(
         .map(std::thread::JoinHandle::join)
         .map(|joined| joined.unwrap_or_default())
         .unwrap_or_default();
-    let _ = stderr_reader.map(std::thread::JoinHandle::join);
+    let stderr = stderr_reader
+        .map(std::thread::JoinHandle::join)
+        .map(|joined| joined.unwrap_or_default())
+        .unwrap_or_default();
     if !status.success() {
+        // The child's own words travel with the failure. An exit status alone
+        // cannot tell a provider pushing back from a malformed answer, and the
+        // caller decides whether to wait or to retry on exactly that.
+        let excerpt: String = String::from_utf8_lossy(&stderr)
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or_default()
+            .chars()
+            .take(240)
+            .collect();
         return Err(ContractError::degraded(
             "UNKNOWN_OWNER_UNRESOLVED",
-            format!("classifier exited with {status}; extraction abstained"),
+            if excerpt.is_empty() {
+                format!("classifier exited with {status}; extraction abstained")
+            } else {
+                format!("classifier exited with {status}: {excerpt}; extraction abstained")
+            },
             "Repair the classifier; abstention creates a private Unknown.",
         ));
     }

@@ -606,6 +606,7 @@ pub(crate) fn extract_atoms(
         observations,
         LIVE_CLASSIFIER_WORKERS,
         LIVE_EXTRACTION_BUDGET_SECONDS,
+        LIVE_OBSERVATIONS_PER_REQUEST,
     )
 }
 
@@ -619,6 +620,7 @@ pub(crate) fn extract_atoms_bounded(
     observations: Vec<Value>,
     workers: usize,
     budget_seconds: u64,
+    per_request: usize,
 ) -> Result<Extraction, ContractError> {
     let mut extraction = Extraction {
         atoms: BTreeMap::new(),
@@ -660,8 +662,9 @@ pub(crate) fn extract_atoms_bounded(
         &mut extraction,
         workers,
         budget_seconds,
+        per_request,
     )?;
-    wanted += live_batches(&observations)?.len() * LIVE_BASE_SAMPLES;
+    wanted += live_batches(&observations, per_request)?.len() * LIVE_BASE_SAMPLES;
     taken += base.0;
     merge_samples(&observations, base.1, &mut samples);
 
@@ -686,8 +689,9 @@ pub(crate) fn extract_atoms_bounded(
             &mut extraction,
             workers,
             budget_seconds,
+            per_request,
         )?;
-        wanted += live_batches(&contested)?.len() * LIVE_TIEBREAK_SAMPLES;
+        wanted += live_batches(&contested, per_request)?.len() * LIVE_TIEBREAK_SAMPLES;
         taken += tiebreak.0;
         merge_samples(&contested, tiebreak.1, &mut samples);
     }
@@ -735,9 +739,9 @@ pub(crate) fn extract_atoms_bounded(
 /// observation at a time spends most of the wall budget re-sending the
 /// instruction. `classifier::request_batches` still splits any group whose
 /// bytes exceed the request bound.
-fn live_batches(observations: &[Value]) -> Result<Vec<Value>, ContractError> {
+fn live_batches(observations: &[Value], per_request: usize) -> Result<Vec<Value>, ContractError> {
     let mut batches = Vec::new();
-    for chunk in observations.chunks(LIVE_OBSERVATIONS_PER_REQUEST) {
+    for chunk in observations.chunks(per_request.max(1)) {
         for batch in crate::classifier::request_batches(chunk.to_vec())? {
             if batch["observations"]
                 .as_array()
@@ -772,8 +776,9 @@ fn live_sample_pass(
     extraction: &mut Extraction,
     workers: usize,
     budget_seconds: u64,
+    per_request: usize,
 ) -> Result<(usize, Vec<(usize, BTreeMap<String, Vec<Value>>)>), ContractError> {
-    let batches = live_batches(observations)?;
+    let batches = live_batches(observations, per_request)?;
     let work = batches.len() * samples;
     if work == 0 {
         return Ok((0, Vec::new()));
@@ -926,8 +931,12 @@ const LIVE_TIEBREAK_SAMPLES: usize = 1;
 /// flight. This carries no information about the observation, so it is a wait,
 /// never an abstention.
 fn provider_backpressure(error: &ContractError) -> bool {
-    error.code == "PROCESSOR_UNAUTHORIZED"
-        && (error.message.contains("429") || error.message.contains("too many"))
+    matches!(
+        error.code.as_str(),
+        "PROCESSOR_UNAUTHORIZED" | "UNKNOWN_OWNER_UNRESOLVED"
+    ) && (error.message.contains("429")
+        || error.message.contains("too many")
+        || error.message.contains("rate limit"))
 }
 
 /// Bounded, growing pause before re-offering a request the provider pushed
