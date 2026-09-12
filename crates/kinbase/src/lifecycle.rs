@@ -3140,7 +3140,19 @@ fn revocation_of(trust: &TrustFacts, observation: &Observation) -> Option<String
     if store_for(&observation.source_kind) == "codebase" {
         // Derived Codebase facts are warranted by the registered repository
         // authority; with no active owner for the repository scope there is
-        // no authority left to warrant them.
+        // no authority left to warrant them. But a revocation is an event
+        // that happened, with a time. When nothing has ever been revoked, a
+        // registry that simply never named a per-repository owner is not a
+        // revocation, and reporting one made every certified repository at
+        // Wander show ~45,000 "revoked" unknowns over a store nobody revoked.
+        let nothing_revoked = trust.revocations.is_empty()
+            && trust
+                .governing_revoked_keys
+                .as_ref()
+                .is_none_or(|keys| keys.is_empty());
+        if nothing_revoked {
+            return None;
+        }
         if let Some(scope) = trust.maintainer_scope() {
             if trust.certificate_valid && trust.owner_of_scope(&scope).is_none() {
                 let effective = trust
