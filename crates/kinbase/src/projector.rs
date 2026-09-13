@@ -144,12 +144,24 @@ pub fn run(
                 .or_else(|| repository.uuid_hint().map(str::to_owned))
         })
         .unwrap_or_default();
-    let _ = crate::repository::ensure_authority_snapshot_for(
+    // Stated, never silent: a refresh the service refused (a ceiling, an
+    // outage) leaves the cached snapshot in force, and the brief says so. A
+    // ruling that exists but was withheld must not read as a ruling that
+    // does not exist.
+    let authority_refresh = match crate::repository::ensure_authority_snapshot_for(
         launcher,
         &repository_uuid,
         None,
         &as_of.as_of,
-    );
+    ) {
+        Ok((cursor, source)) => json!({"status": "ok", "source": source, "cursor": cursor}),
+        Err(error) => json!({
+            "status": "withheld",
+            "code": error.code,
+            "message": error.message,
+            "remediation": error.remediation,
+        }),
+    };
     let mut facts = Vec::new();
     let mut ingested_events = Vec::new();
     let mut conflict_event_ids = BTreeSet::new();
@@ -605,7 +617,8 @@ pub fn run(
             "selection_reason": if resident_ids.contains(&fact.fact_id) { "working_set_resident" } else { "positive_conditional_marginal_value" }
         })
     };
-    let brief = direction_brief(&facts, &context, task, decision, &as_of.as_of);
+    let mut brief = direction_brief(&facts, &context, task, decision, &as_of.as_of);
+    brief["authority_refresh"] = authority_refresh;
     let result = json!({
         "decision": decision,
         "task": task,
