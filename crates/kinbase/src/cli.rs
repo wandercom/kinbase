@@ -292,22 +292,25 @@ fn resolve_as_of(
     };
     let repo = crate::codebase::Repository::discover(repo_path)?;
     let local = repo.local_dir().join("proof-clock");
-    if let Ok(text) = std::fs::read_to_string(&local) {
-        return crate::time::AsOf::recorded(text.trim()).map_err(as_of_error);
-    }
-    let store = launcher.private_store()?;
-    if let Some(uuid) = repo.uuid_hint() {
-        let key = format!("proof-clock:{uuid}");
-        if let Some(value) = store.meta(&key)? {
-            return crate::time::AsOf::recorded(value.trim()).map_err(as_of_error);
+    let recorded = if let Ok(text) = std::fs::read_to_string(&local) {
+        crate::time::AsOf::recorded(text.trim()).map_err(as_of_error)?
+    } else {
+        let store = launcher.private_store()?;
+        let per_repo = match repo.uuid_hint() {
+            Some(uuid) => store.meta(&format!("proof-clock:{uuid}"))?,
+            None => None,
+        };
+        match per_repo.or(store.meta("proof-clock:default")?) {
+            Some(value) => crate::time::AsOf::recorded(value.trim()).map_err(as_of_error)?,
+            None => {
+                return Err(as_of_error(
+                    "no recorded proof clock is available; --as-of is required".to_owned(),
+                ))
+            }
         }
-    }
-    if let Some(value) = store.meta("proof-clock:default")? {
-        return crate::time::AsOf::recorded(value.trim()).map_err(as_of_error);
-    }
-    Err(as_of_error(
-        "no recorded proof clock is available; --as-of is required".to_owned(),
-    ))
+    };
+    // The verified authority snapshot is recorded proof of a later instant.
+    Ok(crate::repository::advance_as_of(launcher, &recorded))
 }
 
 fn store_to_kind(store: Store) -> crate::StoreKind {

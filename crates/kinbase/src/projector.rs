@@ -162,6 +162,10 @@ pub fn run(
             "remediation": error.remediation,
         }),
     };
+    // The refresh may have stored a later signed instant than the one the
+    // command resolved before it ran.
+    let advanced = crate::repository::advance_as_of(launcher, as_of);
+    let as_of = &advanced;
     let mut facts = Vec::new();
     let mut ingested_events = Vec::new();
     let mut conflict_event_ids = BTreeSet::new();

@@ -78,6 +78,29 @@ impl AsOf {
     }
 }
 
+impl AsOf {
+    /// Advance to a later recorded instant from a named source, keeping an
+    /// explicit `--as-of` untouched. A signed authority snapshot's `issued_at`
+    /// is recorded proof of time from the Company root: a ruling published
+    /// after this repository's own proof clock is current, not future.
+    pub fn advanced_to(&self, instant: &str, source: &str) -> Self {
+        if self.as_of_source.starts_with("explicit:") {
+            return self.clone();
+        }
+        let Ok(parsed) = parse_rfc3339_millis(instant) else {
+            return self.clone();
+        };
+        let candidate = format_rfc3339_millis(parsed + Duration::seconds(clock_offset_seconds()));
+        if candidate.as_str() <= self.as_of.as_str() {
+            return self.clone();
+        }
+        Self {
+            as_of: candidate,
+            as_of_source: source.to_owned(),
+        }
+    }
+}
+
 /// Advance a recorded proof-clock instant by this invocation's offset.
 pub fn recorded_with_offset(value: &str) -> Result<String, String> {
     let parsed = parse_rfc3339_millis(value)?;

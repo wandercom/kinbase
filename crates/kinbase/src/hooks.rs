@@ -695,6 +695,15 @@ fn session_start(
             .push("no recorded proof clock".to_owned());
         return state;
     };
+    // The verified authority snapshot is recorded proof of a later instant.
+    let resolved_as_of = crate::repository::advance_as_of(
+        &launcher,
+        &crate::time::AsOf {
+            as_of: clock,
+            as_of_source: "recorded-proof-clock".to_owned(),
+        },
+    );
+    let clock = resolved_as_of.as_of.clone();
     // Offline: the previously verified cache is the only Company input here.
     let Ok(context) = RepoContext::load(launcher.clone(), cwd, false, Some(clock.as_str())) else {
         state
@@ -760,10 +769,7 @@ fn session_start(
     }
     // Company facts are projected only from a warm, fresh, verified cache.
     if state.certified && state.cache_state == "warm" && revocation_fresh && fact_fresh {
-        let as_of = crate::time::AsOf {
-            as_of: clock.clone(),
-            as_of_source: "recorded-proof-clock".to_owned(),
-        };
+        let as_of = resolved_as_of.clone();
         if let Ok(view) = crate::projector::company_view(&launcher, cwd, &as_of) {
             state.trusted_company_facts = view
                 .facts

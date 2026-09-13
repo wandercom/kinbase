@@ -1462,6 +1462,23 @@ pub fn trust_facts(
 
 /// Replay the proof clock recorded at repository creation, advanced by this
 /// invocation's `KINBASE_PROOF_CLOCK_OFFSET_SECONDS` (ruling R-14).
+/// The `issued_at` of the verified authority snapshot in the cache, if any.
+/// `store_snapshot` verifies the root signature before recording it, so this
+/// instant is signed proof of time, not a wall-clock read.
+pub fn authority_snapshot_instant(launcher: &Launcher) -> Option<String> {
+    let (cache, _root) = launcher.company_cache().ok().flatten()?;
+    cache.meta("issued_at")
+}
+
+/// A repository's recorded proof clock, advanced to the verified authority
+/// snapshot when that is later. Explicit `--as-of` values are left alone.
+pub fn advance_as_of(launcher: &Launcher, as_of: &crate::time::AsOf) -> crate::time::AsOf {
+    match authority_snapshot_instant(launcher) {
+        Some(instant) => as_of.advanced_to(&instant, "authority-snapshot:issued_at"),
+        None => as_of.clone(),
+    }
+}
+
 pub fn recorded_clock(launcher: &Launcher, repo: &Repository) -> Result<String, ContractError> {
     if let Some(text) = std::fs::read_to_string(repo.local_dir().join("proof-clock"))
         .ok()
