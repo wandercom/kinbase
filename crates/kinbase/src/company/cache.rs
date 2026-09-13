@@ -192,6 +192,14 @@ impl Cache {
                 self.set_meta(key, value)?;
             }
         }
+        // The scope the service filtered this snapshot to. One cache row
+        // serves every repository on the machine, so a projection has to know
+        // whether the rows in hand were selected for its repository or for
+        // whichever repository refreshed last.
+        self.set_meta(
+            "facts_scope",
+            crate::json::get_str(snapshot, "facts_scope").unwrap_or_default(),
+        )?;
         self.set_meta("high_water_cursor", &cursor)?;
         self.set_meta("snapshot_digest", &digest)?;
         self.set_meta("refreshed_at", now)?;
@@ -213,6 +221,13 @@ impl Cache {
         }
         self.state = CacheState::Warm;
         Ok(())
+    }
+
+    /// The scope the cached snapshot was filtered to: `repository:<uuid>`
+    /// when a repository asked for its own direction, empty for a company-wide
+    /// snapshot, and `None` when no snapshot has recorded one.
+    pub fn facts_scope(&self) -> Option<String> {
+        self.meta("facts_scope")
     }
 
     pub fn snapshot(&self) -> Result<Option<Value>, ContractError> {

@@ -132,7 +132,24 @@ pub fn run(
     // Authority refresh is an optimization, not a command gate. When Company
     // is unavailable, the cached projection is still emitted and the explicit
     // degraded policy withholds the dependent decision.
-    let _ = crate::repository::ensure_authority_snapshot(launcher, None, &as_of.as_of);
+    // Ask as this repository: the service sends company-wide direction plus
+    // the rulings that govern this repository, and a cached snapshot fetched
+    // for another repository does not count as fresh.
+    let repository_uuid = crate::codebase::Repository::discover(repo)
+        .ok()
+        .and_then(|repository| {
+            crate::repository::build_trust(launcher, &repository, false, None)
+                .ok()
+                .and_then(|trust| trust.repository_uuid)
+                .or_else(|| repository.uuid_hint().map(str::to_owned))
+        })
+        .unwrap_or_default();
+    let _ = crate::repository::ensure_authority_snapshot_for(
+        launcher,
+        &repository_uuid,
+        None,
+        &as_of.as_of,
+    );
     let mut facts = Vec::new();
     let mut ingested_events = Vec::new();
     let mut conflict_event_ids = BTreeSet::new();

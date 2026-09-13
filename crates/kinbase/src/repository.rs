@@ -1766,6 +1766,22 @@ pub fn ensure_authority_snapshot(
     requested_cursor: Option<&str>,
     as_of: &str,
 ) -> Result<(String, &'static str), ContractError> {
+    ensure_authority_snapshot_for(launcher, "", requested_cursor, as_of)
+}
+
+/// Ensure the cached snapshot is fresh *and* was selected for this repository.
+/// The service filters a snapshot to the rulings that govern the asking
+/// repository plus company-wide direction; the cache holds one snapshot for
+/// the whole machine. A fresh snapshot fetched for another repository is not
+/// this repository's direction, however recent it is, so scope is part of
+/// freshness here. An empty `repository_uuid` keeps the scope-blind behaviour
+/// of the company-wide callers.
+pub fn ensure_authority_snapshot_for(
+    launcher: &Launcher,
+    repository_uuid: &str,
+    requested_cursor: Option<&str>,
+    as_of: &str,
+) -> Result<(String, &'static str), ContractError> {
     let Some(mut company) = launcher.company()? else {
         return Err(ContractError::degraded(
             "CACHE_EXPIRED",
@@ -1779,8 +1795,16 @@ pub fn ensure_authority_snapshot(
         .meta("authority_cursor")
         .unwrap_or_else(|| "0".to_owned());
     let requested = requested_cursor.unwrap_or(cached_cursor.as_str());
+    let wanted_scope = if repository_uuid.is_empty() {
+        String::new()
+    } else {
+        format!("repository:{repository_uuid}")
+    };
+    let scope_matches = repository_uuid.is_empty()
+        || company.cache.facts_scope().as_deref() == Some(wanted_scope.as_str());
     let cache_fresh = company.cache.state == crate::company::cache::CacheState::Warm
-        && !cache_needs_refresh(&company.cache, &now);
+        && !cache_needs_refresh(&company.cache, &now)
+        && scope_matches;
     // An explicit cursor is a temporal boundary for this invocation. It is
     // not a demand that the local registry cache already contain a snapshot
     // at or beyond that boundary; the reducer still sees and reports the
@@ -1793,7 +1817,7 @@ pub fn ensure_authority_snapshot(
     {
         return Ok((cached_cursor, "cache"));
     }
-    match company.client.snapshot() {
+    match company.client.snapshot_for(repository_uuid) {
         Ok(snapshot) => {
             company
                 .cache
