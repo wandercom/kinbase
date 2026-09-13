@@ -2913,9 +2913,31 @@ fn build_destination_event(
             .unwrap_or_default(),
     };
     let repo = repo()?;
-    let (private_path, _) = crate::crypto::ensure_keypair(store, &repo)?;
-    let key = crate::crypto::PrivateKey::load_or_generate(&private_path, "local destination key")?;
+    let key = destination_signing_key(store, &repo)?;
     key.sign_document("fact-event", &event.to_value())
+}
+
+/// One signer per shared store. A repository trusts its configured maintainer
+/// key once it holds a certificate and nothing else it has not registered, so
+/// a session admission signed with a generated local key was structurally
+/// perfect and entirely untrusted: the same defect bulk admission had, on the
+/// other path. Shared stores sign as the maintainer whenever Company access is
+/// configured; Personal, and a machine with no Company access, keep the local
+/// key.
+pub(crate) fn destination_signing_key(
+    store: crate::StoreKind,
+    repo: &Path,
+) -> Result<crate::crypto::PrivateKey, ContractError> {
+    if store != crate::StoreKind::Personal {
+        if let Some(access) = crate::launcher::Launcher::load()
+            .ok()
+            .and_then(|launcher| launcher.shared.company.clone())
+        {
+            return access.maintainer_key();
+        }
+    }
+    let (private_path, _) = crate::crypto::ensure_keypair(store, repo)?;
+    crate::crypto::PrivateKey::load_or_generate(&private_path, "local destination key")
 }
 
 /// Close overdue apology Unknowns with exactly one signed `orphan_abandoned`
@@ -3024,9 +3046,7 @@ pub(crate) fn emit_due_orphan_abandonments(
         if let (crate::StoreKind::Codebase, Some(uuid)) = (store, &repository_uuid) {
             document["repository_id"] = Value::String(uuid.clone());
         }
-        let (private_path, _) = crate::crypto::ensure_keypair(store, repository_root)?;
-        let key =
-            crate::crypto::PrivateKey::load_or_generate(&private_path, "local destination key")?;
+        let key = destination_signing_key(store, repository_root)?;
         let signed = key.sign_document("fact-event", &document)?;
         let parsed = FactEvent::from_value(&signed).map_err(|error| {
             ContractError::integrity(
