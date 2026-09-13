@@ -206,3 +206,21 @@ fn receipt_skew_bounds() -> (i64, i64) {
 
 /// The ratified five-minute receipt-time bound.
 pub const RECEIPT_SKEW_SECONDS: i64 = 300;
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_later_signed_instant_advances_a_recorded_clock_but_not_an_explicit_one() {
+        let recorded = super::AsOf::recorded("2026-09-11T13:31:53.426Z").unwrap();
+        let advanced = recorded.advanced_to("2026-09-13T21:12:34.413Z", "authority-snapshot:issued_at");
+        assert_eq!(advanced.as_of, "2026-09-13T21:12:34.413Z");
+        assert_eq!(advanced.as_of_source, "authority-snapshot:issued_at");
+        let earlier = recorded.advanced_to("2026-09-10T00:00:00.000Z", "authority-snapshot:issued_at");
+        assert_eq!(earlier, recorded);
+        let explicit = super::AsOf::explicit("2026-09-11T13:31:53.426Z").unwrap();
+        let untouched = explicit.advanced_to("2026-09-13T21:12:34.413Z", "authority-snapshot:issued_at");
+        assert_eq!(untouched, explicit);
+        let garbage = recorded.advanced_to("not a time", "authority-snapshot:issued_at");
+        assert_eq!(garbage, recorded);
+    }
+}
