@@ -1646,6 +1646,58 @@ fn direction_brief(
             }
         }
     }
+    // Direction by ownership: an ownership fact cites the rows that justify
+    // it (evidence_refs of the form `row:<logical key>`). Those rows govern
+    // any ticket that touches the prefix, whatever words the ticket uses, so
+    // they are delivered without a lexical match. This is how "the monorepo is
+    // retiring" reaches a ticket that says "platform" and "user-agent".
+    let mut cited: Vec<Value> = Vec::new();
+    let mut cited_keys: BTreeSet<String> = BTreeSet::new();
+    for fact in company
+        .iter()
+        .filter(|f| f.logical_key.starts_with("ownership/"))
+    {
+        let governs_named = paths.iter().any(|path| {
+            fact.governs_paths
+                .iter()
+                .any(|prefix| path.starts_with(prefix.trim_end_matches('/')))
+        });
+        if !governs_named {
+            continue;
+        }
+        for reference in &fact.evidence_refs {
+            if let Some(key) = reference.strip_prefix("row:") {
+                if cited_keys.insert(key.to_owned()) {
+                    if let Some(row) = company.iter().find(|f| f.logical_key == key) {
+                        cited.push(direction_row(row, as_of));
+                    }
+                }
+            }
+        }
+    }
+    // A ticket that names code whose target-state owner is another component
+    // is a conflict between the ticket and direction. That is the owner's call,
+    // not the agent's: the brief carries a question to raise before planning.
+    let mut questions: Vec<Value> = Vec::new();
+    for owner in &owners {
+        let statement = owner["row"]["statement"].as_str().unwrap_or_default();
+        let retiring = statement.contains("transitional")
+            || statement.contains("retir")
+            || statement.contains("out of the monorepo");
+        if retiring {
+            questions.push(json!({
+                "kind": "ownership_conflict",
+                "path": owner["path"],
+                "owner_row": owner["row"]["logical_key"],
+                "owner": owner["row"]["owner"],
+                "question": format!(
+                    "The ticket names {}, whose target-state owner is elsewhere ({}). Should this work land there, land here as a transitional change, or wait? Ask the owner before planning.",
+                    owner["path"].as_str().unwrap_or_default(),
+                    statement.split(". ").next().unwrap_or(statement)
+                ),
+            }));
+        }
+    }
     let ownership = if paths.is_empty() {
         json!({"status": "no_paths_named", "paths": []})
     } else if owners.is_empty() {
@@ -1698,6 +1750,8 @@ fn direction_brief(
 
     json!({
         "target_state_owner": ownership,
+        "questions": questions,
+        "direction_by_ownership": cited,
         "vocabulary_collisions": collisions,
         "direction_index": index,
         "governing_direction": governing,
