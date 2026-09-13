@@ -621,7 +621,7 @@ pub fn run(
             "selection_reason": if resident_ids.contains(&fact.fact_id) { "working_set_resident" } else { "positive_conditional_marginal_value" }
         })
     };
-    let mut brief = direction_brief(&facts, &context, task, decision, &as_of.as_of);
+    let mut brief = direction_brief(&facts, &context, task, decision, &as_of.as_of, &repository_uuid);
     brief["authority_refresh"] = authority_refresh;
     let result = json!({
         "decision": decision,
@@ -1654,6 +1654,7 @@ fn direction_brief(
     task: &str,
     decision: &str,
     as_of: &str,
+    repository_uuid: &str,
 ) -> Value {
     let company: Vec<&CurrentFact> = facts
         .iter()
@@ -1668,7 +1669,7 @@ fn direction_brief(
     let mut owners = Vec::new();
     for fact in company
         .iter()
-        .filter(|f| f.logical_key.starts_with("ownership/"))
+        .filter(|f| f.logical_key.starts_with("ownership/") && !f.logical_key.starts_with("ownership/repo/"))
     {
         for path in &paths {
             if fact
@@ -1680,6 +1681,18 @@ fn direction_brief(
             }
         }
     }
+    // Repository-level owner: an `ownership/repo/` fact that governs the
+    // repository the projection is for, by uuid. A ticket in payment gets
+    // the Payment Service as owner whether or not it names a path.
+    let governs_repository = |fact: &CurrentFact| -> bool {
+        fact.logical_key.starts_with("ownership/repo/")
+            && !repository_uuid.is_empty()
+            && fact.governs_paths.iter().any(|g| g == repository_uuid)
+    };
+    let repository_owner: Option<Value> = company
+        .iter()
+        .find(|f| governs_repository(f))
+        .map(|f| direction_row(f, as_of));
     // Direction by ownership: an ownership fact cites the rows that justify
     // it (evidence_refs of the form `row:<logical key>`). Those rows govern
     // any ticket that touches the prefix, whatever words the ticket uses, so
@@ -1691,11 +1704,12 @@ fn direction_brief(
         .iter()
         .filter(|f| f.logical_key.starts_with("ownership/"))
     {
-        let governs_named = paths.iter().any(|path| {
-            fact.governs_paths
-                .iter()
-                .any(|prefix| path.starts_with(prefix.trim_end_matches('/')))
-        });
+        let governs_named = governs_repository(fact)
+            || paths.iter().any(|path| {
+                fact.governs_paths
+                    .iter()
+                    .any(|prefix| path.starts_with(prefix.trim_end_matches('/')))
+            });
         if !governs_named {
             continue;
         }
@@ -1713,18 +1727,35 @@ fn direction_brief(
     // is a conflict between the ticket and direction. That is the owner's call,
     // not the agent's: the brief carries a question to raise before planning.
     let mut questions: Vec<Value> = Vec::new();
-    for owner in &owners {
-        let statement = owner["row"]["statement"].as_str().unwrap_or_default();
-        // The words a ruling uses when the code in front of the agent is not
-        // where the work belongs: the module is transitional, the monorepo is
-        // retiring, landing here is for emergencies, work refactors out.
-        let retiring = statement.contains("transitional")
+    // The words a ruling uses when the code in front of the agent is not
+    // where the work belongs: the module is transitional, the monorepo is
+    // retiring, landing here is for emergencies, work refactors out.
+    let retiring = |statement: &str| -> bool {
+        statement.contains("transitional")
             || statement.contains("retir")
             || statement.contains("out of the monorepo")
             || statement.contains("out of wander")
             || statement.contains("emergenc")
-            || statement.contains("refactor out");
-        if retiring {
+            || statement.contains("refactor out")
+    };
+    if let Some(row) = &repository_owner {
+        let statement = row["statement"].as_str().unwrap_or_default();
+        if retiring(statement) {
+            questions.push(json!({
+                "kind": "ownership_conflict",
+                "path": "",
+                "owner_row": row["logical_key"],
+                "owner": row["owner"],
+                "question": format!(
+                    "This repository is retiring or its target-state owner is elsewhere ({}). Should this work land here, land with the owner, or wait? Ask the owner before planning.",
+                    statement.split(". ").next().unwrap_or(statement)
+                ),
+            }));
+        }
+    }
+    for owner in &owners {
+        let statement = owner["row"]["statement"].as_str().unwrap_or_default();
+        if retiring(statement) {
             questions.push(json!({
                 "kind": "ownership_conflict",
                 "path": owner["path"],
@@ -1738,13 +1769,16 @@ fn direction_brief(
             }));
         }
     }
-    let ownership = if paths.is_empty() {
-        json!({"status": "no_paths_named", "paths": []})
-    } else if owners.is_empty() {
-        json!({"status": "no_ownership_fact", "paths": paths})
-    } else {
+    let mut ownership = if !owners.is_empty() {
         json!({"status": "resolved", "paths": paths, "owners": owners})
+    } else if repository_owner.is_some() {
+        json!({"status": "resolved_repository", "paths": paths})
+    } else if paths.is_empty() {
+        json!({"status": "no_paths_named", "paths": []})
+    } else {
+        json!({"status": "no_ownership_fact", "paths": paths})
     };
+    ownership["repository"] = repository_owner.clone().unwrap_or(Value::Null);
 
     // Vocabulary: a ratified-vocabulary row whose term the ticket uses.
     let mut collisions = Vec::new();
@@ -1802,6 +1836,47 @@ fn direction_brief(
 #[cfg(test)]
 mod brief_tests {
     use super::*;
+
+    #[test]
+    fn a_repository_level_ruling_resolves_by_identity_and_delivers_its_rows() {
+        let spec = company_fact(
+            "architecture/delta-current-state-to-target/payment-spec-07",
+            "Delta — Payment — spec 07. wandercom/payment, largest and most mature.",
+            &[],
+            &[],
+        );
+        let owner = company_fact(
+            "ownership/repo/payment",
+            "Target-state owner of wandercom/payment: Payment Service (spec 07). Status: live, refactoring.",
+            &["uuid-payment", "wandercom/payment"],
+            &["row:architecture/delta-current-state-to-target/payment-spec-07"],
+        );
+        let retiring = company_fact(
+            "ownership/repo/wander",
+            "Target-state owner of wandercom/wander: the retiring monorepo. Landing in wander/ is for emergencies only.",
+            &["uuid-wander", "wandercom/wander"],
+            &[],
+        );
+        let facts = vec![spec, owner, retiring];
+        let brief = direction_brief(
+            &facts,
+            &facts,
+            "Add a disbursement rule for management fees",
+            "",
+            "2026-09-13T00:00:00.000Z",
+            "uuid-payment",
+        );
+        assert_eq!(brief["target_state_owner"]["status"], "resolved_repository");
+        assert_eq!(brief["target_state_owner"]["repository"]["logical_key"], "ownership/repo/payment");
+        assert_eq!(brief["direction_by_ownership"][0]["logical_key"], "architecture/delta-current-state-to-target/payment-spec-07");
+        assert!(brief["questions"].as_array().unwrap().is_empty());
+        let wander = direction_brief(&facts, &facts, "Fix a null check", "", "2026-09-13T00:00:00.000Z", "uuid-wander");
+        assert_eq!(wander["target_state_owner"]["status"], "resolved_repository");
+        assert_eq!(wander["questions"][0]["kind"], "ownership_conflict");
+        let nobody = direction_brief(&facts, &facts, "Fix a null check", "", "2026-09-13T00:00:00.000Z", "uuid-other");
+        assert_eq!(nobody["target_state_owner"]["status"], "no_paths_named");
+        assert!(nobody["target_state_owner"]["repository"].is_null());
+    }
 
     fn company_fact(key: &str, statement: &str, governs: &[&str], refs: &[&str]) -> CurrentFact {
         CurrentFact {
@@ -1869,6 +1944,7 @@ mod brief_tests {
             "Add a platform label to the counter in src/pms/bookings/module/src/actions/confirm-booking-metrics.ts",
             "Which channel does the platform belong to?",
             "2026-09-13T00:00:00.000Z",
+            "",
         );
         assert_eq!(brief["target_state_owner"]["status"], "resolved");
         assert_eq!(brief["questions"].as_array().unwrap().len(), 1);
@@ -1901,6 +1977,7 @@ mod brief_tests {
             "touch services/api/src/app.ts",
             "why",
             "2026-09-13T00:00:00.000Z",
+            "",
         );
         assert_eq!(brief["target_state_owner"]["status"], "no_ownership_fact");
         assert!(brief["questions"].as_array().unwrap().is_empty());
