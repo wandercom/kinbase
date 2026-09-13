@@ -335,6 +335,7 @@ pub fn run(
     let mut stop_round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
     let mut direction_slots_used = 0usize;
     let mut direction_slots_withheld = 0usize;
+    let cache = EvalCache::new(&candidates, task, decision);
     while context.len() < PROJECTION_LIMIT {
         let mut round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
         for fact in &candidates {
@@ -348,7 +349,7 @@ pub fn run(
                 direction_slots_withheld += 1;
                 continue;
             }
-            let evaluation = evaluate(fact, &context, task, decision);
+            let evaluation = evaluate_cached(fact, &context, &cache);
             if context_bytes(&context, Some(fact)) > PROJECTION_BYTE_LIMIT {
                 if evaluation.marginal_value > 0 {
                     byte_ceiling_hit = true;
@@ -469,7 +470,7 @@ pub fn run(
             !context
                 .iter()
                 .any(|existing| existing.fact_id == fact.fact_id)
-                && evaluate(fact, &context, task, decision).marginal_value > 0
+                && evaluate_cached(fact, &context, &cache).marginal_value > 0
         });
     let omitted_count = if byte_ceiling_hit || item_ceiling_hit {
         candidates.len().saturating_sub(context.len())
@@ -1155,17 +1156,103 @@ fn resident_evaluation() -> Evaluation {
 
 /// Score one candidate against the current set `S` (residents plus the
 /// facts selected so far) for the declared task and decision.
+/// The per-fact work of an evaluation, done once per projection. Selection
+/// re-evaluates every candidate on every round, and with a corpus of
+/// evidence repositories that is thousands of candidates times dozens of
+/// rounds: tokenising each statement and normalising it against every
+/// resident fact on every visit took a projection from six seconds to four
+/// minutes without changing a single score.
+struct EvalCache {
+    decision_terms: BTreeSet<String>,
+    task_terms: BTreeSet<String>,
+    normalized: BTreeMap<String, String>,
+    statement_terms: BTreeMap<String, BTreeSet<String>>,
+    trigger_terms: BTreeMap<String, BTreeSet<String>>,
+    distinctive: BTreeMap<String, BTreeSet<String>>,
+    support: BTreeMap<String, BTreeSet<String>>,
+}
+
+impl EvalCache {
+    fn new(facts: &[&CurrentFact], task: &str, decision: &str) -> Self {
+        let mut normalized = BTreeMap::new();
+        let mut statement_terms = BTreeMap::new();
+        let mut trigger_terms = BTreeMap::new();
+        let mut distinctive = BTreeMap::new();
+        let mut support = BTreeMap::new();
+        for fact in facts {
+            normalized.insert(fact.fact_id.clone(), normalized_statement(&fact.statement));
+            statement_terms.insert(fact.fact_id.clone(), terms(&fact.statement));
+            trigger_terms.insert(fact.fact_id.clone(), terms(&fact.distortion.trigger));
+            distinctive.insert(fact.fact_id.clone(), distinctive_terms(&fact.statement));
+            support.insert(fact.fact_id.clone(), support_ids(fact));
+        }
+        Self {
+            decision_terms: terms(decision),
+            task_terms: terms(task),
+            normalized,
+            statement_terms,
+            trigger_terms,
+            distinctive,
+            support,
+        }
+    }
+
+    fn distinctive(&self, fact: &CurrentFact) -> std::borrow::Cow<'_, BTreeSet<String>> {
+        match self.distinctive.get(&fact.fact_id) {
+            Some(value) => std::borrow::Cow::Borrowed(value),
+            None => std::borrow::Cow::Owned(distinctive_terms(&fact.statement)),
+        }
+    }
+
+    fn support(&self, fact: &CurrentFact) -> std::borrow::Cow<'_, BTreeSet<String>> {
+        match self.support.get(&fact.fact_id) {
+            Some(value) => std::borrow::Cow::Borrowed(value),
+            None => std::borrow::Cow::Owned(support_ids(fact)),
+        }
+    }
+
+    fn normalized(&self, fact: &CurrentFact) -> std::borrow::Cow<'_, str> {
+        match self.normalized.get(&fact.fact_id) {
+            Some(value) => std::borrow::Cow::Borrowed(value.as_str()),
+            None => std::borrow::Cow::Owned(normalized_statement(&fact.statement)),
+        }
+    }
+
+    fn statement_terms(&self, fact: &CurrentFact) -> std::borrow::Cow<'_, BTreeSet<String>> {
+        match self.statement_terms.get(&fact.fact_id) {
+            Some(value) => std::borrow::Cow::Borrowed(value),
+            None => std::borrow::Cow::Owned(terms(&fact.statement)),
+        }
+    }
+
+    fn trigger_terms(&self, fact: &CurrentFact) -> std::borrow::Cow<'_, BTreeSet<String>> {
+        match self.trigger_terms.get(&fact.fact_id) {
+            Some(value) => std::borrow::Cow::Borrowed(value),
+            None => std::borrow::Cow::Owned(terms(&fact.distortion.trigger)),
+        }
+    }
+}
+
 fn evaluate(
     fact: &CurrentFact,
     current_set: &[CurrentFact],
     task: &str,
     decision: &str,
 ) -> Evaluation {
-    let decision_terms = terms(decision);
-    let task_terms = terms(task);
-    let statement_terms = terms(&fact.statement);
-    let decision_overlap = statement_terms.intersection(&decision_terms).count().min(4) as i64;
-    let task_overlap = statement_terms.intersection(&task_terms).count().min(4) as i64;
+    let cache = EvalCache::new(&[fact], task, decision);
+    evaluate_cached(fact, current_set, &cache)
+}
+
+fn evaluate_cached(
+    fact: &CurrentFact,
+    current_set: &[CurrentFact],
+    cache: &EvalCache,
+) -> Evaluation {
+    let decision_terms = &cache.decision_terms;
+    let task_terms = &cache.task_terms;
+    let statement_terms = cache.statement_terms(fact);
+    let decision_overlap = statement_terms.intersection(decision_terms).count().min(4) as i64;
+    let task_overlap = statement_terms.intersection(task_terms).count().min(4) as i64;
     // Range matters more than the shape: at 3000 + small increments every
     // candidate landed within a third of every other, so `loss_if_absent`
     // decided the order and the most emphatic fact won every question whatever
@@ -1177,9 +1264,9 @@ fn evaluate(
             .min(10_000);
     // Distortion already covered by an equivalent member of S is not newly
     // covered: a paraphrase of a resident fact covers nothing new.
+    let fact_normalized = cache.normalized(fact);
     let covered_by_set = current_set.iter().any(|existing| {
-        existing.logical_key == fact.logical_key
-            || normalized_statement(&existing.statement) == normalized_statement(&fact.statement)
+        existing.logical_key == fact.logical_key || cache.normalized(existing) == fact_normalized
     });
     // The trigger names the decision a fact exists to settle. Full weight goes
     // to a fact whose *trigger* the question is about -- not one whose own
@@ -1187,13 +1274,17 @@ fn evaluate(
     // fact does by construction and which therefore granted the bypass to
     // everything. Asking about reconcilers must not hand full weight to an
     // invariant about pricing simply because the invariant is well-formed.
-    let trigger_terms = terms(&fact.distortion.trigger);
-    let question_is_about_this = trigger_terms.intersection(&decision_terms).count()
-        + trigger_terms.intersection(&task_terms).count()
+    let trigger_terms = cache.trigger_terms(fact);
+    let question_is_about_this = trigger_terms.intersection(decision_terms).count()
+        + trigger_terms.intersection(task_terms).count()
         > 0;
+    let own_trigger = !trigger_terms.is_empty()
+        && trigger_terms
+            .iter()
+            .all(|term| statement_terms.contains(term));
     let newly_covered = if covered_by_set {
         0
-    } else if covers_own_trigger(fact) && question_is_about_this {
+    } else if own_trigger && question_is_about_this {
         i64::from(fact.distortion.loss_if_absent)
     } else {
         i64::from(fact.distortion.loss_if_absent)
@@ -1209,13 +1300,13 @@ fn evaluate(
             };
         base + (i64::from(fact.confidence) / 20).min(500)
     };
-    let (complementarity, complementarity_basis) = complementarity(fact, current_set);
+    let (complementarity, complementarity_basis) = complementarity(fact, current_set, cache);
     let uncertainty = (i64::try_from(fact.independent_support_count)
         .unwrap_or(i64::MAX)
         .saturating_mul(250))
     .min(1_000)
         + if fact.company_refs.is_empty() { 0 } else { 250 };
-    let (redundancy, redundancy_basis) = redundancy(fact, current_set);
+    let (redundancy, redundancy_basis) = redundancy(fact, current_set, cache);
     let cost = 250;
     let stale = 0;
     Evaluation {
@@ -1312,9 +1403,21 @@ fn distinctive_terms(statement: &str) -> BTreeSet<String> {
 /// or decision it evidences are jointly useful when they address one subject.
 /// The subject link is an explicit `complements` edge, a shared logical-key
 /// subject, or shared distinctive vocabulary; the trace names which.
-fn complementarity(fact: &CurrentFact, current_set: &[CurrentFact]) -> (i64, String) {
+fn support_ids(fact: &CurrentFact) -> BTreeSet<String> {
+    fact.support_event_ids
+        .iter()
+        .chain(fact.evidence_refs.iter())
+        .cloned()
+        .collect()
+}
+
+fn complementarity(
+    fact: &CurrentFact,
+    current_set: &[CurrentFact],
+    cache: &EvalCache,
+) -> (i64, String) {
     const GAIN: i64 = 2_500;
-    let fact_terms = distinctive_terms(&fact.statement);
+    let fact_terms = cache.distinctive(fact);
     for existing in current_set {
         if fact.complements.contains(&existing.fact_id)
             || existing.complements.contains(&fact.fact_id)
@@ -1338,7 +1441,7 @@ fn complementarity(fact: &CurrentFact, current_set: &[CurrentFact]) -> (i64, Str
                 return (GAIN, format!("shared_subject_key:{subject}"));
             }
         }
-        let existing_terms = distinctive_terms(&existing.statement);
+        let existing_terms = cache.distinctive(existing);
         let shared: Vec<&str> = fact_terms
             .intersection(&existing_terms)
             .map(String::as_str)
@@ -1352,9 +1455,10 @@ fn complementarity(fact: &CurrentFact, current_set: &[CurrentFact]) -> (i64, Str
 
 /// Redundancy against the current set: explicit edges, shared provenance,
 /// then lexical similarity. Returns the positive penalty and its basis.
-fn redundancy(fact: &CurrentFact, current_set: &[CurrentFact]) -> (i64, String) {
+fn redundancy(fact: &CurrentFact, current_set: &[CurrentFact], cache: &EvalCache) -> (i64, String) {
     let protected_invariant = fact.distortion.loss_if_absent >= 7_000
         && matches!(fact.atom_kind.as_str(), "constraint" | "decision");
+    let fact_support = cache.support(fact);
     for existing in current_set {
         let explicit = fact.redundancy_with.contains(&existing.fact_id)
             || existing.redundancy_with.contains(&fact.fact_id);
@@ -1368,23 +1472,8 @@ fn redundancy(fact: &CurrentFact, current_set: &[CurrentFact]) -> (i64, String) 
                 (8_000, format!("explicit_edge:{}", existing.fact_id))
             };
         }
-        let fact_support: BTreeSet<&str> = fact
-            .support_event_ids
-            .iter()
-            .chain(fact.evidence_refs.iter())
-            .map(String::as_str)
-            .collect();
-        let existing_support: BTreeSet<&str> = existing
-            .support_event_ids
-            .iter()
-            .chain(existing.evidence_refs.iter())
-            .map(String::as_str)
-            .collect();
-        if !fact_support
-            .intersection(&existing_support)
-            .collect::<BTreeSet<_>>()
-            .is_empty()
-        {
+        let existing_support = cache.support(existing);
+        if fact_support.iter().any(|id| existing_support.contains(id)) {
             return if protected_invariant {
                 (
                     1_000,
@@ -1395,10 +1484,10 @@ fn redundancy(fact: &CurrentFact, current_set: &[CurrentFact]) -> (i64, String) 
             };
         }
     }
-    let fact_terms = terms(&fact.statement);
+    let fact_terms = cache.statement_terms(fact);
     let mut best = (0i64, "none".to_owned());
     for existing in current_set {
-        let existing_terms = terms(&existing.statement);
+        let existing_terms = cache.statement_terms(existing);
         let intersection = fact_terms.intersection(&existing_terms).count() as i64;
         let total = fact_terms.len() as i64 + existing_terms.len() as i64;
         if total == 0 {
