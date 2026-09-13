@@ -1360,7 +1360,7 @@ const BULK_DOCUMENTS_PER_PASS: usize = 24;
 /// each of its calls is a process carrying a 17k-token prompt, and sixteen
 /// of them pegged the machine; four leaves the laptop usable and finishes
 /// a corpus in the background.
-const BULK_CLASSIFIER_WORKERS: usize = 4;
+const BULK_CLASSIFIER_WORKERS: usize = 6;
 const BULK_EXTRACTION_BUDGET_SECONDS: u64 = 900;
 /// Chunks per classifier request. Every Antigravity turn carries a fixed
 /// overhead of tens of thousands of tokens, so a request is worth filling;
