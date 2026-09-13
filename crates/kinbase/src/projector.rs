@@ -1758,3 +1758,111 @@ fn direction_brief(
         "stale_after_days": DIRECTION_STALE_AFTER_DAYS,
     })
 }
+
+#[cfg(test)]
+mod brief_tests {
+    use super::*;
+
+    fn company_fact(key: &str, statement: &str, governs: &[&str], refs: &[&str]) -> CurrentFact {
+        CurrentFact {
+            standing: "ratified".to_owned(),
+            provenance: "human".to_owned(),
+            governs_paths: governs.iter().map(|g| g.to_string()).collect(),
+            anchors: Vec::new(),
+            fact_id: format!("fact_{}", key.replace('/', "_")),
+            event_id: format!("evt_{}", key.replace('/', "_")),
+            logical_key: key.to_owned(),
+            atom_kind: "decision".to_owned(),
+            scope: "company:architecture".to_owned(),
+            statement: statement.to_owned(),
+            status: "current".to_owned(),
+            disposition: "accepted".to_owned(),
+            authority_id: "jmc".to_owned(),
+            authority_scope: "company:architecture".to_owned(),
+            store_kind: "company".to_owned(),
+            effective_from: "2026-08-31T00:00:00.000Z".to_owned(),
+            effective_until: None,
+            distortion: crate::model::Distortion {
+                trigger: key.to_owned(),
+                loss_if_absent: 7_000,
+                rationale: "test".to_owned(),
+            },
+            company_refs: Vec::new(),
+            evidence_refs: refs.iter().map(|r| r.to_string()).collect(),
+            support_event_ids: Vec::new(),
+            independent_support_count: 0,
+            redundancy_with: Vec::new(),
+            complements: Vec::new(),
+            confidence: 9_500,
+            criticality: String::new(),
+            trust: "trusted".to_owned(),
+            stale_reasons: Vec::new(),
+            authority_snapshot_cursor: String::new(),
+            effective_dependence_class: None,
+        }
+    }
+
+    #[test]
+    fn ownership_delivers_cited_rows_and_asks_on_conflict() {
+        let retirement = company_fact(
+            "architecture/delta-current-state-to-target/thesis/three-greenfield-services",
+            "Three greenfield services; nothing worth preserving underneath",
+            &[],
+            &[],
+        );
+        let owner = company_fact(
+            "ownership/src/pms/bookings",
+            "Target-state owner of src/pms/bookings/: Booking Service. The monorepo module is transitional.",
+            &["src/pms/bookings/"],
+            &["row:architecture/delta-current-state-to-target/thesis/three-greenfield-services"],
+        );
+        let vocab = company_fact(
+            "architecture/architecture-notes/2-ratified-vocabulary/channel",
+            "Channel is a supply-side program",
+            &[],
+            &[],
+        );
+        let facts = vec![retirement, owner, vocab];
+        let brief = direction_brief(
+            &facts,
+            &[],
+            "Add a platform label to the counter in src/pms/bookings/module/src/actions/confirm-booking-metrics.ts",
+            "Which channel does the platform belong to?",
+            "2026-09-13T00:00:00.000Z",
+        );
+        assert_eq!(brief["target_state_owner"]["status"], "resolved");
+        assert_eq!(brief["questions"].as_array().unwrap().len(), 1);
+        assert_eq!(brief["questions"][0]["kind"], "ownership_conflict");
+        let cited: Vec<&str> = brief["direction_by_ownership"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|r| r["logical_key"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            cited,
+            vec!["architecture/delta-current-state-to-target/thesis/three-greenfield-services"]
+        );
+        let terms: Vec<&str> = brief["vocabulary_collisions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["term"].as_str().unwrap())
+            .collect();
+        assert_eq!(terms, vec!["channel"]);
+        assert_eq!(brief["direction_by_ownership"][0]["age_days"], 13);
+    }
+
+    #[test]
+    fn no_ownership_fact_is_reported_not_guessed() {
+        let brief = direction_brief(
+            &[],
+            &[],
+            "touch services/api/src/app.ts",
+            "why",
+            "2026-09-13T00:00:00.000Z",
+        );
+        assert_eq!(brief["target_state_owner"]["status"], "no_ownership_fact");
+        assert!(brief["questions"].as_array().unwrap().is_empty());
+    }
+}
