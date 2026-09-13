@@ -1698,9 +1698,15 @@ fn direction_brief(
     let mut questions: Vec<Value> = Vec::new();
     for owner in &owners {
         let statement = owner["row"]["statement"].as_str().unwrap_or_default();
+        // The words a ruling uses when the code in front of the agent is not
+        // where the work belongs: the module is transitional, the monorepo is
+        // retiring, landing here is for emergencies, work refactors out.
         let retiring = statement.contains("transitional")
             || statement.contains("retir")
-            || statement.contains("out of the monorepo");
+            || statement.contains("out of the monorepo")
+            || statement.contains("out of wander")
+            || statement.contains("emergenc")
+            || statement.contains("refactor out");
         if retiring {
             questions.push(json!({
                 "kind": "ownership_conflict",
