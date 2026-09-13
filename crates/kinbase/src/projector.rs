@@ -588,12 +588,19 @@ pub fn run(
             "selection_reason": if resident_ids.contains(&fact.fact_id) { "working_set_resident" } else { "positive_conditional_marginal_value" }
         })
     };
+    let brief = direction_brief(&facts, &context, task, decision, &as_of.as_of);
     let result = json!({
         "decision": decision,
         "task": task,
         "as_of": as_of.as_of,
         "as_of_source": as_of.as_of_source,
         "ambient_clock_read": false,
+        // What a long-tenured engineer would say before the plan: who owns the
+        // code the ticket names in the target state, which of the ticket's words
+        // the ratified vocabulary defines differently, where the direction lives,
+        // and the direction that governs, each row with its owner and age. An
+        // agent does not have to know the vocabulary or search for any of it.
+        "brief": brief,
         "candidates": candidate_values.into_iter().chain(unknowns.iter().map(unknown_value)).collect::<Vec<_>>(),
         "working_set": working_set,
         "evidence_repos": evidence_repos,
@@ -1568,4 +1575,132 @@ fn terms(value: &str) -> BTreeSet<String> {
         })
         .map(str::to_owned)
         .collect()
+}
+
+/// Direction older than this without re-affirmation is served as stale, not
+/// as fact: a copy of an outside decision is a reference to a point in time.
+const DIRECTION_STALE_AFTER_DAYS: i64 = 180;
+
+fn days_between(earlier: &str, later: &str) -> Option<i64> {
+    let a = crate::time::parse_rfc3339_millis(earlier).ok()?;
+    let b = crate::time::parse_rfc3339_millis(later).ok()?;
+    Some((b - a).num_days())
+}
+
+/// Path-like tokens in free text: anything containing a `/` that looks like a
+/// repository path rather than a URL.
+fn path_tokens(text: &str) -> Vec<String> {
+    text.split(|c: char| {
+        c.is_whitespace() || matches!(c, '`' | '"' | '\'' | '(' | ')' | ',' | ';' | ':')
+    })
+    .filter(|t| t.contains('/') && !t.contains("://") && !t.starts_with('/'))
+    .map(|t| t.trim_end_matches('.').to_owned())
+    .filter(|t| t.len() > 3)
+    .collect()
+}
+
+fn direction_row(fact: &CurrentFact, as_of: &str) -> Value {
+    let age_days = days_between(&fact.effective_from, as_of);
+    json!({
+        "logical_key": fact.logical_key,
+        "statement": fact.statement,
+        "standing": fact.standing,
+        "provenance": fact.provenance,
+        "owner": fact.authority_id,
+        "as_of": fact.effective_from,
+        "age_days": age_days,
+        "stale": age_days.is_some_and(|d| d > DIRECTION_STALE_AFTER_DAYS),
+    })
+}
+
+/// The brief a projection carries above its selected facts.
+fn direction_brief(
+    facts: &[CurrentFact],
+    selected: &[CurrentFact],
+    task: &str,
+    decision: &str,
+    as_of: &str,
+) -> Value {
+    let company: Vec<&CurrentFact> = facts
+        .iter()
+        .filter(|f| f.store_kind == "company" && f.status == "current" && f.trust == "trusted")
+        .collect();
+    let question = format!("{task}\n{decision}");
+    let question_terms = terms(&question);
+
+    // Target-state owner: an `ownership/` fact whose governed path prefixes the
+    // paths the ticket names. No fact is a reportable answer, not a guess.
+    let paths = path_tokens(&question);
+    let mut owners = Vec::new();
+    for fact in company
+        .iter()
+        .filter(|f| f.logical_key.starts_with("ownership/"))
+    {
+        for path in &paths {
+            if fact
+                .governs_paths
+                .iter()
+                .any(|prefix| path.starts_with(prefix.trim_end_matches('/')))
+            {
+                owners.push(json!({"path": path, "row": direction_row(fact, as_of)}));
+            }
+        }
+    }
+    let ownership = if paths.is_empty() {
+        json!({"status": "no_paths_named", "paths": []})
+    } else if owners.is_empty() {
+        json!({"status": "no_ownership_fact", "paths": paths})
+    } else {
+        json!({"status": "resolved", "paths": paths, "owners": owners})
+    };
+
+    // Vocabulary: a ratified-vocabulary row whose term the ticket uses.
+    let mut collisions = Vec::new();
+    for fact in &company {
+        let Some(term) = fact
+            .logical_key
+            .split("ratified-vocabulary/")
+            .nth(1)
+            .and_then(|tail| tail.split('/').next())
+        else {
+            continue;
+        };
+        let term = term.replace('-', " ");
+        if question_terms.contains(&term) || question.to_lowercase().contains(&format!(" {term} "))
+        {
+            collisions.push(json!({"term": term, "row": direction_row(fact, as_of)}));
+        }
+    }
+
+    // Where direction lives: the architecture notes by section, with counts.
+    let mut sections: BTreeMap<String, usize> = BTreeMap::new();
+    for fact in &company {
+        if let Some(rest) = fact
+            .logical_key
+            .strip_prefix("architecture/architecture-notes/")
+        {
+            let section = rest.split('/').next().unwrap_or(rest).to_owned();
+            *sections.entry(section).or_insert(0) += 1;
+        }
+    }
+    let index: Vec<Value> = sections
+        .into_iter()
+        .map(|(section, rows)| json!({"section": section, "rows": rows, "key_prefix": format!("architecture/architecture-notes/{section}/")}))
+        .collect();
+
+    // Governing direction: the company facts the selection chose, as rows
+    // with owner and age, so the caller never has to look them up.
+    let governing: Vec<Value> = selected
+        .iter()
+        .filter(|f| f.store_kind == "company")
+        .map(|f| direction_row(f, as_of))
+        .collect();
+
+    json!({
+        "target_state_owner": ownership,
+        "vocabulary_collisions": collisions,
+        "direction_index": index,
+        "governing_direction": governing,
+        "stale_after_days": DIRECTION_STALE_AFTER_DAYS,
+    })
 }
