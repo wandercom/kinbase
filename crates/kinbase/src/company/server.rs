@@ -1250,6 +1250,16 @@ fn admit_fact(
         )
     })?;
     let (document, approval) = if body.get("schema").is_some() {
+        // A fact-event names itself. An empty event_id was admitted once and
+        // then blocked every later empty-id post as a digest mismatch.
+        if crate::json::get_str(&body, "event_id").unwrap_or_default().trim().is_empty() {
+            return Err(refuse(
+                400,
+                ContractError::invariant(
+                    "a fact-event must carry a non-empty event_id derived from its own bytes",
+                ),
+            ));
+        }
         (body.clone(), None)
     } else if let Some(event) = body.get("event") {
         (event.clone(), body.get("approval_token").cloned())
@@ -1936,9 +1946,14 @@ fn snapshot(
     // the meantime it filled every projection with other services' rulings. A
     // fact that governs nothing in particular is company-wide and always sent.
     let repository = request.query.get("repository").cloned().unwrap_or_default();
+    // Ownership rulings say where work lands. A ticket in one repository
+    // that edits paths in another needs the other's rulings, so they are
+    // delivered to every repository whatever they govern; there are few and
+    // the brief matches them by path.
     let governs_this_repository = |fact: &CurrentFact| -> bool {
         repository.is_empty()
             || fact.governs_paths.is_empty()
+            || fact.logical_key.starts_with("ownership/")
             || fact.governs_paths.iter().any(|path| path == &repository)
     };
     let readable_facts: Vec<&CurrentFact> = view
