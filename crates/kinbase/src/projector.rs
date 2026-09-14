@@ -1656,6 +1656,28 @@ fn direction_row(fact: &CurrentFact, as_of: &str) -> Value {
     })
 }
 
+/// The rows every brief carries whole: the architectural guidance and the
+/// numbered invariants.
+const STANDING_PREFIXES: [&str; 2] = [
+    "architecture/architectural-guidance/",
+    "architecture/architecture-notes/3-invariants/",
+];
+
+/// Guidance first in key order, then invariants in numeric order (I-2 before
+/// I-10), so the block reads the way the source document does.
+fn standing_order(key: &str) -> (u8, u32, String) {
+    if let Some(rest) = key.strip_prefix("architecture/architecture-notes/3-invariants/") {
+        let number = rest
+            .trim_start_matches("i-")
+            .split(|c: char| !c.is_ascii_digit())
+            .next()
+            .and_then(|digits| digits.parse::<u32>().ok())
+            .unwrap_or(u32::MAX);
+        return (1, number, rest.to_owned());
+    }
+    (0, 0, key.to_owned())
+}
+
 /// Control characters folded to single spaces; runs collapsed.
 fn fold_control_characters(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -1841,11 +1863,25 @@ fn direction_brief(
         .map(|(section, rows)| json!({"section": section, "rows": rows, "key_prefix": format!("architecture/architecture-notes/{section}/")}))
         .collect();
 
+    // Standing rules: the architectural guidance and the invariants are a
+    // bounded set that governs every ticket. They reach the brief whole, not
+    // by the luck of a ticket's words matching theirs; the term-overlap
+    // selection then only has to find the ticket-specific rows.
+    let mut standing_facts: Vec<&CurrentFact> = company
+        .iter()
+        .copied()
+        .filter(|f| STANDING_PREFIXES.iter().any(|p| f.logical_key.starts_with(p)))
+        .collect();
+    standing_facts.sort_by_key(|f| standing_order(&f.logical_key));
+    let standing_keys: BTreeSet<&str> = standing_facts.iter().map(|f| f.logical_key.as_str()).collect();
+    let standing: Vec<Value> = standing_facts.iter().map(|f| direction_row(f, as_of)).collect();
+
     // Governing direction: the company facts the selection chose, as rows
-    // with owner and age, so the caller never has to look them up.
+    // with owner and age, so the caller never has to look them up. Rows the
+    // standing block already carries are not repeated here.
     let governing: Vec<Value> = selected
         .iter()
-        .filter(|f| f.store_kind == "company")
+        .filter(|f| f.store_kind == "company" && !standing_keys.contains(f.logical_key.as_str()))
         .map(|f| direction_row(f, as_of))
         .collect();
 
@@ -1856,6 +1892,7 @@ fn direction_brief(
         "vocabulary_collisions": collisions,
         "direction_index": index,
         "governing_direction": governing,
+        "standing_direction": standing,
         "stale_after_days": DIRECTION_STALE_AFTER_DAYS,
     })
 }
@@ -1909,6 +1946,35 @@ mod brief_tests {
     fn a_multi_line_task_is_folded_to_one_line() {
         assert_eq!(super::fold_control_characters("PAY-1\n\nline two\ttabbed  wide"), "PAY-1 line two tabbed wide");
         assert_eq!(super::fold_control_characters("\n leading"), "leading");
+    }
+
+    #[test]
+    fn standing_rules_reach_every_brief_and_are_not_repeated_as_governing_rows() {
+        let invariant = company_fact(
+            "architecture/architecture-notes/3-invariants/i-14",
+            "I-14 Request/response over Baton by default.",
+            &[],
+            &[],
+        );
+        let guidance = company_fact(
+            "architecture/architectural-guidance/data/caches-narrow-authorities-decide",
+            "Caches narrow; authorities decide.",
+            &[],
+            &[],
+        );
+        let roadmap = company_fact(
+            "architecture/platform-1-september-to-end-of-year/being-built/software-factory",
+            "Software Factory, TOOL, 87%.",
+            &[],
+            &[],
+        );
+        let facts = vec![invariant.clone(), guidance.clone(), roadmap.clone()];
+        let brief = direction_brief(&facts, &facts, "Anything at all", "", "2026-09-13T00:00:00.000Z", "");
+        let standing: Vec<&str> = brief["standing_direction"].as_array().unwrap().iter().map(|r| r["logical_key"].as_str().unwrap()).collect();
+        assert_eq!(standing, vec![guidance.logical_key.as_str(), invariant.logical_key.as_str()]);
+        let governing: Vec<&str> = brief["governing_direction"].as_array().unwrap().iter().map(|r| r["logical_key"].as_str().unwrap()).collect();
+        assert_eq!(governing, vec![roadmap.logical_key.as_str()]);
+        assert!(super::standing_order("architecture/architecture-notes/3-invariants/i-2") < super::standing_order("architecture/architecture-notes/3-invariants/i-10"));
     }
 
     fn company_fact(key: &str, statement: &str, governs: &[&str], refs: &[&str]) -> CurrentFact {
