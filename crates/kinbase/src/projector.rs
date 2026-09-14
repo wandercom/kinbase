@@ -1653,7 +1653,31 @@ fn direction_row(fact: &CurrentFact, as_of: &str) -> Value {
         "as_of": fact.effective_from,
         "age_days": age_days,
         "stale": age_days.is_some_and(|d| d > DIRECTION_STALE_AFTER_DAYS),
+        "not_yet_built": not_yet_built(fact),
     })
+}
+
+/// A row that describes something planned rather than running: a greenfield
+/// service, a spec with no repository, a catalog entry marked NEW, a planning
+/// item. A plan that builds on it is building on air; the brief says so and
+/// asks the user for an override or an alternative before work proceeds.
+fn not_yet_built(fact: &CurrentFact) -> bool {
+    let statement = fact.statement.as_str();
+    let key = fact.logical_key.as_str();
+    // An ownership ruling names an owner; it is not the thing being built,
+    // however its statement describes the repository it governs.
+    if key.starts_with("ownership/") {
+        return false;
+    }
+    key.contains("/in-discussion-brief-planning/")
+        || statement.contains("Greenfield")
+        || statement.contains("greenfield")
+        || statement.contains("No repository")
+        || statement.contains("No repo ")
+        || statement.contains("**Status:** NEW")
+        || statement.contains("Status: NEW")
+        || statement.contains("not near-term")
+        || statement.contains("does not exist yet")
 }
 
 /// The rows every brief carries whole: the architectural guidance and the
@@ -1885,6 +1909,24 @@ fn direction_brief(
         .map(|f| direction_row(f, as_of))
         .collect();
 
+    // Not yet built: every delivered row that describes a planned thing
+    // raises a question. Proceeding on it needs the user's override or an
+    // alternative; a weak model reads "greenfield" as "available".
+    for row in cited.iter().chain(governing.iter()) {
+        if row["not_yet_built"].as_bool() == Some(true) {
+            let statement = row["statement"].as_str().unwrap_or_default();
+            questions.push(json!({
+                "kind": "not_yet_built",
+                "row": row["logical_key"],
+                "question": format!(
+                    "Row {} describes something not yet built ({}). Do not build on it as if it existed: ask the user for an override (build against the planned contract anyway) or an alternative (the running component to use until it exists).",
+                    row["logical_key"].as_str().unwrap_or_default(),
+                    statement.split(". ").next().unwrap_or(statement).chars().take(160).collect::<String>()
+                ),
+            }));
+        }
+    }
+
     json!({
         "target_state_owner": ownership,
         "questions": questions,
@@ -1977,6 +2019,39 @@ mod brief_tests {
         assert!(super::standing_order("architecture/architecture-notes/3-invariants/i-2") < super::standing_order("architecture/architecture-notes/3-invariants/i-10"));
     }
 
+    #[test]
+    fn a_planned_service_row_is_flagged_and_asks_for_an_override_or_alternative() {
+        let user = company_fact(
+            "architecture/platform-1-september-to-end-of-year/in-design-architecture/08",
+            "Platform — In design / architecture — 08 — **User** — Greenfield. Accounts by realm, capacities.",
+            &[],
+            &[],
+        );
+        let messaging = company_fact(
+            "architecture/delta-current-state-to-target/messaging-spec-13",
+            "Delta — Messaging — spec 13. **No repository.** Most of what is in the monolith is good.",
+            &[],
+            &[],
+        );
+        let live = company_fact(
+            "architecture/delta-current-state-to-target/payment-spec-07",
+            "Delta — Payment — spec 07. wandercom/payment, largest and most mature.",
+            &[],
+            &[],
+        );
+        let facts = vec![user.clone(), messaging.clone(), live.clone()];
+        let brief = direction_brief(&facts, &facts, "Operator permissions", "", "2026-09-13T00:00:00.000Z", "");
+        let flagged: Vec<(&str, bool)> = brief["governing_direction"].as_array().unwrap().iter()
+            .map(|r| (r["logical_key"].as_str().unwrap(), r["not_yet_built"].as_bool().unwrap())).collect();
+        assert!(flagged.contains(&(user.logical_key.as_str(), true)));
+        assert!(flagged.contains(&(messaging.logical_key.as_str(), true)));
+        assert!(flagged.contains(&(live.logical_key.as_str(), false)));
+        let asks: Vec<&str> = brief["questions"].as_array().unwrap().iter()
+            .filter(|q| q["kind"] == "not_yet_built").map(|q| q["row"].as_str().unwrap()).collect();
+        assert_eq!(asks.len(), 2);
+        assert!(asks.contains(&user.logical_key.as_str()));
+    }
+
     fn company_fact(key: &str, statement: &str, governs: &[&str], refs: &[&str]) -> CurrentFact {
         CurrentFact {
             standing: "ratified".to_owned(),
@@ -2046,8 +2121,12 @@ mod brief_tests {
             "",
         );
         assert_eq!(brief["target_state_owner"]["status"], "resolved");
-        assert_eq!(brief["questions"].as_array().unwrap().len(), 1);
-        assert_eq!(brief["questions"][0]["kind"], "ownership_conflict");
+        let kinds: Vec<&str> = brief["questions"].as_array().unwrap().iter().map(|q| q["kind"].as_str().unwrap()).collect();
+        assert!(kinds.contains(&"ownership_conflict"));
+        // The retirement row names three greenfield services: building on
+        // them needs an override or an alternative, so it asks too.
+        assert!(kinds.contains(&"not_yet_built"));
+        assert_eq!(kinds.iter().filter(|k| **k == "ownership_conflict").count(), 1);
         let cited: Vec<&str> = brief["direction_by_ownership"]
             .as_array()
             .unwrap()
