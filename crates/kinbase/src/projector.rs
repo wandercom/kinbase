@@ -132,6 +132,15 @@ pub fn run(
     // Authority refresh is an optimization, not a command gate. When Company
     // is unavailable, the cached projection is still emitted and the explicit
     // degraded policy withholds the dependent decision.
+    // A task is a query, not a durable record, but it is embedded in one: the
+    // output and the query log are canonical documents, and the text rule
+    // rejects control characters. A ticket pasted with its newlines used to
+    // make the projection print nothing and exit 0. Fold control characters
+    // to spaces here, once, for every consumer downstream.
+    let task_text = fold_control_characters(task);
+    let decision_text = fold_control_characters(decision);
+    let task = task_text.as_str();
+    let decision = decision_text.as_str();
     // Ask as this repository: the service sends company-wide direction plus
     // the rulings that govern this repository, and a cached snapshot fetched
     // for another repository does not count as fresh.
@@ -1647,6 +1656,24 @@ fn direction_row(fact: &CurrentFact, as_of: &str) -> Value {
     })
 }
 
+/// Control characters folded to single spaces; runs collapsed.
+fn fold_control_characters(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut pending_space = false;
+    for ch in text.chars() {
+        if ch.is_control() || ch == ' ' {
+            pending_space = true;
+            continue;
+        }
+        if pending_space && !out.is_empty() {
+            out.push(' ');
+        }
+        pending_space = false;
+        out.push(ch);
+    }
+    out
+}
+
 /// The brief a projection carries above its selected facts.
 fn direction_brief(
     facts: &[CurrentFact],
@@ -1876,6 +1903,12 @@ mod brief_tests {
         let nobody = direction_brief(&facts, &facts, "Fix a null check", "", "2026-09-13T00:00:00.000Z", "uuid-other");
         assert_eq!(nobody["target_state_owner"]["status"], "no_paths_named");
         assert!(nobody["target_state_owner"]["repository"].is_null());
+    }
+
+    #[test]
+    fn a_multi_line_task_is_folded_to_one_line() {
+        assert_eq!(super::fold_control_characters("PAY-1\n\nline two\ttabbed  wide"), "PAY-1 line two tabbed wide");
+        assert_eq!(super::fold_control_characters("\n leading"), "leading");
     }
 
     fn company_fact(key: &str, statement: &str, governs: &[&str], refs: &[&str]) -> CurrentFact {

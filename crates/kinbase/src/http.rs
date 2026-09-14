@@ -408,7 +408,12 @@ pub fn request(
             }
         }
     }
-    if content_length > MAX_BODY_BYTES * 4 {
+    // A repository's snapshot carries every fact that governs it plus the
+    // versions and traces behind them; a 390-fact repository is 1.1 MB, and a
+    // ceiling that refuses it silently withholds the repository's own
+    // direction. Responses are signed and verified after this bound, so the
+    // bound only protects memory.
+    if content_length > MAX_BODY_BYTES * 32 {
         return Err(ContractError::limit(
             "Company response exceeds the bounded body size",
             serde_json::json!({"refused_count": 1, "omitted_count": 1, "bytes": content_length}),
