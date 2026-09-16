@@ -40,6 +40,60 @@ fn sqlite_error(context: &str) -> impl Fn(rusqlite::Error) -> ContractError + '_
     move |error| ContractError::internal(format!("{context}: {error}"))
 }
 
+/// One skipped ledger row, described without its bytes.
+fn unreadable_row(position: usize, text: &str, error: &serde_json::Error) -> Value {
+    json!({"position": position, "bytes": text.len(), "error": error.to_string()})
+}
+
+/// The Recovered signal for skipped rows: one diagnostic per read naming the
+/// query and the first skipped positions, so a rising count is visible before
+/// it becomes a lost ledger. Silence here is how the loss stayed hidden.
+fn report_unreadable_rows(context: &str, skipped: &[Value]) {
+    if skipped.is_empty() {
+        return;
+    }
+    crate::output::diagnostic(
+        "unreadable-ledger-rows",
+        json!({
+            "query": context,
+            "skipped": skipped.len(),
+            "rows": skipped.iter().take(8).collect::<Vec<_>>()
+        }),
+    );
+}
+
+/// Parse the `record` column of each row, skipping any row that is not a
+/// readable `T`. One unreadable row must not make the whole ledger unreadable,
+/// the disposition `all_observations` already takes: five empty observation
+/// rows once hid 1,292 good ones, and eight empty `query_log` rows later hid
+/// every `status` report behind `RUN_INTEGRITY_FAILED`.
+fn parse_rows<T: serde::de::DeserializeOwned>(
+    context: &str,
+    rows: impl Iterator<Item = rusqlite::Result<String>>,
+) -> Result<Vec<T>, ContractError> {
+    let mut output = Vec::new();
+    let mut skipped = Vec::new();
+    for (position, row) in rows.enumerate() {
+        let text = row.map_err(sqlite_error("row"))?;
+        match serde_json::from_str::<T>(&text) {
+            Ok(value) => output.push(value),
+            Err(error) => skipped.push(unreadable_row(position, &text, &error)),
+        }
+    }
+    report_unreadable_rows(context, &skipped);
+    Ok(output)
+}
+
+/// The character class Kindex accepts for a host session identifier. A prompt
+/// or decision sentence has spaces and never passes.
+fn is_host_identifier(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 200
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '@' | '/' | '-'))
+}
+
 impl PrivateStore {
     /// Open the Personal store under `data_root` (mode 0700 enforced).
     pub fn open_personal(data_root: &Path) -> Result<Self, ContractError> {
@@ -451,13 +505,21 @@ impl PrivateStore {
             })
             .map_err(sqlite_error("query"))?;
         let mut output = Vec::new();
-        for row in rows {
+        let mut skipped = Vec::new();
+        for (position, row) in rows.enumerate() {
             let (text, lifecycle) = row.map_err(sqlite_error("row"))?;
-            let mut observation: Observation = serde_json::from_str(&text)
-                .map_err(|error| ContractError::internal(error.to_string()))?;
+            // Same disposition as `all_observations`: skip, and say so.
+            let mut observation: Observation = match serde_json::from_str(&text) {
+                Ok(observation) => observation,
+                Err(error) => {
+                    skipped.push(unreadable_row(position, &text, &error));
+                    continue;
+                }
+            };
             observation.lifecycle = lifecycle;
             output.push(observation);
         }
+        report_unreadable_rows("observations_for_source", &skipped);
         Ok(output)
     }
 
@@ -495,15 +557,7 @@ impl PrivateStore {
         let rows = statement
             .query_map(params![source_identity], |row| row.get::<_, String>(0))
             .map_err(sqlite_error("query"))?;
-        let mut output = Vec::new();
-        for row in rows {
-            let text = row.map_err(sqlite_error("row"))?;
-            output.push(
-                serde_json::from_str(&text)
-                    .map_err(|error| ContractError::internal(error.to_string()))?,
-            );
-        }
-        Ok(output)
+        parse_rows("atoms_for_session", rows)
     }
 
     fn records<T: serde::de::DeserializeOwned>(&self, sql: &str) -> Result<Vec<T>, ContractError> {
@@ -514,15 +568,7 @@ impl PrivateStore {
         let rows = statement
             .query_map([], |row| row.get::<_, String>(0))
             .map_err(sqlite_error("query"))?;
-        let mut output = Vec::new();
-        for row in rows {
-            let text = row.map_err(sqlite_error("row"))?;
-            output.push(
-                serde_json::from_str(&text)
-                    .map_err(|error| ContractError::internal(error.to_string()))?,
-            );
-        }
-        Ok(output)
+        parse_rows(sql, rows)
     }
 
     pub fn values(
@@ -537,15 +583,7 @@ impl PrivateStore {
         let rows = statement
             .query_map(args, |row| row.get::<_, String>(0))
             .map_err(sqlite_error("query"))?;
-        let mut output = Vec::new();
-        for row in rows {
-            let text = row.map_err(sqlite_error("row"))?;
-            output.push(
-                serde_json::from_str(&text)
-                    .map_err(|error| ContractError::internal(error.to_string()))?,
-            );
-        }
-        Ok(output)
+        parse_rows(sql, rows)
     }
 
     // ----- personal facts -----
@@ -1274,14 +1312,30 @@ impl PrivateStore {
     }
 
     pub fn log_query(&self, session_id: Option<&str>, record: &Value) -> Result<(), ContractError> {
+        // `canonical_text` yields "" when the record fails the canonical text
+        // rule, and a blank row is unreadable to every later reader: eight of
+        // them in one Personal store hid every `status` report. Refuse, as
+        // `insert_observation` does, and bound the session column to a host
+        // identifier so free text cannot land there again.
+        if let Some(session) = session_id {
+            if !is_host_identifier(session) {
+                return Err(ContractError::invariant(
+                    "query log session_id must be a bounded host identifier",
+                ));
+            }
+        }
+        let record = crate::json::try_canonical_bytes(record)
+            .map_err(|error| {
+                ContractError::internal(format!("query record is not serialisable: {error}"))
+            })
+            .and_then(|bytes| {
+                String::from_utf8(bytes)
+                    .map_err(|_| ContractError::internal("query record is not UTF-8"))
+            })?;
         self.connection
             .execute(
                 "INSERT INTO query_log(session_id, record, logged_at) VALUES (?1, ?2, ?3)",
-                params![
-                    session_id,
-                    crate::json::canonical_text(record),
-                    crate::time::now_rfc3339_millis()
-                ],
+                params![session_id, record, crate::time::now_rfc3339_millis()],
             )
             .map(|_| ())
             .map_err(sqlite_error("query log"))

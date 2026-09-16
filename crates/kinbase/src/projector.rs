@@ -720,9 +720,10 @@ pub fn run(
         "selection_trace": selection_trace.clone(),
         "as_of": as_of.as_of
     });
-    launcher
-        .private_store()?
-        .log_query(Some(decision), &query_record)?;
+    // A projection has no host session, and the decision is already the
+    // record's `declared_use`; passing it as the session id put sentences in
+    // an identifier column.
+    launcher.private_store()?.log_query(None, &query_record)?;
 
     if json {
         println!("{}", crate::json::canonical_text(&result));
