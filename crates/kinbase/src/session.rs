@@ -58,6 +58,9 @@ pub fn record_hook_observation(
         return Ok(None);
     };
     let repo = std::env::current_dir().map_err(io_error)?;
+    // The prompt arrived through the host envelope, so it is already folded
+    // to canonical text: this digest names the stored text, not the host's
+    // raw bytes, and a transcript that kept those bytes will not reproduce it.
     let digest = sha256_bytes(prompt.as_bytes());
     let observed_at = map
         .get("timestamp")

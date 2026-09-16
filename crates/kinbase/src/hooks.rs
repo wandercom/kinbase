@@ -25,6 +25,22 @@ pub fn dispatch(
     command: crate::command_types::HookCommand,
     json: bool,
 ) -> Result<(), ContractError> {
+    let hosted = matches!(command, crate::command_types::HookCommand::Dispatch { .. });
+    let result = run(command, json);
+    // The host shows a failed hook's stderr and hides its stdout; a refusal
+    // whose reason lived only on stdout surfaced as "No stderr output". This
+    // covers a failed launcher load as well as a refused envelope. In JSON
+    // mode the top-level boundary already mirrors the document.
+    if hosted
+        && !json
+        && let Err(error) = &result
+    {
+        eprintln!("{}: {}", error.code, error.message);
+    }
+    result
+}
+
+fn run(command: crate::command_types::HookCommand, json: bool) -> Result<(), ContractError> {
     let launcher = crate::launcher::Launcher::load()?;
     let ranges = &launcher.shared.hosts;
     match command {
@@ -496,7 +512,7 @@ fn dispatch_event(
     let map: Map<String, Value> = if stdin.is_empty() {
         Map::new()
     } else {
-        crate::json::parse_strict_value(&stdin)
+        crate::json::parse_host_envelope(&stdin)
             .map_err(|error| {
                 ContractError::degraded(
                     "UNSUPPORTED_HOST_VERSION",

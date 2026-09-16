@@ -150,23 +150,130 @@ pub fn validate_json(value: &Value) -> Result<(), String> {
 /// noncharacters, and the listed bidi formatting controls before signature
 /// verification (architecture §3).
 pub fn validate_text(value: &str) -> Result<(), String> {
-    for character in value.chars() {
-        let code = character as u32;
-        if code <= 0x1f || (0x80..=0x9f).contains(&code) {
-            return Err("C0/C1 control characters are forbidden".to_owned());
+    match value.chars().find_map(text_rule) {
+        Some(reason) => Err(reason.to_owned()),
+        None => Ok(()),
+    }
+}
+
+/// The reason the text rule rejects one character, or None when it is
+/// allowed. One predicate serves the validator and the boundary fold.
+fn text_rule(character: char) -> Option<&'static str> {
+    let code = character as u32;
+    if code <= 0x1f || (0x80..=0x9f).contains(&code) {
+        return Some("C0/C1 control characters are forbidden");
+    }
+    if code == 0x61c
+        || (0x200e..=0x200f).contains(&code)
+        || (0x202a..=0x202e).contains(&code)
+        || (0x2066..=0x2069).contains(&code)
+    {
+        return Some("bidirectional formatting controls are forbidden");
+    }
+    if (0xfdd0..=0xfdef).contains(&code) || ((code & 0xfffe) == 0xfffe && code <= 0x10ffff) {
+        return Some("Unicode noncharacters are forbidden");
+    }
+    None
+}
+
+/// `text` with every character the text rule rejects replaced by one space.
+/// Structure a host put in a message (newlines, tabs) becomes word
+/// separation; the length in characters is unchanged.
+pub fn fold_to_canonical_text(text: &str) -> String {
+    text.chars()
+        .map(|character| {
+            if text_rule(character).is_some() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
+/// Top-level envelope fields that name something (a session, an event, a
+/// path, an instant, a tool) rather than say something. They are validated,
+/// never folded: a control character in an identifier is a different
+/// identifier and in a path a different directory, so such an envelope is
+/// refused rather than acted on under a rewritten identity.
+const HOST_IDENTIFIER_FIELDS: [&str; 10] = [
+    "session_id",
+    "id",
+    "cwd",
+    "transcript_path",
+    "hook_event_name",
+    "event_type",
+    "type",
+    "timestamp",
+    "tool_name",
+    "tool_use_id",
+];
+
+/// Fold every string in `value`, keys included, so each one passes the text
+/// rule without changing the value's shape. Two keys that fold to the same
+/// spelling are a duplicate the raw-text scan could not see; refuse rather
+/// than keep one of them.
+fn fold_text_fields(value: &mut Value) -> Result<(), String> {
+    match value {
+        Value::String(text) => {
+            if validate_text(text).is_err() {
+                *text = fold_to_canonical_text(text);
+            }
         }
-        if code == 0x61c
-            || (0x200e..=0x200f).contains(&code)
-            || (0x202a..=0x202e).contains(&code)
-            || (0x2066..=0x2069).contains(&code)
-        {
-            return Err("bidirectional formatting controls are forbidden".to_owned());
+        Value::Array(values) => {
+            for value in values.iter_mut() {
+                fold_text_fields(value)?;
+            }
         }
-        if (0xfdd0..=0xfdef).contains(&code) || ((code & 0xfffe) == 0xfffe && code <= 0x10ffff) {
-            return Err("Unicode noncharacters are forbidden".to_owned());
+        Value::Object(map) => {
+            let entries = std::mem::take(map);
+            for (key, mut entry) in entries {
+                fold_text_fields(&mut entry)?;
+                let key = if validate_text(&key).is_err() {
+                    fold_to_canonical_text(&key)
+                } else {
+                    key
+                };
+                if map.insert(key, entry).is_some() {
+                    return Err("duplicate object key after folding".to_owned());
+                }
+            }
         }
+        _ => {}
     }
     Ok(())
+}
+
+/// Parse a coding host's hook envelope: strict JSON (UTF-8, no duplicate
+/// keys, no trailing input); identifier and path fields validated as they
+/// are; every other string folded to canonical text. The envelope is data
+/// from another authority and carries newlines in prompts, tool commands and
+/// assistant messages by design, and tool inputs carry whatever numbers the
+/// tool takes. Validating it as a canonical record made every such hook exit
+/// 3 before doing anything, so no session was ever checkpointed. The
+/// disposition is the projector's for a pasted ticket (fold, do not refuse);
+/// the predicate is the text rule's own, so the result always passes it.
+/// Numbers are left as sent: nothing in the envelope is itself a record, and
+/// each record built from it goes through a writer that refuses a
+/// non-canonical value.
+pub fn parse_host_envelope(bytes: &[u8]) -> Result<Value, String> {
+    let text = std::str::from_utf8(bytes).map_err(|error| format!("invalid UTF-8: {error}"))?;
+    reject_duplicate_keys(text)?;
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    let mut value =
+        Value::deserialize(&mut deserializer).map_err(|error| format!("invalid JSON: {error}"))?;
+    deserializer
+        .end()
+        .map_err(|error| format!("trailing JSON input: {error}"))?;
+    if let Value::Object(map) = &value {
+        for field in HOST_IDENTIFIER_FIELDS {
+            if let Some(text) = map.get(field).and_then(Value::as_str) {
+                validate_text(text).map_err(|reason| format!("{reason} at field `{field}`"))?;
+            }
+        }
+    }
+    fold_text_fields(&mut value)?;
+    Ok(value)
 }
 
 /// The bijective approval renderer: printable ASCII except `"` and `\` stays

@@ -60,7 +60,14 @@ pub fn append_jsonl(path: &Path, value: &Value) -> Result<(), ContractError> {
     if let Some(parent) = path.parent() {
         crate::paths::ensure_private_dir(parent, "record directory")?;
     }
-    let canonical = canonical_text(value);
+    // `canonical_text` yields "" for a record that fails the canonical rule,
+    // and the empty line it appended was skipped on read: a silent drop, the
+    // same shape that lost observations and blanked query_log. Refuse instead.
+    let canonical = crate::json::try_canonical_bytes(value)
+        .map_err(|error| ContractError::internal(format!("record is not canonical: {error}")))
+        .and_then(|bytes| {
+            String::from_utf8(bytes).map_err(|_| ContractError::internal("record is not UTF-8"))
+        })?;
     if path.exists() {
         let prior =
             fs::read_to_string(path).map_err(|error| ContractError::io("read JSONL", error))?;

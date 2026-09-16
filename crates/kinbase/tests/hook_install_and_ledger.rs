@@ -280,3 +280,246 @@ fn status_survives_a_poisoned_query_log_and_signals_the_skip() {
         "the skip must be signalled, never silent: {stderr}"
     );
 }
+
+/// An isolated host world: HOME, a user config whose Personal root is under
+/// the temp dir, and a Git repository to dispatch from.
+struct HostWorld {
+    home: std::path::PathBuf,
+    config_home: std::path::PathBuf,
+    personal: std::path::PathBuf,
+    repo: std::path::PathBuf,
+}
+
+fn host_world(temp: &TempDir) -> HostWorld {
+    let home = temp.path().join("home");
+    let config_home = home.join(".config");
+    let personal = temp.path().join("personal");
+    fs::create_dir_all(&personal).expect("personal root");
+    fs::set_permissions(&personal, fs::Permissions::from_mode(0o700)).expect("chmod personal");
+    let config = config_home.join("kinbase").join("config.toml");
+    fs::create_dir_all(config.parent().expect("parent")).expect("config dir");
+    fs::write(
+        &config,
+        format!(
+            "schema_version = \"1\"\n\n[personal]\ndata_root = \"{}\"\n",
+            personal.display()
+        ),
+    )
+    .expect("write config");
+    fs::set_permissions(&config, fs::Permissions::from_mode(0o600)).expect("chmod config");
+    let repo = temp.path().join("repo");
+    fs::create_dir_all(&repo).expect("repo");
+    assert!(
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&repo)
+            .status()
+            .expect("git init")
+            .success()
+    );
+    HostWorld {
+        home,
+        config_home,
+        personal,
+        repo,
+    }
+}
+
+fn dispatch(world: &HostWorld, event: &str, stdin: &[u8], json: bool) -> std::process::Output {
+    use std::io::Write as _;
+    let mut args = vec!["hooks", "dispatch", "claude", event];
+    if json {
+        args.push("--json");
+    }
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kinbase"))
+        .current_dir(&world.repo)
+        .args(&args)
+        .env("HOME", &world.home)
+        .env("XDG_CONFIG_HOME", &world.config_home)
+        .env("XDG_STATE_HOME", world.home.join(".state"))
+        .env_remove("KINBASE_COMPANY_URL")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn dispatch");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(stdin)
+        .expect("write stdin");
+    child.wait_with_output().expect("dispatch output")
+}
+
+#[test]
+fn dispatch_accepts_host_envelopes_with_control_characters_and_floats() {
+    let temp = TempDir::new().expect("tempdir");
+    let world = host_world(&temp);
+    let base = json!({
+        "session_id": "host-session-1",
+        "transcript_path": "/nonexistent/transcript.jsonl",
+        "cwd": world.repo.display().to_string(),
+        "permission_mode": "bypassPermissions"
+    });
+    // Stop: the assistant's last message is prose with newlines, a tab and a
+    // bidi control, exactly as the host sends it.
+    let mut stop = base.clone();
+    stop["hook_event_name"] = json!("Stop");
+    stop["stop_hook_active"] = json!(false);
+    stop["last_assistant_message"] = json!("Done.\n\n- one\n- two\ttabbed \u{202e}reversed");
+    let output = dispatch(&world, "Stop", stop.to_string().as_bytes(), true);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "Stop refused: {stderr}");
+    let receipt: Value = serde_json::from_slice(&output.stdout).expect("Stop receipt");
+    assert_eq!(receipt["checkpointed"], true, "{receipt}");
+    assert_eq!(receipt["session_id"], "host-session-1");
+    let ledger = fs::read_to_string(world.personal.join("session-checkpoints.jsonl"))
+        .expect("checkpoint ledger written");
+    assert_eq!(ledger.lines().count(), 1);
+    assert!(ledger.contains("\"session_id\":\"host-session-1\""));
+
+    // PreToolUse: a multi-line shell command, then an MCP tool whose input
+    // carries a float and multi-line prose, as the host sends each of them.
+    for (tool_name, tool_input) in [
+        ("Bash", json!({"command": "echo a\necho b", "timeout": 600000})),
+        ("mcp__kindex__link", json!({"weight": 0.8, "reason": "why\nbecause"})),
+    ] {
+        let mut pre = base.clone();
+        pre["hook_event_name"] = json!("PreToolUse");
+        pre["tool_name"] = json!(tool_name);
+        pre["tool_use_id"] = json!("toolu_01");
+        pre["tool_input"] = tool_input;
+        let output = dispatch(&world, "PreToolUse", pre.to_string().as_bytes(), true);
+        assert!(
+            output.status.success(),
+            "PreToolUse {tool_name} refused: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    // UserPromptSubmit in the host's non-JSON mode, with the event id that
+    // lets the observation path run: the stored prompt is the folded text and
+    // its digest names that text.
+    let raw_prompt = "first line\nsecond \u{202e}line";
+    let mut prompt = base.clone();
+    prompt["hook_event_name"] = json!("UserPromptSubmit");
+    prompt["id"] = json!("evt-1");
+    prompt["prompt"] = json!(raw_prompt);
+    let output = dispatch(&world, "UserPromptSubmit", prompt.to_string().as_bytes(), false);
+    assert!(
+        output.status.success(),
+        "UserPromptSubmit refused: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!output.stdout.is_empty(), "host mode still emits the stream");
+    let observations = fs::read_to_string(world.personal.join("observations.jsonl"))
+        .expect("hook observation written");
+    let observation: Value =
+        serde_json::from_str(observations.lines().next().expect("one row")).expect("row JSON");
+    assert_eq!(observation["source_identity"], "hook:UserPromptSubmit");
+    let folded = kinbase::json::fold_to_canonical_text(raw_prompt);
+    assert_eq!(
+        observation["content_digest"],
+        kinbase::hash::sha256_bytes(folded.as_bytes())
+    );
+
+    // The remaining host events carry the same prose and pass too.
+    for event in ["SessionStart", "SessionEnd", "PreCompact"] {
+        let mut envelope = base.clone();
+        envelope["hook_event_name"] = json!(event);
+        envelope["last_assistant_message"] = json!("a\nb");
+        envelope["trigger"] = json!("manual\n");
+        let output = dispatch(&world, event, envelope.to_string().as_bytes(), true);
+        assert!(
+            output.status.success(),
+            "{event} refused: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn dispatch_refuses_dirty_identifiers_and_paths_instead_of_folding_them() {
+    let temp = TempDir::new().expect("tempdir");
+    let world = host_world(&temp);
+    let clean_cwd = world.repo.display().to_string();
+    for (field, value) in [
+        ("session_id", "abc\ndef"),
+        ("cwd", "/tmp/a\tb"),
+        ("transcript_path", "/x\u{202e}y.jsonl"),
+        ("id", "evt\r1"),
+    ] {
+        let mut stop = json!({
+            "session_id": "host-session-2",
+            "cwd": clean_cwd,
+            "hook_event_name": "Stop",
+            "last_assistant_message": "fine\nprose"
+        });
+        stop[field] = json!(value);
+        let output = dispatch(&world, "Stop", stop.to_string().as_bytes(), false);
+        assert_eq!(output.status.code(), Some(3), "dirty {field} must be refused");
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(field), "the refusal names the field: {stderr:?}");
+    }
+    assert!(
+        !world.personal.join("session-checkpoints.jsonl").exists(),
+        "nothing is checkpointed under a rewritten identity"
+    );
+}
+
+#[test]
+fn append_jsonl_refuses_a_record_that_is_not_canonical() {
+    let temp = TempDir::new().expect("tempdir");
+    let dir = temp.path().join("records");
+    fs::create_dir_all(&dir).expect("records dir");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("chmod records");
+    let path = dir.join("ledger.jsonl");
+    let refused = kinbase::store::append_jsonl(&path, &json!({"statement": "one\ntwo"}));
+    assert!(refused.is_err(), "a non-canonical record is refused, not blanked");
+    assert!(!path.exists(), "nothing was appended: {path:?}");
+    kinbase::store::append_jsonl(&path, &json!({"statement": "one two"})).expect("canonical record");
+    let text = fs::read_to_string(&path).expect("ledger");
+    assert_eq!(text.lines().count(), 1);
+    assert!(text.lines().all(|line| !line.trim().is_empty()));
+}
+
+#[test]
+fn dispatch_refuses_a_malformed_envelope_and_says_so_on_stderr() {
+    let temp = TempDir::new().expect("tempdir");
+    let world = host_world(&temp);
+    let output = dispatch(&world, "Stop", b"not json at all", false);
+    assert_eq!(output.status.code(), Some(3), "a malformed envelope is still refused");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("UNSUPPORTED_HOST_VERSION"),
+        "the host surfaces stderr, so the reason must be there: {stderr:?}"
+    );
+    assert!(
+        !world.personal.join("session-checkpoints.jsonl").exists(),
+        "nothing is checkpointed from a refused envelope"
+    );
+}
+
+#[test]
+fn host_envelope_parser_folds_text_keeps_numbers_and_rejects_duplicates() {
+    let value = kinbase::json::parse_host_envelope(
+        "{\"a\":\"x\\ny\\u202ez\",\"n\":0.5,\"nested\":{\"k\\tv\":[\"p\\rq\"]}}".as_bytes(),
+    )
+    .expect("envelope parses");
+    assert_eq!(value["a"], "x y z");
+    assert_eq!(value["n"], 0.5);
+    assert_eq!(value["nested"]["k v"][0], "p q");
+    assert!(kinbase::json::parse_host_envelope(b"{\"a\":1,\"a\":2}").is_err());
+    assert!(kinbase::json::parse_host_envelope(b"{\"a\":1} trailing").is_err());
+    assert!(
+        kinbase::json::parse_host_envelope(b"{\"k\\tv\":1,\"k\\nv\":2}").is_err(),
+        "keys that fold to the same spelling are a duplicate"
+    );
+    let dirty = kinbase::json::parse_host_envelope(b"{\"cwd\":\"/a\\tb\",\"prompt\":\"x\\ny\"}");
+    assert!(
+        dirty.as_ref().is_err_and(|error| error.contains("cwd")),
+        "an identifier is refused, not folded: {dirty:?}"
+    );
+    assert_eq!(kinbase::json::fold_to_canonical_text("no controls"), "no controls");
+}
