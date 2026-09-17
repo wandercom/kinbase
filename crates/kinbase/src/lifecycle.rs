@@ -124,9 +124,10 @@ pub struct SourceScan {
     /// Non-blank lines an export adapter examined.
     pub export_lines: usize,
     /// Identities the source still holds that this (windowed) scan did not
-    /// emit. They are not retired: leaving the window is not leaving the
-    /// source.
-    pub present_elsewhere: BTreeSet<String>,
+    /// emit, with the origin class they would carry now. One whose recorded
+    /// origin still matches is not retired: leaving the window is not
+    /// leaving the source.
+    pub present_elsewhere: BTreeMap<String, String>,
     /// Where the next page of a windowed source starts, when there is one.
     pub next_checkpoint: Option<String>,
 }
@@ -1996,7 +1997,14 @@ fn scan_git_history(
             .lines()
             .map(str::trim)
             .filter(|sha| !sha.is_empty() && !windowed.contains(sha))
-            .map(|sha| format!("commit:{sha}"))
+            .map(|sha| {
+                let origin = if reachable.contains(sha) {
+                    "merged-default"
+                } else {
+                    "unreviewed-branch"
+                };
+                (format!("commit:{sha}"), origin.to_owned())
+            })
             .collect();
     }
     if commits.len() == max {
@@ -2241,13 +2249,12 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
     for (mtime, path) in files {
         let bytes = read_bounded(&path)?;
         check_budget(&mut scan, bytes.len())?;
-        let parsed = serde_json::from_slice::<Value>(&bytes).ok();
-        let Some(Value::Object(map)) = parsed else {
+        let Ok(parsed) = serde_json::from_slice::<Value>(&bytes) else {
             if Some(&path) == last_written.as_ref() {
                 return Err(ContractError::new(
                     "CONFIG_INVARIANT",
                     format!(
-                        "the most recent GitHub export ({}) is not a JSON object",
+                        "the most recent GitHub export ({}) is not valid JSON",
                         relative_to(&repo.root, &path)
                     ),
                     "Finish or remove the partial export, then ingest again.",
@@ -2255,7 +2262,13 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
                     crate::error::ExitCode::Refused,
                 ));
             }
-            scan.skip("github_export: file is not a JSON object");
+            scan.skip("github_export: file is not valid JSON");
+            continue;
+        };
+        // Valid JSON of another shape is some other document, not a
+        // half-written export.
+        let Value::Object(map) = parsed else {
+            scan.skip("github_export: JSON document is not an export");
             continue;
         };
         let is_export = ["issues", "pullRequests"]
@@ -2265,7 +2278,8 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
             scan.skip("github_export: JSON document is not an export");
             continue;
         }
-        exports.push((export_time(&map), mtime, path, map));
+        let time = export_time(&map).unwrap_or_else(|| mtime_rfc3339(mtime));
+        exports.push((time, mtime, path, map));
     }
     // The export's own time orders snapshots (its header, else its latest
     // item update); a checkout gives files near-identical modification times,
@@ -2392,23 +2406,29 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
 }
 
 /// An export's own time: an `exported_at`/`generated_at` header, else the
-/// latest `updatedAt` among its items (RFC 3339, normalized); empty when it
-/// carries none, which orders it before any export that does.
-fn export_time(map: &Map<String, Value>) -> String {
+/// latest `updatedAt` among the items that are records (objects with a
+/// number). None when it carries neither; the caller then uses file time.
+fn export_time(map: &Map<String, Value>) -> Option<String> {
     let header = ["exported_at", "exportedAt", "generated_at", "generatedAt"]
         .iter()
         .filter_map(|key| map.get(*key).and_then(Value::as_str))
         .find_map(crate::time::normalize_foreign_time);
-    if let Some(header) = header {
+    if header.is_some() {
         return header;
     }
     ["issues", "pullRequests"]
         .iter()
         .filter_map(|key| map.get(*key).and_then(Value::as_array))
         .flatten()
+        .filter(|item| item.get("number").and_then(Value::as_i64).is_some())
         .filter_map(|item| item.get("updatedAt").and_then(Value::as_str))
         .filter_map(crate::time::normalize_foreign_time)
         .max()
+}
+
+fn mtime_rfc3339(seconds: i64) -> String {
+    chrono::DateTime::from_timestamp(seconds, 0)
+        .map(crate::time::format_rfc3339_millis)
         .unwrap_or_default()
 }
 

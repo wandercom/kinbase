@@ -578,7 +578,17 @@ pub fn ingest(
     // Native identities that vanished: retracted while their unit remains,
     // absent when the unit itself is gone. History stays addressable.
     for (native_id, rows) in &prior_by_native {
-        if present_native_ids.contains(native_id) || scan.present_elsewhere.contains(native_id) {
+        if present_native_ids.contains(native_id) {
+            continue;
+        }
+        // Outside a windowed scan but still in the source, and still of the
+        // origin it was recorded with: nothing to retire. A commit that is
+        // now reached only from another branch no longer carries the trust
+        // its main-branch record did, so that record is retired.
+        if scan.present_elsewhere.get(native_id).is_some_and(|origin| {
+            rows.iter()
+                .all(|old| old.origin_trust.as_deref() == Some(origin.as_str()))
+        }) {
             continue;
         }
         for old in rows {
