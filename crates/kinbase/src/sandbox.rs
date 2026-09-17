@@ -346,6 +346,114 @@ fn clear_cloexec(fd: i32) -> Result<(), ContractError> {
     Ok(())
 }
 
+/// An executable opened once and verified through that descriptor.
+struct VerifiedExecutable {
+    file: std::fs::File,
+    metadata: std::fs::Metadata,
+}
+
+/// What verifying a pinned executable found: the digest it read, when it got
+/// that far, and the rule that refused the executable, if any. These are the
+/// checks `run_verified_executable` makes before it runs anything.
+pub struct PinnedCheck {
+    pub observed_sha256: Option<String>,
+    pub refusal: Option<ContractError>,
+}
+
+pub fn check_pinned_executable(executable: &Path, expected_sha256: &str) -> PinnedCheck {
+    match open_verified(executable, expected_sha256) {
+        Ok((_, observed)) => PinnedCheck {
+            observed_sha256: Some(observed),
+            refusal: None,
+        },
+        Err((observed, error)) => PinnedCheck {
+            observed_sha256: observed,
+            refusal: Some(error),
+        },
+    }
+}
+
+/// Open the absolute executable once and verify owner, mode, regular file,
+/// the containing directory chain and the pinned SHA-256 through that
+/// descriptor. A refusal carries the digest when it was read.
+fn open_verified(
+    executable: &Path,
+    expected_sha256: &str,
+) -> Result<(VerifiedExecutable, String), (Option<String>, ContractError)> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let refuse = |error: ContractError| (None, error);
+    if !executable.is_absolute() {
+        return Err(refuse(ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            "classifier executable must be an absolute path",
+            "Configure an absolute regular-file path; no PATH or shell resolution exists.",
+        )));
+    }
+    let file = std::fs::File::open(executable).map_err(|error| {
+        refuse(ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            format!("classifier executable cannot be opened ({})", error.kind()),
+            "Configure a readable absolute executable.",
+        ))
+    })?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| refuse(ContractError::io("fstat classifier", error)))?;
+    // SAFETY: geteuid has no preconditions.
+    let euid = unsafe { libc::geteuid() };
+    if !metadata.is_file() || metadata.uid() != euid || metadata.permissions().mode() & 0o022 != 0 {
+        return Err(refuse(ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            "classifier executable is not a regular file owned by the effective user without group/other write",
+            "Fix ownership and mode of the classifier executable.",
+        )));
+    }
+    let mut ancestor = executable.parent();
+    while let Some(dir) = ancestor {
+        if let Ok(dir_metadata) = std::fs::symlink_metadata(dir) {
+            if dir_metadata.file_type().is_symlink() {
+                return Err(refuse(ContractError::integrity(
+                    "PROCESSOR_UNAUTHORIZED",
+                    "classifier containing-directory chain traverses a symlink",
+                    "Place the classifier under a symlink-free directory chain.",
+                )));
+            }
+            if dir_metadata.permissions().mode() & 0o022 != 0 && dir != Path::new("/") {
+                return Err(refuse(ContractError::integrity(
+                    "PROCESSOR_UNAUTHORIZED",
+                    "classifier containing directory is writable by group or other",
+                    "Tighten the directory chain to 0755 or stricter.",
+                )));
+            }
+        }
+        ancestor = dir.parent();
+    }
+    let mut bytes = Vec::new();
+    {
+        let mut reader = &file;
+        std::io::Read::read_to_end(&mut reader, &mut bytes)
+            .map_err(|error| refuse(ContractError::io("read classifier", error)))?;
+    }
+    let observed = crate::hash::sha256_bytes(&bytes);
+    if observed != expected_sha256 {
+        // A rebuilt classifier stops every classification until it is
+        // re-pinned; say what was read and how to pin it.
+        let error = ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            "classifier executable digest differs from the pinned SHA-256",
+            "Review the executable, then record its digest (`shasum -a 256` of the configured \
+             path; `kinbase doctor` shows it as classifier.observed_sha256) as \
+             classifier.executable_sha256 in a reviewed configuration change; no input was sent.",
+        )
+        .with_detail(json!({
+            "pinned_sha256": expected_sha256,
+            "observed_sha256": observed
+        }));
+        return Err((Some(observed), error));
+    }
+    Ok((VerifiedExecutable { file, metadata }, observed))
+}
+
 /// Descriptor-backed classifier execution (architecture §5): open the
 /// absolute executable once, verify owner/mode/regular file/containing
 /// directory chain and the pinned SHA-256 through that descriptor, then
@@ -358,66 +466,9 @@ pub fn run_verified_executable(
     input: &[u8],
     timeout: std::time::Duration,
 ) -> Result<Vec<u8>, ContractError> {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    if !executable.is_absolute() {
-        return Err(ContractError::integrity(
-            "PROCESSOR_UNAUTHORIZED",
-            "classifier executable must be an absolute path",
-            "Configure an absolute regular-file path; no PATH or shell resolution exists.",
-        ));
-    }
-    let file = std::fs::File::open(executable).map_err(|error| {
-        ContractError::integrity(
-            "PROCESSOR_UNAUTHORIZED",
-            format!("classifier executable cannot be opened ({})", error.kind()),
-            "Configure a readable absolute executable.",
-        )
-    })?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| ContractError::io("fstat classifier", error))?;
-    // SAFETY: geteuid has no preconditions.
-    let euid = unsafe { libc::geteuid() };
-    if !metadata.is_file() || metadata.uid() != euid || metadata.permissions().mode() & 0o022 != 0 {
-        return Err(ContractError::integrity(
-            "PROCESSOR_UNAUTHORIZED",
-            "classifier executable is not a regular file owned by the effective user without group/other write",
-            "Fix ownership and mode of the classifier executable.",
-        ));
-    }
-    let mut ancestor = executable.parent();
-    while let Some(dir) = ancestor {
-        if let Ok(dir_metadata) = std::fs::symlink_metadata(dir) {
-            if dir_metadata.file_type().is_symlink() {
-                return Err(ContractError::integrity(
-                    "PROCESSOR_UNAUTHORIZED",
-                    "classifier containing-directory chain traverses a symlink",
-                    "Place the classifier under a symlink-free directory chain.",
-                ));
-            }
-            if dir_metadata.permissions().mode() & 0o022 != 0 && dir != Path::new("/") {
-                return Err(ContractError::integrity(
-                    "PROCESSOR_UNAUTHORIZED",
-                    "classifier containing directory is writable by group or other",
-                    "Tighten the directory chain to 0755 or stricter.",
-                ));
-            }
-        }
-        ancestor = dir.parent();
-    }
-    let mut bytes = Vec::new();
-    {
-        let mut reader = &file;
-        std::io::Read::read_to_end(&mut reader, &mut bytes)
-            .map_err(|error| ContractError::io("read classifier", error))?;
-    }
-    if crate::hash::sha256_bytes(&bytes) != expected_sha256 {
-        return Err(ContractError::integrity(
-            "PROCESSOR_UNAUTHORIZED",
-            "classifier executable digest differs from the pinned SHA-256",
-            "Update the pinned digest only through a reviewed configuration change; no input was sent.",
-        ));
-    }
+    use std::os::unix::fs::MetadataExt;
+    let (VerifiedExecutable { file, metadata }, _) =
+        open_verified(executable, expected_sha256).map_err(|(_, error)| error)?;
     let fd = file.as_raw_fd();
     // The verified descriptor is exposed to exactly this child: CLOEXEC stays
     // set in the parent and is cleared after fork, so a concurrently spawned
@@ -577,4 +628,74 @@ pub fn run_verified_executable(
         ));
     }
     Ok(stdout)
+}
+
+#[cfg(test)]
+mod pinned_check_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A directory whose whole chain the verifier accepts (no symlink, no
+    /// group/other-writable ancestor); `/tmp` itself is 1777.
+    fn accepted_base() -> Option<PathBuf> {
+        [
+            std::env::temp_dir(),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        ]
+        .into_iter()
+        .filter_map(|dir| dir.canonicalize().ok())
+        .find(|dir| {
+            dir.ancestors().all(|ancestor| {
+                std::fs::symlink_metadata(ancestor).is_ok_and(|metadata| {
+                    ancestor == Path::new("/")
+                        || (!metadata.file_type().is_symlink()
+                            && metadata.permissions().mode() & 0o022 == 0)
+                })
+            })
+        })
+    }
+
+    #[test]
+    fn a_rebuilt_executable_is_refused_with_the_digest_it_now_has() {
+        let Some(base) = accepted_base() else {
+            eprintln!("no directory chain the verifier accepts; skipped");
+            return;
+        };
+        let dir = tempfile::TempDir::new_in(&base).expect("tempdir");
+        let executable = dir.path().join("classifier");
+        let body = b"#!/bin/sh\nexit 0\n";
+        std::fs::write(&executable, body).expect("write");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod");
+        let digest = crate::hash::sha256_bytes(body);
+
+        let pinned = check_pinned_executable(&executable, &digest);
+        assert!(
+            pinned.refusal.is_none(),
+            "{:?}",
+            pinned.refusal.map(|error| error.message)
+        );
+        assert_eq!(pinned.observed_sha256.as_deref(), Some(digest.as_str()));
+
+        let rebuilt = check_pinned_executable(&executable, &"0".repeat(64));
+        assert_eq!(rebuilt.observed_sha256.as_deref(), Some(digest.as_str()));
+        let error = rebuilt.refusal.expect("a stale pin is refused");
+        assert_eq!(error.code, "PROCESSOR_UNAUTHORIZED");
+        assert_eq!(
+            error
+                .detail
+                .as_ref()
+                .and_then(|detail| detail["observed_sha256"].as_str()),
+            Some(digest.as_str())
+        );
+        assert!(
+            error.remediation.contains("shasum -a 256"),
+            "{}",
+            error.remediation
+        );
+
+        let relative = check_pinned_executable(Path::new("classifier"), &digest);
+        assert!(relative.refusal.is_some());
+        assert!(relative.observed_sha256.is_none());
+    }
 }
