@@ -760,6 +760,17 @@ fn plan_refuses_a_host_outside_the_configured_range() {
     );
     assert!(text.contains("UNSUPPORTED_HOST_VERSION"), "{text}");
 
+    // A component past u64 is a configuration error, not a zero.
+    write_config(">=18446744073709551616.0.0");
+    let overflowed = run();
+    assert!(!overflowed.status.success());
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&overflowed.stdout),
+        String::from_utf8_lossy(&overflowed.stderr)
+    );
+    assert!(text.contains("CONFIG_INVARIANT"), "{text}");
+
     write_config(">=1.2.0");
     let planned = run();
     assert!(

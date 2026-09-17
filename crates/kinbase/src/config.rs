@@ -199,10 +199,14 @@ fn host_version_range(section: &toml::Table, key: &str) -> Result<String, Contra
         .trim();
     let version = text.strip_prefix(">=").unwrap_or(text).trim();
     let parts: Vec<&str> = version.split('.').collect();
+    // Each part must be a number the comparator can hold; a part past u64
+    // compared as zero and let every host through.
     if parts.len() > 4
-        || parts
-            .iter()
-            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || !part.bytes().all(|byte| byte.is_ascii_digit())
+                || part.parse::<u64>().is_err()
+        })
     {
         return Err(config_error(format!(
             "hosts.{key} must be `>=X.Y.Z` or an exact `X.Y.Z` version"

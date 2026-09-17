@@ -269,7 +269,7 @@ fn fold_text_fields(value: &mut Value) -> Result<(), String> {
 /// non-canonical value.
 pub fn parse_host_envelope(bytes: &[u8]) -> Result<Value, String> {
     let text = std::str::from_utf8(bytes).map_err(|error| format!("invalid UTF-8: {error}"))?;
-    reject_duplicate_keys(text)?;
+    reject_duplicate_keys(text, KeyIdentity::Decoded)?;
     let mut deserializer = serde_json::Deserializer::from_str(text);
     let mut value =
         Value::deserialize(&mut deserializer).map_err(|error| format!("invalid JSON: {error}"))?;
@@ -372,7 +372,7 @@ fn read_unit(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<u16
 /// data-model validation applied.
 pub fn parse_strict_object(bytes: &[u8]) -> Result<Map<String, Value>, String> {
     let text = std::str::from_utf8(bytes).map_err(|error| format!("invalid UTF-8: {error}"))?;
-    reject_duplicate_keys(text)?;
+    reject_duplicate_keys(text, KeyIdentity::Normalized)?;
     let mut deserializer = serde_json::Deserializer::from_str(text);
     let value =
         Value::deserialize(&mut deserializer).map_err(|error| format!("invalid JSON: {error}"))?;
@@ -392,7 +392,9 @@ pub fn parse_strict_object(bytes: &[u8]) -> Result<Map<String, Value>, String> {
 /// no control characters) do not apply to it.
 pub fn parse_user_document(bytes: &[u8]) -> Result<Value, String> {
     let text = std::str::from_utf8(bytes).map_err(|error| format!("invalid UTF-8: {error}"))?;
-    reject_duplicate_keys(text)?;
+    // The user's keys are theirs: a precomposed and a decomposed spelling
+    // are two keys to JSON and to the host, so only a decoded repeat is one.
+    reject_duplicate_keys(text, KeyIdentity::Decoded)?;
     let mut deserializer = serde_json::Deserializer::from_str(text);
     let value =
         Value::deserialize(&mut deserializer).map_err(|error| format!("invalid JSON: {error}"))?;
@@ -404,7 +406,7 @@ pub fn parse_user_document(bytes: &[u8]) -> Result<Value, String> {
 
 pub fn parse_strict_value(bytes: &[u8]) -> Result<Value, String> {
     let text = std::str::from_utf8(bytes).map_err(|error| format!("invalid UTF-8: {error}"))?;
-    reject_duplicate_keys(text)?;
+    reject_duplicate_keys(text, KeyIdentity::Normalized)?;
     let mut deserializer = serde_json::Deserializer::from_str(text);
     let value =
         Value::deserialize(&mut deserializer).map_err(|error| format!("invalid JSON: {error}"))?;
@@ -415,18 +417,31 @@ pub fn parse_strict_value(bytes: &[u8]) -> Result<Value, String> {
     Ok(value)
 }
 
-/// A key's identity for duplicate detection: its decoded, NFC-normalized
-/// text. An escape the parser would refuse is left as written; the parse
-/// that follows reports it.
-fn object_key(raw: &str) -> String {
-    serde_json::from_str::<String>(&format!("\"{raw}\""))
-        .map(|decoded| decoded.nfc().collect())
-        .unwrap_or_else(|_| raw.to_owned())
+/// What makes two object keys the same key.
+#[derive(Clone, Copy)]
+enum KeyIdentity {
+    /// The decoded text: `a` and `\u0061` are one key.
+    Decoded,
+    /// The decoded, NFC-normalized text, as canonical bytes write it: `é`
+    /// and `e\u0301` are one key too. Only for the data model.
+    Normalized,
+}
+
+/// A key's identity for duplicate detection. An escape the parser would
+/// refuse is left as written; the parse that follows reports it.
+fn object_key(raw: &str, identity: KeyIdentity) -> String {
+    match serde_json::from_str::<String>(&format!("\"{raw}\"")) {
+        Ok(decoded) => match identity {
+            KeyIdentity::Decoded => decoded,
+            KeyIdentity::Normalized => decoded.nfc().collect(),
+        },
+        Err(_) => raw.to_owned(),
+    }
 }
 
 /// serde_json silently keeps the last duplicate key; the data model rejects
 /// duplicates, so scan the token stream once before parsing.
-fn reject_duplicate_keys(text: &str) -> Result<(), String> {
+fn reject_duplicate_keys(text: &str, identity: KeyIdentity) -> Result<(), String> {
     let mut stack: Vec<Option<std::collections::BTreeSet<String>>> = Vec::new();
     let mut chars = text.chars().peekable();
     let mut expecting_key = false;
@@ -466,9 +481,9 @@ fn reject_duplicate_keys(text: &str) -> Result<(), String> {
                 if expecting_key {
                     if let Some(Some(keys)) = stack.last_mut() {
                         // Compare keys as the parser will read them: `a` and
-                        // `\u0061`, or `é` and `e\u0301`, are one key, and
-                        // serde_json would silently keep the last.
-                        if !keys.insert(object_key(&key)) {
+                        // `\u0061` are one key, and serde_json would silently
+                        // keep the last.
+                        if !keys.insert(object_key(&key, identity)) {
                             return Err("duplicate object key".to_owned());
                         }
                     }
@@ -536,6 +551,17 @@ mod duplicate_key_tests {
             );
         }
         assert!(parse_strict_value(br#"{"a":1,"b":{"a":2}}"#).is_ok());
+    }
+
+    #[test]
+    fn a_user_document_keeps_keys_that_differ_only_by_normalization() {
+        let document = "{\"e\u{301}\":1,\"\\u00e9\":2}";
+        let value = parse_user_document(document.as_bytes()).expect("two keys");
+        assert_eq!(value.as_object().map(Map::len), Some(2));
+        let envelope = parse_host_envelope(document.as_bytes()).expect("two keys");
+        assert_eq!(envelope.as_object().map(Map::len), Some(2));
+        let repeated = parse_user_document(br#"{"a":1,"\u0061":2}"#).expect_err("one key");
+        assert!(repeated.contains("duplicate object key"), "{repeated}");
     }
 
     #[test]

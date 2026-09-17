@@ -253,11 +253,14 @@ fn handle_connection(mut stream: TcpStream, state: Arc<ServiceState>) {
             Err((status, error)) => (status, http::error_body(&error)),
         }
     }));
+    // The fallback's message is constant ASCII, so rendering it cannot panic;
+    // it keeps the whole typed envelope (remediation, retryable, evidence).
     let (status, body) = outcome.unwrap_or_else(|_| {
         (
             500,
-            json!({"error": {"code": "RUN_INTEGRITY_FAILED",
-                             "message": "request handler failed; evidence preserved in the service audit"}}),
+            http::error_body(&ContractError::internal(
+                "request handler failed; evidence preserved in the service audit",
+            )),
         )
     });
     let _ = http::respond(&mut stream, status, &body);

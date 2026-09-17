@@ -161,6 +161,14 @@ fn version_components(value: &str) -> Vec<u64> {
 fn version_in_range(version: &str, range: &str) -> bool {
     if let Some(minimum) = range.trim().strip_prefix(">=") {
         let actual = version_components(version);
+        // A minimum the comparator cannot hold admits nothing.
+        if minimum
+            .trim()
+            .split('.')
+            .any(|part| part.parse::<u64>().is_err())
+        {
+            return false;
+        }
         let required = version_components(minimum);
         for index in 0..required.len().max(actual.len()) {
             let left = actual.get(index).copied().unwrap_or(0);
@@ -1274,6 +1282,13 @@ pub fn host_version(host: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_minimum_past_u64_admits_no_host() {
+        assert!(!version_in_range("1.2.3", ">=18446744073709551616.0.0"));
+        assert!(version_in_range("1.2.3", ">=1.2.0"));
+        assert!(!version_in_range("1.1.9", ">=1.2.0"));
+    }
 
     #[test]
     fn context_output_is_empty_without_evidence() {
