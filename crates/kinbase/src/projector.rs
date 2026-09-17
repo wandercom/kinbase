@@ -311,14 +311,15 @@ pub fn run(
     // An Unknown blocks this projection when it names the task or the
     // decision as the decision it blocks, when its own precise question is
     // the decision at stake, or when it is architecture-owned.
-    let has_blocking_unknown = open_unknowns.iter().any(|unknown| {
+    let blocks = |unknown: &UnknownOut| {
         unknown.loss_if_absent >= 7_000
             && (unknown.decision_blocked == decision
                 || unknown.decision_blocked == task
                 || unknown.question == decision
                 || unknown.scope.starts_with("architecture:")
                 || unknown.owner_role == "chief-architect")
-    });
+    };
+    let has_blocking_unknown = open_unknowns.iter().any(|unknown| blocks(unknown));
 
     // The current set S starts as the caller-declared working set: facts
     // already resident at the dependent edit. They condition every marginal
@@ -486,10 +487,16 @@ pub fn run(
         // This holds especially when no authority is registered for the scope: that
         // unknown carries UNKNOWN_OWNER_UNRESOLVED, and suppressing it would make
         // the absence of an owner the reason nobody is ever asked to become one.
-        for unknown in open_unknowns
+        //
+        // One question is raised per projection, so the order decides which one a
+        // person sees. The Unknowns that stopped this projection come first: asking
+        // about an unrelated expired fact while the decision at hand stays blocked
+        // answers nothing the caller asked.
+        let (blocking, elsewhere): (Vec<&UnknownOut>, Vec<&UnknownOut>) = open_unknowns
             .iter()
             .filter(|unknown| unknown.loss_if_absent >= 7_000 || unknown.kind == "conflict")
-        {
+            .partition(|unknown| blocks(unknown));
+        for unknown in blocking.into_iter().chain(elsewhere) {
             if let Some(id) =
                 crate::questions::ensure_question(repo, unknown, decision, &evidence, &remaining)?
             {
