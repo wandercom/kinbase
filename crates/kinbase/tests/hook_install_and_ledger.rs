@@ -625,3 +625,60 @@ fn checkpoint_streams_only_this_sessions_records_from_shared_ledgers() {
         "the signal carries neither record bytes nor the store's path: {stderr:?}"
     );
 }
+
+#[test]
+fn a_host_hook_never_exits_2_even_for_a_user_action_refusal() {
+    use std::io::Write as _;
+    // A session outside any Git worktree that has an automatic candidate for
+    // a shared destination: admission needs repository discovery, which
+    // refuses with REPO_UNCERTIFIED (exit 2 for a command). From a Stop hook,
+    // exit 2 tells the host to refuse to stop and fire Stop again.
+    let temp = TempDir::new().expect("tempdir");
+    let world = host_world(&temp);
+    let outside = temp.path().join("not-a-repository");
+    fs::create_dir_all(&outside).expect("outside dir");
+    let canonical = "x";
+    let candidate = json!({
+        "admission_mode": "automatic",
+        "candidate_id": "cand_probe",
+        "canonical": canonical,
+        "destination": "company:root",
+        "payload_digest": kinbase::hash::sha256_text(canonical),
+        "session_id": "host-session-4"
+    });
+    kinbase::store::append_jsonl(&world.personal.join("candidates.jsonl"), &candidate)
+        .expect("candidate");
+    let stop = json!({
+        "session_id": "host-session-4",
+        "cwd": outside.display().to_string(),
+        "hook_event_name": "Stop",
+        "stop_hook_active": false
+    });
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kinbase"))
+        .current_dir(&outside)
+        .args(["hooks", "dispatch", "claude", "Stop"])
+        .env("HOME", &world.home)
+        .env("XDG_CONFIG_HOME", &world.config_home)
+        .env("XDG_STATE_HOME", world.home.join(".state"))
+        .env_remove("KINBASE_COMPANY_URL")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(stop.to_string().as_bytes())
+        .expect("write");
+    let output = child.wait_with_output().expect("output");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(output.status.code(), Some(3), "{stderr}");
+    assert!(stderr.contains("REPO_UNCERTIFIED"), "the reason is kept: {stderr}");
+
+    // The same refusal from an ordinary command still exits 2.
+    let refused = kinbase::error::ContractError::user_action("REPO_UNCERTIFIED", "m", "r");
+    assert_eq!(refused.exit(), 2);
+    assert_eq!(refused.for_host_hook().exit(), 3);
+}

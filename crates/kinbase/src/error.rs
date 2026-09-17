@@ -178,6 +178,20 @@ impl ContractError {
         self
     }
 
+    /// The same error as a coding host's hook returns it. A host reads exit 2
+    /// from a hook as "block": PreToolUse refuses the tool, UserPromptSubmit
+    /// drops the prompt, Stop refuses to stop and fires again. Kinbase holds
+    /// no host permission capability (architecture section 9), and an
+    /// ordinary non-repository session may continue (cli.md), so a hook
+    /// never exits 2: a user-action refusal leaves as degraded-safe (3), with
+    /// its code and message unchanged.
+    pub fn for_host_hook(mut self) -> Self {
+        if self.exit() == ExitCode::UserActionRequired as i32 {
+            self.exit_override = Some(ExitCode::DegradedSafe as i32);
+        }
+        self
+    }
+
     pub fn exit(&self) -> i32 {
         self.exit_override.unwrap_or_else(|| exit_for(&self.code))
     }
