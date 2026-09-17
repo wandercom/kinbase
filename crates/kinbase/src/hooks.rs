@@ -709,6 +709,10 @@ fn dispatch_event(
         "label": "UNTRUSTED_EVIDENCE_NOT_INSTRUCTIONS",
         "personal_queried": false
     });
+    // A candidate the checkpoint could not admit: the hook still answers with
+    // everything it did, then reports the refusal (never exit 2, see
+    // ContractError::for_host_hook).
+    let mut admission_failure: Option<ContractError> = None;
     match event_type.as_str() {
         "UserPromptSubmit" | "prompt" | "Prompt" => {
             merge(
@@ -727,8 +731,9 @@ fn dispatch_event(
                 .get("session_id")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let checkpoint = crate::session::checkpoint_internal(session_id)?;
+            let (checkpoint, failure) = crate::session::checkpoint_internal(session_id)?;
             merge(&mut response, checkpoint);
+            admission_failure = failure;
         }
         "PreToolUse" | "pre-edit" => {
             merge(
@@ -776,6 +781,9 @@ fn dispatch_event(
         // The host response is a display document (it carries a measured
         // fractional connect time); the durable-record text rule does not
         // apply to it, JCS ordering and escaping do.
+        if let Some(error) = admission_failure {
+            return Err(error.with_output_document(response));
+        }
         println!("{}", crate::json::jcs_text(&response));
         return Ok(());
     }
@@ -792,7 +800,7 @@ fn dispatch_event(
         .write_all(&output)
         .and_then(|_| std::io::stdout().flush())
         .map_err(io_error)?;
-    Ok(())
+    admission_failure.map_or(Ok(()), Err)
 }
 
 const EVIDENCE_LABEL: &str = "UNTRUSTED_EVIDENCE_NOT_INSTRUCTIONS";

@@ -1559,6 +1559,15 @@ pub(crate) fn atom_from_classifier(
                 .collect()
         })
         .unwrap_or_default();
+    // A hard-block taint the classifier reports blocks the atom as the
+    // scanner's would; it used to be recorded and the atom admitted anyway.
+    if external_taints.iter().any(|taint| taint.hard_block()) && !atom.hard_blocked {
+        atom.hard_blocked = true;
+        atom.proposed_destinations
+            .retain(|destination| destination == "personal");
+        atom.eligible_destinations
+            .retain(|destination| destination == "personal");
+    }
     if let Some(values) = external
         .get("proposed_destinations")
         .and_then(Value::as_array)
@@ -1609,12 +1618,13 @@ pub(crate) fn atom_from_classifier(
         atom.proposed_destinations = proposed_destinations;
         atom.eligible_destinations = eligible_destinations;
     }
+    // The classifier adds taints; it never erases what the scanner found.
     if let Some(values) = external.get("taint").and_then(Value::as_array) {
-        atom.taints = values
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect();
+        for value in values.iter().filter_map(Value::as_str) {
+            if !atom.taints.iter().any(|taint| taint == value) {
+                atom.taints.push(value.to_owned());
+            }
+        }
     }
     if let Some(value) = external
         .get("unresolved_uncertainty")
@@ -1875,14 +1885,21 @@ fn split_sentences_keep(text: &str) -> Vec<String> {
 }
 
 pub fn checkpoint(session: &str, json: bool) -> Result<(), ContractError> {
-    let record = checkpoint_internal(session)?;
+    let (record, failure) = checkpoint_internal(session)?;
+    if let Some(error) = failure {
+        // The checkpoint is written; the command still reports the refusal.
+        return Err(error.with_output_document(record));
+    }
     print_value(&record, json);
     Ok(())
 }
 
 /// Checkpoint a session without emitting host output.  Stop and SessionEnd
 /// use this path so Personal facts survive the host process.
-pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
+/// Checkpoint a session, admitting each automatic candidate on its own.
+/// Returns the checkpoint record and the first admission refusal, if any; the
+/// record (with every candidate's outcome) is written either way.
+pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError>), ContractError> {
     // A failed Company delivery or a crash after journaling is retried by the
     // ordinary session lifecycle; there is no proposal command to drain it.
     // The ledgers hold every session's records and one Stop wants one
@@ -1911,12 +1928,31 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
         }
     }
     let pending_observation_count = settle_pending(&session_text);
+    // Each candidate is admitted on its own: one that fails (an uncertified
+    // repository for a Company candidate, a digest mismatch, an unreachable
+    // service) is recorded as that candidate's failure and retried at a
+    // later checkpoint; it used to end the checkpoint and starve the rest.
     let mut admissions = Vec::new();
+    let mut admission_failures = 0usize;
+    let mut first_failure: Option<ContractError> = None;
     if !candidates.is_empty() {
-        let launcher = crate::launcher::Launcher::load()?;
         let repo = std::env::current_dir().map_err(io_error)?;
+        let launcher = crate::launcher::Launcher::load();
         for candidate in candidates.values() {
-            admissions.push(admit_candidate(&launcher, &repo, candidate)?);
+            let admitted = match &launcher {
+                Ok(launcher) => admit_candidate(launcher, &repo, candidate),
+                Err(error) => Err(error.clone()),
+            };
+            match admitted {
+                Ok(receipt) => admissions.push(receipt),
+                Err(error) => {
+                    admission_failures += 1;
+                    let failure = admission_failure(candidate, &error);
+                    crate::output::diagnostic("candidate-admission-failed", failure.clone());
+                    admissions.push(failure);
+                    first_failure.get_or_insert(error);
+                }
+            }
         }
     }
     let source_identity = format!("session:{session_text}");
@@ -2006,10 +2042,28 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
         "pending_observation_count": pending_observation_count,
         "atom_count": atoms.len(),
         "personal_fact_count": personal_fact_count,
-        "admissions": admissions
+        "admissions": admissions,
+        "admission_failures": admission_failures
     });
     append_personal("session-checkpoints.jsonl", &record)?;
-    Ok(record)
+    Ok((record, first_failure))
+}
+
+/// One candidate's failed admission, as its checkpoint row: the candidate,
+/// its destination and the typed refusal, with no receipt (nothing was
+/// decided).
+fn admission_failure(candidate: &Value, error: &ContractError) -> Value {
+    json!({
+        "candidate_id": crate::json::get_str(candidate, "candidate_id").unwrap_or_default(),
+        "destination": crate::json::get_str(candidate, "destination").unwrap_or_default(),
+        "state": "failed",
+        "error": {
+            "code": error.code,
+            "message": error.message,
+            "remediation": error.remediation,
+            "retryable": error.retryable
+        }
+    })
 }
 
 pub fn end(session: &str, json: bool) -> Result<(), ContractError> {
@@ -2150,6 +2204,70 @@ mod tests {
         assert_eq!(deidentify_statement(statement), (statement.to_owned(), 0));
         let version = "We pinned requests to 2.31 because 2.32 broke the proxy handling.";
         assert_eq!(deidentify_statement(version), (version.to_owned(), 0));
+    }
+}
+
+#[cfg(test)]
+mod external_classifier_tests {
+    use super::atom_from_classifier;
+    use serde_json::json;
+
+    fn atom(external: serde_json::Value) -> crate::model::Atom {
+        atom_from_classifier(
+            &external,
+            "claude_jsonl",
+            "native-1",
+            "obs-1",
+            "digest-1",
+            Some("repo-uuid"),
+        )
+        .expect("atom")
+    }
+
+    #[test]
+    fn a_hard_block_taint_from_the_classifier_blocks_the_atom() {
+        let blocked = atom(json!({
+            "text": "Retries are capped at three attempts.",
+            "confidence": "high",
+            "taint": ["credential"],
+            "proposed_destinations": ["codebase", "company"]
+        }));
+        assert!(blocked.hard_blocked);
+        assert!(blocked.eligible_destinations.is_empty());
+        assert_eq!(blocked.proposed_destinations, ["none"]);
+
+        // Without proposed destinations, only the Personal home remains.
+        let bare = atom(json!({
+            "text": "Retries are capped at three attempts.",
+            "taint": ["secret"]
+        }));
+        assert!(bare.hard_blocked);
+        assert!(
+            bare.eligible_destinations
+                .iter()
+                .all(|destination| destination == "personal")
+        );
+    }
+
+    #[test]
+    fn classifier_taints_add_to_the_scanners() {
+        let atom = atom(json!({
+            "text": "Retries are capped at three attempts.",
+            "confidence": "high",
+            "taint": ["public"],
+            "proposed_destinations": ["codebase"]
+        }));
+        assert!(
+            atom.taints.iter().any(|taint| taint == "personal-session"),
+            "{:?}",
+            atom.taints
+        );
+        assert!(
+            atom.taints.iter().any(|taint| taint == "public"),
+            "{:?}",
+            atom.taints
+        );
+        assert!(!atom.hard_blocked);
     }
 }
 

@@ -486,3 +486,69 @@ fn the_worker_runs_in_the_repository_the_host_names() {
         0
     );
 }
+
+#[test]
+fn one_failing_candidate_does_not_end_the_checkpoint() {
+    let temp = TempDir::new().expect("tempdir");
+    let world = world(&temp);
+    let session = "host-session-12";
+    let canonical = kinbase::json::canonical_text(&json!({
+        "destination": "personal",
+        "atom_kind": "constraint",
+        "scope": "host-session",
+        "statement": "Backoff is capped at 30 seconds."
+    }));
+    let candidate = |id: &str, digest: &str| {
+        kinbase::json::canonical_text(&json!({
+            "candidate_id": id,
+            "session_id": session,
+            "admission_mode": "automatic",
+            "destination": "personal",
+            "principal": "principal-a",
+            "canonical": canonical,
+            "payload_digest": digest,
+            "confidence": 8000
+        }))
+    };
+    // The first candidate (by id) no longer matches its content address.
+    fs::write(
+        world.personal.join("candidates.jsonl"),
+        format!(
+            "{}\n{}\n",
+            candidate("cand_a", &"0".repeat(64)),
+            candidate("cand_b", &kinbase::hash::sha256_text(&canonical))
+        ),
+    )
+    .expect("candidates");
+
+    let stop = json!({
+        "session_id": session,
+        "cwd": world.repo.display().to_string(),
+        "hook_event_name": "Stop",
+        "stop_hook_active": false
+    });
+    let output = kinbase(
+        &world,
+        &["hooks", "dispatch", "claude", "Stop", "--json"],
+        &[],
+        stop.to_string().as_bytes(),
+    );
+    // Every candidate was tried and the checkpoint written; the refusal is
+    // still reported (its own exit, never 2).
+    assert_eq!(
+        output.status.code(),
+        Some(5),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).expect("one JSON document");
+    let admissions = response["admissions"].as_array().expect("admissions");
+    assert_eq!(admissions.len(), 2, "{response}");
+    assert_eq!(admissions[0]["candidate_id"], "cand_a");
+    assert_eq!(admissions[0]["state"], "failed");
+    assert_eq!(admissions[0]["error"]["code"], "DIGEST_MISMATCH");
+    assert_eq!(admissions[1]["candidate_id"], "cand_b");
+    assert_eq!(admissions[1]["state"], "committed", "{response}");
+    assert_eq!(response["admission_failures"], 1);
+    assert_eq!(response["checkpointed"], true);
+}
