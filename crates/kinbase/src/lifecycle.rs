@@ -2662,9 +2662,33 @@ pub struct TrustFacts {
     /// and gets it wrong. `None` means no authority answer was read and the
     /// cursor comparison below is the only evidence available.
     pub governing_revoked_keys: Option<BTreeSet<String>>,
+    /// The operator's certificate-bound maintainer keys, which warrant a
+    /// certified repository without a registry entry.
+    pub maintainer_keys: BTreeSet<String>,
+    /// Every key a registry entry has named for this repository's
+    /// `codebase:`/`repository:` scope, whether still active or since
+    /// revoked.
+    pub repository_keys: BTreeSet<String>,
 }
 
 impl TrustFacts {
+    /// Whether an unrevoked key still warrants this repository's derived
+    /// facts: an active `codebase:`/`repository:` owner, or a
+    /// certificate-bound maintainer key (as `TrustContext::is_maintainer`
+    /// accepts them).
+    fn repository_warranted(&self) -> bool {
+        let Some(uuid) = &self.repository_uuid else {
+            return false;
+        };
+        let scopes = [format!("codebase:{uuid}"), format!("repository:{uuid}")];
+        self.active_entries
+            .iter()
+            .filter(|(scope, _, _, _)| scopes.contains(scope))
+            .map(|(_, key, _, _)| key)
+            .chain(self.maintainer_keys.iter())
+            .any(|key| !self.key_revoked(key))
+    }
+
     fn owner_of_scope(&self, scope: &str) -> Option<(String, String)> {
         let owners: Vec<&(String, String, String, String)> = self
             .active_entries
@@ -3153,17 +3177,21 @@ fn revocation_of(trust: &TrustFacts, observation: &Observation) -> Option<String
         if nothing_revoked {
             return None;
         }
-        if let Some(scope) = trust.maintainer_scope() {
-            if trust.certificate_valid && trust.owner_of_scope(&scope).is_none() {
-                let effective = trust
-                    .revocations
-                    .iter()
-                    .map(|(_, _, effective)| effective.clone())
-                    .max()
-                    .unwrap_or_default();
-                return Some(effective);
-            }
+        // Withdrawn only when nothing unrevoked warrants this repository any
+        // more and a revocation names a key that did. A revocation of some
+        // other repository's key, with a registry that never named a
+        // per-repository owner, used to withdraw every derived fact.
+        if !trust.certificate_valid || trust.repository_warranted() {
+            return None;
         }
+        return trust
+            .revocations
+            .iter()
+            .filter(|(key, _, _)| {
+                trust.repository_keys.contains(key) || trust.maintainer_keys.contains(key)
+            })
+            .map(|(_, _, effective)| effective.clone())
+            .max();
     }
     None
 }
@@ -4252,6 +4280,86 @@ mod tests {
         assert_eq!(
             clean_text("# title\n\nbody\tline\u{202e}x"),
             "# title body line x"
+        );
+    }
+}
+
+#[cfg(test)]
+mod revocation_warrant_tests {
+    use super::*;
+
+    const UUID: &str = "00000000-0000-4000-8000-000000000001";
+
+    fn derived() -> Observation {
+        Observation {
+            observation_id: "obs_adr".to_owned(),
+            source_kind: "adr".to_owned(),
+            native_id: "adr-1".to_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn certified() -> TrustFacts {
+        TrustFacts {
+            repository_uuid: Some(UUID.to_owned()),
+            certificate_valid: true,
+            ..Default::default()
+        }
+    }
+
+    fn revoke(trust: &mut TrustFacts, key: &str, effective_at: &str) {
+        trust
+            .revocations
+            .push((key.to_owned(), "7".to_owned(), effective_at.to_owned()));
+        trust
+            .governing_revoked_keys
+            .get_or_insert_with(BTreeSet::new)
+            .insert(key.to_owned());
+    }
+
+    #[test]
+    fn another_repositorys_revocation_withdraws_nothing() {
+        let mut trust = certified();
+        revoke(&mut trust, "other-key", "2026-09-01T00:00:00.000Z");
+        assert_eq!(revocation_of(&trust, &derived()), None);
+    }
+
+    #[test]
+    fn revoking_the_repository_key_withdraws_its_derived_facts() {
+        let mut trust = certified();
+        trust.repository_keys.insert("repo-key".to_owned());
+        revoke(&mut trust, "other-key", "2026-09-03T00:00:00.000Z");
+        revoke(&mut trust, "repo-key", "2026-09-02T00:00:00.000Z");
+        assert_eq!(
+            revocation_of(&trust, &derived()).as_deref(),
+            Some("2026-09-02T00:00:00.000Z")
+        );
+    }
+
+    #[test]
+    fn a_live_warrant_keeps_derived_facts() {
+        let mut trust = certified();
+        trust
+            .repository_keys
+            .extend(["old-key".to_owned(), "new-key".to_owned()]);
+        trust.active_entries.push((
+            format!("codebase:{UUID}"),
+            "new-key".to_owned(),
+            "owner".to_owned(),
+            "9".to_owned(),
+        ));
+        revoke(&mut trust, "old-key", "2026-09-02T00:00:00.000Z");
+        assert_eq!(revocation_of(&trust, &derived()), None);
+
+        let mut trust = certified();
+        trust.repository_keys.insert("repo-key".to_owned());
+        trust.maintainer_keys.insert("maintainer-key".to_owned());
+        revoke(&mut trust, "repo-key", "2026-09-02T00:00:00.000Z");
+        assert_eq!(revocation_of(&trust, &derived()), None);
+        revoke(&mut trust, "maintainer-key", "2026-09-04T00:00:00.000Z");
+        assert_eq!(
+            revocation_of(&trust, &derived()).as_deref(),
+            Some("2026-09-04T00:00:00.000Z")
         );
     }
 }

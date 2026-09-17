@@ -130,14 +130,25 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             )
             .map_err(internal)?;
         }
-        Command::Classifier { provider, model } => {
-            let configured = launcher
-                .shared
-                .classifier
-                .as_ref()
+        Command::Classifier {
+            provider,
+            model,
+            processor_scope,
+        } => {
+            let classifier = launcher.shared.classifier.as_ref();
+            let configured = classifier
                 .map(|classifier| classifier.model.clone())
                 .unwrap_or_else(|| "deterministic".to_owned());
-            crate::classifier::run(provider.as_deref(), model.as_deref(), &configured, json)?;
+            let processor_scope = processor_scope
+                .or_else(|| classifier.map(|classifier| classifier.processor_scope.clone()))
+                .unwrap_or_else(|| "local".to_owned());
+            crate::classifier::run(
+                provider.as_deref(),
+                model.as_deref(),
+                &configured,
+                &processor_scope,
+                json,
+            )?;
         }
         Command::Corpus(CorpusCommand::Rebuild {
             store,
