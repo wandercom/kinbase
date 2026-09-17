@@ -3359,6 +3359,11 @@ pub fn status(
                 crate::json::get_str(record, "effective_dependence_class").map(str::to_owned)
             })
         });
+    let this_destination = context
+        .trust
+        .repository_uuid
+        .as_ref()
+        .map(|uuid| format!("codebase:{uuid}"));
     let pending_orphans = context
         .launcher
         .company_cache()?
@@ -3368,6 +3373,9 @@ pub fn status(
                 .iter()
                 .filter(|saga| {
                     crate::json::get_str(saga, "state") == Some("awaiting_reconcile_or_abandon")
+                        && this_destination.as_deref().is_some_and(|destination| {
+                            crate::json::get_str(saga, "committed_destination") == Some(destination)
+                        })
                 })
                 .count()
         })

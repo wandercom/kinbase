@@ -1439,6 +1439,7 @@ fn classify_bulk(
     classify_limit: Option<usize>,
 ) -> Result<Value, ContractError> {
     let classifier = launcher.shared.classifier.as_ref();
+    let registry = launcher.scanner_registry()?;
     let provider = crate::session::select_provider(classifier);
     let fingerprint = crate::session::classifier_fingerprint(classifier, &provider);
     // A document classified once is classified. The receipt records which
@@ -1477,7 +1478,10 @@ fn classify_bulk(
         let mut blocked: BTreeSet<String> = BTreeSet::new();
         for observation in group {
             let statement = observation.statement.as_deref().unwrap_or_default();
-            if crate::scanner::hard_blocked(statement) {
+            if crate::scanner::scan(statement, &registry)
+                .map(|result| result.hard_block)
+                .unwrap_or(true)
+            {
                 blocked.insert(observation.observation_id.clone());
                 continue;
             }

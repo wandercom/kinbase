@@ -47,11 +47,35 @@ fn now() -> String {
 }
 
 fn observe(temp: &Path, text: &str) -> Value {
+    observe_with(temp, text, None)
+}
+
+/// `session observe` of one message, optionally under a user config whose
+/// scanner registry lists `canary`.
+fn observe_with(temp: &Path, text: &str, canary: Option<&str>) -> Value {
     let home = temp.join("home");
     let state = temp.join("state");
     let workdir = temp.join("work");
     for directory in [&home, &state, &workdir] {
         fs::create_dir_all(directory).expect("dir");
+    }
+    if let Some(canary) = canary {
+        let config = home.join(".config/kinbase");
+        let personal = temp.join("personal");
+        fs::create_dir_all(&personal).expect("personal");
+        private_write(
+            &config.join("canaries.txt"),
+            format!("{canary}\n").as_bytes(),
+        );
+        private_write(
+            &config.join("config.toml"),
+            format!(
+                "schema_version = \"1\"\n\n[personal]\ndata_root = \"{}\"\n\n[scanner]\ncanary_file = \"{}\"\n",
+                personal.display(),
+                config.join("canaries.txt").display()
+            )
+            .as_bytes(),
+        );
     }
     let event = temp.join("event.jsonl");
     fs::write(
@@ -109,6 +133,17 @@ fn a_message_with_a_secret_yields_no_candidate_at_all() {
         assert_eq!(atom["hard_blocked"], true, "{atom}");
         assert_eq!(atom["eligible_destinations"], json!([]), "{atom}");
     }
+}
+
+#[test]
+fn a_registered_canary_blocks_the_whole_message() {
+    let temp = TempDir::new().expect("tempdir");
+    let observed = observe_with(
+        temp.path(),
+        "The retry scheduler must cap backoff at 30 seconds. Project kxbluefalcon41 ships Friday.",
+        Some("kxbluefalcon41"),
+    );
+    assert_eq!(observed["candidate_count"], 0, "{observed}");
 }
 
 struct Certified {

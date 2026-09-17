@@ -574,6 +574,10 @@ pub fn observe(
     // candidate at all, and its text reaches no classifier: blocking each
     // atom on its own let the rest of the message (or a paraphrase of the
     // secret) through.
+    // The configured canary and forbidden-identifier registries apply here
+    // too, and a scan that cannot complete blocks.
+    let launcher = crate::launcher::Launcher::load()?;
+    let registry = launcher.scanner_registry()?;
     let blocked_observations: BTreeSet<String> = observations
         .iter()
         .filter(|(_, event)| {
@@ -581,7 +585,9 @@ pub fn observe(
                 .get("event_id")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            crate::scanner::hard_blocked(&session_corpus_text(&records, native_id))
+            crate::scanner::scan(&session_corpus_text(&records, native_id), &registry)
+                .map(|result| result.hard_block)
+                .unwrap_or(true)
         })
         .map(|(observation, _)| observation.observation_id.clone())
         .collect();
@@ -745,7 +751,6 @@ pub fn observe(
         append_personal("candidates.jsonl", candidate)?;
     }
 
-    let launcher = crate::launcher::Launcher::load()?;
     let mut admissions = Vec::new();
     let mut questions = BTreeSet::new();
     for atom in &atom_records {
@@ -2286,6 +2291,8 @@ fn merge_receipt(receipt: &mut Value, saga: &Value) {
 // ---------------------------------------------------------------------------
 
 const FANOUT_JOURNAL_SCHEMA: &str = "kinbase-fanout-journal/1";
+/// Company's admission status for an approved event awaiting a steward.
+const STEWARD_REVIEW: &str = "pending-steward-review";
 const APOLOGY_RESPONSE_WINDOW_HOURS: i64 = 24;
 
 /// The closed transition enum of the destination journal (architecture §3:
@@ -2725,15 +2732,20 @@ fn commit_company(
             .and_then(|submission| access.client.post_fact(&submission))
         {
             // A signer that is not the Company authority for the scope is
-            // queued for steward review (202): Company holds the bytes, and
-            // the fan-out is not divergent.
-            Ok(body) => json!({
-                "state": "committed",
-                "company_receipt": body,
-                "company_admission": crate::json::get_str(&body, "status")
+            // queued for steward review (202). Until a steward admits it the
+            // Company destination is pending: its apology stays open and
+            // later passes ask again.
+            Ok(body) => {
+                let admission = crate::json::get_str(&body, "status")
                     .or_else(|| crate::json::get_str(&body, "admission_status"))
                     .unwrap_or("committed")
-            }),
+                    .to_owned();
+                json!({
+                    "state": if admission == STEWARD_REVIEW { "pending" } else { "committed" },
+                    "company_receipt": body,
+                    "company_admission": admission
+                })
+            }
             Err(error) => json!({
                 "state": if error.code == "COMPANY_UNREACHABLE" { "pending" } else { "refused" },
                 "error_code": error.code,
@@ -2763,7 +2775,7 @@ fn commit_company(
     if state == "committed" {
         // The apology opened while Company had not answered is settled: the
         // claim is no longer orphaned, and its deadline must not abandon it.
-        reconcile_apologies(receipt_id, &now_rfc3339_millis())?;
+        reconcile_apologies(launcher, receipt_id, &now_rfc3339_millis())?;
     } else {
         // Divergence: another destination of the same source already holds
         // a durable commit that this failure cannot roll back. The
@@ -2789,6 +2801,12 @@ fn commit_company(
                 journal.complete("apology", json!({"unknown_id": unknown_id}))?;
             }
             apology_ids.push(apology_id);
+        }
+        // Outside the admission lock: a slow Company must not hold it. An
+        // unreachable Company gets the Unknowns from a later pass.
+        if !apology_ids.is_empty() && attempt.get("company_unreachable") != Some(&Value::Bool(true))
+        {
+            deliver_apology_unknowns(launcher, repository_uuid)?;
         }
     }
     let _generation = repository.admission_lock(repository_uuid)?;
@@ -2903,22 +2921,34 @@ fn committed_siblings(record: &Value) -> Result<Vec<Value>, ContractError> {
 
 /// Mark every open apology for `failed_receipt_id` reconciled: the
 /// destination that had not answered has committed after all.
-fn reconcile_apologies(failed_receipt_id: &str, now: &str) -> Result<(), ContractError> {
+fn reconcile_apologies(
+    launcher: &crate::launcher::Launcher,
+    failed_receipt_id: &str,
+    now: &str,
+) -> Result<(), ContractError> {
     for apology in current_apologies_complete()? {
         if crate::json::get_str(&apology, "failed_receipt_id") != Some(failed_receipt_id)
             || crate::json::get_str(&apology, "state") != Some("awaiting_reconcile_or_abandon")
         {
             continue;
         }
-        append_personal_durable(
-            "apologies.jsonl",
-            &json!({
-                "apology_id": apology.get("apology_id").cloned().unwrap_or(Value::Null),
-                "state": "reconciled",
-                "reconciled_at": now,
-                "reconciled_by": "failed-destination-committed"
-            }),
-        )?;
+        let update = json!({
+            "apology_id": apology.get("apology_id").cloned().unwrap_or(Value::Null),
+            "state": "reconciled",
+            "reconciled_at": now,
+            "reconciled_by": "failed-destination-committed"
+        });
+        append_personal_durable("apologies.jsonl", &update)?;
+        // The cached saga row `status` counts is settled with it.
+        if let Ok(Some((cache, _))) = launcher.company_cache() {
+            let mut settled = apology.clone();
+            merge_receipt(&mut settled, &update);
+            let _ = cache.save_saga(
+                crate::json::get_str(&apology, "candidate_id").unwrap_or_default(),
+                &settled,
+                now,
+            );
+        }
     }
     Ok(())
 }
@@ -3057,7 +3087,9 @@ fn write_apology(
     let store = destination_store(&committed_destination)?;
     let question = format!(
         "Apology Unknown for divergent fan-out: destination {failed_destination} failed ({}) after {committed_destination} committed receipt {}. Admitting principal {principal} is responsible; closing authority {closing_name} ({closing_role}) must reconcile or abandon by {response_due_at}. The orphaned claim is withheld from trusted use until then.",
-        crate::json::get_str(attempt, "error_code").unwrap_or("refused"),
+        crate::json::get_str(attempt, "error_code")
+            .or_else(|| crate::json::get_str(attempt, "company_admission"))
+            .unwrap_or("refused"),
         crate::json::get_str(committed, "receipt_id").unwrap_or_default()
     );
     let scope = "architecture:escalation";
@@ -3132,11 +3164,6 @@ fn write_apology(
         "unknown_delivered": false
     });
     append_personal_durable("apologies.jsonl", &apology)?;
-    // A Company that answered (and refused) can take the Unknown now; an
-    // unreachable one gets it from a later recovery pass.
-    if crate::json::get_str(attempt, "error_code") != Some("COMPANY_UNREACHABLE") {
-        deliver_apology_unknowns(launcher, repository_uuid)?;
-    }
     // The pending saga is also visible to the Company cache so `status`
     // counts it among the orphans awaiting reconcile/abandon.
     if let Ok(Some((cache, _))) = launcher.company_cache() {
