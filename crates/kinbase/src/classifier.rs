@@ -10,7 +10,7 @@ use crate::scanner::{ScanResult, scanner};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::io::{Read, Write};
+use std::io::{BufRead, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
@@ -309,6 +309,88 @@ pub(crate) fn authorize_processor(
 /// schema enforced on the answer, and limits high enough that a corpus load
 /// is not throttled into abstaining.
 const AGY_PATHS: [&str; 2] = ["/opt/homebrew/bin/agy", "/usr/local/bin/agy"];
+const KIN_PATHS: [&str; 2] = ["/opt/homebrew/bin/kin", "/usr/local/bin/kin"];
+const REGISTRATION_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The conversation an Antigravity stream-json `init` event names, and the
+/// directory it runs in, before the turn starts.
+fn init_conversation(line: &[u8]) -> Option<(String, Option<String>)> {
+    let event: Value = serde_json::from_slice(line).ok()?;
+    if event.get("event").and_then(Value::as_str) != Some("init") {
+        return None;
+    }
+    let id = event.get("conversation_id").and_then(Value::as_str)?;
+    let well_formed = !id.is_empty()
+        && id.len() <= 128
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+    if !well_formed {
+        return None;
+    }
+    let cwd = event
+        .get("init")
+        .and_then(|init| init.get("cwd"))
+        .and_then(Value::as_str)
+        .filter(|cwd| std::path::Path::new(cwd).is_absolute())
+        .map(str::to_owned);
+    Some((id.to_owned(), cwd))
+}
+
+/// Tell Kindex's supervisor health, when Kindex is installed, that this
+/// Antigravity conversation is a classifier turn and not a coding session.
+/// Each turn is a non-interactive Antigravity session that Antigravity's own
+/// records give no workspace, so health counted every one as unscoped host
+/// activity and raised `observation_unavailable`. Best effort and bounded:
+/// the turn is never held or failed by it; a failure is said on stderr.
+fn register_automation_session(
+    kin_paths: &[&str],
+    conversation: &str,
+    cwd: Option<&str>,
+) -> Option<std::thread::JoinHandle<()>> {
+    let kin = kin_paths
+        .iter()
+        .find(|path| std::path::Path::new(path).is_file())?
+        .to_string();
+    let project = cwd.map(str::to_owned).unwrap_or_else(real_home_dir);
+    let conversation = conversation.to_owned();
+    Some(std::thread::spawn(move || {
+        let spawned = std::process::Command::new(&kin)
+            .env_clear()
+            .env("PATH", "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin")
+            .env("HOME", real_home_dir())
+            .args(["supervisor-register", "--agent", "antigravity", "--session"])
+            .arg(&conversation)
+            .arg("--project")
+            .arg(&project)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        let outcome = match spawned {
+            Ok(mut child) => {
+                let started = std::time::Instant::now();
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(status)) if status.success() => break Ok(()),
+                        Ok(Some(status)) => break Err(format!("exited with {status}")),
+                        Ok(None) if started.elapsed() >= REGISTRATION_TIMEOUT => {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                            break Err("timed out".to_owned());
+                        }
+                        Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                        Err(error) => break Err(error.kind().to_string()),
+                    }
+                }
+            }
+            Err(error) => Err(error.kind().to_string()),
+        };
+        if let Err(reason) = outcome {
+            eprintln!("kindex supervisor registration of classifier turn unavailable: {reason}");
+        }
+    }))
+}
 
 /// The invoking user's home directory from the password database, since the
 /// sandboxed child's environment deliberately does not carry it.
@@ -338,6 +420,15 @@ pub(crate) fn agy_available() -> Result<(), String> {
 }
 
 fn antigravity(model: &str, document: &Value) -> Result<Value, ContractError> {
+    antigravity_with(&AGY_PATHS, &KIN_PATHS, model, document)
+}
+
+fn antigravity_with(
+    agy_paths: &[&str],
+    kin_paths: &[&str],
+    model: &str,
+    document: &Value,
+) -> Result<Value, ContractError> {
     let input_observations = observations(document)?;
     for observation in input_observations {
         require_observation(
@@ -378,7 +469,7 @@ fn antigravity(model: &str, document: &Value) -> Result<Value, ContractError> {
         },
         "required": ["atoms"]
     });
-    let binary = AGY_PATHS
+    let binary = agy_paths
         .iter()
         .find(|path| std::path::Path::new(path).is_file())
         .ok_or_else(|| unauthorized("Antigravity CLI is not installed"))?;
@@ -426,27 +517,69 @@ fn antigravity(model: &str, document: &Value) -> Result<Value, ContractError> {
         .stdin
         .take()
         .map(|mut stdin| std::thread::spawn(move || stdin.write_all(&message)));
-    let output = child
-        .wait_with_output()
+    let stderr_reader = child.stderr.take().map(|mut stderr| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = stderr.read_to_end(&mut bytes);
+            bytes
+        })
+    });
+    // Stdout is read as it arrives so the turn can be registered from its
+    // `init` event, before it runs, rather than after health has seen it.
+    let mut stdout_bytes = Vec::new();
+    let mut registration = None;
+    let mut registration_tried = false;
+    if let Some(stdout) = child.stdout.take() {
+        let mut reader = std::io::BufReader::new(stdout);
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            match reader.read_until(b'\n', &mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    if !registration_tried
+                        && let Some((conversation, cwd)) = init_conversation(&line)
+                    {
+                        registration_tried = true;
+                        registration =
+                            register_automation_session(kin_paths, &conversation, cwd.as_deref());
+                    }
+                    stdout_bytes.extend_from_slice(&line);
+                }
+            }
+        }
+    }
+    let status = child
+        .wait()
         .map_err(|error| unauthorized(format!("Antigravity CLI failed: {error}")))?;
+    let stderr_bytes = stderr_reader
+        .and_then(|reader| reader.join().ok())
+        .unwrap_or_default();
     if let Some(writer) = writer {
         // A child that exits without reading its prompt breaks the pipe; its
         // exit status below is the error that matters.
         let _ = writer.join();
     }
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
+    // A registration still running when the turn ends is not waited for: the
+    // turn's answer must not miss its caller's deadline on its account, and
+    // the sandbox ends what this process leaves in its group. It started at
+    // `init`, so it has normally finished long before the turn has.
+    if let Some(registration) = registration.filter(|handle| handle.is_finished()) {
+        let _ = registration.join();
+    }
+    if !status.success() {
+        let stderr = String::from_utf8_lossy(&stderr_bytes);
         let first = stderr
             .lines()
             .find(|line| !line.trim().is_empty())
             .unwrap_or_default();
         return Err(unauthorized(format!(
             "Antigravity CLI exited with {}: {}",
-            output.status,
+            status,
             first.chars().take(200).collect::<String>()
         )));
     }
-    let envelope = String::from_utf8_lossy(&output.stdout)
+    let envelope = String::from_utf8_lossy(&stdout_bytes)
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .filter(|event| event.get("event").and_then(Value::as_str) == Some("result"))
@@ -1524,6 +1657,123 @@ fn unreachable(message: impl Into<String>) -> ContractError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_antigravity_init_event_names_its_conversation() {
+        let init = br#"{"event":"init","conversation_id":"98ff4883-8ac5-4c7c-9567-13193d711589","init":{"cwd":"/work/classifier"}}"#;
+        assert_eq!(
+            init_conversation(init),
+            Some((
+                "98ff4883-8ac5-4c7c-9567-13193d711589".to_owned(),
+                Some("/work/classifier".to_owned())
+            ))
+        );
+        let relative = br#"{"event":"init","conversation_id":"c1","init":{"cwd":"work"}}"#;
+        assert_eq!(init_conversation(relative), Some(("c1".to_owned(), None)));
+        for other in [
+            &br#"{"event":"step_update","conversation_id":"c1"}"#[..],
+            br#"{"event":"init","conversation_id":""}"#,
+            br#"{"event":"init","conversation_id":"c1 --agent codex"}"#,
+            br#"{"event":"init"}"#,
+            b"not json",
+        ] {
+            assert_eq!(
+                init_conversation(other),
+                None,
+                "{}",
+                String::from_utf8_lossy(other)
+            );
+        }
+    }
+
+    #[test]
+    fn a_slow_registration_never_holds_the_turn() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let executable = |name: &str, body: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).expect("write fake executable");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+            path.display().to_string()
+        };
+        // Answers at once: `init`, then a schema-checked result.
+        let agy = executable(
+            "agy",
+            concat!(
+                "#!/bin/sh\n",
+                "read -r _prompt\n",
+                "echo '{\"event\":\"init\",\"conversation_id\":\"turn-1\",\"init\":{\"cwd\":\"/\"}}'\n",
+                "echo '{\"event\":\"result\",\"result\":{\"conversation_id\":\"turn-1\",\"status\":\"SUCCESS\",",
+                "\"structured_output\":{\"atoms\":[{\"id\":\"obs-1\",\"text\":\"Retries back off exponentially.\",",
+                "\"destination\":\"codebase\",\"confidence\":\"high\"}]}}}'\n",
+            ),
+        );
+        let kin = executable("kin", "#!/bin/sh\nsleep 30\n");
+        let document = json!({"observations": [{
+            "observation_id": "obs-1",
+            "source_kind": "claude_jsonl",
+            "source_identity": "session:test",
+            "content_digest": "digest-1",
+            "observed_at": "2026-09-17T00:00:00.000Z",
+            "disposition": "current",
+            "extraction_version": "1",
+            "scope": "unscoped",
+            "body": "Retries back off exponentially."
+        }]});
+
+        let started = std::time::Instant::now();
+        let output = antigravity_with(&[agy.as_str()], &[kin.as_str()], "default", &document)
+            .expect("the turn's answer");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the answer waited {:?} on a registration that never finishes",
+            started.elapsed()
+        );
+        assert_eq!(
+            output["atoms"].as_array().map(Vec::len),
+            Some(1),
+            "{output}"
+        );
+    }
+
+    #[test]
+    fn a_classifier_turn_is_registered_with_kindex_when_it_is_installed() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let calls = dir.path().join("calls");
+        let kin = dir.path().join("kin");
+        std::fs::write(
+            &kin,
+            format!("#!/bin/sh\nprintf '%s\\n' \"$@\" > '{}'\n", calls.display()),
+        )
+        .expect("write fake kin");
+        std::fs::set_permissions(&kin, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let kin_path = kin.display().to_string();
+
+        register_automation_session(&[kin_path.as_str()], "c1", Some("/work/classifier"))
+            .expect("kin is installed")
+            .join()
+            .expect("registration thread");
+        assert_eq!(
+            std::fs::read_to_string(&calls).expect("kin ran"),
+            "supervisor-register\n--agent\nantigravity\n--session\nc1\n--project\n/work/classifier\n"
+        );
+
+        let missing = dir.path().join("absent").display().to_string();
+        assert!(
+            register_automation_session(&[missing.as_str()], "c1", None).is_none(),
+            "no Kindex, no registration"
+        );
+
+        // A failing registration is reported, never raised.
+        std::fs::write(&kin, "#!/bin/sh\nexit 2\n").expect("rewrite fake kin");
+        register_automation_session(&[kin_path.as_str()], "c1", None)
+            .expect("kin is installed")
+            .join()
+            .expect("a failed registration does not panic");
+    }
 
     #[test]
     fn an_ollama_cloud_model_is_its_own_processor() {
