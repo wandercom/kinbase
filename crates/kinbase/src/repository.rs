@@ -4026,7 +4026,10 @@ pub fn doctor(
     } else {
         crate::private::PrivateStore::open_memory("core")?
     };
-    let sweep = core.sweep(&now)?;
+    // A diagnostic changes nothing: it reports what is due, and the session
+    // write path (Stop's checkpoint) applies it. Doctor used to expire
+    // candidates, mark delivery loss and delete bodies on its own clock.
+    let sweep = core.sweep_due(&now)?;
     // C9: doctor reports HOOK_APPROVAL_REQUIRED for every host whose
     // user-level config lacks the planned entries. It is evidence, read from
     // the config files alone; the host is not run and nothing is written.
@@ -4049,15 +4052,25 @@ pub fn doctor(
         let probe = crate::sandbox::denial_probe(&root, &repo.as_ref().map(|r| vec![r.root.clone()]).unwrap_or_default(), launcher.company_port());
         json!({"enforced": probe.enforced, "personal_root_readable": probe.personal_root_readable, "disabled_loudly": probe.disabled_loudly, "detail": probe.detail})
     });
-    let classifier_pinned = launcher
-        .shared
-        .classifier
+    // The checks classification itself makes (owner, mode, directory chain,
+    // digest), so doctor cannot call pinned what the run will refuse, and it
+    // shows the digest a rebuilt classifier would need.
+    let classifier_check = launcher.shared.classifier.as_ref().map(|classifier| {
+        crate::sandbox::check_pinned_executable(
+            &classifier.executable,
+            &classifier.executable_sha256,
+        )
+    });
+    let classifier_pinned = classifier_check
         .as_ref()
-        .is_some_and(|classifier| {
-            std::fs::read(&classifier.executable)
-                .map(|bytes| crate::hash::sha256_bytes(&bytes) == classifier.executable_sha256)
-                .unwrap_or(false)
-        });
+        .is_some_and(|check| check.refusal.is_none());
+    let classifier_observed = classifier_check
+        .as_ref()
+        .and_then(|check| check.observed_sha256.clone());
+    let classifier_refusal = classifier_check
+        .as_ref()
+        .and_then(|check| check.refusal.as_ref())
+        .map(|error| json!({"code": error.code, "message": error.message, "remediation": error.remediation}));
     let classifier = match launcher.shared.classifier.as_ref() {
         Some(classifier) => json!({
             "provider": if classifier.model.starts_with("ollama:") { "ollama" } else { "deterministic" },
@@ -4066,7 +4079,9 @@ pub fn doctor(
             "executable_sha256": classifier.executable_sha256,
             "processor_scope": classifier.processor_scope,
             "descriptor_backed": true,
-            "pinned": classifier_pinned
+            "pinned": classifier_pinned,
+            "observed_sha256": classifier_observed,
+            "refusal": classifier_refusal
         }),
         None => {
             let executable = std::env::current_exe().unwrap_or_else(|_| "kinbase".into());

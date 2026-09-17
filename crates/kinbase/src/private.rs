@@ -328,7 +328,7 @@ impl PrivateStore {
         record
             .map(|text| {
                 serde_json::from_str(&text)
-                    .map_err(|error| ContractError::internal(error.to_string()))
+                    .map_err(|error| ContractError::internal(crate::json::serde_error_text(&error)))
             })
             .transpose()
     }
@@ -1267,6 +1267,27 @@ impl PrivateStore {
         )
     }
 
+    /// What `sweep` would change at `now`, changing nothing: `doctor` reports
+    /// this, and the transitions happen on the session write path.
+    pub fn sweep_due(&self, now: &str) -> Result<Value, ContractError> {
+        let count = |sql: &str| -> Result<i64, ContractError> {
+            let counted: rusqlite::Result<i64> =
+                self.connection
+                    .query_row(sql, params![now], |row| row.get(0));
+            counted.map_err(sqlite_error("sweep preview"))
+        };
+        Ok(json!({
+            "applied": false,
+            "due_candidate_expiries": count(
+                "SELECT COUNT(*) FROM candidates WHERE status='pending' AND expires_at <= ?1"
+            )?,
+            "due_delivery_losses": count(
+                "SELECT COUNT(*) FROM prompt_reservations WHERE status='reserved' AND expires_at <= ?1"
+            )?,
+            "due_body_expiries": count("SELECT COUNT(*) FROM bodies WHERE retention_until <= ?1")?
+        }))
+    }
+
     // ----- checkpoints, query log, reminders, unknowns -----
 
     pub fn checkpoint(&self, source_identity: &str) -> Result<Option<Value>, ContractError> {
@@ -1408,4 +1429,41 @@ fn self_bump(transaction: &rusqlite::Transaction<'_>, name: &str) -> Result<(), 
         )
         .map(|_| ())
         .map_err(sqlite_error("metric"))
+}
+
+#[cfg(test)]
+mod sweep_tests {
+    use super::*;
+
+    #[test]
+    fn a_preview_changes_nothing_and_the_sweep_applies_it() {
+        let store = PrivateStore::open_memory("core").expect("store");
+        store
+            .insert_candidate(&json!({
+                "candidate_id": "cand_1",
+                "session_id": "s-1",
+                "destination": "company",
+                "payload_digest": "0".repeat(64),
+                "created_at": "2026-09-01T00:00:00.000Z",
+                "expires_at": "2026-09-01T00:15:00.000Z"
+            }))
+            .expect("candidate");
+        store
+            .store_body(b"raw", "2026-09-01T00:00:00.000Z")
+            .expect("body");
+        let now = "2026-09-17T00:00:00.000Z";
+        for _ in 0..2 {
+            let due = store.sweep_due(now).expect("preview");
+            assert_eq!(due["due_candidate_expiries"], 1, "{due}");
+            assert_eq!(due["due_body_expiries"], 1, "{due}");
+            assert_eq!(due["applied"], false);
+        }
+        let applied = store.sweep(now).expect("sweep");
+        assert_eq!(applied["expired_candidates"], 1, "{applied}");
+        assert_eq!(applied["expired_bodies"], 1, "{applied}");
+        assert_eq!(
+            store.sweep_due(now).expect("preview")["due_candidate_expiries"],
+            0
+        );
+    }
 }

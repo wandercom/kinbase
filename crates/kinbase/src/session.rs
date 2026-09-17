@@ -2006,6 +2006,9 @@ pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError
     };
     let core = crate::private::PrivateStore::open_core()?;
     let now = now_rfc3339_millis();
+    // Expiries (pending candidates, unanswered prompt reservations, raw
+    // bodies past retention) are applied here, on the write path.
+    let sweep = core.sweep(&now)?;
     let mut personal_fact_count = 0;
     for atom in &atoms {
         let personal = atom
@@ -2048,6 +2051,7 @@ pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError
         "pending_observation_count": pending_observation_count,
         "atom_count": atoms.len(),
         "personal_fact_count": personal_fact_count,
+        "sweep": sweep,
         "admissions": admissions,
         "admission_failures": admission_failures
     });
