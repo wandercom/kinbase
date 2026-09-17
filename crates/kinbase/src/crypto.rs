@@ -193,6 +193,15 @@ impl PublicKey {
         crate::hash::hex_string(&self.key.to_bytes())
     }
 
+    /// `text` as the canonical lowercase hex of the key it names, or `text`
+    /// unchanged when it names no key. Registry and revocation entries are
+    /// compared in this spelling.
+    pub fn canonical_spelling(text: &str) -> String {
+        Self::from_hex(text)
+            .map(|key| key.to_hex())
+            .unwrap_or_else(|_| text.to_owned())
+    }
+
     pub fn load(path: &Path, role: &str) -> Result<Self, ContractError> {
         let text = read_private_text(path, role)?;
         Self::from_hex(&text)
@@ -210,6 +219,12 @@ impl PublicKey {
             .get("signature")
             .and_then(serde_json::Value::as_str)?;
         let key = PublicKey::from_hex(signer).ok()?;
+        // A signed identity has one spelling. Revocation, steward and
+        // registry checks compare the signer field as text, so a key spelled
+        // in base64 would verify and still match none of them.
+        if key.to_hex() != signer {
+            return None;
+        }
         let bytes = crate::json::unsigned_bytes(document).ok()?;
         key.verify(message_type, &bytes, signature).then_some(key)
     }
@@ -396,4 +411,26 @@ pub fn verify_message(
 ) -> Result<bool, ContractError> {
     let key = PublicKey::load(public_path, "Ed25519 public key")?;
     Ok(key.verify(message_type, message, signature))
+}
+
+#[cfg(test)]
+mod signer_spelling_tests {
+    use super::*;
+
+    #[test]
+    fn a_signer_spelled_in_base64_does_not_verify() {
+        let key = PrivateKey::generate();
+        let signed = key
+            .sign_document("fact-event", &serde_json::json!({"statement": "s"}))
+            .expect("sign");
+        assert!(PublicKey::verify_document("fact-event", &signed).is_some());
+        let mut respelled = signed.clone();
+        respelled["signer"] = serde_json::Value::String(BASE64.encode(key.public().key.to_bytes()));
+        assert!(PublicKey::verify_document("fact-event", &respelled).is_none());
+        assert_eq!(
+            PublicKey::canonical_spelling(respelled["signer"].as_str().unwrap()),
+            key.public().to_hex()
+        );
+        assert_eq!(PublicKey::canonical_spelling("not-a-key"), "not-a-key");
+    }
 }

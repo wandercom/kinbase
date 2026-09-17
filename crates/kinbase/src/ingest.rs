@@ -216,9 +216,16 @@ pub fn ingest(
         .transpose()?;
     let default_revision = discovered_repository.revision().ok();
     let default_branch = discovered_repository.branch().ok();
-    let trust = crate::repository::RepoContext::load(launcher.clone(), repo, false, Some(&now))
-        .ok()
-        .map(|context| context.trust);
+    // Revocation is observed only through the trust context; when it cannot
+    // be loaded the receipt says the check did not run, and why.
+    let (trust, trust_unavailable) =
+        match crate::repository::RepoContext::load(launcher.clone(), repo, false, Some(&now)) {
+            Ok(context) => (Some(context.trust), None),
+            Err(error) => (
+                None,
+                Some(json!({"code": error.code, "message": error.message})),
+            ),
+        };
 
     // -- ceiling stops and parser quarantines -------------------------------
     let mut quarantined_count = 0usize;
@@ -631,6 +638,8 @@ pub fn ingest(
         "receipt_scope_restricted": !historical_receipts.is_empty(),
         "revocation_observed": revocation_observed_count > 0,
         "revocation_observed_count": revocation_observed_count,
+        "revocation_checked": trust_unavailable.is_none(),
+        "trust_context_unavailable": trust_unavailable,
         "manifest_publication": manifest_publication,
         "manifest_lineages": manifest_lineages,
         "source_identity": source_identity,

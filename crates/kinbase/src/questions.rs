@@ -597,7 +597,7 @@ fn write_signed_outbox(
         .and_then(Value::as_str)
         .unwrap_or("question");
     let path = directory.join(format!("{question_id}.json"));
-    std::fs::write(&path, canonical_text(&document).as_bytes()).map_err(io_error)?;
+    std::fs::write(&path, crate::json::record_text(&document)?.as_bytes()).map_err(io_error)?;
     Ok(path)
 }
 

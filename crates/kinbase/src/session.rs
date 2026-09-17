@@ -1,6 +1,6 @@
 use crate::error::{ContractError, ExitCode};
 use crate::hash::{sha256_bytes, sha256_text};
-use crate::json::{canonical_text, parse_strict_object};
+use crate::json::parse_strict_object;
 use crate::model::{CompanyReference, Distortion, FactEvent, Observation, UnknownEvent};
 use crate::time::{format_rfc3339_millis, now_rfc3339_millis, parse_rfc3339_millis};
 use chrono::Duration;
@@ -489,9 +489,16 @@ pub fn observe(
     event: &Path,
     json: bool,
 ) -> Result<(), ContractError> {
-    ensure_session_record(session)?;
     let bytes = std::fs::read(event).map_err(io_error)?;
     let parsed_records = parse_session_corpus(&bytes)?;
+    // The session belongs to the host the batch names, not always Codex.
+    let host = parsed_records
+        .first()
+        .and_then(|record| record.get("source_kind"))
+        .and_then(Value::as_str)
+        .map(host_of_source_kind)
+        .unwrap_or("unknown");
+    ensure_session_record(session, host)?;
     if parsed_records.len() > SESSION_OBSERVATION_LIMIT {
         return Err(ContractError::limit(
             format!(
@@ -619,6 +626,8 @@ pub fn observe(
 
     let mut atom_records = Vec::new();
     let mut candidate_records = Vec::new();
+    // Each atom carries its observation's own source kind; every one was
+    // labelled codex_jsonl, whichever host the batch came from.
     for (observation, event) in &observations {
         let native_id = event
             .get("event_id")
@@ -628,7 +637,7 @@ pub fn observe(
         let mut atoms = Vec::new();
         if blocked_observations.contains(&observation.observation_id) {
             let mut atom = crate::classify::atomize(
-                "codex_jsonl",
+                &observation.source_kind,
                 native_id,
                 &text,
                 "host-session",
@@ -645,7 +654,7 @@ pub fn observe(
             for item in external {
                 atoms.push(atom_from_classifier(
                     item,
-                    "codex_jsonl",
+                    &observation.source_kind,
                     native_id,
                     &observation.observation_id,
                     &observation.content_digest,
@@ -662,7 +671,7 @@ pub fn observe(
                 // confidence with destination none. No rule provider guesses
                 // in its place inside a pinned live run.
                 let mut atom = crate::classify::atomize(
-                    "codex_jsonl",
+                    &observation.source_kind,
                     native_id,
                     &text,
                     "host-session",
@@ -680,7 +689,7 @@ pub fn observe(
                 atoms.push(atom);
             } else {
                 atoms.push(crate::classify::atomize(
-                    "codex_jsonl",
+                    &observation.source_kind,
                     native_id,
                     &text,
                     "host-session",
@@ -794,7 +803,16 @@ pub fn observe(
 
 /// A host session token is caller-supplied and opaque.  Record it as active
 /// when it has not been seen before so Stop/SessionEnd can checkpoint it.
-fn ensure_session_record(session: &str) -> Result<(), ContractError> {
+/// The host a session source kind comes from.
+fn host_of_source_kind(source_kind: &str) -> &'static str {
+    match source_kind {
+        "claude_jsonl" => "claude",
+        "codex_jsonl" => "codex",
+        _ => "other",
+    }
+}
+
+fn ensure_session_record(session: &str, host: &str) -> Result<(), ContractError> {
     if personal_records("sessions.jsonl")
         .into_iter()
         .any(|record| {
@@ -807,7 +825,7 @@ fn ensure_session_record(session: &str) -> Result<(), ContractError> {
     let repo = std::env::current_dir().map_err(io_error)?;
     let record = json!({
         "session_id": session,
-        "host": "codex",
+        "host": host,
         "repository_id": crate::repository::repository_id(&repo).ok(),
         "started_at": now_rfc3339_millis(),
         "status": "started",
@@ -1750,7 +1768,7 @@ fn build_candidate(
         "scope": atom.scope,
         "statement": statement
     });
-    let canonical = canonical_text(&payload);
+    let canonical = crate::json::record_text(&payload)?;
     let payload_digest = sha256_text(&canonical);
     let candidate_id = format!(
         "cand_{}",
@@ -2156,6 +2174,23 @@ fn personal_records_complete(name: &str) -> Result<Vec<Value>, ContractError> {
     crate::store::read_records_complete(crate::StoreKind::Personal, &repo, name)
 }
 
+/// The text a record line holding `value` carries, for a marker filter:
+/// only lines holding it are parsed, and the exact filter runs on the record.
+/// The value alone, not `"key":value`, so a record written with other
+/// spacing still matches.
+fn value_marker(value: &str) -> String {
+    crate::json::jcs_text(&Value::String(value.to_owned()))
+}
+
+/// `personal_records_complete` for the lines holding `marker`, read by
+/// stream: one candidate's receipts, not every candidate's.
+fn personal_records_complete_marked(name: &str, marker: &str) -> Result<Vec<Value>, ContractError> {
+    let repo = std::env::current_dir().map_err(io_error)?;
+    crate::store::read_records_complete_where(crate::StoreKind::Personal, &repo, name, |line| {
+        crate::store::bytes_contain(line, marker.as_bytes())
+    })
+}
+
 /// `personal_records` restricted to the lines `keep` accepts, read by stream.
 /// A ledger that cannot be read is Degraded, not empty: the failure is
 /// signalled so a zero count is never mistaken for no records.
@@ -2433,15 +2468,18 @@ fn finalize_principal_receipt(base: &Value, saga: &Value) -> Result<Value, Contr
     let mut receipt = base.clone();
     merge_receipt(&mut receipt, saga);
     let repo_root = repo()?;
-    let already = personal_records_complete("proposal-decisions.jsonl")?
-        .into_iter()
-        .any(|record| {
-            crate::json::get_str(&record, "candidate_id")
-                == crate::json::get_str(&receipt, "candidate_id")
-                && crate::json::get_str(&record, "receipt_id")
-                    == crate::json::get_str(&receipt, "receipt_id")
-                && crate::json::get_str(&record, "state") == crate::json::get_str(&receipt, "state")
-        });
+    let already = personal_records_complete_marked(
+        "proposal-decisions.jsonl",
+        &value_marker(crate::json::get_str(&receipt, "candidate_id").unwrap_or_default()),
+    )?
+    .into_iter()
+    .any(|record| {
+        crate::json::get_str(&record, "candidate_id")
+            == crate::json::get_str(&receipt, "candidate_id")
+            && crate::json::get_str(&record, "receipt_id")
+                == crate::json::get_str(&receipt, "receipt_id")
+            && crate::json::get_str(&record, "state") == crate::json::get_str(&receipt, "state")
+    });
     if already {
         // Found, possibly from an attempt whose sync failed.
         crate::store::sync_record(
@@ -2567,7 +2605,7 @@ impl FanoutJournal {
         marker["updated_at"] = Value::String(now_rfc3339_millis());
         crate::paths::write_atomic(
             &self.marker_path(transition),
-            &crate::json::canonical_bytes(&marker),
+            &crate::json::record_bytes(&marker)?,
             0o600,
             false,
         )?;
@@ -2694,7 +2732,7 @@ fn reserve_nonce(
         }
         None => {
             let event = build_destination_event(Some(launcher), store, repository_uuid, record)?;
-            (canonical_text(&event), event)
+            (crate::json::record_text(&event)?, event)
         }
     };
     if !journal.is_complete("nonce_reservation") {
@@ -2809,7 +2847,7 @@ fn commit_codebase(
             });
             crate::paths::write_atomic(
                 &receipt_path,
-                &crate::json::canonical_bytes(&receipt),
+                &crate::json::record_bytes(&receipt)?,
                 0o600,
                 false,
             )?;
@@ -3073,16 +3111,39 @@ fn committed_siblings(record: &Value) -> Result<Vec<Value>, ContractError> {
     let message_id = crate::json::get_str(record, "message_id").unwrap_or_default();
     let session_id = crate::json::get_str(record, "session_id").unwrap_or_default();
     let candidate_id = crate::json::get_str(record, "candidate_id").unwrap_or_default();
-    let siblings: Vec<Value> = personal_records("candidates.jsonl")
-        .into_iter()
-        .filter(|other| {
-            crate::json::get_str(other, "message_id") == Some(message_id)
-                && crate::json::get_str(other, "session_id") == Some(session_id)
-                && crate::json::get_str(other, "candidate_id") != Some(candidate_id)
-        })
+    let message_marker = value_marker(message_id);
+    let siblings: Vec<Value> = personal_records_where("candidates.jsonl", |line| {
+        crate::store::bytes_contain(line, message_marker.as_bytes())
+    })
+    .into_iter()
+    .filter(|other| {
+        crate::json::get_str(other, "message_id") == Some(message_id)
+            && crate::json::get_str(other, "session_id") == Some(session_id)
+            && crate::json::get_str(other, "candidate_id") != Some(candidate_id)
+    })
+    .collect();
+    // Whether a sibling committed decides whether an apology is owed; only
+    // the siblings' receipts are read.
+    let sibling_markers: Vec<String> = siblings
+        .iter()
+        .filter_map(|sibling| crate::json::get_str(sibling, "candidate_id"))
+        .map(value_marker)
         .collect();
-    // Whether a sibling committed decides whether an apology is owed.
-    let decisions = personal_records_complete("proposal-decisions.jsonl")?;
+    let decisions = if sibling_markers.is_empty() {
+        Vec::new()
+    } else {
+        let repo = std::env::current_dir().map_err(io_error)?;
+        crate::store::read_records_complete_where(
+            crate::StoreKind::Personal,
+            &repo,
+            "proposal-decisions.jsonl",
+            |line| {
+                sibling_markers
+                    .iter()
+                    .any(|marker| crate::store::bytes_contain(line, marker.as_bytes()))
+            },
+        )?
+    };
     let mut committed = Vec::new();
     for sibling in siblings {
         let sibling_id = crate::json::get_str(&sibling, "candidate_id").unwrap_or_default();
@@ -3266,7 +3327,8 @@ fn write_apology(
     let closing_name = closing_identity
         .clone()
         .unwrap_or_else(|| closing_role.clone());
-    let now = crate::time::now_utc();
+    // The same proof clock that later decides the apology is overdue.
+    let now = crate::time::proof_clock_instant();
     let response_due_at =
         format_rfc3339_millis(now + Duration::hours(APOLOGY_RESPONSE_WINDOW_HOURS));
     let store = destination_store(&committed_destination)?;
@@ -3927,6 +3989,7 @@ pub(crate) fn destination_signing_key(
 pub(crate) fn emit_due_orphan_abandonments(
     launcher: &crate::launcher::Launcher,
     repository_root: &Path,
+    clock: &crate::time::AsOf,
 ) -> Result<usize, ContractError> {
     let existing: BTreeSet<String> = personal_records_complete("orphan-abandonments.jsonl")?
         .into_iter()
@@ -3941,7 +4004,9 @@ pub(crate) fn emit_due_orphan_abandonments(
         return Ok(existing.len());
     };
     let this_destination = format!("codebase:{repository_uuid}");
-    let now = crate::time::now_utc();
+    // The caller's clock: the proof clock, so a pinned acceptance run closes
+    // exactly what it expects and a report can say which clock it read.
+    let now = parse_rfc3339_millis(&clock.as_of).map_err(ContractError::internal)?;
     let due: Vec<Value> = current_apologies_complete()?
         .into_iter()
         .filter(|apology| {
@@ -4130,24 +4195,26 @@ fn admit_candidate(
             "Preserve the candidate and inspect its source.",
         ));
     }
-    if let Some(previous) = personal_records_complete("proposal-decisions.jsonl")?
-        .into_iter()
-        .rev()
-        .find(|receipt| {
-            crate::json::get_str(receipt, "candidate_id") == Some(candidate)
-                && crate::json::get_str(receipt, "destination") == Some(destination)
-                && crate::json::get_str(receipt, "digest") == Some(digest.as_str())
-        })
+    // The Stop path admits every automatic candidate; each reads only its
+    // own receipts rather than the whole decision ledger.
+    if let Some(previous) =
+        personal_records_complete_marked("proposal-decisions.jsonl", &value_marker(candidate))?
+            .into_iter()
+            .rev()
+            .find(|receipt| {
+                crate::json::get_str(receipt, "candidate_id") == Some(candidate)
+                    && crate::json::get_str(receipt, "destination") == Some(destination)
+                    && crate::json::get_str(receipt, "digest") == Some(digest.as_str())
+            })
+        && matches!(decision_state(&previous), "committed" | "refused")
     {
-        if matches!(decision_state(&previous), "committed" | "refused") {
-            // Acting on a found receipt: make sure it is on disk first.
-            crate::store::sync_record(
-                crate::StoreKind::Personal,
-                &std::env::current_dir().map_err(io_error)?,
-                "proposal-decisions.jsonl",
-            )?;
-            return Ok(previous);
-        }
+        // Acting on a found receipt: make sure it is on disk first.
+        crate::store::sync_record(
+            crate::StoreKind::Personal,
+            &std::env::current_dir().map_err(io_error)?,
+            "proposal-decisions.jsonl",
+        )?;
+        return Ok(previous);
     }
     let receipt_id = receipt_id(candidate, destination, &digest);
     let receipt = json!({
@@ -4268,7 +4335,7 @@ mod saga_identity_tests {
     use crate::crypto::{PrivateKey, PublicKey};
 
     fn record(scope: &str, statement: &str) -> Value {
-        let canonical = canonical_text(&json!({
+        let canonical = crate::json::canonical_text(&json!({
             "destination": "codebase:repo-uuid",
             "atom_kind": "constraint",
             "scope": scope,

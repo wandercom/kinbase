@@ -21,6 +21,11 @@ pub const PROMPT_WINDOW_SECONDS: i64 = 60 * 60;
 pub const PROMPT_WINDOW_LIMIT: i64 = 4;
 pub const CONSECUTIVE_LIMIT: i64 = 3;
 pub const REISSUE_LOCK_SECONDS: i64 = 24 * 60 * 60;
+/// How long a retrieval stays in the query log. The log is the future
+/// compiler's specification, not a history: it had no bound at all.
+pub const QUERY_LOG_RETENTION_SECONDS: i64 = 30 * 24 * 60 * 60;
+/// The most query-log entries a status report carries (the newest).
+pub const QUERY_LOG_REPORT_LIMIT: i64 = 200;
 
 pub struct PrivateStore {
     pub root: PathBuf,
@@ -34,6 +39,18 @@ pub fn state_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| paths::home_dir().join(".local").join("state"))
         .join("kinbase")
+}
+
+/// The `logged_at` before which a query-log entry has expired at `now`,
+/// in the log's own format.
+fn query_log_cutoff(now: &str) -> String {
+    crate::time::parse_rfc3339_millis(now)
+        .map(|instant| {
+            crate::time::format_rfc3339_millis(
+                instant - chrono::Duration::seconds(QUERY_LOG_RETENTION_SECONDS),
+            )
+        })
+        .unwrap_or_default()
 }
 
 fn sqlite_error(context: &str) -> impl Fn(rusqlite::Error) -> ContractError + '_ {
@@ -447,21 +464,29 @@ impl PrivateStore {
             })
             .map_err(sqlite_error("query"))?;
         let mut output = Vec::new();
-        for row in rows {
+        let mut skipped = crate::output::Skipped::default();
+        for (position, row) in rows.enumerate() {
             let (text, lifecycle, cursor) = row.map_err(sqlite_error("row"))?;
             // One unreadable row must not make the whole ledger unreadable. A
             // corrupt observation is quarantined by being skipped -- the rest of a
             // company's corpus stays usable, which is the same disposition this
             // product takes everywhere else it meets bytes it cannot trust. Failing
             // the entire read instead meant five empty rows out of 1,297 hid every
-            // other observation from every caller.
+            // other observation from every caller. The skip is counted and
+            // reported, as every sibling reader's is.
             let Ok(mut observation) = serde_json::from_str::<Observation>(&text) else {
+                skipped.push(
+                    position,
+                    text.len(),
+                    crate::output::unreadable_reason(text.as_bytes()),
+                );
                 continue;
             };
             observation.lifecycle = lifecycle;
             observation.cursor = Some(cursor.max(0) as u64);
             output.push(observation);
         }
+        skipped.report("observations");
         Ok(output)
     }
 
@@ -1262,8 +1287,15 @@ impl PrivateStore {
             self.bump("delivery_loss")?;
         }
         let bodies = self.expire_bodies(now)?;
+        let queries = self
+            .connection
+            .execute(
+                "DELETE FROM query_log WHERE logged_at <= ?1",
+                params![query_log_cutoff(now)],
+            )
+            .map_err(sqlite_error("expire query log"))?;
         Ok(
-            json!({"expired_candidates": expired_candidates, "delivery_loss": lost, "expired_bodies": bodies}),
+            json!({"expired_candidates": expired_candidates, "delivery_loss": lost, "expired_bodies": bodies, "expired_queries": queries}),
         )
     }
 
@@ -1276,6 +1308,12 @@ impl PrivateStore {
                     .query_row(sql, params![now], |row| row.get(0));
             counted.map_err(sqlite_error("sweep preview"))
         };
+        let due_queries: rusqlite::Result<i64> = self.connection.query_row(
+            "SELECT COUNT(*) FROM query_log WHERE logged_at <= ?1",
+            params![query_log_cutoff(now)],
+            |row| row.get(0),
+        );
+        let due_queries = due_queries.map_err(sqlite_error("sweep preview"))?;
         Ok(json!({
             "applied": false,
             "due_candidate_expiries": count(
@@ -1284,7 +1322,8 @@ impl PrivateStore {
             "due_delivery_losses": count(
                 "SELECT COUNT(*) FROM prompt_reservations WHERE status='reserved' AND expires_at <= ?1"
             )?,
-            "due_body_expiries": count("SELECT COUNT(*) FROM bodies WHERE retention_until <= ?1")?
+            "due_body_expiries": count("SELECT COUNT(*) FROM bodies WHERE retention_until <= ?1")?,
+            "due_query_expiries": due_queries
         }))
     }
 
@@ -1357,6 +1396,21 @@ impl PrivateStore {
             ),
             None => self.values("SELECT record FROM query_log ORDER BY id", &[]),
         }
+    }
+
+    /// The newest `limit` query-log entries, oldest first, and how many the
+    /// log holds: a report carries a window and says so, rather than
+    /// reading the whole log on every status.
+    pub fn recent_query_log(&self, limit: i64) -> Result<(Vec<Value>, i64), ContractError> {
+        let records = self.values(
+            "SELECT record FROM (SELECT id, record FROM query_log ORDER BY id DESC LIMIT ?1) ORDER BY id",
+            &[&limit],
+        )?;
+        let total: i64 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM query_log", [], |row| row.get(0))
+            .map_err(sqlite_error("count query log"))?;
+        Ok((records, total))
     }
 
     pub fn insert_reminder(&self, record: &Value) -> Result<(), ContractError> {
@@ -1465,5 +1519,36 @@ mod sweep_tests {
             store.sweep_due(now).expect("preview")["due_candidate_expiries"],
             0
         );
+    }
+
+    #[test]
+    fn the_query_log_keeps_thirty_days_and_a_report_reads_a_window() {
+        let store = PrivateStore::open_memory("core").expect("store");
+        for index in 0..5 {
+            store
+                .log_query(Some("s-1"), &json!({"query": format!("q{index}")}))
+                .expect("log");
+        }
+        // Two entries logged long ago.
+        store
+            .connection
+            .execute(
+                "UPDATE query_log SET logged_at='2026-01-01T00:00:00.000Z' WHERE id <= 2",
+                [],
+            )
+            .expect("age");
+        let (window, total) = store.recent_query_log(2).expect("window");
+        assert_eq!(total, 5);
+        assert_eq!(window, vec![json!({"query": "q3"}), json!({"query": "q4"})]);
+
+        let now = crate::time::now_rfc3339_millis();
+        assert_eq!(
+            store.sweep_due(&now).expect("preview")["due_query_expiries"],
+            2
+        );
+        assert_eq!(store.sweep(&now).expect("sweep")["expired_queries"], 2);
+        let (window, total) = store.recent_query_log(10).expect("window");
+        assert_eq!(total, 3);
+        assert_eq!(window.first(), Some(&json!({"query": "q2"})));
     }
 }
