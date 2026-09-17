@@ -238,6 +238,17 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             event,
             consume,
         }) => {
+            // A queued host prompt is claimed first (one worker at a time)
+            // and removed only once its observation is recorded.
+            let claim = if consume {
+                match crate::session::claim_pending(&event) {
+                    Some(claim) => Some(claim),
+                    None => return Ok(()),
+                }
+            } else {
+                None
+            };
+            let event = claim.as_ref().map(|claim| claim.path()).unwrap_or(event);
             let observed = crate::session::observe(
                 launcher.shared.classifier.as_ref(),
                 launcher.shared.principal_id.as_str(),
@@ -246,8 +257,8 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
                 &event,
                 json,
             );
-            if consume {
-                crate::session::consume_pending_event(&event);
+            if let Some(claim) = claim {
+                crate::session::finish_pending(claim, observed.as_ref().err());
             }
             observed.map_err(internal)?;
         }

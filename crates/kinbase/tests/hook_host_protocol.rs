@@ -260,3 +260,226 @@ fn a_prompt_reaches_the_sessions_checkpoint() {
         "{receipt}"
     );
 }
+
+fn pending_dir(world: &World) -> PathBuf {
+    world.personal.join("pending-observations")
+}
+
+/// A queued prompt as a hook leaves it, with its metadata.
+fn queue_entry(
+    world: &World,
+    name: &str,
+    session: &str,
+    record: &str,
+    queued_ago: i64,
+    spawned_ago: i64,
+) -> PathBuf {
+    let dir = pending_dir(world);
+    fs::create_dir_all(&dir).expect("pending dir");
+    fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("chmod");
+    let event = dir.join(format!("{name}.jsonl"));
+    fs::write(&event, record).expect("event");
+    let stamp = |ago: i64| {
+        (chrono::Utc::now() - chrono::Duration::seconds(ago))
+            .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+            .to_string()
+    };
+    let meta = json!({
+        "session": session,
+        "repo": world.repo.display().to_string(),
+        "queued_at": stamp(queued_ago),
+        "spawned_at": stamp(spawned_ago),
+        "attempts": 0
+    });
+    fs::write(dir.join(format!("{name}.meta.json")), meta.to_string()).expect("meta");
+    event
+}
+
+fn prompt_record(text: &str) -> String {
+    format!(
+        "{}\n",
+        json!({"id": "evt-q", "role": "user", "text": text,
+               "observed_at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+               "source_kind": "claude_jsonl"})
+    )
+}
+
+#[test]
+fn a_failed_worker_keeps_the_prompt_for_a_bounded_retry() {
+    let temp = TempDir::new().expect("tempdir");
+    let world = world(&temp);
+    let event = queue_entry(&world, "bad", "host-session-3", "not a record\n", 0, 0);
+    let event_arg = event.display().to_string();
+    for attempt in 1..=3 {
+        let output = kinbase(
+            &world,
+            &[
+                "session",
+                "observe",
+                "host-session-3",
+                "--consume",
+                "--json",
+                "--event",
+                &event_arg,
+            ],
+            &[],
+            b"",
+        );
+        assert!(!output.status.success(), "a malformed event fails");
+        if attempt < 3 {
+            assert!(event.is_file(), "kept after attempt {attempt}");
+            let meta: Value = serde_json::from_slice(
+                &fs::read(pending_dir(&world).join("bad.meta.json")).expect("meta"),
+            )
+            .expect("meta JSON");
+            assert_eq!(meta["attempts"], attempt);
+        }
+    }
+    assert!(!event.exists(), "dropped after the last attempt");
+    assert!(!pending_dir(&world).join("bad.meta.json").exists());
+}
+
+#[test]
+fn a_stop_reports_prompts_still_being_classified() {
+    let temp = TempDir::new().expect("tempdir");
+    let world = world(&temp);
+    let queued = queue_entry(
+        &world,
+        "busy",
+        "host-session-4",
+        &prompt_record("still working"),
+        0,
+        0,
+    );
+    // A live worker (this test process) holds it.
+    let event = pending_dir(&world).join("busy.working.jsonl");
+    fs::rename(&queued, &event).expect("claim");
+    let meta_file = pending_dir(&world).join("busy.meta.json");
+    let mut meta: Value = serde_json::from_slice(&fs::read(&meta_file).unwrap()).unwrap();
+    meta["worker_pid"] = json!(std::process::id());
+    fs::write(&meta_file, meta.to_string()).unwrap();
+    let stop = json!({"session_id": "host-session-4", "cwd": world.repo.display().to_string(),
+                      "hook_event_name": "Stop"});
+    let started = std::time::Instant::now();
+    let receipt = ok(&kinbase(
+        &world,
+        &["hooks", "dispatch", "claude", "Stop", "--json"],
+        &[],
+        stop.to_string().as_bytes(),
+    ));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert_eq!(receipt["pending_observation_count"], 1, "{receipt}");
+    assert!(event.is_file(), "a held prompt is left to its worker");
+}
+
+#[test]
+fn a_prompt_whose_worker_died_is_requeued_as_a_failed_attempt() {
+    let temp = TempDir::new().expect("tempdir");
+    let world = world(&temp);
+    let queued = queue_entry(
+        &world,
+        "lost",
+        "host-session-10",
+        &prompt_record("lost work"),
+        0,
+        0,
+    );
+    fs::rename(&queued, pending_dir(&world).join("lost.working.jsonl")).expect("claim");
+    let meta_file = pending_dir(&world).join("lost.meta.json");
+    let mut meta: Value = serde_json::from_slice(&fs::read(&meta_file).unwrap()).unwrap();
+    meta["worker_pid"] = json!(i32::MAX as u32); // no such process
+    fs::write(&meta_file, meta.to_string()).unwrap();
+    let stop = json!({"session_id": "host-session-11", "cwd": world.repo.display().to_string(),
+                      "hook_event_name": "Stop"});
+    kinbase(
+        &world,
+        &["hooks", "dispatch", "claude", "Stop", "--json"],
+        &[],
+        stop.to_string().as_bytes(),
+    );
+    assert!(queued.is_file(), "requeued");
+    let meta: Value = serde_json::from_slice(&fs::read(&meta_file).unwrap()).unwrap();
+    assert_eq!(meta["attempts"], 1);
+    assert!(meta["worker_pid"].is_null());
+}
+
+#[test]
+fn a_stranded_prompt_is_classified_by_the_next_stop() {
+    let temp = TempDir::new().expect("tempdir");
+    let world = world(&temp);
+    let event = queue_entry(
+        &world,
+        "stranded",
+        "host-session-5",
+        &prompt_record("We chose to keep three retries."),
+        600,
+        600,
+    );
+    let expired = queue_entry(
+        &world,
+        "expired",
+        "host-session-6",
+        &prompt_record("an old prompt"),
+        25 * 3600,
+        25 * 3600,
+    );
+    let stop = json!({"session_id": "host-session-5", "cwd": world.repo.display().to_string(),
+                      "hook_event_name": "Stop"});
+    kinbase(
+        &world,
+        &["hooks", "dispatch", "claude", "Stop", "--json"],
+        &[],
+        stop.to_string().as_bytes(),
+    );
+    assert!(!expired.exists(), "a raw prompt past retention is removed");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while event.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the stranded prompt was never picked up"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    let receipt = ok(&kinbase(
+        &world,
+        &["hooks", "dispatch", "claude", "Stop", "--json"],
+        &[],
+        stop.to_string().as_bytes(),
+    ));
+    assert_eq!(receipt["observation_count"], 1, "{receipt}");
+    assert_eq!(receipt["pending_observation_count"], 0);
+}
+
+#[test]
+fn the_worker_runs_in_the_repository_the_host_names() {
+    let temp = TempDir::new().expect("tempdir");
+    let world = world(&temp);
+    // The host names a repository this process cannot enter; the prompt is
+    // then recorded at once, which shows the named repository was used.
+    let prompt = json!({
+        "session_id": "host-session-8",
+        "cwd": temp.path().join("gone").display().to_string(),
+        "hook_event_name": "UserPromptSubmit",
+        "prompt": "a prompt for a repository that is not here"
+    });
+    let output = kinbase(
+        &world,
+        &["hooks", "dispatch", "claude", "UserPromptSubmit"],
+        &[],
+        prompt.to_string().as_bytes(),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let observations =
+        fs::read_to_string(world.personal.join("observations.jsonl")).expect("recorded");
+    assert!(observations.contains("\"source_identity\":\"session:host-session-8\""));
+    assert_eq!(
+        fs::read_dir(pending_dir(&world))
+            .map(|entries| entries.count())
+            .unwrap_or(0),
+        0
+    );
+}
