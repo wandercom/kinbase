@@ -1059,10 +1059,20 @@ pub fn admit(
     }
     let now = crate::repository::recorded_clock(launcher, &discovered)?;
     let repository_id = discovered.uuid_hint().map(str::to_owned);
+    // Every shared-store write is scanned, as the session path scans every
+    // atom. De-identification only removes opaque codes; an email address, a
+    // `password:` field, a cloud key or a registered name (a guest's, from a
+    // ticket) passes it untouched, and bulk admission signed those into the
+    // repository's `.kin` as trusted facts.
+    let registry = launcher.scanner_registry()?;
+    let withheld = |text: &str| {
+        text.trim().is_empty() || crate::scanner::scanner_with(text, &registry).hard_block
+    };
 
     let mut admitted = 0usize;
     let mut skipped_existing = 0usize;
     let mut skipped_wrong_store = 0usize;
+    let mut withheld_for_privacy = 0usize;
     let mut by_provenance: std::collections::BTreeMap<String, usize> =
         std::collections::BTreeMap::new();
     let mut existing = existing;
@@ -1128,6 +1138,10 @@ pub fn admit(
         if store != crate::StoreKind::Personal {
             let (clean, _removed) = crate::session::deidentify_statement(&statement);
             statement = clean;
+            if withheld(&statement) {
+                withheld_for_privacy += 1;
+                continue;
+            }
         }
         // The store bounds a statement at 16 KiB. Adapters bound their own output,
         // but this path admits whatever is already in the ledger -- including
@@ -1141,6 +1155,11 @@ pub fn admit(
             }
             statement.truncate(end);
             statement.push_str(" [excerpt; full source retained by content digest]");
+            // A cut can leave a token that is a match on its own.
+            if store != crate::StoreKind::Personal && withheld(&statement) {
+                withheld_for_privacy += 1;
+                continue;
+            }
         }
         let mut event = crate::model::FactEvent {
             schema: crate::model::EVENT_SCHEMA.to_owned(),
@@ -1231,6 +1250,13 @@ pub fn admit(
         if crate::json::get_str(&receipt, "repository_id") != repository_id.as_deref() {
             continue;
         }
+        if receipt.get("hard_blocked").and_then(Value::as_bool) == Some(true) {
+            // The whole document was blocked before it reached the
+            // classifier, so it has no atoms to count; it is withheld all
+            // the same.
+            withheld_for_privacy += 1;
+            continue;
+        }
         let Some(atoms) = receipt.get("atoms").and_then(Value::as_array) else {
             continue;
         };
@@ -1240,6 +1266,8 @@ pub fn admit(
                 break;
             }
             if atom.get("hard_blocked").and_then(Value::as_bool) == Some(true) {
+                // Blocked when it was classified; withheld from every store.
+                withheld_for_privacy += 1;
                 continue;
             }
             let Some(statement) = crate::json::get_str(atom, "statement") else {
@@ -1279,6 +1307,12 @@ pub fn admit(
             if store != crate::StoreKind::Personal {
                 let (clean, _removed) = crate::session::deidentify_statement(&statement);
                 statement = clean;
+                // Classification scanned this atom against the registry of its
+                // day; the registry may have grown since.
+                if withheld(&statement) {
+                    withheld_for_privacy += 1;
+                    continue;
+                }
             }
             let confidence = atom
                 .get("confidence")
@@ -1375,6 +1409,7 @@ pub fn admit(
             "admitted": admitted,
             "skipped_already_admitted": skipped_existing,
             "skipped_other_store": skipped_wrong_store,
+            "withheld_for_privacy": withheld_for_privacy,
             "by_provenance": by_provenance,
             "classified": classified,
             "atoms_by_destination": atoms_by_destination,
@@ -1567,6 +1602,7 @@ fn classify_bulk(
                         &observation.observation_id,
                         &observation.content_digest,
                         observation.repository_id.as_deref(),
+                        &registry,
                     )?;
                     atoms.push(atom);
                 }
