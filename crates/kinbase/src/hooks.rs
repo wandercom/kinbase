@@ -41,6 +41,9 @@ pub fn dispatch(
         && let Err(error) = &result
     {
         eprintln!("{}: {}", error.code, error.message);
+        if !error.remediation.is_empty() {
+            eprintln!("remediation: {}", error.remediation);
+        }
     }
     result
 }

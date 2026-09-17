@@ -676,6 +676,10 @@ fn a_host_hook_never_exits_2_even_for_a_user_action_refusal() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(3), "{stderr}");
     assert!(stderr.contains("REPO_UNCERTIFIED"), "the reason is kept: {stderr}");
+    assert!(
+        stderr.lines().any(|line| line.starts_with("remediation: ")),
+        "so is the remediation: {stderr}"
+    );
 
     // The same refusal from an ordinary command still exits 2.
     let refused = kinbase::error::ContractError::user_action("REPO_UNCERTIFIED", "m", "r");
