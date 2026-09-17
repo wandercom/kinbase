@@ -95,11 +95,16 @@ pub struct Registry {
     pub canary_digests: BTreeSet<String>,
     pub identifiers: Vec<String>,
     pub identifier_digests: BTreeSet<String>,
-    /// The most words any registered value spans. A digest-only scan hashes
-    /// every run of up to this many consecutive words; hashing single words
-    /// and the whole text could never match `alpha bravo` inside a sentence.
-    pub digest_words: usize,
+    /// The word counts registered values span. A digest-only scan hashes
+    /// every run of consecutive words of exactly these lengths; hashing single
+    /// words and the whole text could never match `alpha bravo` inside a
+    /// sentence.
+    pub digest_word_counts: BTreeSet<usize>,
 }
+
+/// The longest word run a digest-only scan hashes. A longer registered value
+/// is still found whole, never by a run; the cap bounds the work.
+pub const MAX_DIGEST_WORDS: usize = 32;
 
 impl Registry {
     pub fn from_values(canaries: Vec<String>, identifiers: Vec<String>) -> Self {
@@ -108,13 +113,13 @@ impl Registry {
             .iter()
             .map(|value| identifier_digest(value))
             .collect();
-        let digest_words = registered_words(canaries.iter().chain(&identifiers));
+        let digest_word_counts = registered_word_counts(canaries.iter().chain(&identifiers));
         Self {
             canaries,
             canary_digests,
             identifiers,
             identifier_digests,
-            digest_words,
+            digest_word_counts,
         }
     }
 
@@ -122,14 +127,18 @@ impl Registry {
     pub fn digests_only(
         canary_digests: &[String],
         identifier_digests: &[String],
-        digest_words: usize,
+        digest_word_counts: &[usize],
     ) -> Self {
         Self {
             canaries: Vec::new(),
             canary_digests: canary_digests.iter().cloned().collect(),
             identifiers: Vec::new(),
             identifier_digests: identifier_digests.iter().cloned().collect(),
-            digest_words,
+            digest_word_counts: digest_word_counts
+                .iter()
+                .copied()
+                .filter(|count| (1..=MAX_DIGEST_WORDS).contains(count))
+                .collect(),
         }
     }
 }
@@ -145,13 +154,13 @@ fn digest_words(value: &str) -> Vec<String> {
         .collect()
 }
 
-/// The longest word count among registered values (at least one).
-pub fn registered_words<'a>(values: impl Iterator<Item = &'a String>) -> usize {
+/// The word counts of registered values a run can match (one through
+/// `MAX_DIGEST_WORDS`).
+pub fn registered_word_counts<'a>(values: impl Iterator<Item = &'a String>) -> BTreeSet<usize> {
     values
         .map(|value| digest_words(value).len())
-        .max()
-        .unwrap_or(0)
-        .max(1)
+        .filter(|count| (1..=MAX_DIGEST_WORDS).contains(count))
+        .collect()
 }
 
 /// Normalization used for registry digests: NFC, lowercase, alphanumerics
@@ -471,17 +480,21 @@ fn scan_inner(text: &str, registry: &Registry) -> Result<ScanResult, String> {
             }
         }
     }
-    // 1b. digest-only registries (shared processes): every run of up to
-    //     `digest_words` consecutive words, and the whole text.
+    // 1b. digest-only registries (shared processes): every run of a
+    //     registered word count, and the whole text. A registry holding the
+    //     raw values has already matched them above and below, so it skips
+    //     the runs (and their hashing cost).
     let digest_only = registry.canaries.is_empty() && registry.identifiers.is_empty();
     if !registry.canary_digests.is_empty() || !registry.identifier_digests.is_empty() {
-        let span = registry.digest_words.max(1);
         for (family, view) in &all_views {
-            let words = digest_words(view);
-            for start in 0..words.len() {
-                let mut joined = String::new();
-                for word in words.iter().skip(start).take(span) {
-                    joined.push_str(word);
+            let words = if digest_only {
+                digest_words(view)
+            } else {
+                Vec::new()
+            };
+            for &count in &registry.digest_word_counts {
+                for run in words.windows(count) {
+                    let joined = run.concat();
                     if joined.len() >= 6
                         && registry.canary_digests.contains(&canary_digest(&joined))
                     {
@@ -492,10 +505,9 @@ fn scan_inner(text: &str, registry: &Registry) -> Result<ScanResult, String> {
                             Taint::ConfiguredCanary,
                         );
                     }
-                    if digest_only
-                        && registry
-                            .identifier_digests
-                            .contains(&identifier_digest(&joined))
+                    if registry
+                        .identifier_digests
+                        .contains(&identifier_digest(&joined))
                     {
                         add(
                             &mut findings,
@@ -914,10 +926,11 @@ mod digest_registry_tests {
             vec!["Violet Harbor Lantern".to_owned()],
             vec!["acme payroll".to_owned()],
         );
-        assert_eq!(raw.digest_words, 3);
+        let counts: Vec<usize> = raw.digest_word_counts.iter().copied().collect();
+        assert_eq!(counts, [2, 3]);
         let digests: Vec<String> = raw.canary_digests.iter().cloned().collect();
         let identifiers: Vec<String> = raw.identifier_digests.iter().cloned().collect();
-        let shared = Registry::digests_only(&digests, &identifiers, raw.digest_words);
+        let shared = Registry::digests_only(&digests, &identifiers, &counts);
         assert!(shared.canaries.is_empty() && shared.identifiers.is_empty());
 
         let canary = scan(
@@ -941,6 +954,46 @@ mod digest_registry_tests {
             !clean.taints.contains(&Taint::ConfiguredCanary),
             "{:?}",
             clean.findings
+        );
+    }
+}
+
+#[cfg(test)]
+mod digest_work_tests {
+    use super::*;
+
+    #[test]
+    fn a_long_registered_value_does_not_multiply_the_scan() {
+        let long_identifier = (0..100)
+            .map(|index| format!("word{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let text = (0..1000)
+            .map(|index| format!("token{index}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let raw = Registry::from_values(Vec::new(), vec![long_identifier]);
+        assert!(
+            raw.digest_word_counts.is_empty(),
+            "a 100-word value is never a run"
+        );
+        let started = std::time::Instant::now();
+        scan(&text, &raw).expect("scan");
+        let identifiers: Vec<String> = raw.identifier_digests.iter().cloned().collect();
+        let shared = Registry::digests_only(&[], &identifiers, &[100, 2]);
+        assert_eq!(
+            shared
+                .digest_word_counts
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            [2]
+        );
+        scan(&text, &shared).expect("scan");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
         );
     }
 }

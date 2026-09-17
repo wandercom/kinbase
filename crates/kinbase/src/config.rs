@@ -116,8 +116,8 @@ pub struct SharedConfig {
     /// Digests, like the canaries': a shared process holds no raw registered
     /// value.
     pub forbidden_identifier_digests: Vec<String>,
-    /// The most words a registered value spans (see `scanner::Registry`).
-    pub registry_digest_words: usize,
+    /// The word counts registered values span (see `scanner::Registry`).
+    pub registry_digest_word_counts: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -661,8 +661,10 @@ impl UserConfig {
             None => Vec::new(),
             Some(path) => load_registry_lines(path, "forbidden identifier registry")?,
         };
-        let registry_digest_words =
-            crate::scanner::registered_words(canaries.iter().chain(&forbidden_identifiers));
+        let registry_digest_word_counts =
+            crate::scanner::registered_word_counts(canaries.iter().chain(&forbidden_identifiers))
+                .into_iter()
+                .collect();
         let canary_digests = canaries
             .iter()
             .map(|value| crate::scanner::canary_digest(value))
@@ -690,7 +692,7 @@ impl UserConfig {
             },
             canary_digests,
             forbidden_identifier_digests,
-            registry_digest_words,
+            registry_digest_word_counts,
         })
     }
 }
@@ -730,7 +732,7 @@ pub fn codebase_only_shared() -> SharedConfig {
         },
         canary_digests: Vec::new(),
         forbidden_identifier_digests: Vec::new(),
-        registry_digest_words: 0,
+        registry_digest_word_counts: Vec::new(),
     }
 }
 
