@@ -243,6 +243,13 @@ def test_native_host_events_prime_capture_and_exclude_personal(
     _run(kinbase, "hooks", "install", host, "--json",
          cwd=world.repo.path)
 
+    frozen = hosts.envelope_fixture(host)
+    if host_binary.version != frozen["version"]:
+        raise HarnessInvalid(
+            f"the frozen {host} envelopes describe {frozen['version']!r}; the host under "
+            f"test is {host_binary.version!r}. Re-freeze tests/fixtures/hosts/envelopes.json "
+            "for the pinned host (spec/verification.md V-9 pins both)."
+        )
     session = ids.token("native-events")
     dispatched: dict[str, dict] = {}
     for event in NATIVE_EVENTS:
@@ -263,6 +270,16 @@ def test_native_host_events_prime_capture_and_exclude_personal(
     witness.assert_not_mocked()
     start = dispatched["SessionStart"]
     rendered = json.dumps(dispatched)
+    # Capture and checkpoint are read from the Personal ledgers the product
+    # writes, not from the response's own flags (which were constants).
+    captured = _personal_records(
+        roots, "observations.jsonl",
+        lambda row: row.get("source_identity") == "session:" + session,
+    )
+    checkpoints = _personal_records(
+        roots, "session-checkpoints.jsonl",
+        lambda row: row.get("session_id") == session and row.get("status") == "checkpointed",
+    )
     O.check(
         "V-9.native-events",
         {
@@ -275,9 +292,10 @@ def test_native_host_events_prime_capture_and_exclude_personal(
             },
             "personal_root_occurrences": rendered.count(canary)
             + rendered.count(str(roots.personal_root)),
-            "capture_continued": field(
-                dispatched["UserPromptSubmit"], "capture_active"),
-            "stop_checkpointed": field(dispatched["Stop"], "checkpointed"),
+            "envelope_fixture": {"host_version": frozen["version"],
+                                 "provenance": frozen["provenance"]},
+            "capture_continued": bool(captured),
+            "stop_checkpointed": bool(checkpoints),
         },
         label="native host events prime capture and exclude Personal",
     )
@@ -313,8 +331,9 @@ def test_matched_conversations_produce_identical_canonical_payloads(
         native = []
         for index, text in enumerate(messages):
             message_id = ids.token("parity-message-" + str(index))
+            # A host sends no message id or timestamp with a prompt.
             prompt = hosts.envelope_for(name, "UserPromptSubmit", session_id=session,
-                                        cwd=str(world.repo.path), id=message_id, prompt=text, timestamp=stamp)
+                                        cwd=str(world.repo.path), prompt=text)
             _run(kinbase, "hooks", "dispatch", name, "UserPromptSubmit", "--json",
                  cwd=world.repo.path, stdin=json.dumps(prompt)).ok()
             native.append({"id": message_id, "role": "user", "text": text,
@@ -363,6 +382,26 @@ def test_matched_conversations_produce_identical_canonical_payloads(
         "receipts_match": first["receipts"] == second["receipts"],
         "projections_match": bool(projections[0]) and projections[0] == projections[1],
     }, label="matched native conversations admit identical canonical knowledge and receipts")
+
+
+def _personal_records(roots: ProofRoots, name: str, keep, *, wait_s: float = 30.0) -> list[dict]:
+    """Rows of one Personal ledger that ``keep`` accepts, waiting for a queued
+    observation to drain; an absent ledger is no rows."""
+    path = roots.personal_root / name
+    deadline = time.monotonic() + wait_s
+    while True:
+        rows_found = []
+        if path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict) and keep(row):
+                    rows_found.append(row)
+        if rows_found or time.monotonic() >= deadline:
+            return rows_found
+        time.sleep(0.25)
 
 
 def _construct_state(kinbase: Kinbase, roots: ProofRoots, world, state: str) -> bool:

@@ -121,22 +121,29 @@ class Obligation:
             "vectors": list(self.vectors),
             "fail_closed": self.fail_closed,
             "nodes": list(self.nodes),
-            "thresholds": [
-                {
-                    "tag": c.tag,
-                    "kind": c.kind,
-                    "path": c.path,
-                    "bound": c.value if not isinstance(c.value, tuple) else list(c.value),
-                    "min_len": c.min_len,
-                    "why": c.why,
-                    "positive_control": self.positive_control(c.tag),
-                    "negative_control": self.negative_control(c.tag),
-                    "product_mutation": self.product_mutation(c.tag),
-                    "detector_mutation": self.detector_mutation(c.tag),
-                }
-                for c in self.clause_set.clauses
-            ],
+            "thresholds": [self._clause_json(c, "") for c in self.clause_set.clauses],
         }
+
+    def _clause_json(self, clause, parent: str) -> dict:
+        """One threshold with its controls; an `every` threshold carries the
+        sub-clauses it applies to each element, so the frozen catalog (and its
+        digest) changes whenever what the obligation really checks changes."""
+        tag = f"{parent}{clause.tag}"
+        entry = {
+            "tag": tag,
+            "kind": clause.kind,
+            "path": clause.path,
+            "bound": clause.value if not isinstance(clause.value, tuple) else list(clause.value),
+            "min_len": clause.min_len,
+            "why": clause.why,
+            "positive_control": self.positive_control(tag),
+            "negative_control": self.negative_control(tag),
+            "product_mutation": self.product_mutation(tag),
+            "detector_mutation": self.detector_mutation(tag),
+        }
+        if clause.each:
+            entry["each"] = [self._clause_json(sub, f"{tag}/") for sub in clause.each]
+        return entry
 
 
 

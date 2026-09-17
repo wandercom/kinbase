@@ -18,7 +18,6 @@ from pathlib import Path
 
 import pytest
 
-from ._harness.cli import Kinbase
 from ._harness.gates import (
     COMPOSITION,
     GATE_IDS,
@@ -30,7 +29,7 @@ from ._harness.gates import (
     compose,
     gate_result_from_vector,
 )
-from ._harness.requirements import ARCH, CLI, VERIFY, ProductFailure, spec_ref
+from ._harness.requirements import VERIFY, spec_ref
 
 pytestmark = [pytest.mark.verdict]
 

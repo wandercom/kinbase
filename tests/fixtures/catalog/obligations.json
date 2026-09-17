@@ -67,6 +67,44 @@
         {
           "bound": null,
           "detector_mutation": "V-1.adapters-native#dm:every:receipts",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-1.adapters-native#dm:every:receipts/present:adapter",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.adapters-native#nc:every:receipts/present:adapter",
+              "path": "adapter",
+              "positive_control": "V-1.adapters-native#pc:every:receipts/present:adapter",
+              "product_mutation": "V-1.adapters-native#pm:every:receipts/present:adapter",
+              "tag": "every:receipts/present:adapter",
+              "why": "receipt names its adapter"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.adapters-native#dm:every:receipts/present:source_identity",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.adapters-native#nc:every:receipts/present:source_identity",
+              "path": "source_identity",
+              "positive_control": "V-1.adapters-native#pc:every:receipts/present:source_identity",
+              "product_mutation": "V-1.adapters-native#pm:every:receipts/present:source_identity",
+              "tag": "every:receipts/present:source_identity",
+              "why": "receipt binds a stable native source identity"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.adapters-native#dm:every:receipts/nonempty:observations",
+              "kind": "nonempty",
+              "min_len": 1,
+              "negative_control": "V-1.adapters-native#nc:every:receipts/nonempty:observations",
+              "path": "observations",
+              "positive_control": "V-1.adapters-native#pc:every:receipts/nonempty:observations",
+              "product_mutation": "V-1.adapters-native#pm:every:receipts/nonempty:observations",
+              "tag": "every:receipts/nonempty:observations",
+              "why": "receipt lists observations, never a bare count"
+            }
+          ],
           "kind": "every",
           "min_len": 10,
           "negative_control": "V-1.adapters-native#nc:every:receipts",
@@ -108,6 +146,80 @@
         {
           "bound": null,
           "detector_mutation": "V-1.receipt-not-count#dm:every:observations",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-1.receipt-not-count#dm:every:observations/present:source_kind",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.receipt-not-count#nc:every:observations/present:source_kind",
+              "path": "source_kind",
+              "positive_control": "V-1.receipt-not-count#pc:every:observations/present:source_kind",
+              "product_mutation": "V-1.receipt-not-count#pm:every:observations/present:source_kind",
+              "tag": "every:observations/present:source_kind",
+              "why": "source class"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.receipt-not-count#dm:every:observations/present:source_identity",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.receipt-not-count#nc:every:observations/present:source_identity",
+              "path": "source_identity",
+              "positive_control": "V-1.receipt-not-count#pc:every:observations/present:source_identity",
+              "product_mutation": "V-1.receipt-not-count#pm:every:observations/present:source_identity",
+              "tag": "every:observations/present:source_identity",
+              "why": "stable native identity"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.receipt-not-count#dm:every:observations/present:content_digest",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.receipt-not-count#nc:every:observations/present:content_digest",
+              "path": "content_digest",
+              "positive_control": "V-1.receipt-not-count#pc:every:observations/present:content_digest",
+              "product_mutation": "V-1.receipt-not-count#pm:every:observations/present:content_digest",
+              "tag": "every:observations/present:content_digest",
+              "why": "content digest"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.receipt-not-count#dm:every:observations/present:observed_at",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.receipt-not-count#nc:every:observations/present:observed_at",
+              "path": "observed_at",
+              "positive_control": "V-1.receipt-not-count#pc:every:observations/present:observed_at",
+              "product_mutation": "V-1.receipt-not-count#pm:every:observations/present:observed_at",
+              "tag": "every:observations/present:observed_at",
+              "why": "observed time"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.receipt-not-count#dm:every:observations/present:disposition",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.receipt-not-count#nc:every:observations/present:disposition",
+              "path": "disposition",
+              "positive_control": "V-1.receipt-not-count#pc:every:observations/present:disposition",
+              "product_mutation": "V-1.receipt-not-count#pm:every:observations/present:disposition",
+              "tag": "every:observations/present:disposition",
+              "why": "lifecycle disposition"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.receipt-not-count#dm:every:observations/present:extraction_version",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.receipt-not-count#nc:every:observations/present:extraction_version",
+              "path": "extraction_version",
+              "positive_control": "V-1.receipt-not-count#pc:every:observations/present:extraction_version",
+              "product_mutation": "V-1.receipt-not-count#pm:every:observations/present:extraction_version",
+              "tag": "every:observations/present:extraction_version",
+              "why": "extraction version"
+            }
+          ],
           "kind": "every",
           "min_len": 1,
           "negative_control": "V-1.receipt-not-count#nc:every:observations",
@@ -345,6 +457,44 @@
         {
           "bound": null,
           "detector_mutation": "V-1.disposition-change#dm:every:changed_dispositions",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-1.disposition-change#dm:every:changed_dispositions/present:observation_id",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.disposition-change#nc:every:changed_dispositions/present:observation_id",
+              "path": "observation_id",
+              "positive_control": "V-1.disposition-change#pc:every:changed_dispositions/present:observation_id",
+              "product_mutation": "V-1.disposition-change#pm:every:changed_dispositions/present:observation_id",
+              "tag": "every:changed_dispositions/present:observation_id",
+              "why": "which observation"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.disposition-change#dm:every:changed_dispositions/present:from_disposition",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.disposition-change#nc:every:changed_dispositions/present:from_disposition",
+              "path": "from_disposition",
+              "positive_control": "V-1.disposition-change#pc:every:changed_dispositions/present:from_disposition",
+              "product_mutation": "V-1.disposition-change#pm:every:changed_dispositions/present:from_disposition",
+              "tag": "every:changed_dispositions/present:from_disposition",
+              "why": "prior disposition"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.disposition-change#dm:every:changed_dispositions/present:to_disposition",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.disposition-change#nc:every:changed_dispositions/present:to_disposition",
+              "path": "to_disposition",
+              "positive_control": "V-1.disposition-change#pc:every:changed_dispositions/present:to_disposition",
+              "product_mutation": "V-1.disposition-change#pm:every:changed_dispositions/present:to_disposition",
+              "tag": "every:changed_dispositions/present:to_disposition",
+              "why": "new disposition"
+            }
+          ],
           "kind": "every",
           "min_len": 1,
           "negative_control": "V-1.disposition-change#nc:every:changed_dispositions",
@@ -416,6 +566,188 @@
         {
           "bound": null,
           "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/present:adapter",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/present:adapter",
+              "path": "adapter",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/present:adapter",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/present:adapter",
+              "tag": "every:cells/present:adapter",
+              "why": "which adapter"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/present:cell",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/present:cell",
+              "path": "cell",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/present:cell",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/present:cell",
+              "tag": "every:cells/present:cell",
+              "why": "which lifecycle cell"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/present:native_format",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/present:native_format",
+              "path": "native_format",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/present:native_format",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/present:native_format",
+              "tag": "every:cells/present:native_format",
+              "why": "the adapter's own source format, not a generic JSON stand-in"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/present:expected_observation_state",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/present:expected_observation_state",
+              "path": "expected_observation_state",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/present:expected_observation_state",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/present:expected_observation_state",
+              "tag": "every:cells/present:expected_observation_state",
+              "why": "frozen expected observation state"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/present:expected_fact_state",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/present:expected_fact_state",
+              "path": "expected_fact_state",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/present:expected_fact_state",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/present:expected_fact_state",
+              "tag": "every:cells/present:expected_fact_state",
+              "why": "frozen expected current-fact state"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/present:expected_unknown_state",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/present:expected_unknown_state",
+              "path": "expected_unknown_state",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/present:expected_unknown_state",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/present:expected_unknown_state",
+              "tag": "every:cells/present:expected_unknown_state",
+              "why": "frozen expected Unknown state"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/present:observed_observation_state",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/present:observed_observation_state",
+              "path": "observed_observation_state",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/present:observed_observation_state",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/present:observed_observation_state",
+              "tag": "every:cells/present:observed_observation_state",
+              "why": "observed observation state"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/present:observed_fact_state",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/present:observed_fact_state",
+              "path": "observed_fact_state",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/present:observed_fact_state",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/present:observed_fact_state",
+              "tag": "every:cells/present:observed_fact_state",
+              "why": "observed current-fact state"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/present:observed_unknown_state",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/present:observed_unknown_state",
+              "path": "observed_unknown_state",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/present:observed_unknown_state",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/present:observed_unknown_state",
+              "tag": "every:cells/present:observed_unknown_state",
+              "why": "observed Unknown state"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/is_true:states_match",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/is_true:states_match",
+              "path": "states_match",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/is_true:states_match",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/is_true:states_match",
+              "tag": "every:cells/is_true:states_match",
+              "why": "C15: public observations, linked facts and Unknowns satisfy the frozen expectations"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/is_true:transition_executed_natively",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/is_true:transition_executed_natively",
+              "path": "transition_executed_natively",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/is_true:transition_executed_natively",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/is_true:transition_executed_natively",
+              "tag": "every:cells/is_true:transition_executed_natively",
+              "why": "the transition ran in the adapter's native format; naming a cell is not executing it"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/present:source_tree_before",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/present:source_tree_before",
+              "path": "source_tree_before",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/present:source_tree_before",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/present:source_tree_before",
+              "tag": "every:cells/present:source_tree_before",
+              "why": "raw source digest before the transition"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/present:source_tree_after",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/present:source_tree_after",
+              "path": "source_tree_after",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/present:source_tree_after",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/present:source_tree_after",
+              "tag": "every:cells/present:source_tree_after",
+              "why": "raw source digest after the transition"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/present:negative_mutation",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/present:negative_mutation",
+              "path": "negative_mutation",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/present:negative_mutation",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/present:negative_mutation",
+              "tag": "every:cells/present:negative_mutation",
+              "why": "this cell's own negative mutation"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.lifecycle-matrix#dm:every:cells/is_true:adapter_receipts_present",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-1.lifecycle-matrix#nc:every:cells/is_true:adapter_receipts_present",
+              "path": "adapter_receipts_present",
+              "positive_control": "V-1.lifecycle-matrix#pc:every:cells/is_true:adapter_receipts_present",
+              "product_mutation": "V-1.lifecycle-matrix#pm:every:cells/is_true:adapter_receipts_present",
+              "tag": "every:cells/is_true:adapter_receipts_present",
+              "why": "C15: status reports receipts for the exercised adapter"
+            }
+          ],
           "kind": "every",
           "min_len": 64,
           "negative_control": "V-1.lifecycle-matrix#nc:every:cells",
@@ -562,6 +894,56 @@
         {
           "bound": null,
           "detector_mutation": "V-1.clock-skew#dm:every:cursors_exercised_detail",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-1.clock-skew#dm:every:cursors_exercised_detail/present:cursor",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-1.clock-skew#nc:every:cursors_exercised_detail/present:cursor",
+              "path": "cursor",
+              "positive_control": "V-1.clock-skew#pc:every:cursors_exercised_detail/present:cursor",
+              "product_mutation": "V-1.clock-skew#pm:every:cursors_exercised_detail/present:cursor",
+              "tag": "every:cursors_exercised_detail/present:cursor",
+              "why": "which cursor"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.clock-skew#dm:every:cursors_exercised_detail/is_true:positive_skew_quarantined",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-1.clock-skew#nc:every:cursors_exercised_detail/is_true:positive_skew_quarantined",
+              "path": "positive_skew_quarantined",
+              "positive_control": "V-1.clock-skew#pc:every:cursors_exercised_detail/is_true:positive_skew_quarantined",
+              "product_mutation": "V-1.clock-skew#pm:every:cursors_exercised_detail/is_true:positive_skew_quarantined",
+              "tag": "every:cursors_exercised_detail/is_true:positive_skew_quarantined",
+              "why": "future receipt-time claim quarantined"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.clock-skew#dm:every:cursors_exercised_detail/is_true:negative_skew_quarantined",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-1.clock-skew#nc:every:cursors_exercised_detail/is_true:negative_skew_quarantined",
+              "path": "negative_skew_quarantined",
+              "positive_control": "V-1.clock-skew#pc:every:cursors_exercised_detail/is_true:negative_skew_quarantined",
+              "product_mutation": "V-1.clock-skew#pm:every:cursors_exercised_detail/is_true:negative_skew_quarantined",
+              "tag": "every:cursors_exercised_detail/is_true:negative_skew_quarantined",
+              "why": "past receipt-time claim quarantined"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-1.clock-skew#dm:every:cursors_exercised_detail/is_true:out_of_order_handled",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-1.clock-skew#nc:every:cursors_exercised_detail/is_true:out_of_order_handled",
+              "path": "out_of_order_handled",
+              "positive_control": "V-1.clock-skew#pc:every:cursors_exercised_detail/is_true:out_of_order_handled",
+              "product_mutation": "V-1.clock-skew#pm:every:cursors_exercised_detail/is_true:out_of_order_handled",
+              "tag": "every:cursors_exercised_detail/is_true:out_of_order_handled",
+              "why": "out-of-order delivery handled"
+            }
+          ],
           "kind": "every",
           "min_len": 3,
           "negative_control": "V-1.clock-skew#nc:every:cursors_exercised_detail",
@@ -752,6 +1134,25 @@
         {
           "bound": null,
           "detector_mutation": "V-1.origin-trust#dm:every:observations",
+          "each": [
+            {
+              "bound": [
+                "merged-default",
+                "approved-pr",
+                "unreviewed-branch",
+                "uncommitted-worktree"
+              ],
+              "detector_mutation": "V-1.origin-trust#dm:every:observations/member:origin_trust_class",
+              "kind": "member",
+              "min_len": 1,
+              "negative_control": "V-1.origin-trust#nc:every:observations/member:origin_trust_class",
+              "path": "origin_trust_class",
+              "positive_control": "V-1.origin-trust#pc:every:observations/member:origin_trust_class",
+              "product_mutation": "V-1.origin-trust#pm:every:observations/member:origin_trust_class",
+              "tag": "every:observations/member:origin_trust_class",
+              "why": "closed origin trust class set"
+            }
+          ],
           "kind": "every",
           "min_len": 2,
           "negative_control": "V-1.origin-trust#nc:every:observations",
@@ -894,6 +1295,32 @@
         {
           "bound": null,
           "detector_mutation": "V-2.annotators#dm:every:per_destination_kappa",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-2.annotators#dm:every:per_destination_kappa/present:destination",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-2.annotators#nc:every:per_destination_kappa/present:destination",
+              "path": "destination",
+              "positive_control": "V-2.annotators#pc:every:per_destination_kappa/present:destination",
+              "product_mutation": "V-2.annotators#pm:every:per_destination_kappa/present:destination",
+              "tag": "every:per_destination_kappa/present:destination",
+              "why": "which destination"
+            },
+            {
+              "bound": 0.8,
+              "detector_mutation": "V-2.annotators#dm:every:per_destination_kappa/at_least:kappa",
+              "kind": "at_least",
+              "min_len": 1,
+              "negative_control": "V-2.annotators#nc:every:per_destination_kappa/at_least:kappa",
+              "path": "kappa",
+              "positive_control": "V-2.annotators#pc:every:per_destination_kappa/at_least:kappa",
+              "product_mutation": "V-2.annotators#pm:every:per_destination_kappa/at_least:kappa",
+              "tag": "every:per_destination_kappa/at_least:kappa",
+              "why": "Cohen's kappa floor per destination"
+            }
+          ],
           "kind": "every",
           "min_len": 4,
           "negative_control": "V-2.annotators#nc:every:per_destination_kappa",
@@ -1013,6 +1440,32 @@
         {
           "bound": null,
           "detector_mutation": "V-2.pinned-runs#dm:every:shared_precision_lower_bound",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-2.pinned-runs#dm:every:shared_precision_lower_bound/present:destination",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-2.pinned-runs#nc:every:shared_precision_lower_bound/present:destination",
+              "path": "destination",
+              "positive_control": "V-2.pinned-runs#pc:every:shared_precision_lower_bound/present:destination",
+              "product_mutation": "V-2.pinned-runs#pm:every:shared_precision_lower_bound/present:destination",
+              "tag": "every:shared_precision_lower_bound/present:destination",
+              "why": "which shared destination"
+            },
+            {
+              "bound": 0.95,
+              "detector_mutation": "V-2.pinned-runs#dm:every:shared_precision_lower_bound/at_least:value",
+              "kind": "at_least",
+              "min_len": 1,
+              "negative_control": "V-2.pinned-runs#nc:every:shared_precision_lower_bound/at_least:value",
+              "path": "value",
+              "positive_control": "V-2.pinned-runs#pc:every:shared_precision_lower_bound/at_least:value",
+              "product_mutation": "V-2.pinned-runs#pm:every:shared_precision_lower_bound/at_least:value",
+              "tag": "every:shared_precision_lower_bound/at_least:value",
+              "why": "shared precision floor"
+            }
+          ],
           "kind": "every",
           "min_len": 2,
           "negative_control": "V-2.pinned-runs#nc:every:shared_precision_lower_bound",
@@ -1069,6 +1522,44 @@
         {
           "bound": null,
           "detector_mutation": "V-2.atomisation#dm:every:mixed_messages",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-2.atomisation#dm:every:mixed_messages/present:message_id",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-2.atomisation#nc:every:mixed_messages/present:message_id",
+              "path": "message_id",
+              "positive_control": "V-2.atomisation#pc:every:mixed_messages/present:message_id",
+              "product_mutation": "V-2.atomisation#pm:every:mixed_messages/present:message_id",
+              "tag": "every:mixed_messages/present:message_id",
+              "why": "which message"
+            },
+            {
+              "bound": 2,
+              "detector_mutation": "V-2.atomisation#dm:every:mixed_messages/at_least:atom_count",
+              "kind": "at_least",
+              "min_len": 1,
+              "negative_control": "V-2.atomisation#nc:every:mixed_messages/at_least:atom_count",
+              "path": "atom_count",
+              "positive_control": "V-2.atomisation#pc:every:mixed_messages/at_least:atom_count",
+              "product_mutation": "V-2.atomisation#pm:every:mixed_messages/at_least:atom_count",
+              "tag": "every:mixed_messages/at_least:atom_count",
+              "why": "a mixed message yields at least two atoms"
+            },
+            {
+              "bound": 2,
+              "detector_mutation": "V-2.atomisation#dm:every:mixed_messages/at_least:distinct_destination_count",
+              "kind": "at_least",
+              "min_len": 1,
+              "negative_control": "V-2.atomisation#nc:every:mixed_messages/at_least:distinct_destination_count",
+              "path": "distinct_destination_count",
+              "positive_control": "V-2.atomisation#pc:every:mixed_messages/at_least:distinct_destination_count",
+              "product_mutation": "V-2.atomisation#pm:every:mixed_messages/at_least:distinct_destination_count",
+              "tag": "every:mixed_messages/at_least:distinct_destination_count",
+              "why": "a mixed message yields at least two destinations"
+            }
+          ],
           "kind": "every",
           "min_len": 40,
           "negative_control": "V-2.atomisation#nc:every:mixed_messages",
@@ -1130,6 +1621,56 @@
         {
           "bound": null,
           "detector_mutation": "V-2.metrics#dm:every:per_label",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-2.metrics#dm:every:per_label/present:destination",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-2.metrics#nc:every:per_label/present:destination",
+              "path": "destination",
+              "positive_control": "V-2.metrics#pc:every:per_label/present:destination",
+              "product_mutation": "V-2.metrics#pm:every:per_label/present:destination",
+              "tag": "every:per_label/present:destination",
+              "why": "which label"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-2.metrics#dm:every:per_label/present:precision",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-2.metrics#nc:every:per_label/present:precision",
+              "path": "precision",
+              "positive_control": "V-2.metrics#pc:every:per_label/present:precision",
+              "product_mutation": "V-2.metrics#pm:every:per_label/present:precision",
+              "tag": "every:per_label/present:precision",
+              "why": "precision"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-2.metrics#dm:every:per_label/present:recall",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-2.metrics#nc:every:per_label/present:recall",
+              "path": "recall",
+              "positive_control": "V-2.metrics#pc:every:per_label/present:recall",
+              "product_mutation": "V-2.metrics#pm:every:per_label/present:recall",
+              "tag": "every:per_label/present:recall",
+              "why": "recall"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-2.metrics#dm:every:per_label/present:f1",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-2.metrics#nc:every:per_label/present:f1",
+              "path": "f1",
+              "positive_control": "V-2.metrics#pc:every:per_label/present:f1",
+              "product_mutation": "V-2.metrics#pm:every:per_label/present:f1",
+              "tag": "every:per_label/present:f1",
+              "why": "F1"
+            }
+          ],
           "kind": "every",
           "min_len": 4,
           "negative_control": "V-2.metrics#nc:every:per_label",
@@ -1213,6 +1754,35 @@
         {
           "bound": null,
           "detector_mutation": "V-2.low-confidence#dm:every:low_confidence_atoms",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-2.low-confidence#dm:every:low_confidence_atoms/present:atom_id",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-2.low-confidence#nc:every:low_confidence_atoms/present:atom_id",
+              "path": "atom_id",
+              "positive_control": "V-2.low-confidence#pc:every:low_confidence_atoms/present:atom_id",
+              "product_mutation": "V-2.low-confidence#pm:every:low_confidence_atoms/present:atom_id",
+              "tag": "every:low_confidence_atoms/present:atom_id",
+              "why": "which atom"
+            },
+            {
+              "bound": [
+                "none",
+                "personal"
+              ],
+              "detector_mutation": "V-2.low-confidence#dm:every:low_confidence_atoms/member:destination",
+              "kind": "member",
+              "min_len": 1,
+              "negative_control": "V-2.low-confidence#nc:every:low_confidence_atoms/member:destination",
+              "path": "destination",
+              "positive_control": "V-2.low-confidence#pc:every:low_confidence_atoms/member:destination",
+              "product_mutation": "V-2.low-confidence#pm:every:low_confidence_atoms/member:destination",
+              "tag": "every:low_confidence_atoms/member:destination",
+              "why": "a low-confidence shared label demotes to none/Unknown"
+            }
+          ],
           "kind": "every",
           "min_len": 1,
           "negative_control": "V-2.low-confidence#nc:every:low_confidence_atoms",
@@ -1269,6 +1839,32 @@
         {
           "bound": null,
           "detector_mutation": "V-2.independent-candidates#dm:every:three_store_detail",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-2.independent-candidates#dm:every:three_store_detail/present:message_id",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-2.independent-candidates#nc:every:three_store_detail/present:message_id",
+              "path": "message_id",
+              "positive_control": "V-2.independent-candidates#pc:every:three_store_detail/present:message_id",
+              "product_mutation": "V-2.independent-candidates#pm:every:three_store_detail/present:message_id",
+              "tag": "every:three_store_detail/present:message_id",
+              "why": "which message"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-2.independent-candidates#dm:every:three_store_detail/distinct:payload_digests",
+              "kind": "distinct",
+              "min_len": 3,
+              "negative_control": "V-2.independent-candidates#nc:every:three_store_detail/distinct:payload_digests",
+              "path": "payload_digests",
+              "positive_control": "V-2.independent-candidates#pc:every:three_store_detail/distinct:payload_digests",
+              "product_mutation": "V-2.independent-candidates#pm:every:three_store_detail/distinct:payload_digests",
+              "tag": "every:three_store_detail/distinct:payload_digests",
+              "why": "distinct minimized bytes per destination"
+            }
+          ],
           "kind": "every",
           "min_len": 1,
           "negative_control": "V-2.independent-candidates#nc:every:three_store_detail",
@@ -1556,6 +2152,68 @@
         {
           "bound": null,
           "detector_mutation": "V-2.crash-recovery#dm:every:transitions",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-2.crash-recovery#dm:every:transitions/present:transition",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-2.crash-recovery#nc:every:transitions/present:transition",
+              "path": "transition",
+              "positive_control": "V-2.crash-recovery#pc:every:transitions/present:transition",
+              "product_mutation": "V-2.crash-recovery#pm:every:transitions/present:transition",
+              "tag": "every:transitions/present:transition",
+              "why": "which transition"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-2.crash-recovery#dm:every:transitions/is_true:crash_witnessed",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-2.crash-recovery#nc:every:transitions/is_true:crash_witnessed",
+              "path": "crash_witnessed",
+              "positive_control": "V-2.crash-recovery#pc:every:transitions/is_true:crash_witnessed",
+              "product_mutation": "V-2.crash-recovery#pm:every:transitions/is_true:crash_witnessed",
+              "tag": "every:transitions/is_true:crash_witnessed",
+              "why": "the crash is independently witnessed, not merely requested"
+            },
+            {
+              "bound": 0,
+              "detector_mutation": "V-2.crash-recovery#dm:every:transitions/equals:duplicate_events",
+              "kind": "equals",
+              "min_len": 1,
+              "negative_control": "V-2.crash-recovery#nc:every:transitions/equals:duplicate_events",
+              "path": "duplicate_events",
+              "positive_control": "V-2.crash-recovery#pc:every:transitions/equals:duplicate_events",
+              "product_mutation": "V-2.crash-recovery#pm:every:transitions/equals:duplicate_events",
+              "tag": "every:transitions/equals:duplicate_events",
+              "why": "no duplicate event"
+            },
+            {
+              "bound": 0,
+              "detector_mutation": "V-2.crash-recovery#dm:every:transitions/equals:recursive_apologies",
+              "kind": "equals",
+              "min_len": 1,
+              "negative_control": "V-2.crash-recovery#nc:every:transitions/equals:recursive_apologies",
+              "path": "recursive_apologies",
+              "positive_control": "V-2.crash-recovery#pc:every:transitions/equals:recursive_apologies",
+              "product_mutation": "V-2.crash-recovery#pm:every:transitions/equals:recursive_apologies",
+              "tag": "every:transitions/equals:recursive_apologies",
+              "why": "no recursive apology"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-2.crash-recovery#dm:every:transitions/is_true:recovered",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-2.crash-recovery#nc:every:transitions/is_true:recovered",
+              "path": "recovered",
+              "positive_control": "V-2.crash-recovery#pc:every:transitions/is_true:recovered",
+              "product_mutation": "V-2.crash-recovery#pm:every:transitions/is_true:recovered",
+              "tag": "every:transitions/is_true:recovered",
+              "why": "restart completes or rolls back the journal"
+            }
+          ],
           "kind": "every",
           "min_len": 5,
           "negative_control": "V-2.crash-recovery#nc:every:transitions",
@@ -1606,6 +2264,49 @@
         {
           "bound": null,
           "detector_mutation": "V-2.no-cross-store#dm:every:receipts",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-2.no-cross-store#dm:every:receipts/present:destination",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-2.no-cross-store#nc:every:receipts/present:destination",
+              "path": "destination",
+              "positive_control": "V-2.no-cross-store#pc:every:receipts/present:destination",
+              "product_mutation": "V-2.no-cross-store#pm:every:receipts/present:destination",
+              "tag": "every:receipts/present:destination",
+              "why": "which destination"
+            },
+            {
+              "bound": [
+                "committed",
+                "refused",
+                "pending",
+                "abandoned"
+              ],
+              "detector_mutation": "V-2.no-cross-store#dm:every:receipts/member:state",
+              "kind": "member",
+              "min_len": 1,
+              "negative_control": "V-2.no-cross-store#nc:every:receipts/member:state",
+              "path": "state",
+              "positive_control": "V-2.no-cross-store#pc:every:receipts/member:state",
+              "product_mutation": "V-2.no-cross-store#pm:every:receipts/member:state",
+              "tag": "every:receipts/member:state",
+              "why": "closed saga receipt state set"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-2.no-cross-store#dm:every:receipts/absent:global_rollback",
+              "kind": "absent",
+              "min_len": 1,
+              "negative_control": "V-2.no-cross-store#nc:every:receipts/absent:global_rollback",
+              "path": "global_rollback",
+              "positive_control": "V-2.no-cross-store#pc:every:receipts/absent:global_rollback",
+              "product_mutation": "V-2.no-cross-store#pm:every:receipts/absent:global_rollback",
+              "tag": "every:receipts/absent:global_rollback",
+              "why": "no global rollback is claimed"
+            }
+          ],
           "kind": "every",
           "min_len": 2,
           "negative_control": "V-2.no-cross-store#nc:every:receipts",
@@ -1772,6 +2473,56 @@
         {
           "bound": null,
           "detector_mutation": "V-3.positive-control#dm:every:planted",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-3.positive-control#dm:every:planted/present:surface_family",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-3.positive-control#nc:every:planted/present:surface_family",
+              "path": "surface_family",
+              "positive_control": "V-3.positive-control#pc:every:planted/present:surface_family",
+              "product_mutation": "V-3.positive-control#pm:every:planted/present:surface_family",
+              "tag": "every:planted/present:surface_family",
+              "why": "which surface"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.positive-control#dm:every:planted/present:encoding_class",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-3.positive-control#nc:every:planted/present:encoding_class",
+              "path": "encoding_class",
+              "positive_control": "V-3.positive-control#pc:every:planted/present:encoding_class",
+              "product_mutation": "V-3.positive-control#pm:every:planted/present:encoding_class",
+              "tag": "every:planted/present:encoding_class",
+              "why": "which encoding"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.positive-control#dm:every:planted/present:location_digest",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-3.positive-control#nc:every:planted/present:location_digest",
+              "path": "location_digest",
+              "positive_control": "V-3.positive-control#pc:every:planted/present:location_digest",
+              "product_mutation": "V-3.positive-control#pm:every:planted/present:location_digest",
+              "tag": "every:planted/present:location_digest",
+              "why": "an exact location receipt"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.positive-control#dm:every:planted/is_true:detected",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-3.positive-control#nc:every:planted/is_true:detected",
+              "path": "detected",
+              "positive_control": "V-3.positive-control#pc:every:planted/is_true:detected",
+              "product_mutation": "V-3.positive-control#pm:every:planted/is_true:detected",
+              "tag": "every:planted/is_true:detected",
+              "why": "the planted control is detected"
+            }
+          ],
           "kind": "every",
           "min_len": 12,
           "negative_control": "V-3.positive-control#nc:every:planted",
@@ -1965,6 +2716,56 @@
         {
           "bound": null,
           "detector_mutation": "V-3.capability#dm:every:shared_processes",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-3.capability#dm:every:shared_processes/present:role",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-3.capability#nc:every:shared_processes/present:role",
+              "path": "role",
+              "positive_control": "V-3.capability#pc:every:shared_processes/present:role",
+              "product_mutation": "V-3.capability#pm:every:shared_processes/present:role",
+              "tag": "every:shared_processes/present:role",
+              "why": "which shared role"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.capability#dm:every:shared_processes/nonempty:granted_capabilities",
+              "kind": "nonempty",
+              "min_len": 1,
+              "negative_control": "V-3.capability#nc:every:shared_processes/nonempty:granted_capabilities",
+              "path": "granted_capabilities",
+              "positive_control": "V-3.capability#pc:every:shared_processes/nonempty:granted_capabilities",
+              "product_mutation": "V-3.capability#pm:every:shared_processes/nonempty:granted_capabilities",
+              "tag": "every:shared_processes/nonempty:granted_capabilities",
+              "why": "capabilities are enumerated"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.capability#dm:every:shared_processes/is_false:holds_personal_capability",
+              "kind": "is_false",
+              "min_len": 1,
+              "negative_control": "V-3.capability#nc:every:shared_processes/is_false:holds_personal_capability",
+              "path": "holds_personal_capability",
+              "positive_control": "V-3.capability#pc:every:shared_processes/is_false:holds_personal_capability",
+              "product_mutation": "V-3.capability#pm:every:shared_processes/is_false:holds_personal_capability",
+              "tag": "every:shared_processes/is_false:holds_personal_capability",
+              "why": "no Personal capability"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.capability#dm:every:shared_processes/is_false:personal_root_in_serialized_config",
+              "kind": "is_false",
+              "min_len": 1,
+              "negative_control": "V-3.capability#nc:every:shared_processes/is_false:personal_root_in_serialized_config",
+              "path": "personal_root_in_serialized_config",
+              "positive_control": "V-3.capability#pc:every:shared_processes/is_false:personal_root_in_serialized_config",
+              "product_mutation": "V-3.capability#pm:every:shared_processes/is_false:personal_root_in_serialized_config",
+              "tag": "every:shared_processes/is_false:personal_root_in_serialized_config",
+              "why": "no Personal root in the serialized config"
+            }
+          ],
           "kind": "every",
           "min_len": 1,
           "negative_control": "V-3.capability#nc:every:shared_processes",
@@ -2140,6 +2941,56 @@
         {
           "bound": null,
           "detector_mutation": "V-3.process-artifacts#dm:every:inspected_processes",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-3.process-artifacts#dm:every:inspected_processes/present:label",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-3.process-artifacts#nc:every:inspected_processes/present:label",
+              "path": "label",
+              "positive_control": "V-3.process-artifacts#pc:every:inspected_processes/present:label",
+              "product_mutation": "V-3.process-artifacts#pm:every:inspected_processes/present:label",
+              "tag": "every:inspected_processes/present:label",
+              "why": "which process"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.process-artifacts#dm:every:inspected_processes/nonempty:argv",
+              "kind": "nonempty",
+              "min_len": 1,
+              "negative_control": "V-3.process-artifacts#nc:every:inspected_processes/nonempty:argv",
+              "path": "argv",
+              "positive_control": "V-3.process-artifacts#pc:every:inspected_processes/nonempty:argv",
+              "product_mutation": "V-3.process-artifacts#pm:every:inspected_processes/nonempty:argv",
+              "tag": "every:inspected_processes/nonempty:argv",
+              "why": "argv captured"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.process-artifacts#dm:every:inspected_processes/present:environ",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-3.process-artifacts#nc:every:inspected_processes/present:environ",
+              "path": "environ",
+              "positive_control": "V-3.process-artifacts#pc:every:inspected_processes/present:environ",
+              "product_mutation": "V-3.process-artifacts#pm:every:inspected_processes/present:environ",
+              "tag": "every:inspected_processes/present:environ",
+              "why": "environment captured"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.process-artifacts#dm:every:inspected_processes/present:fds",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-3.process-artifacts#nc:every:inspected_processes/present:fds",
+              "path": "fds",
+              "positive_control": "V-3.process-artifacts#pc:every:inspected_processes/present:fds",
+              "product_mutation": "V-3.process-artifacts#pm:every:inspected_processes/present:fds",
+              "tag": "every:inspected_processes/present:fds",
+              "why": "descriptor metadata captured"
+            }
+          ],
           "kind": "every",
           "min_len": 2,
           "negative_control": "V-3.process-artifacts#nc:every:inspected_processes",
@@ -2616,6 +3467,80 @@
         {
           "bound": null,
           "detector_mutation": "V-3.attack-families#dm:every:families",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-3.attack-families#dm:every:families/present:family",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-3.attack-families#nc:every:families/present:family",
+              "path": "family",
+              "positive_control": "V-3.attack-families#pc:every:families/present:family",
+              "product_mutation": "V-3.attack-families#pm:every:families/present:family",
+              "tag": "every:families/present:family",
+              "why": "family number"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.attack-families#dm:every:families/is_true:executed",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-3.attack-families#nc:every:families/is_true:executed",
+              "path": "executed",
+              "positive_control": "V-3.attack-families#pc:every:families/is_true:executed",
+              "product_mutation": "V-3.attack-families#pm:every:families/is_true:executed",
+              "tag": "every:families/is_true:executed",
+              "why": "the family probe actually ran"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.attack-families#dm:every:families/is_true:positive_control_detected",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-3.attack-families#nc:every:families/is_true:positive_control_detected",
+              "path": "positive_control_detected",
+              "positive_control": "V-3.attack-families#pc:every:families/is_true:positive_control_detected",
+              "product_mutation": "V-3.attack-families#pm:every:families/is_true:positive_control_detected",
+              "tag": "every:families/is_true:positive_control_detected",
+              "why": "the family's exact positive control is detected"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.attack-families#dm:every:families/is_true:negative_control_clean",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-3.attack-families#nc:every:families/is_true:negative_control_clean",
+              "path": "negative_control_clean",
+              "positive_control": "V-3.attack-families#pc:every:families/is_true:negative_control_clean",
+              "product_mutation": "V-3.attack-families#pm:every:families/is_true:negative_control_clean",
+              "tag": "every:families/is_true:negative_control_clean",
+              "why": "the family's exact negative control stays clean"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.attack-families#dm:every:families/is_true:detector_mutation_blinds",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-3.attack-families#nc:every:families/is_true:detector_mutation_blinds",
+              "path": "detector_mutation_blinds",
+              "positive_control": "V-3.attack-families#pc:every:families/is_true:detector_mutation_blinds",
+              "product_mutation": "V-3.attack-families#pm:every:families/is_true:detector_mutation_blinds",
+              "tag": "every:families/is_true:detector_mutation_blinds",
+              "why": "the family's detector mutation genuinely blinds"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-3.attack-families#dm:every:families/present:surfaces",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-3.attack-families#nc:every:families/present:surfaces",
+              "path": "surfaces",
+              "positive_control": "V-3.attack-families#pc:every:families/present:surfaces",
+              "product_mutation": "V-3.attack-families#pm:every:families/present:surfaces",
+              "tag": "every:families/present:surfaces",
+              "why": "the surfaces the family ranges over"
+            }
+          ],
           "kind": "every",
           "min_len": 19,
           "negative_control": "V-3.attack-families#nc:every:families",
@@ -2772,6 +3697,44 @@
         {
           "bound": null,
           "detector_mutation": "V-4.incremental-cycle#dm:every:stages",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-4.incremental-cycle#dm:every:stages/present:stage",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-4.incremental-cycle#nc:every:stages/present:stage",
+              "path": "stage",
+              "positive_control": "V-4.incremental-cycle#pc:every:stages/present:stage",
+              "product_mutation": "V-4.incremental-cycle#pm:every:stages/present:stage",
+              "tag": "every:stages/present:stage",
+              "why": "which stage"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-4.incremental-cycle#dm:every:stages/is_true:stage_verified",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-4.incremental-cycle#nc:every:stages/is_true:stage_verified",
+              "path": "stage_verified",
+              "positive_control": "V-4.incremental-cycle#pc:every:stages/is_true:stage_verified",
+              "product_mutation": "V-4.incremental-cycle#pm:every:stages/is_true:stage_verified",
+              "tag": "every:stages/is_true:stage_verified",
+              "why": "mutation stages advance state; duplicate/rebuild/restart preserve it"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-4.incremental-cycle#dm:every:stages/present:post_state_digest",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-4.incremental-cycle#nc:every:stages/present:post_state_digest",
+              "path": "post_state_digest",
+              "positive_control": "V-4.incremental-cycle#pc:every:stages/present:post_state_digest",
+              "product_mutation": "V-4.incremental-cycle#pm:every:stages/present:post_state_digest",
+              "tag": "every:stages/present:post_state_digest",
+              "why": "the post-stage state is content-addressed"
+            }
+          ],
           "kind": "every",
           "min_len": 13,
           "negative_control": "V-4.incremental-cycle#nc:every:stages",
@@ -2937,6 +3900,44 @@
         {
           "bound": null,
           "detector_mutation": "V-4.manifest-comparison#dm:every:scenarios",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-4.manifest-comparison#dm:every:scenarios/present:scenario",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-4.manifest-comparison#nc:every:scenarios/present:scenario",
+              "path": "scenario",
+              "positive_control": "V-4.manifest-comparison#pc:every:scenarios/present:scenario",
+              "product_mutation": "V-4.manifest-comparison#pm:every:scenarios/present:scenario",
+              "tag": "every:scenarios/present:scenario",
+              "why": "which comparison case"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-4.manifest-comparison#dm:every:scenarios/is_true:state_constructed",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-4.manifest-comparison#nc:every:scenarios/is_true:state_constructed",
+              "path": "state_constructed",
+              "positive_control": "V-4.manifest-comparison#pc:every:scenarios/is_true:state_constructed",
+              "product_mutation": "V-4.manifest-comparison#pm:every:scenarios/is_true:state_constructed",
+              "tag": "every:scenarios/is_true:state_constructed",
+              "why": "the manifest/reachability state is really constructed"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-4.manifest-comparison#dm:every:scenarios/present:classification",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-4.manifest-comparison#nc:every:scenarios/present:classification",
+              "path": "classification",
+              "positive_control": "V-4.manifest-comparison#pc:every:scenarios/present:classification",
+              "product_mutation": "V-4.manifest-comparison#pm:every:scenarios/present:classification",
+              "tag": "every:scenarios/present:classification",
+              "why": "the resulting classification"
+            }
+          ],
           "kind": "every",
           "min_len": 4,
           "negative_control": "V-4.manifest-comparison#nc:every:scenarios",
@@ -3009,6 +4010,20 @@
         {
           "bound": null,
           "detector_mutation": "V-4.normalisation#dm:every:admitted_paths",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-4.normalisation#dm:every:admitted_paths/is_true:lowercase",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-4.normalisation#nc:every:admitted_paths/is_true:lowercase",
+              "path": "lowercase",
+              "positive_control": "V-4.normalisation#pc:every:admitted_paths/is_true:lowercase",
+              "product_mutation": "V-4.normalisation#pm:every:admitted_paths/is_true:lowercase",
+              "tag": "every:admitted_paths/is_true:lowercase",
+              "why": "computed lowercase ASCII digest path"
+            }
+          ],
           "kind": "every",
           "min_len": 1,
           "negative_control": "V-4.normalisation#nc:every:admitted_paths",
@@ -3104,6 +4119,32 @@
         {
           "bound": null,
           "detector_mutation": "V-4.determinism#dm:every:varied_inputs",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-4.determinism#dm:every:varied_inputs/present:input",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-4.determinism#nc:every:varied_inputs/present:input",
+              "path": "input",
+              "positive_control": "V-4.determinism#pc:every:varied_inputs/present:input",
+              "product_mutation": "V-4.determinism#pm:every:varied_inputs/present:input",
+              "tag": "every:varied_inputs/present:input",
+              "why": "which input was varied"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-4.determinism#dm:every:varied_inputs/is_true:observed_effect",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-4.determinism#nc:every:varied_inputs/is_true:observed_effect",
+              "path": "observed_effect",
+              "positive_control": "V-4.determinism#pc:every:varied_inputs/is_true:observed_effect",
+              "product_mutation": "V-4.determinism#pm:every:varied_inputs/is_true:observed_effect",
+              "tag": "every:varied_inputs/is_true:observed_effect",
+              "why": "varying the input has an observable, recorded effect"
+            }
+          ],
           "kind": "every",
           "min_len": 4,
           "negative_control": "V-4.determinism#nc:every:varied_inputs",
@@ -3603,6 +4644,128 @@
         {
           "bound": null,
           "detector_mutation": "V-5.cases#dm:every:cases",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-5.cases#dm:every:cases/present:case_id",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-5.cases#nc:every:cases/present:case_id",
+              "path": "case_id",
+              "positive_control": "V-5.cases#pc:every:cases/present:case_id",
+              "product_mutation": "V-5.cases#pm:every:cases/present:case_id",
+              "tag": "every:cases/present:case_id",
+              "why": "which frozen case"
+            },
+            {
+              "bound": 2,
+              "detector_mutation": "V-5.cases#dm:every:cases/at_least:planted_event_count",
+              "kind": "at_least",
+              "min_len": 1,
+              "negative_control": "V-5.cases#nc:every:cases/at_least:planted_event_count",
+              "path": "planted_event_count",
+              "positive_control": "V-5.cases#pc:every:cases/at_least:planted_event_count",
+              "product_mutation": "V-5.cases#pm:every:cases/at_least:planted_event_count",
+              "tag": "every:cases/at_least:planted_event_count",
+              "why": "each case is established by planted signed events"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-5.cases#dm:every:cases/present:observed_state",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-5.cases#nc:every:cases/present:observed_state",
+              "path": "observed_state",
+              "positive_control": "V-5.cases#pc:every:cases/present:observed_state",
+              "product_mutation": "V-5.cases#pm:every:cases/present:observed_state",
+              "tag": "every:cases/present:observed_state",
+              "why": "the reducer's decision"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-5.cases#dm:every:cases/present:expected_state",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-5.cases#nc:every:cases/present:expected_state",
+              "path": "expected_state",
+              "positive_control": "V-5.cases#pc:every:cases/present:expected_state",
+              "product_mutation": "V-5.cases#pm:every:cases/present:expected_state",
+              "tag": "every:cases/present:expected_state",
+              "why": "the tester-held expectation"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-5.cases#dm:every:cases/is_true:state_matches",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-5.cases#nc:every:cases/is_true:state_matches",
+              "path": "state_matches",
+              "positive_control": "V-5.cases#pc:every:cases/is_true:state_matches",
+              "product_mutation": "V-5.cases#pm:every:cases/is_true:state_matches",
+              "tag": "every:cases/is_true:state_matches",
+              "why": "the decision matches the frozen expectation"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-5.cases#dm:every:cases/nonempty:trace",
+              "kind": "nonempty",
+              "min_len": 1,
+              "negative_control": "V-5.cases#nc:every:cases/nonempty:trace",
+              "path": "trace",
+              "positive_control": "V-5.cases#pc:every:cases/nonempty:trace",
+              "product_mutation": "V-5.cases#pm:every:cases/nonempty:trace",
+              "tag": "every:cases/nonempty:trace",
+              "why": "an inspectable evidence trace is emitted"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-5.cases#dm:every:cases/present:uncertainty_state",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-5.cases#nc:every:cases/present:uncertainty_state",
+              "path": "uncertainty_state",
+              "positive_control": "V-5.cases#pc:every:cases/present:uncertainty_state",
+              "product_mutation": "V-5.cases#pm:every:cases/present:uncertainty_state",
+              "tag": "every:cases/present:uncertainty_state",
+              "why": "the uncertainty state is reported"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-5.cases#dm:every:cases/nonempty:counterfactual",
+              "kind": "nonempty",
+              "min_len": 1,
+              "negative_control": "V-5.cases#nc:every:cases/nonempty:counterfactual",
+              "path": "counterfactual",
+              "positive_control": "V-5.cases#pc:every:cases/nonempty:counterfactual",
+              "product_mutation": "V-5.cases#pm:every:cases/nonempty:counterfactual",
+              "tag": "every:cases/nonempty:counterfactual",
+              "why": "the evidence that would flip the result is shown"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-5.cases#dm:every:cases/nonempty:rejected_events",
+              "kind": "nonempty",
+              "min_len": 1,
+              "negative_control": "V-5.cases#nc:every:cases/nonempty:rejected_events",
+              "path": "rejected_events",
+              "positive_control": "V-5.cases#pc:every:cases/nonempty:rejected_events",
+              "product_mutation": "V-5.cases#pm:every:cases/nonempty:rejected_events",
+              "tag": "every:cases/nonempty:rejected_events",
+              "why": "rejected events are shown"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-5.cases#dm:every:cases/is_false:case_identity_disclosed",
+              "kind": "is_false",
+              "min_len": 1,
+              "negative_control": "V-5.cases#nc:every:cases/is_false:case_identity_disclosed",
+              "path": "case_identity_disclosed",
+              "positive_control": "V-5.cases#pc:every:cases/is_false:case_identity_disclosed",
+              "product_mutation": "V-5.cases#pm:every:cases/is_false:case_identity_disclosed",
+              "tag": "every:cases/is_false:case_identity_disclosed",
+              "why": "the case identity never reaches the product"
+            }
+          ],
           "kind": "every",
           "min_len": 9,
           "negative_control": "V-5.cases#nc:every:cases",
@@ -3840,6 +5003,32 @@
         {
           "bound": null,
           "detector_mutation": "V-5.scope#dm:every:unknowns",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-5.scope#dm:every:unknowns/present:owner_identity",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-5.scope#nc:every:unknowns/present:owner_identity",
+              "path": "owner_identity",
+              "positive_control": "V-5.scope#pc:every:unknowns/present:owner_identity",
+              "product_mutation": "V-5.scope#pm:every:unknowns/present:owner_identity",
+              "tag": "every:unknowns/present:owner_identity",
+              "why": "a blocking Unknown always names a person"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-5.scope#dm:every:unknowns/present:owner_role",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-5.scope#nc:every:unknowns/present:owner_role",
+              "path": "owner_role",
+              "positive_control": "V-5.scope#pc:every:unknowns/present:owner_role",
+              "product_mutation": "V-5.scope#pm:every:unknowns/present:owner_role",
+              "tag": "every:unknowns/present:owner_role",
+              "why": "and its role"
+            }
+          ],
           "kind": "every",
           "min_len": 1,
           "negative_control": "V-5.scope#nc:every:unknowns",
@@ -4543,6 +5732,44 @@
         {
           "bound": null,
           "detector_mutation": "V-6.call-ceiling#dm:every:responses",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-6.call-ceiling#dm:every:responses/present:answer",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-6.call-ceiling#nc:every:responses/present:answer",
+              "path": "answer",
+              "positive_control": "V-6.call-ceiling#pc:every:responses/present:answer",
+              "product_mutation": "V-6.call-ceiling#pm:every:responses/present:answer",
+              "tag": "every:responses/present:answer",
+              "why": "a fact"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-6.call-ceiling#dm:every:responses/present:rationale",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-6.call-ceiling#nc:every:responses/present:rationale",
+              "path": "rationale",
+              "positive_control": "V-6.call-ceiling#pc:every:responses/present:rationale",
+              "product_mutation": "V-6.call-ceiling#pm:every:responses/present:rationale",
+              "tag": "every:responses/present:rationale",
+              "why": "a rationale"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-6.call-ceiling#dm:every:responses/is_false:contains_code",
+              "kind": "is_false",
+              "min_len": 1,
+              "negative_control": "V-6.call-ceiling#nc:every:responses/is_false:contains_code",
+              "path": "contains_code",
+              "positive_control": "V-6.call-ceiling#pc:every:responses/is_false:contains_code",
+              "product_mutation": "V-6.call-ceiling#pm:every:responses/is_false:contains_code",
+              "tag": "every:responses/is_false:contains_code",
+              "why": "never code or a solution"
+            }
+          ],
           "kind": "every",
           "min_len": 2,
           "negative_control": "V-6.call-ceiling#nc:every:responses",
@@ -4788,6 +6015,116 @@
         {
           "bound": null,
           "detector_mutation": "V-7.marginal-terms#dm:every:trace",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-7.marginal-terms#dm:every:trace/present:fact_id",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.marginal-terms#nc:every:trace/present:fact_id",
+              "path": "fact_id",
+              "positive_control": "V-7.marginal-terms#pc:every:trace/present:fact_id",
+              "product_mutation": "V-7.marginal-terms#pm:every:trace/present:fact_id",
+              "tag": "every:trace/present:fact_id",
+              "why": "which candidate"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.marginal-terms#dm:every:trace/present:marginal_terms.newly_covered_distortion",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.marginal-terms#nc:every:trace/present:marginal_terms.newly_covered_distortion",
+              "path": "marginal_terms.newly_covered_distortion",
+              "positive_control": "V-7.marginal-terms#pc:every:trace/present:marginal_terms.newly_covered_distortion",
+              "product_mutation": "V-7.marginal-terms#pm:every:trace/present:marginal_terms.newly_covered_distortion",
+              "tag": "every:trace/present:marginal_terms.newly_covered_distortion",
+              "why": "distortion term"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.marginal-terms#dm:every:trace/present:marginal_terms.authority_and_validity_gain",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.marginal-terms#nc:every:trace/present:marginal_terms.authority_and_validity_gain",
+              "path": "marginal_terms.authority_and_validity_gain",
+              "positive_control": "V-7.marginal-terms#pc:every:trace/present:marginal_terms.authority_and_validity_gain",
+              "product_mutation": "V-7.marginal-terms#pm:every:trace/present:marginal_terms.authority_and_validity_gain",
+              "tag": "every:trace/present:marginal_terms.authority_and_validity_gain",
+              "why": "authority term"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.marginal-terms#dm:every:trace/present:marginal_terms.complementarity_gain",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.marginal-terms#nc:every:trace/present:marginal_terms.complementarity_gain",
+              "path": "marginal_terms.complementarity_gain",
+              "positive_control": "V-7.marginal-terms#pc:every:trace/present:marginal_terms.complementarity_gain",
+              "product_mutation": "V-7.marginal-terms#pm:every:trace/present:marginal_terms.complementarity_gain",
+              "tag": "every:trace/present:marginal_terms.complementarity_gain",
+              "why": "complementarity term"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.marginal-terms#dm:every:trace/present:marginal_terms.uncertainty_reduction",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.marginal-terms#nc:every:trace/present:marginal_terms.uncertainty_reduction",
+              "path": "marginal_terms.uncertainty_reduction",
+              "positive_control": "V-7.marginal-terms#pc:every:trace/present:marginal_terms.uncertainty_reduction",
+              "product_mutation": "V-7.marginal-terms#pm:every:trace/present:marginal_terms.uncertainty_reduction",
+              "tag": "every:trace/present:marginal_terms.uncertainty_reduction",
+              "why": "uncertainty term"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.marginal-terms#dm:every:trace/present:marginal_terms.redundancy",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.marginal-terms#nc:every:trace/present:marginal_terms.redundancy",
+              "path": "marginal_terms.redundancy",
+              "positive_control": "V-7.marginal-terms#pc:every:trace/present:marginal_terms.redundancy",
+              "product_mutation": "V-7.marginal-terms#pm:every:trace/present:marginal_terms.redundancy",
+              "tag": "every:trace/present:marginal_terms.redundancy",
+              "why": "redundancy term"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.marginal-terms#dm:every:trace/present:marginal_terms.retrieval_and_residency_cost",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.marginal-terms#nc:every:trace/present:marginal_terms.retrieval_and_residency_cost",
+              "path": "marginal_terms.retrieval_and_residency_cost",
+              "positive_control": "V-7.marginal-terms#pc:every:trace/present:marginal_terms.retrieval_and_residency_cost",
+              "product_mutation": "V-7.marginal-terms#pm:every:trace/present:marginal_terms.retrieval_and_residency_cost",
+              "tag": "every:trace/present:marginal_terms.retrieval_and_residency_cost",
+              "why": "cost term"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.marginal-terms#dm:every:trace/present:marginal_terms.stale_or_conflict_risk",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.marginal-terms#nc:every:trace/present:marginal_terms.stale_or_conflict_risk",
+              "path": "marginal_terms.stale_or_conflict_risk",
+              "positive_control": "V-7.marginal-terms#pc:every:trace/present:marginal_terms.stale_or_conflict_risk",
+              "product_mutation": "V-7.marginal-terms#pm:every:trace/present:marginal_terms.stale_or_conflict_risk",
+              "tag": "every:trace/present:marginal_terms.stale_or_conflict_risk",
+              "why": "risk term"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.marginal-terms#dm:every:trace/present:current_set_size",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.marginal-terms#nc:every:trace/present:current_set_size",
+              "path": "current_set_size",
+              "positive_control": "V-7.marginal-terms#pc:every:trace/present:current_set_size",
+              "product_mutation": "V-7.marginal-terms#pm:every:trace/present:current_set_size",
+              "tag": "every:trace/present:current_set_size",
+              "why": "the set it was scored against"
+            }
+          ],
           "kind": "every",
           "min_len": 1,
           "negative_control": "V-7.marginal-terms#nc:every:trace",
@@ -4832,6 +6169,20 @@
         {
           "bound": null,
           "detector_mutation": "V-7.complementarity#dm:every:complementary_steps",
+          "each": [
+            {
+              "bound": 1e-06,
+              "detector_mutation": "V-7.complementarity#dm:every:complementary_steps/at_least:complementarity_gain",
+              "kind": "at_least",
+              "min_len": 1,
+              "negative_control": "V-7.complementarity#nc:every:complementary_steps/at_least:complementarity_gain",
+              "path": "complementarity_gain",
+              "positive_control": "V-7.complementarity#pc:every:complementary_steps/at_least:complementarity_gain",
+              "product_mutation": "V-7.complementarity#pm:every:complementary_steps/at_least:complementarity_gain",
+              "tag": "every:complementary_steps/at_least:complementarity_gain",
+              "why": "positive complementarity"
+            }
+          ],
           "kind": "every",
           "min_len": 2,
           "negative_control": "V-7.complementarity#nc:every:complementary_steps",
@@ -4844,6 +6195,32 @@
         {
           "bound": null,
           "detector_mutation": "V-7.complementarity#dm:every:penalised_steps",
+          "each": [
+            {
+              "bound": 1e-06,
+              "detector_mutation": "V-7.complementarity#dm:every:penalised_steps/at_least:redundancy",
+              "kind": "at_least",
+              "min_len": 1,
+              "negative_control": "V-7.complementarity#nc:every:penalised_steps/at_least:redundancy",
+              "path": "redundancy",
+              "positive_control": "V-7.complementarity#pc:every:penalised_steps/at_least:redundancy",
+              "product_mutation": "V-7.complementarity#pm:every:penalised_steps/at_least:redundancy",
+              "tag": "every:penalised_steps/at_least:redundancy",
+              "why": "a positive redundancy penalty"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.complementarity#dm:every:penalised_steps/nonempty:redundancy_basis",
+              "kind": "nonempty",
+              "min_len": 1,
+              "negative_control": "V-7.complementarity#nc:every:penalised_steps/nonempty:redundancy_basis",
+              "path": "redundancy_basis",
+              "positive_control": "V-7.complementarity#pc:every:penalised_steps/nonempty:redundancy_basis",
+              "product_mutation": "V-7.complementarity#pm:every:penalised_steps/nonempty:redundancy_basis",
+              "tag": "every:penalised_steps/nonempty:redundancy_basis",
+              "why": "explicit edge, provenance or similarity"
+            }
+          ],
           "kind": "every",
           "min_len": 1,
           "negative_control": "V-7.complementarity#nc:every:penalised_steps",
@@ -4901,6 +6278,32 @@
         {
           "bound": null,
           "detector_mutation": "V-7.stale-fact#dm:every:owned_unknowns",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-7.stale-fact#dm:every:owned_unknowns/present:owner_role",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.stale-fact#nc:every:owned_unknowns/present:owner_role",
+              "path": "owner_role",
+              "positive_control": "V-7.stale-fact#pc:every:owned_unknowns/present:owner_role",
+              "product_mutation": "V-7.stale-fact#pm:every:owned_unknowns/present:owner_role",
+              "tag": "every:owned_unknowns/present:owner_role",
+              "why": "owning role"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.stale-fact#dm:every:owned_unknowns/present:owner_identity",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.stale-fact#nc:every:owned_unknowns/present:owner_identity",
+              "path": "owner_identity",
+              "positive_control": "V-7.stale-fact#pc:every:owned_unknowns/present:owner_identity",
+              "product_mutation": "V-7.stale-fact#pm:every:owned_unknowns/present:owner_identity",
+              "tag": "every:owned_unknowns/present:owner_identity",
+              "why": "owning identity"
+            }
+          ],
           "kind": "every",
           "min_len": 1,
           "negative_control": "V-7.stale-fact#nc:every:owned_unknowns",
@@ -5085,6 +6488,128 @@
         {
           "bound": null,
           "detector_mutation": "V-7.query-log#dm:every:query_log",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-7.query-log#dm:every:query_log/present:requested",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.query-log#nc:every:query_log/present:requested",
+              "path": "requested",
+              "positive_control": "V-7.query-log#pc:every:query_log/present:requested",
+              "product_mutation": "V-7.query-log#pm:every:query_log/present:requested",
+              "tag": "every:query_log/present:requested",
+              "why": "requested"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.query-log#dm:every:query_log/present:returned",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.query-log#nc:every:query_log/present:returned",
+              "path": "returned",
+              "positive_control": "V-7.query-log#pc:every:query_log/present:returned",
+              "product_mutation": "V-7.query-log#pm:every:query_log/present:returned",
+              "tag": "every:query_log/present:returned",
+              "why": "returned"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.query-log#dm:every:query_log/present:selected_ids",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.query-log#nc:every:query_log/present:selected_ids",
+              "path": "selected_ids",
+              "positive_control": "V-7.query-log#pc:every:query_log/present:selected_ids",
+              "product_mutation": "V-7.query-log#pm:every:query_log/present:selected_ids",
+              "tag": "every:query_log/present:selected_ids",
+              "why": "selected IDs"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.query-log#dm:every:query_log/present:working_set",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.query-log#nc:every:query_log/present:working_set",
+              "path": "working_set",
+              "positive_control": "V-7.query-log#pc:every:query_log/present:working_set",
+              "product_mutation": "V-7.query-log#pm:every:query_log/present:working_set",
+              "tag": "every:query_log/present:working_set",
+              "why": "working set"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.query-log#dm:every:query_log/present:resident_at_dependent_edit",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.query-log#nc:every:query_log/present:resident_at_dependent_edit",
+              "path": "resident_at_dependent_edit",
+              "positive_control": "V-7.query-log#pc:every:query_log/present:resident_at_dependent_edit",
+              "product_mutation": "V-7.query-log#pm:every:query_log/present:resident_at_dependent_edit",
+              "tag": "every:query_log/present:resident_at_dependent_edit",
+              "why": "edit-time residency"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.query-log#dm:every:query_log/present:declared_use",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.query-log#nc:every:query_log/present:declared_use",
+              "path": "declared_use",
+              "positive_control": "V-7.query-log#pc:every:query_log/present:declared_use",
+              "product_mutation": "V-7.query-log#pm:every:query_log/present:declared_use",
+              "tag": "every:query_log/present:declared_use",
+              "why": "declared use"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.query-log#dm:every:query_log/present:marginal_gain",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.query-log#nc:every:query_log/present:marginal_gain",
+              "path": "marginal_gain",
+              "positive_control": "V-7.query-log#pc:every:query_log/present:marginal_gain",
+              "product_mutation": "V-7.query-log#pm:every:query_log/present:marginal_gain",
+              "tag": "every:query_log/present:marginal_gain",
+              "why": "marginal gain"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.query-log#dm:every:query_log/present:stopping_reason",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.query-log#nc:every:query_log/present:stopping_reason",
+              "path": "stopping_reason",
+              "positive_control": "V-7.query-log#pc:every:query_log/present:stopping_reason",
+              "product_mutation": "V-7.query-log#pm:every:query_log/present:stopping_reason",
+              "tag": "every:query_log/present:stopping_reason",
+              "why": "stopping reason"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.query-log#dm:every:query_log/present:outcome",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.query-log#nc:every:query_log/present:outcome",
+              "path": "outcome",
+              "positive_control": "V-7.query-log#pc:every:query_log/present:outcome",
+              "product_mutation": "V-7.query-log#pm:every:query_log/present:outcome",
+              "tag": "every:query_log/present:outcome",
+              "why": "outcome"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-7.query-log#dm:every:query_log/present:cost",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-7.query-log#nc:every:query_log/present:cost",
+              "path": "cost",
+              "positive_control": "V-7.query-log#pc:every:query_log/present:cost",
+              "product_mutation": "V-7.query-log#pm:every:query_log/present:cost",
+              "tag": "every:query_log/present:cost",
+              "why": "cost"
+            }
+          ],
           "kind": "every",
           "min_len": 1,
           "negative_control": "V-7.query-log#nc:every:query_log",
@@ -5370,6 +6895,104 @@
         {
           "bound": null,
           "detector_mutation": "V-8.stricter-class#dm:every:combinations",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-8.stricter-class#dm:every:combinations/present:company_class",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-8.stricter-class#nc:every:combinations/present:company_class",
+              "path": "company_class",
+              "positive_control": "V-8.stricter-class#pc:every:combinations/present:company_class",
+              "product_mutation": "V-8.stricter-class#pm:every:combinations/present:company_class",
+              "tag": "every:combinations/present:company_class",
+              "why": "Company criticality"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.stricter-class#dm:every:combinations/present:local_class",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-8.stricter-class#nc:every:combinations/present:local_class",
+              "path": "local_class",
+              "positive_control": "V-8.stricter-class#pc:every:combinations/present:local_class",
+              "product_mutation": "V-8.stricter-class#pm:every:combinations/present:local_class",
+              "tag": "every:combinations/present:local_class",
+              "why": "local dependence"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.stricter-class#dm:every:combinations/present:effective_class",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-8.stricter-class#nc:every:combinations/present:effective_class",
+              "path": "effective_class",
+              "positive_control": "V-8.stricter-class#pc:every:combinations/present:effective_class",
+              "product_mutation": "V-8.stricter-class#pm:every:combinations/present:effective_class",
+              "tag": "every:combinations/present:effective_class",
+              "why": "derived effective class"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.stricter-class#dm:every:combinations/is_true:is_stricter",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-8.stricter-class#nc:every:combinations/is_true:is_stricter",
+              "path": "is_stricter",
+              "positive_control": "V-8.stricter-class#pc:every:combinations/is_true:is_stricter",
+              "product_mutation": "V-8.stricter-class#pm:every:combinations/is_true:is_stricter",
+              "tag": "every:combinations/is_true:is_stricter",
+              "why": "the derived value is the stricter input"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.stricter-class#dm:every:combinations/present:dominating_input",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-8.stricter-class#nc:every:combinations/present:dominating_input",
+              "path": "dominating_input",
+              "positive_control": "V-8.stricter-class#pc:every:combinations/present:dominating_input",
+              "product_mutation": "V-8.stricter-class#pm:every:combinations/present:dominating_input",
+              "tag": "every:combinations/present:dominating_input",
+              "why": "the trace records which input dominated"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.stricter-class#dm:every:combinations/present:company_owner",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-8.stricter-class#nc:every:combinations/present:company_owner",
+              "path": "company_owner",
+              "positive_control": "V-8.stricter-class#pc:every:combinations/present:company_owner",
+              "product_mutation": "V-8.stricter-class#pm:every:combinations/present:company_owner",
+              "tag": "every:combinations/present:company_owner",
+              "why": "both input owners are recorded"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.stricter-class#dm:every:combinations/present:local_owner",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-8.stricter-class#nc:every:combinations/present:local_owner",
+              "path": "local_owner",
+              "positive_control": "V-8.stricter-class#pc:every:combinations/present:local_owner",
+              "product_mutation": "V-8.stricter-class#pm:every:combinations/present:local_owner",
+              "tag": "every:combinations/present:local_owner",
+              "why": "both input owners are recorded"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.stricter-class#dm:every:combinations/is_true:planted_as_signed_state",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-8.stricter-class#nc:every:combinations/is_true:planted_as_signed_state",
+              "path": "planted_as_signed_state",
+              "positive_control": "V-8.stricter-class#pc:every:combinations/is_true:planted_as_signed_state",
+              "product_mutation": "V-8.stricter-class#pm:every:combinations/is_true:planted_as_signed_state",
+              "tag": "every:combinations/is_true:planted_as_signed_state",
+              "why": "both classes come from signed state, not a selector"
+            }
+          ],
           "kind": "every",
           "min_len": 3,
           "negative_control": "V-8.stricter-class#nc:every:combinations",
@@ -5493,6 +7116,56 @@
         {
           "bound": null,
           "detector_mutation": "V-8.digest-attribution#dm:every:scenarios",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-8.digest-attribution#dm:every:scenarios/present:scenario",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-8.digest-attribution#nc:every:scenarios/present:scenario",
+              "path": "scenario",
+              "positive_control": "V-8.digest-attribution#pc:every:scenarios/present:scenario",
+              "product_mutation": "V-8.digest-attribution#pm:every:scenarios/present:scenario",
+              "tag": "every:scenarios/present:scenario",
+              "why": "which case"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.digest-attribution#dm:every:scenarios/is_true:company_queried",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-8.digest-attribution#nc:every:scenarios/is_true:company_queried",
+              "path": "company_queried",
+              "positive_control": "V-8.digest-attribution#pc:every:scenarios/is_true:company_queried",
+              "product_mutation": "V-8.digest-attribution#pm:every:scenarios/is_true:company_queried",
+              "tag": "every:scenarios/is_true:company_queried",
+              "why": "the client actually queries Company for the historical digest"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.digest-attribution#dm:every:scenarios/present:owner_role",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-8.digest-attribution#nc:every:scenarios/present:owner_role",
+              "path": "owner_role",
+              "positive_control": "V-8.digest-attribution#pc:every:scenarios/present:owner_role",
+              "product_mutation": "V-8.digest-attribution#pm:every:scenarios/present:owner_role",
+              "tag": "every:scenarios/present:owner_role",
+              "why": "the resulting Unknown owner"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.digest-attribution#dm:every:scenarios/is_true:owner_matches_expected",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-8.digest-attribution#nc:every:scenarios/is_true:owner_matches_expected",
+              "path": "owner_matches_expected",
+              "positive_control": "V-8.digest-attribution#pc:every:scenarios/is_true:owner_matches_expected",
+              "product_mutation": "V-8.digest-attribution#pm:every:scenarios/is_true:owner_matches_expected",
+              "tag": "every:scenarios/is_true:owner_matches_expected",
+              "why": "the attribution is correct"
+            }
+          ],
           "kind": "every",
           "min_len": 4,
           "negative_control": "V-8.digest-attribution#nc:every:scenarios",
@@ -5849,6 +7522,80 @@
         {
           "bound": null,
           "detector_mutation": "V-8.cache-table#dm:every:rows",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-8.cache-table#dm:every:rows/present:revocation",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-8.cache-table#nc:every:rows/present:revocation",
+              "path": "revocation",
+              "positive_control": "V-8.cache-table#pc:every:rows/present:revocation",
+              "product_mutation": "V-8.cache-table#pm:every:rows/present:revocation",
+              "tag": "every:rows/present:revocation",
+              "why": "revocation snapshot state"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.cache-table#dm:every:rows/present:fact_validity",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-8.cache-table#nc:every:rows/present:fact_validity",
+              "path": "fact_validity",
+              "positive_control": "V-8.cache-table#pc:every:rows/present:fact_validity",
+              "product_mutation": "V-8.cache-table#pm:every:rows/present:fact_validity",
+              "tag": "every:rows/present:fact_validity",
+              "why": "fact validity state"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.cache-table#dm:every:rows/present:dependence",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-8.cache-table#nc:every:rows/present:dependence",
+              "path": "dependence",
+              "positive_control": "V-8.cache-table#pc:every:rows/present:dependence",
+              "product_mutation": "V-8.cache-table#pm:every:rows/present:dependence",
+              "tag": "every:rows/present:dependence",
+              "why": "dependence class"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.cache-table#dm:every:rows/present:projection",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-8.cache-table#nc:every:rows/present:projection",
+              "path": "projection",
+              "positive_control": "V-8.cache-table#pc:every:rows/present:projection",
+              "product_mutation": "V-8.cache-table#pm:every:rows/present:projection",
+              "tag": "every:rows/present:projection",
+              "why": "the resulting projection"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.cache-table#dm:every:rows/is_true:state_constructed",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-8.cache-table#nc:every:rows/is_true:state_constructed",
+              "path": "state_constructed",
+              "positive_control": "V-8.cache-table#pc:every:rows/is_true:state_constructed",
+              "product_mutation": "V-8.cache-table#pm:every:rows/is_true:state_constructed",
+              "tag": "every:rows/is_true:state_constructed",
+              "why": "the cache state is really constructed, not selected"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-8.cache-table#dm:every:rows/is_true:matches_expected",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-8.cache-table#nc:every:rows/is_true:matches_expected",
+              "path": "matches_expected",
+              "positive_control": "V-8.cache-table#pc:every:rows/is_true:matches_expected",
+              "product_mutation": "V-8.cache-table#pm:every:rows/is_true:matches_expected",
+              "tag": "every:rows/is_true:matches_expected",
+              "why": "the projection matches the frozen row"
+            }
+          ],
           "kind": "every",
           "min_len": 6,
           "negative_control": "V-8.cache-table#nc:every:rows",
@@ -6369,6 +8116,68 @@
         {
           "bound": null,
           "detector_mutation": "V-9.latency#dm:every:states",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "V-9.latency#dm:every:states/present:state",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "V-9.latency#nc:every:states/present:state",
+              "path": "state",
+              "positive_control": "V-9.latency#pc:every:states/present:state",
+              "product_mutation": "V-9.latency#pm:every:states/present:state",
+              "tag": "every:states/present:state",
+              "why": "which start state"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "V-9.latency#dm:every:states/is_true:state_constructed",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "V-9.latency#nc:every:states/is_true:state_constructed",
+              "path": "state_constructed",
+              "positive_control": "V-9.latency#pc:every:states/is_true:state_constructed",
+              "product_mutation": "V-9.latency#pm:every:states/is_true:state_constructed",
+              "tag": "every:states/is_true:state_constructed",
+              "why": "the cache/fsck precondition is genuinely created"
+            },
+            {
+              "bound": 200,
+              "detector_mutation": "V-9.latency#dm:every:states/at_least:invocations",
+              "kind": "at_least",
+              "min_len": 1,
+              "negative_control": "V-9.latency#nc:every:states/at_least:invocations",
+              "path": "invocations",
+              "positive_control": "V-9.latency#pc:every:states/at_least:invocations",
+              "product_mutation": "V-9.latency#pm:every:states/at_least:invocations",
+              "tag": "every:states/at_least:invocations",
+              "why": "at least 200 invocations per host/state"
+            },
+            {
+              "bound": 2.0,
+              "detector_mutation": "V-9.latency#dm:every:states/at_most:p95_seconds",
+              "kind": "at_most",
+              "min_len": 1,
+              "negative_control": "V-9.latency#nc:every:states/at_most:p95_seconds",
+              "path": "p95_seconds",
+              "positive_control": "V-9.latency#pc:every:states/at_most:p95_seconds",
+              "product_mutation": "V-9.latency#pm:every:states/at_most:p95_seconds",
+              "tag": "every:states/at_most:p95_seconds",
+              "why": "the two-second p95 budget"
+            },
+            {
+              "bound": 0,
+              "detector_mutation": "V-9.latency#dm:every:states/equals:refusals",
+              "kind": "equals",
+              "min_len": 1,
+              "negative_control": "V-9.latency#nc:every:states/equals:refusals",
+              "path": "refusals",
+              "positive_control": "V-9.latency#pc:every:states/equals:refusals",
+              "product_mutation": "V-9.latency#pm:every:states/equals:refusals",
+              "tag": "every:states/equals:refusals",
+              "why": "latency may not pass by refusing every invocation"
+            }
+          ],
           "kind": "every",
           "min_len": 4,
           "negative_control": "V-9.latency#nc:every:states",
@@ -6715,6 +8524,44 @@
         {
           "bound": null,
           "detector_mutation": "NF.help#dm:every:commands",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "NF.help#dm:every:commands/present:command",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "NF.help#nc:every:commands/present:command",
+              "path": "command",
+              "positive_control": "NF.help#pc:every:commands/present:command",
+              "product_mutation": "NF.help#pm:every:commands/present:command",
+              "tag": "every:commands/present:command",
+              "why": "command name"
+            },
+            {
+              "bound": 65536,
+              "detector_mutation": "NF.help#dm:every:commands/at_most:help_bytes",
+              "kind": "at_most",
+              "min_len": 1,
+              "negative_control": "NF.help#nc:every:commands/at_most:help_bytes",
+              "path": "help_bytes",
+              "positive_control": "NF.help#pc:every:commands/at_most:help_bytes",
+              "product_mutation": "NF.help#pm:every:commands/at_most:help_bytes",
+              "tag": "every:commands/at_most:help_bytes",
+              "why": "help output is bounded"
+            },
+            {
+              "bound": 0,
+              "detector_mutation": "NF.help#dm:every:commands/equals:exit_code",
+              "kind": "equals",
+              "min_len": 1,
+              "negative_control": "NF.help#nc:every:commands/equals:exit_code",
+              "path": "exit_code",
+              "positive_control": "NF.help#pc:every:commands/equals:exit_code",
+              "product_mutation": "NF.help#pm:every:commands/equals:exit_code",
+              "tag": "every:commands/equals:exit_code",
+              "why": "help exits zero"
+            }
+          ],
           "kind": "every",
           "min_len": 5,
           "negative_control": "NF.help#nc:every:commands",
@@ -6760,6 +8607,44 @@
         {
           "bound": null,
           "detector_mutation": "NF.roots#dm:every:roots",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "NF.roots#dm:every:roots/present:root",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "NF.roots#nc:every:roots/present:root",
+              "path": "root",
+              "positive_control": "NF.roots#pc:every:roots/present:root",
+              "product_mutation": "NF.roots#pm:every:roots/present:root",
+              "tag": "every:roots/present:root",
+              "why": "root path"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.roots#dm:every:roots/present:mode",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "NF.roots#nc:every:roots/present:mode",
+              "path": "mode",
+              "positive_control": "NF.roots#pc:every:roots/present:mode",
+              "product_mutation": "NF.roots#pm:every:roots/present:mode",
+              "tag": "every:roots/present:mode",
+              "why": "observed mode"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.roots#dm:every:roots/is_true:restrictive",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "NF.roots#nc:every:roots/is_true:restrictive",
+              "path": "restrictive",
+              "positive_control": "NF.roots#pc:every:roots/is_true:restrictive",
+              "product_mutation": "NF.roots#pm:every:roots/is_true:restrictive",
+              "tag": "every:roots/is_true:restrictive",
+              "why": "mode is no broader than declared"
+            }
+          ],
           "kind": "every",
           "min_len": 3,
           "negative_control": "NF.roots#nc:every:roots",
@@ -6772,6 +8657,32 @@
         {
           "bound": null,
           "detector_mutation": "NF.roots#dm:every:escape_probes",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "NF.roots#dm:every:escape_probes/present:probe",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "NF.roots#nc:every:escape_probes/present:probe",
+              "path": "probe",
+              "positive_control": "NF.roots#pc:every:escape_probes/present:probe",
+              "product_mutation": "NF.roots#pm:every:escape_probes/present:probe",
+              "tag": "every:escape_probes/present:probe",
+              "why": "what was attempted"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.roots#dm:every:escape_probes/is_true:refused",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "NF.roots#nc:every:escape_probes/is_true:refused",
+              "path": "refused",
+              "positive_control": "NF.roots#pc:every:escape_probes/is_true:refused",
+              "product_mutation": "NF.roots#pm:every:escape_probes/is_true:refused",
+              "tag": "every:escape_probes/is_true:refused",
+              "why": "the escape was refused"
+            }
+          ],
           "kind": "every",
           "min_len": 2,
           "negative_control": "NF.roots#nc:every:escape_probes",
@@ -7002,6 +8913,44 @@
         {
           "bound": null,
           "detector_mutation": "NF.diagnostics#dm:every:diagnostics",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "NF.diagnostics#dm:every:diagnostics/present:command",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "NF.diagnostics#nc:every:diagnostics/present:command",
+              "path": "command",
+              "positive_control": "NF.diagnostics#pc:every:diagnostics/present:command",
+              "product_mutation": "NF.diagnostics#pm:every:diagnostics/present:command",
+              "tag": "every:diagnostics/present:command",
+              "why": "which diagnostic"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.diagnostics#dm:every:diagnostics/is_true:executable",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "NF.diagnostics#nc:every:diagnostics/is_true:executable",
+              "path": "executable",
+              "positive_control": "NF.diagnostics#pc:every:diagnostics/is_true:executable",
+              "product_mutation": "NF.diagnostics#pm:every:diagnostics/is_true:executable",
+              "tag": "every:diagnostics/is_true:executable",
+              "why": "it ran"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.diagnostics#dm:every:diagnostics/is_true:useful",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "NF.diagnostics#nc:every:diagnostics/is_true:useful",
+              "path": "useful",
+              "positive_control": "NF.diagnostics#pc:every:diagnostics/is_true:useful",
+              "product_mutation": "NF.diagnostics#pm:every:diagnostics/is_true:useful",
+              "tag": "every:diagnostics/is_true:useful",
+              "why": "it emitted an inspectable object"
+            }
+          ],
           "kind": "every",
           "min_len": 4,
           "negative_control": "NF.diagnostics#nc:every:diagnostics",
@@ -7046,6 +8995,44 @@
         {
           "bound": null,
           "detector_mutation": "NF.http#dm:every:probes",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "NF.http#dm:every:probes/present:probe",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "NF.http#nc:every:probes/present:probe",
+              "path": "probe",
+              "positive_control": "NF.http#pc:every:probes/present:probe",
+              "product_mutation": "NF.http#pm:every:probes/present:probe",
+              "tag": "every:probes/present:probe",
+              "why": "which probe"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.http#dm:every:probes/is_true:refused",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "NF.http#nc:every:probes/is_true:refused",
+              "path": "refused",
+              "positive_control": "NF.http#pc:every:probes/is_true:refused",
+              "product_mutation": "NF.http#pm:every:probes/is_true:refused",
+              "tag": "every:probes/is_true:refused",
+              "why": "the probe was refused"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.http#dm:every:probes/is_true:bounded_body",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "NF.http#nc:every:probes/is_true:bounded_body",
+              "path": "bounded_body",
+              "positive_control": "NF.http#pc:every:probes/is_true:bounded_body",
+              "product_mutation": "NF.http#pm:every:probes/is_true:bounded_body",
+              "tag": "every:probes/is_true:bounded_body",
+              "why": "the error body is bounded"
+            }
+          ],
           "kind": "every",
           "min_len": 4,
           "negative_control": "NF.http#nc:every:probes",
@@ -7082,6 +9069,56 @@
         {
           "bound": null,
           "detector_mutation": "NF.ceilings#dm:every:ceilings",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "NF.ceilings#dm:every:ceilings/present:ceiling",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "NF.ceilings#nc:every:ceilings/present:ceiling",
+              "path": "ceiling",
+              "positive_control": "NF.ceilings#pc:every:ceilings/present:ceiling",
+              "product_mutation": "NF.ceilings#pm:every:ceilings/present:ceiling",
+              "tag": "every:ceilings/present:ceiling",
+              "why": "which ceiling"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.ceilings#dm:every:ceilings/is_true:constructed",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "NF.ceilings#nc:every:ceilings/is_true:constructed",
+              "path": "constructed",
+              "positive_control": "NF.ceilings#pc:every:ceilings/is_true:constructed",
+              "product_mutation": "NF.ceilings#pm:every:ceilings/is_true:constructed",
+              "tag": "every:ceilings/is_true:constructed",
+              "why": "the input really reached the ceiling"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.ceilings#dm:every:ceilings/is_true:refused",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "NF.ceilings#nc:every:ceilings/is_true:refused",
+              "path": "refused",
+              "positive_control": "NF.ceilings#pc:every:ceilings/is_true:refused",
+              "product_mutation": "NF.ceilings#pm:every:ceilings/is_true:refused",
+              "tag": "every:ceilings/is_true:refused",
+              "why": "the ceiling refused"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.ceilings#dm:every:ceilings/present:omitted_count",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "NF.ceilings#nc:every:ceilings/present:omitted_count",
+              "path": "omitted_count",
+              "positive_control": "NF.ceilings#pc:every:ceilings/present:omitted_count",
+              "product_mutation": "NF.ceilings#pm:every:ceilings/present:omitted_count",
+              "tag": "every:ceilings/present:omitted_count",
+              "why": "the omitted count is reported"
+            }
+          ],
           "kind": "every",
           "min_len": 5,
           "negative_control": "NF.ceilings#nc:every:ceilings",
@@ -7174,6 +9211,92 @@
         {
           "bound": null,
           "detector_mutation": "NF.exit-boundary#dm:every:probes",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "NF.exit-boundary#dm:every:probes/present:channel",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "NF.exit-boundary#nc:every:probes/present:channel",
+              "path": "channel",
+              "positive_control": "NF.exit-boundary#pc:every:probes/present:channel",
+              "product_mutation": "NF.exit-boundary#pm:every:probes/present:channel",
+              "tag": "every:probes/present:channel",
+              "why": "the channel the bytes travelled on"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.exit-boundary#dm:every:probes/is_true:delivered",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "NF.exit-boundary#nc:every:probes/is_true:delivered",
+              "path": "delivered",
+              "positive_control": "NF.exit-boundary#pc:every:probes/is_true:delivered",
+              "product_mutation": "NF.exit-boundary#pm:every:probes/is_true:delivered",
+              "tag": "every:probes/is_true:delivered",
+              "why": "the product really received the bytes"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.exit-boundary#dm:every:probes/is_false:reserved_exit_1",
+              "kind": "is_false",
+              "min_len": 1,
+              "negative_control": "NF.exit-boundary#nc:every:probes/is_false:reserved_exit_1",
+              "path": "reserved_exit_1",
+              "positive_control": "NF.exit-boundary#pc:every:probes/is_false:reserved_exit_1",
+              "product_mutation": "NF.exit-boundary#pm:every:probes/is_false:reserved_exit_1",
+              "tag": "every:probes/is_false:reserved_exit_1",
+              "why": "exit 1 is reserved and never emitted"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.exit-boundary#dm:every:probes/is_true:exit_in_contract",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "NF.exit-boundary#nc:every:probes/is_true:exit_in_contract",
+              "path": "exit_in_contract",
+              "positive_control": "NF.exit-boundary#pc:every:probes/is_true:exit_in_contract",
+              "product_mutation": "NF.exit-boundary#pm:every:probes/is_true:exit_in_contract",
+              "tag": "every:probes/is_true:exit_in_contract",
+              "why": "the exit is one the table names"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.exit-boundary#dm:every:probes/is_true:refused_when_required",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "NF.exit-boundary#nc:every:probes/is_true:refused_when_required",
+              "path": "refused_when_required",
+              "positive_control": "NF.exit-boundary#pc:every:probes/is_true:refused_when_required",
+              "product_mutation": "NF.exit-boundary#pm:every:probes/is_true:refused_when_required",
+              "tag": "every:probes/is_true:refused_when_required",
+              "why": "a probe the table says to refuse is refused"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "NF.exit-boundary#dm:every:probes/is_true:typed_or_completed",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "NF.exit-boundary#nc:every:probes/is_true:typed_or_completed",
+              "path": "typed_or_completed",
+              "positive_control": "NF.exit-boundary#pc:every:probes/is_true:typed_or_completed",
+              "product_mutation": "NF.exit-boundary#pm:every:probes/is_true:typed_or_completed",
+              "tag": "every:probes/is_true:typed_or_completed",
+              "why": "every non-zero exit carries the complete typed error"
+            },
+            {
+              "bound": 0,
+              "detector_mutation": "NF.exit-boundary#dm:every:probes/equals:stack_trace_leaked",
+              "kind": "equals",
+              "min_len": 1,
+              "negative_control": "NF.exit-boundary#nc:every:probes/equals:stack_trace_leaked",
+              "path": "stack_trace_leaked",
+              "positive_control": "NF.exit-boundary#pc:every:probes/equals:stack_trace_leaked",
+              "product_mutation": "NF.exit-boundary#pm:every:probes/equals:stack_trace_leaked",
+              "tag": "every:probes/equals:stack_trace_leaked",
+              "why": "no raw trace reaches the operator"
+            }
+          ],
           "kind": "every",
           "min_len": 4,
           "negative_control": "NF.exit-boundary#nc:every:probes",
@@ -7369,6 +9492,32 @@
         {
           "bound": null,
           "detector_mutation": "EV.retention#dm:every:incident_hold_fields",
+          "each": [
+            {
+              "bound": null,
+              "detector_mutation": "EV.retention#dm:every:incident_hold_fields/present:field",
+              "kind": "present",
+              "min_len": 1,
+              "negative_control": "EV.retention#nc:every:incident_hold_fields/present:field",
+              "path": "field",
+              "positive_control": "EV.retention#pc:every:incident_hold_fields/present:field",
+              "product_mutation": "EV.retention#pm:every:incident_hold_fields/present:field",
+              "tag": "every:incident_hold_fields/present:field",
+              "why": "field name"
+            },
+            {
+              "bound": null,
+              "detector_mutation": "EV.retention#dm:every:incident_hold_fields/is_true:present",
+              "kind": "is_true",
+              "min_len": 1,
+              "negative_control": "EV.retention#nc:every:incident_hold_fields/is_true:present",
+              "path": "present",
+              "positive_control": "EV.retention#pc:every:incident_hold_fields/is_true:present",
+              "product_mutation": "EV.retention#pm:every:incident_hold_fields/is_true:present",
+              "tag": "every:incident_hold_fields/is_true:present",
+              "why": "the field exists"
+            }
+          ],
           "kind": "every",
           "min_len": 4,
           "negative_control": "EV.retention#nc:every:incident_hold_fields",

@@ -109,6 +109,8 @@ def pytest_configure(config: pytest.Config) -> None:
     planter_catalog.reset()
     census = Census.build()
     census.catalog_digest = catalog_module.catalog_digest()
+    from acceptance._harness.cli import product_identity
+    census.product = product_identity()
     census.mutation = mutation_catalog.active_mutation() or ""
     census.detector_mutation = os.environ.get("KINBASE_ACCEPT_DETECTOR_MUTATION", "")
     config.stash[CENSUS_KEY] = census
@@ -328,6 +330,14 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config) -> None:  # no
             census.invalidate("INSTRUMENT", str(exc))
 
     terminalreporter.write_sep("=", "kinbase gate vector (observation, not a verdict)")
+    product = census.product
+    if product.get("resolved"):
+        terminalreporter.write_line(
+            f"product: {product['path']} sha256:{product['sha256'][:16]} "
+            f"version={product.get('version') or 'unknown'}"
+        )
+    else:
+        terminalreporter.write_line(f"product: unresolved ({product.get('reason', 'KINBASE_BIN')})")
     vector = census.gate_vector()
     for gate in GROUPS:
         state = census.gates[gate]

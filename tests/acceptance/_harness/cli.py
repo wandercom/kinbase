@@ -30,10 +30,8 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import shutil
 import signal
 import subprocess
-import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -258,29 +256,46 @@ class Result:
 
 
 def _resolve_entrypoint() -> tuple[str, ...]:
+    """The product under test, named explicitly. A `kinbase` found on PATH
+    (a stale global install) was graded as the product without being named
+    anywhere in the evidence."""
     override = os.environ.get("KINBASE_BIN")
-    if override:
-        parts = tuple(shlex.split(override))
-        if not parts:
-            raise HarnessInvalid("KINBASE_BIN is set but empty")
-        return parts
-    found = shutil.which("kinbase")
-    if found:
-        return (found,)
-    probe = subprocess.run(
-        [sys.executable, "-c", "import kinbase"],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if probe.returncode == 0:
-        return (sys.executable, "-m", "kinbase")
-    raise ProductEntryPointMissing(
-        "no ratified kinbase entry point resolved. spec/cli.md freezes the "
-        "command surface (`kinbase status`, `kinbase doctor`, "
-        "`kinbase company serve`, ...); the combined snapshot must expose it "
-        "on PATH, as `python -m kinbase`, or via KINBASE_BIN."
-    )
+    if not override:
+        raise ProductEntryPointMissing(
+            "KINBASE_BIN is not set. Name the build under test explicitly "
+            "(the absolute path of the kinbase executable); spec/cli.md freezes "
+            "its command surface, and the census records its path and digest."
+        )
+    parts = tuple(shlex.split(override))
+    if not parts:
+        raise HarnessInvalid("KINBASE_BIN is set but empty")
+    executable = Path(parts[0])
+    if not executable.is_absolute() or not executable.is_file():
+        raise HarnessInvalid(
+            f"KINBASE_BIN must start with the absolute path of an executable file; got {parts[0]!r}"
+        )
+    return parts
+
+
+def product_identity() -> dict:
+    """Path, SHA-256 and `--version` of the product under test, for the
+    census; `resolved` is false when KINBASE_BIN names nothing usable."""
+    import hashlib
+
+    try:
+        parts = _resolve_entrypoint()
+    except (ProductEntryPointMissing, HarnessInvalid) as exc:
+        return {"resolved": False, "reason": str(exc)}
+    executable = Path(parts[0])
+    digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+    try:
+        probe = subprocess.run([*parts, "--version"], capture_output=True, text=True,
+                               timeout=60, env={"PATH": os.environ.get("PATH", "")})
+        version = (probe.stdout or probe.stderr).strip().splitlines()[0][:200] if probe.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError, IndexError):
+        version = ""
+    return {"resolved": True, "argv": list(parts), "path": str(executable),
+            "sha256": digest, "version": version}
 
 
 class Kinbase:
