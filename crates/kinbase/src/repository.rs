@@ -1573,7 +1573,18 @@ pub fn build_trust(
     }
     let hint_uuid = repo.uuid_hint().map(str::to_owned);
     let now = resolve_trust_clock(launcher, repo, as_of)?;
-    let Some(mut company) = launcher.company()? else {
+    // An offline read uses the cache as it is (and creates none); only an
+    // online read opens the Company client, whose signing key it may mint.
+    let company = if online {
+        launcher
+            .company()?
+            .map(|access| (access.cache, access.root, Some(access.client)))
+    } else {
+        launcher
+            .company_cache()?
+            .map(|(cache, root)| (cache, root, None))
+    };
+    let Some((mut cache, company_root, client)) = company else {
         if let Some(uuid) = hint_uuid {
             trust.repository_uuid = Some(uuid.clone());
             trust.certificate_reason = "Codebase-only mode: no user config, so no certificate or root key resolves; events count as UNVERIFIED".to_owned();
@@ -1581,13 +1592,13 @@ pub fn build_trust(
         }
         return Ok(trust);
     };
-    trust.root = Some(company.root.clone());
+    trust.root = Some(company_root.clone());
     trust.local_maintainer_keys = launcher
         .shared
         .company
         .as_ref()
-        .and_then(|access| access.maintainer_key().ok())
-        .map(|key| BTreeSet::from([key.public().to_hex()]))
+        .and_then(|access| access.existing_maintainer_public_key())
+        .map(|key| BTreeSet::from([key]))
         .unwrap_or_default();
     if online {
         // An online status read observes the published authority state. A
@@ -1603,10 +1614,16 @@ pub fn build_trust(
             .clone()
             .or_else(|| repo.uuid_hint().map(str::to_owned))
             .unwrap_or_default();
-        match company.client.snapshot_for(&asking_as) {
+        let snapshot = match client.as_ref() {
+            Some(client) => client.snapshot_for(&asking_as),
+            None => Err(ContractError::internal(
+                "an online read has a Company client",
+            )),
+        };
+        match snapshot {
             Ok(snapshot) => {
                 trust.company_reachable = Some(true);
-                if let Err(error) = company.cache.store_snapshot(&snapshot, &company.root, &now) {
+                if let Err(error) = cache.store_snapshot(&snapshot, &company_root, &now) {
                     crate::output::diagnostic("snapshot-refused", serde_json::to_value(&error).unwrap_or_else(|_| json!({"code": "RUN_INTEGRITY_FAILED", "message": "snapshot refusal detail was unreadable", "remediation": "Preserve the receipt.", "retryable": false, "evidence_id": "err_snapshot_refused"})));
                 }
             }
@@ -1617,8 +1634,8 @@ pub fn build_trust(
         }
         trust.company_connect_seconds = Some(started.elapsed().as_secs_f64());
     }
-    trust.freshness = Some(company.cache.freshness(&now));
-    if let Some(snapshot) = company.cache.snapshot()? {
+    trust.freshness = Some(cache.freshness(&now));
+    if let Some(snapshot) = cache.snapshot()? {
         trust.registry = crate::json::get_array(&snapshot, "registry")
             .cloned()
             .unwrap_or_default();
@@ -1676,8 +1693,7 @@ pub fn build_trust(
     // Certificate: only from the cache, keyed by the config hint.
     if let Some(uuid) = hint_uuid {
         trust.repository_uuid = Some(uuid.clone());
-        if company
-            .cache
+        if cache
             .meta(&format!("certificate_identity_conflict:{uuid}"))
             .is_some()
         {
@@ -1688,7 +1704,7 @@ pub fn build_trust(
         // certificate installed for the same UUID (a later issuance, a stray
         // copy, or an index that disagrees with the file) makes the binding
         // ambiguous: nothing is trusted and the steward owns the Unknown.
-        let claims = company.cache.certificate_claims(&uuid)?;
+        let claims = cache.certificate_claims(&uuid)?;
         let distinct_digests: BTreeSet<&str> = claims
             .iter()
             .filter_map(|claim| crate::json::get_str(claim, "digest"))
@@ -1708,12 +1724,12 @@ pub fn build_trust(
                 trust.unknowns.push(identity_unknown(&uuid, &now));
             }
         }
-        match company.cache.certificate(&uuid)? {
+        match cache.certificate(&uuid)? {
             Some(_) if !trust.certificate_conflicts.is_empty() => {}
             Some((certificate, digest)) => {
                 let signer = PublicKey::verify_document("repo-certificate", &certificate);
                 match signer {
-                    Some(signer) if signer == company.root => {
+                    Some(signer) if signer == company_root => {
                         trust.certificate = Some(certificate);
                         trust.certificate_digest = Some(digest);
                         trust.certificate_valid = true;
@@ -1735,7 +1751,7 @@ pub fn build_trust(
         if let Ok(remote) = crate::codebase::git(&repo.root, &["remote", "get-url", "origin"]) {
             let hint = normalize_hint(&remote);
             if !hint.is_empty() && trust.certificate_valid {
-                match company.cache.pin(
+                match cache.pin(
                     &hint,
                     &uuid,
                     trust.certificate_digest.as_deref().unwrap_or_default(),
@@ -2043,7 +2059,7 @@ pub fn init(
             // steward-owned identity Unknown is opened in the cache so every
             // later status reports it until a signed lineage/move event.
             let pinned = existing.repository_uuid_hint.clone();
-            if let Ok(Some((cache, _root))) = launcher.company_cache() {
+            if let Ok(Some((cache, _root))) = launcher.company_cache_for_write() {
                 let _ = cache.set_meta(
                     &format!("certificate_identity_conflict:{pinned}"),
                     &format!("{offered}:{}", crate::json::digest(&document)),

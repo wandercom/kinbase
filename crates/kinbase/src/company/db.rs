@@ -349,6 +349,22 @@ impl CompanyDb {
             .map_err(sqlite_error("register token"))
     }
 
+    /// Retire every live token of `role` except the digest named, so the
+    /// token now in a role's file is the only one that role accepts.
+    pub fn retire_other_tokens(
+        &self,
+        role: &str,
+        keep_token: &str,
+    ) -> Result<usize, ContractError> {
+        let keep = crate::hash::sha256_text(keep_token);
+        self.connection
+            .execute(
+                "UPDATE tokens SET retired_at=?3 WHERE role=?1 AND token_digest<>?2 AND retired_at IS NULL",
+                params![role, keep, crate::time::now_rfc3339_millis()],
+            )
+            .map_err(sqlite_error("retire tokens"))
+    }
+
     pub fn retire_tokens_with_role(&self, role: &str) -> Result<usize, ContractError> {
         self.connection
             .execute(
