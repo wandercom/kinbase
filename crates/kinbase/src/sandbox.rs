@@ -454,6 +454,58 @@ fn open_verified(
     Ok((VerifiedExecutable { file, metadata }, observed))
 }
 
+/// The most classifier stdout kept (the input bound).
+pub const MAX_CLASSIFIER_OUTPUT: usize = 8 * 1024 * 1024;
+/// The most classifier stderr kept; only its first line is reported.
+const MAX_CLASSIFIER_STDERR: usize = 64 * 1024;
+/// How long output may keep arriving after the classifier exits.
+const OUTPUT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+enum OutputProblem {
+    TooLarge,
+    Late,
+}
+
+/// A pipe drained on its own thread, keeping at most `limit` bytes (the rest
+/// is read and discarded, so the writer never blocks on a full pipe).
+struct BoundedReader {
+    receiver: std::sync::mpsc::Receiver<(Vec<u8>, bool)>,
+}
+
+impl BoundedReader {
+    fn collect(self, deadline: std::time::Instant) -> Result<Vec<u8>, OutputProblem> {
+        let wait = deadline.saturating_duration_since(std::time::Instant::now());
+        match self.receiver.recv_timeout(wait) {
+            Ok((_, true)) => Err(OutputProblem::TooLarge),
+            Ok((bytes, false)) => Ok(bytes),
+            Err(_) => Err(OutputProblem::Late),
+        }
+    }
+}
+
+fn bounded_reader(mut pipe: impl std::io::Read + Send + 'static, limit: usize) -> BoundedReader {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut kept = Vec::new();
+        let mut over = false;
+        let mut chunk = [0u8; 64 * 1024];
+        loop {
+            match pipe.read(&mut chunk) {
+                Ok(0) | Err(_) => break,
+                Ok(read) => {
+                    let room = limit.saturating_sub(kept.len());
+                    if read > room {
+                        over = true;
+                    }
+                    kept.extend_from_slice(&chunk[..read.min(room)]);
+                }
+            }
+        }
+        let _ = sender.send((kept, over));
+    });
+    BoundedReader { receiver }
+}
+
 /// Descriptor-backed classifier execution (architecture §5): open the
 /// absolute executable once, verify owner/mode/regular file/containing
 /// directory chain and the pinned SHA-256 through that descriptor, then
@@ -492,6 +544,8 @@ pub fn run_verified_executable(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Its own process group, so a timeout reaches everything it started.
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
     // SAFETY: the hook only calls fcntl, which is async-signal-safe.
     unsafe {
         std::os::unix::process::CommandExt::pre_exec(&mut command, inherit_verified_descriptor);
@@ -532,6 +586,7 @@ pub fn run_verified_executable(
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            std::os::unix::process::CommandExt::process_group(&mut fallback_command, 0);
             // SAFETY: the hook only calls fcntl, which is async-signal-safe.
             unsafe {
                 std::os::unix::process::CommandExt::pre_exec(
@@ -561,51 +616,96 @@ pub fn run_verified_executable(
             // Drop closes stdin even if the child exits before reading all bytes.
         })
     });
-    let stdout_reader = child.stdout.take().map(|mut pipe| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = std::io::Read::read_to_end(&mut pipe, &mut bytes);
-            bytes
-        })
-    });
-    let stderr_reader = child.stderr.take().map(|mut pipe| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = std::io::Read::read_to_end(&mut pipe, &mut bytes);
-            bytes
-        })
-    });
+    let stdout_reader = child
+        .stdout
+        .take()
+        .map(|pipe| bounded_reader(pipe, MAX_CLASSIFIER_OUTPUT));
+    let stderr_reader = child
+        .stderr
+        .take()
+        .map(|pipe| bounded_reader(pipe, MAX_CLASSIFIER_STDERR));
+    let group = child.id() as libc::pid_t;
     let started = std::time::Instant::now();
     let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if started.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let _ = stdin_writer.map(std::thread::JoinHandle::join);
-                    let _ = stdout_reader.map(std::thread::JoinHandle::join);
-                    let _ = stderr_reader.map(std::thread::JoinHandle::join);
-                    return Err(ContractError::degraded(
-                        "UNKNOWN_OWNER_UNRESOLVED",
-                        "classifier exceeded its wall timeout; extraction abstained",
-                        "Increase classifier.timeout_seconds or use a faster local processor.",
-                    ));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(20));
+        // Peek at the exit without reaping: while the exited child is an
+        // unreaped zombie its process-group id cannot be reused, so the group
+        // can be signalled safely before the child is collected.
+        // SAFETY: waitid writes only into `info`, a zeroed siginfo_t.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let peeked = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                group as libc::id_t,
+                &mut info,
+                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+            )
+        };
+        if peeked != 0 {
+            return Err(ContractError::io(
+                "wait classifier",
+                std::io::Error::last_os_error(),
+            ));
+        }
+        // SAFETY: si_pid is set by waitid (zero while the child runs).
+        let exited = unsafe { info.si_pid() } != 0;
+        if exited {
+            // What the classifier left running in its group goes with it,
+            // so the pipes close.
+            // SAFETY: killpg only signals our child's (still unreaped) group.
+            unsafe {
+                libc::killpg(group, libc::SIGKILL);
             }
-            Err(error) => return Err(ContractError::io("wait classifier", error)),
+            break child
+                .wait()
+                .map_err(|error| ContractError::io("wait classifier", error))?;
+        }
+        if started.elapsed() > timeout {
+            // The whole group, not just the child: a grandchild kept running
+            // and holding the pipes. Nothing waits on the pipe readers or the
+            // stdin writer afterwards, since a descendant outside the group
+            // could hold them forever; they end when the last holder does.
+            // SAFETY: killpg only signals our child's (still unreaped) group.
+            unsafe {
+                libc::killpg(group, libc::SIGKILL);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(ContractError::degraded(
+                "UNKNOWN_OWNER_UNRESOLVED",
+                "classifier exceeded its wall timeout; extraction abstained",
+                "Increase classifier.timeout_seconds or use a faster local processor.",
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    // Output that has not arrived within the grace period is not waited for.
+    drop(stdin_writer);
+    let deadline = std::time::Instant::now() + OUTPUT_GRACE;
+    let stdout = stdout_reader
+        .map(|reader| reader.collect(deadline))
+        .unwrap_or_else(|| Ok(Vec::new()));
+    let stderr = stderr_reader
+        .map(|reader| reader.collect(deadline))
+        .unwrap_or_else(|| Ok(Vec::new()))
+        .unwrap_or_default();
+    let stdout = match stdout {
+        Ok(stdout) => stdout,
+        Err(OutputProblem::TooLarge) => {
+            return Err(ContractError::limit(
+                format!(
+                    "classifier output exceeds the {MAX_CLASSIFIER_OUTPUT}-byte bound; extraction abstained"
+                ),
+                serde_json::json!({"refused_count": 1, "omitted_count": 1, "ceiling_bytes": MAX_CLASSIFIER_OUTPUT}),
+            ));
+        }
+        Err(OutputProblem::Late) => {
+            return Err(ContractError::degraded(
+                "UNKNOWN_OWNER_UNRESOLVED",
+                "classifier output did not close after it exited; extraction abstained",
+                "Repair the classifier so its output ends when it does.",
+            ));
         }
     };
-    let _ = stdin_writer.map(std::thread::JoinHandle::join);
-    let stdout = stdout_reader
-        .map(std::thread::JoinHandle::join)
-        .map(|joined| joined.unwrap_or_default())
-        .unwrap_or_default();
-    let stderr = stderr_reader
-        .map(std::thread::JoinHandle::join)
-        .map(|joined| joined.unwrap_or_default())
-        .unwrap_or_default();
     if !status.success() {
         // The child's own words travel with the failure. An exit status alone
         // cannot tell a provider pushing back from a malformed answer, and the
@@ -707,5 +807,106 @@ mod pinned_check_tests {
         let relative = check_pinned_executable(Path::new("classifier"), &digest);
         assert!(relative.refusal.is_some());
         assert!(relative.observed_sha256.is_none());
+    }
+
+    fn pinned_script(dir: &Path, body: &str) -> (PathBuf, String) {
+        let executable = dir.join("classifier");
+        std::fs::write(&executable, body).expect("write");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod");
+        (executable, crate::hash::sha256_bytes(body.as_bytes()))
+    }
+
+    #[test]
+    fn a_timeout_ends_a_classifier_whose_child_holds_its_output() {
+        let base = accepted_base();
+        let dir = tempfile::TempDir::new_in(&base).expect("tempdir");
+        // The classifier starts a long-lived child that inherits stdout,
+        // then hangs; before, the wall timeout killed only the classifier
+        // and then waited on the pipe the child still held.
+        let (executable, digest) = pinned_script(
+            dir.path(),
+            "#!/bin/sh
+sleep 30 &
+sleep 30
+",
+        );
+        let started = std::time::Instant::now();
+        let error = run_verified_executable(
+            &executable,
+            &digest,
+            &[],
+            b"",
+            std::time::Duration::from_millis(300),
+        )
+        .expect_err("timed out");
+        assert!(error.message.contains("wall timeout"), "{}", error.message);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn classifier_output_is_bounded() {
+        let base = accepted_base();
+        let dir = tempfile::TempDir::new_in(&base).expect("tempdir");
+        let (executable, digest) = pinned_script(
+            dir.path(),
+            "#!/bin/sh
+head -c 9000000 /dev/zero
+",
+        );
+        let error = run_verified_executable(
+            &executable,
+            &digest,
+            &[],
+            b"",
+            std::time::Duration::from_secs(20),
+        )
+        .expect_err("over the bound");
+        assert_eq!(error.code, "LIMIT_EXCEEDED");
+
+        let (executable, digest) = pinned_script(
+            dir.path(),
+            "#!/bin/sh
+printf ok
+",
+        );
+        let output = run_verified_executable(
+            &executable,
+            &digest,
+            &[],
+            b"",
+            std::time::Duration::from_secs(20),
+        )
+        .expect("small output");
+        assert_eq!(output, b"ok");
+    }
+
+    #[test]
+    fn an_exited_classifier_does_not_wait_on_a_detached_descendant() {
+        let base = accepted_base();
+        let dir = tempfile::TempDir::new_in(&base).expect("tempdir");
+        // A descendant in its own session keeps the output pipe open after
+        // the classifier exits; the run ends within the grace period.
+        let (executable, digest) = pinned_script(
+            dir.path(),
+            "#!/bin/sh
+printf done
+( trap '' HUP; exec perl -e 'use POSIX; POSIX::setsid(); sleep 30' ) &
+exit 0
+",
+        );
+        let started = std::time::Instant::now();
+        let result = run_verified_executable(
+            &executable,
+            &digest,
+            &[],
+            b"",
+            std::time::Duration::from_secs(20),
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        match result {
+            Ok(output) => assert_eq!(output, b"done"),
+            Err(error) => assert!(error.message.contains("did not close"), "{}", error.message),
+        }
     }
 }

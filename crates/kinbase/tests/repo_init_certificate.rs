@@ -1288,6 +1288,65 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         "complete"
     );
 
+    // An event file at its own content address that cannot be admitted is
+    // named by fsck, an oversized one included (it used to be counted and
+    // dropped from the list).
+    let events_root = repo.join(".kin").join("events");
+    let mut planted = Vec::new();
+    for bytes in [
+        b"{\"not\":\"an event\"}".to_vec(),
+        vec![b' '; kinbase::model::MAX_EVENT_BYTES + 1],
+    ] {
+        let digest = kinbase::hash::sha256_bytes(&bytes);
+        let relative = kinbase::paths::sharded_relative(&digest).expect("sharded");
+        let path = events_root.join(&relative);
+        fs::create_dir_all(path.parent().unwrap()).expect("shard directory");
+        fs::write(&path, &bytes).expect("plant event");
+        planted.push((path, format!(".kin/events/{}", relative.display())));
+    }
+    let named = Command::new(env!("CARGO_BIN_EXE_kinbase"))
+        .current_dir(&repo)
+        .args([
+            "fsck",
+            "--repo",
+            &repo.display().to_string(),
+            "--full",
+            "--json",
+        ])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env_remove("KINBASE_COMPANY_URL")
+        .output_alone()
+        .expect("run fsck with planted events");
+    let named: Value = serde_json::from_slice(&named.stdout).expect("fsck receipt is JSON");
+    let malformed: Vec<(String, String)> = named["malformed_paths"]
+        .as_array()
+        .expect("malformed paths")
+        .iter()
+        .map(|row| {
+            (
+                row["path"].as_str().unwrap_or_default().to_owned(),
+                row["reason"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(malformed.len(), 2, "{named}");
+    assert!(
+        malformed.contains(&(
+            planted[1].1.clone(),
+            "event exceeds the size bound".to_owned()
+        )),
+        "{named}"
+    );
+    assert!(
+        malformed.iter().any(|(path, _)| path == &planted[0].1),
+        "{named}"
+    );
+    assert_eq!(named["counts"]["oversized"], 1, "{named}");
+    for (path, _) in &planted {
+        fs::remove_file(path).expect("remove planted event");
+    }
+
     let first_unpinned = Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(&repo)
         .args([

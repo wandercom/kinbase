@@ -21,6 +21,18 @@ pub struct TrustState {
     pub cursor: i64,
 }
 
+/// Registry entries with each public key in its canonical spelling.
+pub fn canonical_registry(mut entries: Vec<Value>) -> Vec<Value> {
+    for entry in &mut entries {
+        if let Some(key) =
+            crate::json::get_str(entry, "public_key").map(PublicKey::canonical_spelling)
+        {
+            entry["public_key"] = Value::String(key);
+        }
+    }
+    entries
+}
+
 pub fn load(db: &CompanyDb, root: &PublicKey) -> Result<TrustState, ContractError> {
     let mut steward_keys: BTreeSet<String> = BTreeSet::new();
     steward_keys.insert(root.to_hex());
@@ -30,21 +42,25 @@ pub fn load(db: &CompanyDb, root: &PublicKey) -> Result<TrustState, ContractErro
         if verification != "verified" {
             continue;
         }
-        let signer = crate::json::get_str(&payload, "signer").unwrap_or_default();
-        if !steward_keys.contains(signer) {
+        let signer = PublicKey::canonical_spelling(
+            crate::json::get_str(&payload, "signer").unwrap_or_default(),
+        );
+        if !steward_keys.contains(&signer) {
             continue;
         }
         if let Some(new_key) = crate::json::get_str(&payload, "new_key") {
-            steward_keys.insert(new_key.to_owned());
+            steward_keys.insert(PublicKey::canonical_spelling(new_key));
         }
         let _ = cursor;
     }
-    let registry = db.registry_entries()?;
+    let registry = canonical_registry(db.registry_entries()?);
     for (cursor, payload, verification) in db.events_of_kind("revocation")? {
         if verification != "verified" {
             continue;
         }
         if let Some(key) = crate::json::get_str(&payload, "revoked_key") {
+            let key = PublicKey::canonical_spelling(key);
+            let key = key.as_str();
             // A key the steward later republished under an active entry is
             // authorized again from that newer publication; the earlier
             // revocation stays in history but no longer governs.

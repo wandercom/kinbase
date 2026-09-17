@@ -119,6 +119,9 @@ impl CompanyDb {
                     client_key TEXT NOT NULL, nonce TEXT NOT NULL, expires_at TEXT NOT NULL,
                     PRIMARY KEY(client_key, nonce));
                  CREATE TABLE IF NOT EXISTS auth_failures(minute INTEGER PRIMARY KEY, count INTEGER NOT NULL);
+                 CREATE TABLE IF NOT EXISTS auth_failure_subjects(
+                    minute INTEGER NOT NULL, subject TEXT NOT NULL, count INTEGER NOT NULL,
+                    PRIMARY KEY(minute, subject));
                  CREATE TABLE IF NOT EXISTS request_rate(
                     client_key TEXT NOT NULL, minute INTEGER NOT NULL, count INTEGER NOT NULL,
                     PRIMARY KEY(client_key, minute));
@@ -224,7 +227,7 @@ impl CompanyDb {
                     event_id,
                     message_type,
                     kind,
-                    crate::json::canonical_text(payload),
+                    crate::json::record_text(payload)?,
                     signer,
                     verification,
                     crate::time::now_rfc3339_millis(),
@@ -449,7 +452,7 @@ impl CompanyDb {
             self.connection
                 .execute(
                     "INSERT INTO audit(kind, record, recorded_at) VALUES ('token-client-pair', ?1, ?2)",
-                    params![crate::json::canonical_text(&record), now],
+                    params![crate::json::record_text(&record)?, now],
                 )
                 .map_err(sqlite_error("token client audit"))?;
         }
@@ -468,12 +471,15 @@ impl CompanyDb {
 
     // ----- throttles -----
 
-    pub fn auth_failures(&self, minute: i64) -> Result<i64, ContractError> {
+    /// Failed authentications this minute for one subject: a presented
+    /// token's digest, or `unauthenticated` for a request presenting none
+    /// the service holds.
+    pub fn auth_failures(&self, minute: i64, subject: &str) -> Result<i64, ContractError> {
         Ok(self
             .connection
             .query_row(
-                "SELECT count FROM auth_failures WHERE minute=?1",
-                params![minute],
+                "SELECT count FROM auth_failure_subjects WHERE minute=?1 AND subject=?2",
+                params![minute, subject],
                 |row| row.get(0),
             )
             .optional()
@@ -481,11 +487,18 @@ impl CompanyDb {
             .unwrap_or(0))
     }
 
-    pub fn record_auth_failure(&self, minute: i64) -> Result<(), ContractError> {
+    pub fn record_auth_failure(&self, minute: i64, subject: &str) -> Result<(), ContractError> {
         self.connection
             .execute(
-                "INSERT INTO auth_failures(minute, count) VALUES (?1, 1) ON CONFLICT(minute) DO UPDATE SET count=count+1",
-                params![minute],
+                "DELETE FROM auth_failure_subjects WHERE minute < ?1",
+                params![minute - 1],
+            )
+            .map_err(sqlite_error("prune auth failures"))?;
+        self.connection
+            .execute(
+                "INSERT INTO auth_failure_subjects(minute, subject, count) VALUES (?1, ?2, 1)
+                 ON CONFLICT(minute, subject) DO UPDATE SET count=count+1",
+                params![minute, subject],
             )
             .map(|_| ())
             .map_err(sqlite_error("auth failure"))
@@ -574,7 +587,7 @@ impl CompanyDb {
                     capabilities,
                     crate::json::get_str(entry, "status").unwrap_or("active"),
                     cursor,
-                    crate::json::canonical_text(entry)
+                    crate::json::record_text(entry)?
                 ],
             )
             .map(|_| ())
@@ -676,11 +689,11 @@ impl CompanyDb {
                     crate::json::get_str(document, "authority_id").unwrap_or_default(),
                     crate::json::get_str(document, "authority_scope").unwrap_or_default(),
                     crate::json::get_str(document, "question_kind").unwrap_or("general"),
-                    crate::json::canonical_text(document),
+                    crate::json::record_text(document)?,
                     crate::json::get_str(document, "created_at").unwrap_or_default(),
                     crate::json::get_str(document, "response_due_at").unwrap_or_default(),
                     asked_by,
-                    crate::json::canonical_text(delivery)
+                    crate::json::record_text(delivery)?
                 ],
             )
             .map_err(sqlite_error("insert question"))?;
@@ -754,7 +767,7 @@ impl CompanyDb {
                     crate::json::get_str(document, "question_id").unwrap_or_default(),
                     crate::json::get_str(document, "authority_id").unwrap_or_default(),
                     crate::json::get_str(document, "authority_scope").unwrap_or_default(),
-                    crate::json::canonical_text(document),
+                    crate::json::record_text(document)?,
                     cursor,
                     crate::json::get_str(document, "answered_at").unwrap_or_default(),
                     supersedes
@@ -794,7 +807,7 @@ impl CompanyDb {
                     owner_identity=excluded.owner_identity, response_due_at=excluded.response_due_at, updated_at=excluded.updated_at",
                 params![
                     crate::json::get_str(document, "fact_id").or(crate::json::get_str(document, "unknown_id")).unwrap_or_default(),
-                    crate::json::canonical_text(document),
+                    crate::json::record_text(document)?,
                     crate::json::get_str(document, "status").unwrap_or("open"),
                     crate::json::get_str(document, "owner_identity").unwrap_or_default(),
                     crate::json::get_str(document, "scope").unwrap_or_default(),
@@ -889,7 +902,7 @@ impl CompanyDb {
                     digest=excluded.digest, issued_at=excluded.issued_at, status='active', lineage_parent=excluded.lineage_parent, cursor=excluded.cursor",
                 params![
                     crate::json::get_str(document, "repository_uuid").unwrap_or_default(),
-                    crate::json::canonical_text(document),
+                    crate::json::record_text(document)?,
                     hint,
                     crate::json::digest(document),
                     crate::json::get_str(document, "issued_at").unwrap_or_default(),
@@ -1007,7 +1020,7 @@ impl CompanyDb {
                     serde_json::to_string(document.get("event_digests").unwrap_or(&Value::Array(Vec::new()))).unwrap_or_default(),
                     crate::json::get_str(document, "observed_at").unwrap_or_default(),
                     crate::json::get_str(document, "fresh_until").unwrap_or_default(),
-                    crate::json::canonical_text(document),
+                    crate::json::record_text(document)?,
                     cursor
                 ],
             )
@@ -1115,7 +1128,7 @@ impl CompanyDb {
             .connection
             .execute(
                 "INSERT OR IGNORE INTO steward_queue(event_id, document, approval, status, queued_at, submitted_by) VALUES (?1, ?2, ?3, 'pending-steward-review', ?4, ?5)",
-                params![event_id, crate::json::canonical_text(document), crate::json::canonical_text(approval), crate::time::now_rfc3339_millis(), submitted_by],
+                params![event_id, crate::json::record_text(document)?, crate::json::record_text(approval)?, crate::time::now_rfc3339_millis(), submitted_by],
             )
             .map_err(sqlite_error("steward queue"))?;
         Ok(inserted == 1)
@@ -1157,7 +1170,7 @@ impl CompanyDb {
                     crate::json::get_str(document, "relaxed_fact_version").unwrap_or("current"),
                     crate::json::get_str(document, "relaxed_class").unwrap_or("advisory"),
                     crate::json::get_str(document, "effective_until").unwrap_or_default(),
-                    crate::json::canonical_text(document),
+                    crate::json::record_text(document)?,
                     cursor
                 ],
             )
@@ -1189,7 +1202,7 @@ impl CompanyDb {
                 "INSERT INTO audit(kind, record, recorded_at) VALUES (?1, ?2, ?3)",
                 params![
                     kind,
-                    crate::json::canonical_text(record),
+                    crate::json::record_text(record)?,
                     crate::time::now_rfc3339_millis()
                 ],
             )

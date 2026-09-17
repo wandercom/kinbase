@@ -46,6 +46,8 @@ pub struct TrustContext {
     pub authority_cursor: String,
     pub freshness: Option<Freshness>,
     pub company_reachable: Option<bool>,
+    /// A verified Company snapshot is cached (it may hold no facts).
+    pub company_snapshot_present: bool,
     pub company_query_attempted: bool,
     pub company_connect_seconds: Option<f64>,
     pub unknowns: Vec<Value>,
@@ -287,6 +289,9 @@ pub struct RepoContext {
     pub launcher: Launcher,
     pub repo: Repository,
     pub trust: TrustContext,
+    /// The verified event store, read once per context: `status` read and
+    /// verified it three times (and `fsck` more), each time with its Git scans.
+    events: std::cell::OnceCell<(Vec<LoadedEvent>, LoadCounts)>,
 }
 
 fn git_text(repo: &Path, args: &[&str]) -> String {
@@ -391,11 +396,22 @@ impl RepoContext {
             launcher,
             repo,
             trust,
+            events: std::cell::OnceCell::new(),
         })
     }
 
+    /// Every stored event, loaded and verified on first use. A context lives
+    /// for one command, and no command writes events through it.
+    pub fn load_events(&self) -> Result<&(Vec<LoadedEvent>, LoadCounts), ContractError> {
+        if let Some(loaded) = self.events.get() {
+            return Ok(loaded);
+        }
+        let loaded = self.read_events()?;
+        Ok(self.events.get_or_init(|| loaded))
+    }
+
     /// Load and verify every stored event.
-    pub fn load_events(&self) -> Result<(Vec<LoadedEvent>, LoadCounts), ContractError> {
+    fn read_events(&self) -> Result<(Vec<LoadedEvent>, LoadCounts), ContractError> {
         let mut counts = LoadCounts::default();
         let mut loaded = Vec::new();
         let head = self.repo.revision().unwrap_or_default();
@@ -452,6 +468,24 @@ impl RepoContext {
             if file.bytes.len() > crate::model::MAX_EVENT_BYTES {
                 counts.oversized += 1;
                 counts.malformed += 1;
+                // Listed (without its bytes) so fsck can name it; it was
+                // counted and dropped, and no report said which file it was.
+                let origin = event_path_origin_class(
+                    &self.repo.root,
+                    &file.relative,
+                    &tracked_paths,
+                    &dirty_paths,
+                    &default_origin,
+                );
+                let mut file = file;
+                file.bytes = Vec::new();
+                loaded.push(LoadedEvent {
+                    file,
+                    parsed: ParsedEvent::Malformed("event exceeds the size bound".to_owned()),
+                    verification: None,
+                    origin_trust: origin,
+                    reachable: head_reachable,
+                });
                 continue;
             }
             let parsed = parse_stored(&file.bytes);
@@ -531,7 +565,7 @@ impl RepoContext {
         let (loaded, _) = self.load_events()?;
         let mut fact_by_event_id: BTreeMap<&str, &FactEvent> = BTreeMap::new();
         let mut fact_by_fact_id: BTreeMap<&str, &FactEvent> = BTreeMap::new();
-        for item in &loaded {
+        for item in loaded {
             if let ParsedEvent::Fact(event) = &item.parsed {
                 fact_by_event_id.insert(event.event_id.as_str(), event);
                 fact_by_fact_id.insert(event.fact_id.as_str(), event);
@@ -732,7 +766,7 @@ impl RepoContext {
             as_of,
         );
         dependence_events.clear();
-        Ok((view, counts, references))
+        Ok((view, counts.clone(), references))
     }
 
     /// P-8: resolve each Company reference through the cached authorized
@@ -905,9 +939,10 @@ impl RepoContext {
                 }
                 match (company_fact.as_ref(), live_digest.as_deref()) {
                     (None, _) => {
-                        if self.trust.company_reachable == Some(false)
-                            || self.trust.company_facts.is_empty()
-                        {
+                        if company_unavailable(
+                            self.trust.company_reachable,
+                            self.trust.company_snapshot_present,
+                        ) {
                             record["resolution"] = Value::String("company-unavailable".to_owned());
                             record["digest_attribution"] = json!({"owner_role": "none", "reason": "Company unavailable; withheld without accusation", "owner_matches_expected": true});
                             record["reference_resolved"] = Value::Bool(false);
@@ -1206,6 +1241,25 @@ fn unsupported_digest_algorithm(
             "unknown digest algorithm version means client upgrade/degraded mode",
         )
     })
+}
+
+/// Whether a repository fact and a Company fact are one multiply supported
+/// fact. Only a current repository copy stands for both stores: a withheld
+/// copy that shared the Company's statement hid the Company's current row,
+/// and the facts depending on it read as reopened.
+fn merges_with_company(fact_status: &str, fact_statement: &str, company: &Value) -> bool {
+    fact_status == "current"
+        && crate::json::get_str(company, "status") == Some("current")
+        && crate::json::get_str(company, "statement").is_some_and(|statement| {
+            crate::scanner::squeeze(statement) == crate::scanner::squeeze(fact_statement)
+        })
+}
+
+/// Whether a missing Company fact is for want of the Company. A Company that
+/// answered with no facts is reachable (a missing reference is then the
+/// steward's Unknown); only a failed answer or no cached snapshot is not.
+fn company_unavailable(reachable: Option<bool>, snapshot_present: bool) -> bool {
+    reachable == Some(false) || !snapshot_present
 }
 
 fn digest_mismatch_attribution(
@@ -1575,6 +1629,7 @@ pub fn build_trust(
         authority_cursor: "0".to_owned(),
         freshness: None,
         company_reachable: None,
+        company_snapshot_present: false,
         company_query_attempted: false,
         company_connect_seconds: None,
         unknowns: Vec::new(),
@@ -1653,14 +1708,23 @@ pub fn build_trust(
     }
     trust.freshness = Some(cache.freshness(&now));
     if let Some(snapshot) = cache.snapshot()? {
-        trust.registry = crate::json::get_array(&snapshot, "registry")
-            .cloned()
-            .unwrap_or_default();
+        trust.company_snapshot_present = true;
+        // Keys compared as text are held in their canonical spelling.
+        trust.registry = crate::company::trust::canonical_registry(
+            crate::json::get_array(&snapshot, "registry")
+                .cloned()
+                .unwrap_or_default(),
+        );
         trust.revocations = crate::json::get_array(&snapshot, "revocations")
             .map(|items| {
                 items
                     .iter()
-                    .filter_map(|item| serde_json::from_value(item.clone()).ok())
+                    .filter_map(|item| serde_json::from_value::<Revocation>(item.clone()).ok())
+                    .map(|mut revocation| {
+                        revocation.revoked_key =
+                            PublicKey::canonical_spelling(&revocation.revoked_key);
+                        revocation
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -1683,7 +1747,12 @@ pub fn build_trust(
             .map(|items| {
                 items
                     .iter()
-                    .filter_map(|item| serde_json::from_value(item.clone()).ok())
+                    .filter_map(|item| serde_json::from_value::<Revocation>(item.clone()).ok())
+                    .map(|mut revocation| {
+                        revocation.revoked_key =
+                            PublicKey::canonical_spelling(&revocation.revoked_key);
+                        revocation
+                    })
                     .collect()
             })
             .unwrap_or_default();
@@ -2544,7 +2613,7 @@ pub(crate) fn publish_manifest_value(
             "{}.json",
             crate::json::get_str(&manifest, "manifest_digest").unwrap_or("latest")
         )),
-        &crate::json::canonical_bytes(&record),
+        &crate::json::record_bytes(&record)?,
         0o600,
         false,
     )?;
@@ -2668,7 +2737,13 @@ pub fn status(
     // Overdue apologies close under the exclusive lock before this report
     // takes its shared read of the destination. A report is still given
     // when that fails, and says why.
-    if let Err(error) = crate::session::emit_due_orphan_abandonments(&launcher, repo_path) {
+    // Closing an overdue apology is a real-world deadline, so it reads the
+    // proof clock (pinned in acceptance runs, else the wall clock) and the
+    // report says so; the view itself still reduces at `as_of`.
+    let maintenance_clock = crate::time::proof_clock();
+    if let Err(error) =
+        crate::session::emit_due_orphan_abandonments(&launcher, repo_path, &maintenance_clock)
+    {
         crate::output::diagnostic(
             "orphan-abandonment-failed",
             json!({"code": error.code, "message": error.message}),
@@ -2766,13 +2841,7 @@ pub fn status(
                 .get(&fact.logical_key)
                 .into_iter()
                 .flatten()
-                .find(|company| {
-                    crate::json::get_str(company, "status") == Some("current")
-                        && crate::json::get_str(company, "statement").is_some_and(|statement| {
-                            crate::scanner::squeeze(statement)
-                                == crate::scanner::squeeze(&fact.statement)
-                        })
-                })
+                .find(|company| merges_with_company(&fact.status, &fact.statement, company))
                 .copied();
             if let Some(company) = same_statement {
                 merged_company_keys.insert(fact.logical_key.clone());
@@ -3006,10 +3075,11 @@ pub fn status(
             "owner_identity": owner
         }));
     }
+    let no_events = (Vec::new(), LoadCounts::default());
     let (events, _) = if context.repo.config.is_some() {
         context.load_events()?
     } else {
-        (Vec::new(), LoadCounts::default())
+        &no_events
     };
     let local_digests: BTreeSet<String> = events
         .iter()
@@ -3046,7 +3116,7 @@ pub fn status(
     }
     let mut fact_by_event_id: BTreeMap<&str, &crate::model::FactEvent> = BTreeMap::new();
     let mut fact_by_fact_id: BTreeMap<&str, &crate::model::FactEvent> = BTreeMap::new();
-    for item in &events {
+    for item in events {
         if let ParsedEvent::Fact(event) = &item.parsed {
             fact_by_event_id.insert(event.event_id.as_str(), event);
             fact_by_fact_id.insert(event.fact_id.as_str(), event);
@@ -3080,7 +3150,7 @@ pub fn status(
     }
     let mut misextraction_notices = Vec::new();
     let mut never_true = Vec::new();
-    for item in &events {
+    for item in events {
         if let ParsedEvent::Fact(event) = &item.parsed {
             let verified = item.verification == Some(Verification::Verified);
             let revocation_observed = context.trust.is_revoked(&event.signer);
@@ -3375,7 +3445,8 @@ pub fn status(
         .collect();
     let skew = skew_report(&private)?;
     let status_changed_dispositions = changed_dispositions(&private)?;
-    let query_log = private.query_log(None)?;
+    let (query_log, query_log_total) =
+        private.recent_query_log(crate::private::QUERY_LOG_REPORT_LIMIT)?;
     let effective = references
         .iter()
         .filter_map(|record| crate::json::get_str(record, "effective_dependence_class"))
@@ -3409,7 +3480,7 @@ pub fn status(
         .unwrap_or(0)
         .max(crate::session::pending_orphan_count(repo_path));
     let mut origin_trust_classes: BTreeMap<&str, usize> = BTreeMap::new();
-    for event in &events {
+    for event in events {
         *origin_trust_classes
             .entry(event.origin_trust.as_str())
             .or_insert(0) += 1;
@@ -3467,7 +3538,8 @@ pub fn status(
         "authority_cursor": view.authority_cursor,
         "as_of": as_of.as_of,
         "as_of_source": as_of.as_of_source,
-        "ambient_clock_read": false,
+        "ambient_clock_read": maintenance_clock.as_of_source.starts_with("proof-clock:wall"),
+        "maintenance_clock": {"as_of": maintenance_clock.as_of, "as_of_source": maintenance_clock.as_of_source, "closes": "overdue apologies"},
         "origin_trust_classes": origin_trust_classes,
         "adapter_receipts": adapter_receipts,
         "current_view_byte_identical": observations.iter().all(|observation| crate::json::get_str(observation, "state") == Some("current")),
@@ -3500,6 +3572,8 @@ pub fn status(
         "pending_orphans": pending_orphans,
         "journal_state": crate::session::inflight_journal_state(repo_path),
         "query_log": query_log,
+        "query_log_total": query_log_total,
+        "query_log_omitted": query_log_total.saturating_sub(query_log.len() as i64),
         "privacy_claim": PRIVACY_CLAIM,
         "threat_model": "kinbase-atm/1",
         "execution_census_digest": crate::hash::sha256_text(&format!("{}\0{}", context.trust.repository_uuid.clone().unwrap_or_default(), counts.total_files)),
@@ -4145,7 +4219,7 @@ pub fn doctor(
         "company": {"configured": launcher.shared.company.is_some(), "url": launcher.shared.company.as_ref().map(|c| c.url.clone()), "env_endpoint_present": launcher.company_env_present},
         "codebase": {"initialized": repo.as_ref().is_some_and(|r| r.config.is_some())},
         "host": host,
-        "host_versions": {"codex": crate::hooks::host_version("codex"), "claude": crate::hooks::host_version("claude"), "supported_ranges": launcher.shared.hosts},
+        "host_versions": {"codex": crate::hooks::host_version("codex", &launcher.shared.hosts), "claude": crate::hooks::host_version("claude", &launcher.shared.hosts), "supported_ranges": launcher.shared.hosts},
         "hooks": hooks,
         "hooks_approval_required": hooks_approval_required,
         "sweep": sweep,
@@ -4317,7 +4391,7 @@ pub fn fsck(
         // checkout two index entries can collapse to one worktree file, so the
         // index is required to surface the `core.ignorecase` collision.
         let mut exact_paths: BTreeSet<String> = BTreeSet::new();
-        for event in &events {
+        for event in events {
             exact_paths.insert(event.file.relative.to_string_lossy().into_owned());
         }
         for path in tracked_event_paths(&repo.root) {
@@ -4339,6 +4413,19 @@ pub fn fsck(
     }
     refused_paths.sort_by(|left, right| left["path"].as_str().cmp(&right["path"].as_str()));
     let path_refusal_count = refused_paths.len();
+    // Events at a valid path whose bytes cannot be admitted, each named.
+    let malformed_paths: Vec<Value> = events
+        .iter()
+        .filter(|event| !event.file.path_alias)
+        .filter_map(|event| match &event.parsed {
+            ParsedEvent::Malformed(reason) => Some(json!({
+                "path": format!(".kin/events/{}", event.file.relative.to_string_lossy()),
+                "digest": event.file.digest,
+                "reason": reason
+            })),
+            _ => None,
+        })
+        .collect();
     let store_digest =
         crate::hash::sha256_text(&local_digests.iter().cloned().collect::<Vec<_>>().join("\n"));
     // Two certificates for one UUID fail fsck (verification V-8 identity):
@@ -4402,9 +4489,9 @@ pub fn fsck(
     let lock_path = repo.common_dir.join(format!("kinbase-{uuid}.lock"));
     crate::paths::write_atomic(
         &cache_checkpoint,
-        &crate::json::canonical_bytes(
+        &crate::json::record_bytes(
             &json!({"revision": head, "manifest_heads": manifest_heads, "verified_at": now, "store_digest": store_digest}),
-        ),
+        )?,
         0o600,
         false,
     )?;
@@ -4428,6 +4515,7 @@ pub fn fsck(
         "admitted_paths": admitted_paths,
         "refused_paths": refused_paths,
         "refused_path_count": path_refusal_count,
+        "malformed_paths": malformed_paths,
         "foreign_paths": counts.foreign_paths,
         "ineffective_git_attributes": !attributes_effective,
         "index_cache_byte_equivalent": index_matches,
@@ -4695,6 +4783,36 @@ mod company_reference_tests {
                 "unknown digest algorithm version means client upgrade/degraded mode"
             ))
         );
+    }
+
+    #[test]
+    fn a_withheld_repository_copy_does_not_stand_for_the_company_fact() {
+        let company = json!({"status": "current", "statement": "Queue wait is bounded."});
+        assert!(merges_with_company(
+            "current",
+            "Queue  wait is bounded.",
+            &company
+        ));
+        assert!(!merges_with_company(
+            "withheld",
+            "Queue wait is bounded.",
+            &company
+        ));
+        assert!(!merges_with_company("current", "Something else.", &company));
+        let retired = json!({"status": "superseded", "statement": "Queue wait is bounded."});
+        assert!(!merges_with_company(
+            "current",
+            "Queue wait is bounded.",
+            &retired
+        ));
+    }
+
+    #[test]
+    fn a_company_with_no_facts_is_not_unavailable() {
+        assert!(!company_unavailable(Some(true), true));
+        assert!(!company_unavailable(None, true));
+        assert!(company_unavailable(Some(false), true));
+        assert!(company_unavailable(None, false));
     }
 
     #[test]

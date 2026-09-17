@@ -552,3 +552,26 @@ fn one_failing_candidate_does_not_end_the_checkpoint() {
     assert_eq!(response["admission_failures"], 1);
     assert_eq!(response["checkpointed"], true);
 }
+
+#[test]
+fn a_precompact_checkpoints_the_session_and_allows_the_compaction() {
+    let temp = TempDir::new().expect("tempdir");
+    let world = world(&temp);
+    let compact = json!({
+        "session_id": "host-session-compact",
+        "cwd": world.repo.display().to_string(),
+        "hook_event_name": "PreCompact",
+        "trigger": "auto"
+    });
+    let receipt = ok(&kinbase(
+        &world,
+        &["hooks", "dispatch", "claude", "PreCompact", "--json"],
+        &[],
+        compact.to_string().as_bytes(),
+    ));
+    assert_eq!(receipt["compact_allowed"], true, "{receipt}");
+    assert_eq!(receipt["checkpointed"], true, "{receipt}");
+    let ledger = fs::read_to_string(world.personal.join("session-checkpoints.jsonl"))
+        .expect("the checkpoint is written");
+    assert!(ledger.contains("\"session_id\":\"host-session-compact\""));
+}

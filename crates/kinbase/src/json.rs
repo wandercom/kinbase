@@ -9,12 +9,54 @@ use unicode_normalization::UnicodeNormalization;
 
 pub const JSON_INTEGER_BOUND: i128 = 9_007_199_254_740_991;
 
+/// Canonical bytes of `value`. A value that fails the canonical rule is not
+/// written as nothing: it becomes a marker record naming the rule it broke
+/// and the digest of its unchecked rendering. An empty result had been
+/// stored as an empty record, and every invalid value shared the digest of
+/// the empty string. Callers that must refuse use [`try_canonical_bytes`].
 pub fn canonical_bytes(value: &Value) -> Vec<u8> {
-    try_canonical_bytes(value).unwrap_or_default()
+    match try_canonical_bytes(value) {
+        Ok(bytes) => bytes,
+        Err(error) => noncanonical_marker(value, &error),
+    }
 }
 
 pub fn canonical_text(value: &Value) -> String {
     String::from_utf8(canonical_bytes(value)).unwrap_or_default()
+}
+
+/// Canonical bytes for a durable record. A writer refuses a value that fails
+/// the canonical rule; it never stores a marker or nothing in its place.
+pub fn record_bytes(value: &Value) -> Result<Vec<u8>, crate::error::ContractError> {
+    try_canonical_bytes(value).map_err(|error| {
+        crate::error::ContractError::internal(format!("record is not canonical: {error}"))
+    })
+}
+
+/// [`record_bytes`] as text.
+pub fn record_text(value: &Value) -> Result<String, crate::error::ContractError> {
+    String::from_utf8(record_bytes(value)?)
+        .map_err(|_| crate::error::ContractError::internal("record is not UTF-8"))
+}
+
+/// The field a noncanonical value is replaced by.
+pub const NONCANONICAL_MARKER: &str = "kinbase_noncanonical_record";
+
+fn noncanonical_marker(value: &Value, error: &str) -> Vec<u8> {
+    let mut unchecked = Vec::new();
+    canonical_unchecked(value, &mut unchecked);
+    let digest = crate::hash::sha256_bytes(&unchecked);
+    // The rule's wording can name a field; the value itself never appears.
+    let rule = fold_to_canonical_text(error);
+    crate::output::diagnostic(
+        "noncanonical-record",
+        serde_json::json!({"rule": rule, "unchecked_digest": digest}),
+    );
+    let marker =
+        serde_json::json!({NONCANONICAL_MARKER: {"rule": rule, "unchecked_digest": digest}});
+    let mut out = Vec::new();
+    canonical_unchecked(&marker, &mut out);
+    out
 }
 
 pub fn try_canonical_bytes(value: &Value) -> Result<Vec<u8>, String> {
@@ -611,5 +653,31 @@ mod duplicate_key_tests {
         map.insert("\u{e9}".to_owned(), Value::from(2));
         let error = validate_json(&Value::Object(map)).expect_err("collision");
         assert!(error.contains("Unicode normalization"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod noncanonical_tests {
+    use super::*;
+
+    #[test]
+    fn an_invalid_value_is_a_marker_with_its_own_digest() {
+        let left = serde_json::json!({"text": "a\u{202e}b"});
+        let right = serde_json::json!({"text": "c\u{0007}d"});
+        let marker = canonical_text(&left);
+        assert!(!marker.is_empty());
+        let parsed = parse_strict_value(marker.as_bytes()).expect("the marker is canonical");
+        assert!(parsed.get(NONCANONICAL_MARKER).is_some());
+        assert!(
+            !marker.contains('\u{202e}'),
+            "the value itself never appears"
+        );
+        assert_ne!(digest(&left), digest(&right));
+        assert_ne!(digest(&left), crate::hash::sha256_bytes(b""));
+        // A valid value is unchanged.
+        assert_eq!(
+            canonical_text(&serde_json::json!({"b": 1, "a": 2})),
+            r#"{"a":2,"b":1}"#
+        );
     }
 }

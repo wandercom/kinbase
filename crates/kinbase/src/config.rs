@@ -219,6 +219,26 @@ fn host_version_range(section: &toml::Table, key: &str) -> Result<String, Contra
     Ok(text.to_owned())
 }
 
+/// A TOML parse failure as its position and rule, never the source line:
+/// the toml crate's own text quotes the offending line, which may hold a
+/// secret the user put in their config.
+pub fn toml_error_text(text: &str, error: &toml::de::Error) -> String {
+    match error.span() {
+        Some(span) => {
+            let before = &text.as_bytes()[..span.start.min(text.len())];
+            let line = before.iter().filter(|byte| **byte == b'\n').count() + 1;
+            let column = before
+                .iter()
+                .rev()
+                .take_while(|byte| **byte != b'\n')
+                .count()
+                + 1;
+            format!("line {line}, column {column}: {}", error.message())
+        }
+        None => error.message().to_owned(),
+    }
+}
+
 fn config_error(message: impl Into<String>) -> ContractError {
     ContractError::refused(
         "CONFIG_INVARIANT",
@@ -306,7 +326,10 @@ pub fn load_user_config() -> Result<Option<UserConfig>, ContractError> {
 
 pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, ContractError> {
     let table: toml::Table = text.parse().map_err(|error: toml::de::Error| {
-        config_error(format!("user config is not valid TOML: {error}"))
+        config_error(format!(
+            "user config is not valid TOML ({})",
+            toml_error_text(text, &error)
+        ))
     })?;
     closed_keys(
         &table,
@@ -768,7 +791,10 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
     let text = std::fs::read_to_string(path)
         .map_err(|error| ContractError::unreadable("service config", &error))?;
     let table: toml::Table = text.parse().map_err(|error: toml::de::Error| {
-        config_error(format!("service config is not valid TOML: {error}"))
+        config_error(format!(
+            "service config is not valid TOML ({})",
+            toml_error_text(&text, &error)
+        ))
     })?;
     closed_keys(
         &table,
@@ -885,6 +911,15 @@ mod host_range_tests {
             "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n\n[hosts]\n{extra}\n"
         );
         parse_user_config(Path::new("/private/example/config.toml"), &text)
+    }
+
+    #[test]
+    fn a_toml_error_names_its_place_not_its_line() {
+        let text = "schema_version = \"1\"\ntoken = \"sk-live-SECRET\" oops\n";
+        let error = parse_user_config(Path::new("/private/example/config.toml"), text)
+            .expect_err("invalid TOML");
+        assert!(error.message.contains("line 2"), "{}", error.message);
+        assert!(!error.message.contains("SECRET"), "{}", error.message);
     }
 
     #[test]

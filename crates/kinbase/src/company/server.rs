@@ -20,6 +20,8 @@ use std::time::Duration;
 pub const FACTS_TOKEN_SCOPES: [&str; 2] = ["facts:read", "questions:write"];
 pub const DIRECTORY_TOKEN_SCOPES: [&str; 2] = ["directory:read", "admin:issue"];
 pub const AUTHORITY_TOKEN_SCOPES: [&str; 2] = ["answers:write", "questions:write"];
+/// The failure-counter subject for a request presenting no known token.
+const UNAUTHENTICATED_SUBJECT: &str = "unauthenticated";
 pub const REQUEST_EXPIRY_MAX_SECONDS: i64 = 15 * 60;
 pub const MAX_READ_ITEMS: usize = 500;
 
@@ -314,7 +316,7 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
         && request.header("x-kinbase-signature").is_none()
     {
         // Unauthenticated status is refused like every other read.
-        db.record_auth_failure(now_minute())
+        db.record_auth_failure(now_minute(), UNAUTHENTICATED_SUBJECT)
             .map_err(|error| refuse(500, error))?;
         return Err(auth_refusal());
     }
@@ -518,8 +520,29 @@ fn authenticate(
     now: &str,
 ) -> Result<AuthContext, (u16, ContractError)> {
     let minute = now_minute();
+    let bearer = request
+        .header("authorization")
+        .and_then(|value| {
+            value
+                .strip_prefix("Bearer ")
+                .or_else(|| value.strip_prefix("bearer "))
+        })
+        .map(str::trim)
+        .filter(|token| !token.is_empty());
+    let token = match bearer {
+        Some(bearer) => db.token(bearer).map_err(|error| refuse(500, error))?,
+        None => None,
+    };
+    // Failures are counted per subject: the presented token, or one bucket
+    // for requests presenting none the service holds. A single global
+    // counter checked before credentials let any local process lock every
+    // client out for the rest of the minute.
+    let subject = token
+        .as_ref()
+        .map(|token| token.digest.clone())
+        .unwrap_or_else(|| UNAUTHENTICATED_SUBJECT.to_owned());
     let failures = db
-        .auth_failures(minute)
+        .auth_failures(minute, &subject)
         .map_err(|error| refuse(500, error))?;
     if failures >= state.config.auth_failures_per_minute {
         return Err(refuse(
@@ -531,22 +554,10 @@ fn authenticate(
         ));
     }
     let fail = |db: &CompanyDb| -> (u16, ContractError) {
-        let _ = db.record_auth_failure(minute);
+        let _ = db.record_auth_failure(minute, &subject);
         auth_refusal()
     };
-    let bearer = request
-        .header("authorization")
-        .and_then(|value| {
-            value
-                .strip_prefix("Bearer ")
-                .or_else(|| value.strip_prefix("bearer "))
-        })
-        .map(str::trim)
-        .filter(|token| !token.is_empty());
-    let Some(bearer) = bearer else {
-        return Err(fail(db));
-    };
-    let Some(token) = db.token(bearer).map_err(|error| refuse(500, error))? else {
+    let Some(token) = token else {
         return Err(fail(db));
     };
     let nonce = request
@@ -584,7 +595,7 @@ fn authenticate(
     let skew_seconds = expires.signed_duration_since(now_dt).num_seconds();
     let skew_bound = state.config.clock_skew_seconds.max(0);
     if skew_seconds.abs() > skew_bound {
-        let _ = db.record_auth_failure(minute);
+        let _ = db.record_auth_failure(minute, &subject);
         let direction = if skew_seconds > 0 { "ahead" } else { "behind" };
         let _ = db.audit(
             "request-clock-skew",
@@ -2838,7 +2849,9 @@ fn post_answer(
     body: Option<Value>,
     now: &str,
 ) -> Handled {
-    if !(auth.token.has_scope("answers:write") || auth.token.has_scope("questions:write")) {
+    // Architecture §6: the ordinary facts token (which may write questions)
+    // cannot post an answer; only an answer-scoped token can.
+    if !auth.token.has_scope("answers:write") {
         return Err(auth_refusal_403());
     }
     let document = body.ok_or_else(|| {
@@ -4022,6 +4035,117 @@ mod packet11_tests {
         };
         assert_eq!(status, 429);
         assert_eq!(error.detail.as_ref().unwrap()["omitted_count"], 1);
+    }
+}
+
+#[cfg(test)]
+mod auth_subject_tests {
+    use super::*;
+    use crate::crypto::PrivateKey;
+
+    fn service(temp: &std::path::Path) -> (CompanyDb, ServiceState) {
+        let token_path = temp.join("facts.token");
+        crate::crypto::write_0600(&token_path, b"facts-subject", "facts token").unwrap();
+        let config = ServiceConfig {
+            path: temp.join("kinbased.toml"),
+            company_id: "subject".to_owned(),
+            sqlite_path: temp.join("company.sqlite"),
+            bind: "127.0.0.1:0".parse().unwrap(),
+            root_key_file: temp.join("root.key"),
+            facts_token_file: token_path,
+            directory_token_file: None,
+            admin_token_file: None,
+            authority_token_file: None,
+            auth_failures_per_minute: 3,
+            default_fact_freshness_seconds: 900,
+            candidate_lifetime_seconds: 900,
+            clock_skew_seconds: 300,
+            nonce_retention_seconds: 1300,
+            read_volume_per_hour: 2_000,
+            read_bytes_per_hour: 64 * 1024 * 1024,
+            requests_per_minute: 600,
+            revocation_freshness_seconds: 900,
+            directory_retention_seconds: 365 * 24 * 3600,
+            facts_token_scopes: Vec::new(),
+        };
+        let db = CompanyDb::open(&config.sqlite_path).unwrap();
+        register_tokens(&db, &config).unwrap();
+        let state = ServiceState {
+            config,
+            root: PrivateKey::generate(),
+            started_at: crate::time::now_rfc3339_millis(),
+        };
+        (db, state)
+    }
+
+    fn request(bearer: &str, key: &PrivateKey, nonce: &str, expires_at: &str) -> Request {
+        let signed = json!({
+            "method": "GET",
+            "path": "/status",
+            "body_sha256": crate::hash::sha256_bytes(b""),
+            "nonce": nonce,
+            "expires_at": expires_at
+        });
+        let signature = key
+            .sign("receipt", &crate::json::canonical_bytes(&signed))
+            .unwrap();
+        Request {
+            method: "GET".to_owned(),
+            path: "/status".to_owned(),
+            route: "/status".to_owned(),
+            query: BTreeMap::new(),
+            headers: vec![
+                ("authorization".to_owned(), format!("Bearer {bearer}")),
+                ("x-kinbase-nonce".to_owned(), nonce.to_owned()),
+                ("x-kinbase-expires-at".to_owned(), expires_at.to_owned()),
+                ("x-kinbase-client-key".to_owned(), key.public().to_hex()),
+                ("x-kinbase-signature".to_owned(), signature),
+            ],
+            body: Vec::new(),
+            peer: None,
+        }
+    }
+
+    #[test]
+    fn failures_without_a_token_never_lock_out_a_valid_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let (db, state) = service(temp.path());
+        let key = PrivateKey::generate();
+        let now = crate::time::now_rfc3339_millis();
+        let expires_at = crate::time::plus_seconds(&now, 60).unwrap();
+        for index in 0..5 {
+            let flood = request("guess", &key, &format!("flood-{index}"), &expires_at);
+            let Err((status, _)) = authenticate(&db, &state, &flood, &now) else {
+                panic!("a guessed token was accepted");
+            };
+            assert_eq!(status, if index < 3 { 401 } else { 429 });
+        }
+        let valid = request("facts-subject", &key, "valid", &expires_at);
+        assert!(authenticate(&db, &state, &valid, &now).is_ok());
+    }
+
+    #[test]
+    fn the_facts_token_cannot_post_an_answer() {
+        let temp = tempfile::tempdir().unwrap();
+        let (db, state) = service(temp.path());
+        let key = PrivateKey::generate();
+        let now = crate::time::now_rfc3339_millis();
+        let expires_at = crate::time::plus_seconds(&now, 60).unwrap();
+        let auth = authenticate(&db, &state, &request("facts-subject", &key, "n", &expires_at), &now)
+            .expect("facts token");
+        assert!(auth.token.has_scope("questions:write"));
+        let trust_state = trust::load(&db, &state.root.public()).unwrap();
+        let Err((status, _)) = post_answer(
+            &db,
+            &state,
+            &auth,
+            &trust_state,
+            Some(json!({"question_id": "q-1", "answer": "yes"})),
+            &now,
+        ) else {
+            panic!("the facts token posted an answer");
+        };
+        assert_eq!(status, 403);
     }
 }
 
