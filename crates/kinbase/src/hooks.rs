@@ -807,6 +807,9 @@ fn bound_evidence(facts: &[Value], unknowns: &[Value], company_facts: &[Value]) 
         omitted: 0,
     };
     let mut items = 0usize;
+    // Sized with the largest count the context could ever report, so a
+    // later omission cannot widen it past the ceiling.
+    let widest_omission = facts.len() + unknowns.len() + company_facts.len();
     let groups: [(&[Value], u8); 3] = [(unknowns, 0), (facts, 1), (company_facts, 2)];
     for (values, group) in groups {
         for value in values {
@@ -822,8 +825,7 @@ fn bound_evidence(facts: &[Value], unknowns: &[Value], company_facts: &[Value]) 
             list.push(value.clone());
             // The ceiling is on what the host receives: the whole framed
             // context, counted with the omission it may have to report.
-            let omitted_after = bounded.omitted + 1;
-            let fits = host_context_size(&bounded, omitted_after)
+            let fits = host_context_size(&bounded, widest_omission)
                 <= crate::projector::PROJECTION_BYTE_LIMIT;
             let list = match group {
                 0 => &mut bounded.unknowns,
@@ -1299,6 +1301,30 @@ mod tests {
             )
             .collect();
         let bounded = bound_evidence(&escaped, &[], &[]);
+        let text = host_context_output("SessionStart", &bounded).expect("output");
+        let document: Value = serde_json::from_str(text.trim_end()).expect("host JSON");
+        let context = document["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(
+            crate::json::jcs_text(&Value::String(context.to_owned())).len()
+                <= crate::projector::PROJECTION_BYTE_LIMIT
+        );
+    }
+
+    #[test]
+    fn many_omissions_cannot_widen_a_full_context_past_the_ceiling() {
+        // Nearly full context, then enough further facts that the omission
+        // count gains digits.
+        let mut facts: Vec<Value> = (0..31)
+            .map(
+                |n| json!({"statement": "x".repeat(4 * 1024 - 64), "logical_key": format!("k{n}")}),
+            )
+            .collect();
+        facts
+            .extend((0..20_000).map(|n| json!({"statement": "y", "logical_key": format!("z{n}")})));
+        let bounded = bound_evidence(&facts, &[], &[]);
+        assert!(bounded.omitted >= 10_000);
         let text = host_context_output("SessionStart", &bounded).expect("output");
         let document: Value = serde_json::from_str(text.trim_end()).expect("host JSON");
         let context = document["hookSpecificOutput"]["additionalContext"]
