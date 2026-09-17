@@ -10,11 +10,14 @@
 //!
 //! Roles collapsed: the lane that wrote the fix wrote these probes.
 
+mod support;
+
 use serde_json::{Value, json};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use support::SpawnAlone;
 use tempfile::TempDir;
 
 struct World {
@@ -46,7 +49,7 @@ fn world(temp: &TempDir) -> World {
         Command::new("git")
             .args(["init", "-q"])
             .current_dir(&repo)
-            .status()
+            .status_alone()
             .expect("git")
             .success()
     );
@@ -87,7 +90,7 @@ fn kinbase(world: &World, args: &[&str], envs: &[(&str, &Path)], stdin: &[u8]) -
     for (key, value) in envs {
         command.env(key, value);
     }
-    let mut child = command.spawn().expect("spawn kinbase");
+    let mut child = command.spawn_alone().expect("spawn kinbase");
     child
         .stdin
         .take()
