@@ -807,27 +807,59 @@ fn bound_evidence(facts: &[Value], unknowns: &[Value], company_facts: &[Value]) 
         omitted: 0,
     };
     let mut items = 0usize;
-    let mut bytes = 0usize;
     let groups: [(&[Value], u8); 3] = [(unknowns, 0), (facts, 1), (company_facts, 2)];
     for (values, group) in groups {
         for value in values {
-            let size = crate::json::jcs_text(value).len();
-            if items >= crate::projector::PROJECTION_LIMIT
-                || bytes + size > crate::projector::PROJECTION_BYTE_LIMIT
-            {
+            if items >= crate::projector::PROJECTION_LIMIT {
                 bounded.omitted += 1;
                 continue;
             }
-            items += 1;
-            bytes += size;
-            match group {
-                0 => bounded.unknowns.push(value.clone()),
-                1 => bounded.facts.push(value.clone()),
-                _ => bounded.company_facts.push(value.clone()),
+            let list = match group {
+                0 => &mut bounded.unknowns,
+                1 => &mut bounded.facts,
+                _ => &mut bounded.company_facts,
+            };
+            list.push(value.clone());
+            // The ceiling is on what the host receives: the whole framed
+            // context, counted with the omission it may have to report.
+            let omitted_after = bounded.omitted + 1;
+            let fits = host_context_size(&bounded, omitted_after)
+                <= crate::projector::PROJECTION_BYTE_LIMIT;
+            let list = match group {
+                0 => &mut bounded.unknowns,
+                1 => &mut bounded.facts,
+                _ => &mut bounded.company_facts,
+            };
+            if fits {
+                items += 1;
+            } else {
+                list.pop();
+                bounded.omitted += 1;
             }
         }
     }
     bounded
+}
+
+fn evidence_document(evidence: &BoundedEvidence, omitted: usize) -> String {
+    crate::json::jcs_text(&json!({
+        "label": EVIDENCE_LABEL,
+        "facts": evidence.facts,
+        "unknowns": evidence.unknowns,
+        "trusted_company_facts": evidence.company_facts,
+        "omitted_count": omitted
+    }))
+}
+
+fn framed_context(evidence: &BoundedEvidence, omitted: usize) -> String {
+    let document = evidence_document(evidence, omitted);
+    format!("{EVIDENCE_LABEL}\n{}\n{document}", document.len())
+}
+
+fn host_context_size(evidence: &BoundedEvidence, omitted: usize) -> usize {
+    // additionalContext is JSON-escaped inside the host document; the
+    // escaped length is what travels.
+    crate::json::jcs_text(&Value::String(framed_context(evidence, omitted))).len()
 }
 
 /// `{"hookSpecificOutput": {...additionalContext}}` carrying the labelled,
@@ -835,20 +867,16 @@ fn bound_evidence(facts: &[Value], unknowns: &[Value], company_facts: &[Value]) 
 /// document whose length precedes it, so text inside a fact cannot end the
 /// frame or pose as an instruction outside it.
 fn host_context_output(host_event: &str, evidence: &BoundedEvidence) -> Option<String> {
+    // Nothing to say and nothing withheld: no output. Evidence that was all
+    // withheld still says so.
     if evidence.facts.is_empty()
         && evidence.unknowns.is_empty()
         && evidence.company_facts.is_empty()
+        && evidence.omitted == 0
     {
         return None;
     }
-    let evidence = crate::json::jcs_text(&json!({
-        "label": EVIDENCE_LABEL,
-        "facts": evidence.facts,
-        "unknowns": evidence.unknowns,
-        "trusted_company_facts": evidence.company_facts,
-        "omitted_count": evidence.omitted
-    }));
-    let context = format!("{EVIDENCE_LABEL}\n{}\n{evidence}", evidence.len());
+    let context = framed_context(evidence, evidence.omitted);
     Some(format!(
         "{}\n",
         crate::json::jcs_text(&json!({
@@ -1255,6 +1283,41 @@ mod tests {
         let bounded = bound_evidence(&large, &[], &[]);
         assert_eq!(bounded.facts.len(), 2);
         assert_eq!(bounded.omitted, 1);
+        let text = host_context_output("SessionStart", &bounded).expect("output");
+        let document: Value = serde_json::from_str(text.trim_end()).expect("host JSON");
+        let context = document["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .expect("context");
+        assert!(
+            crate::json::jcs_text(&Value::String(context.to_owned())).len()
+                <= crate::projector::PROJECTION_BYTE_LIMIT
+        );
+        // Characters that escape to six bytes each still fit once framed.
+        let escaped: Vec<Value> = (0..3)
+            .map(
+                |n| json!({"statement": "\u{1}".repeat(20 * 1024), "logical_key": format!("e{n}")}),
+            )
+            .collect();
+        let bounded = bound_evidence(&escaped, &[], &[]);
+        let text = host_context_output("SessionStart", &bounded).expect("output");
+        let document: Value = serde_json::from_str(text.trim_end()).expect("host JSON");
+        let context = document["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(
+            crate::json::jcs_text(&Value::String(context.to_owned())).len()
+                <= crate::projector::PROJECTION_BYTE_LIMIT
+        );
+    }
+
+    #[test]
+    fn evidence_that_was_all_withheld_still_says_so() {
+        let huge = vec![json!({"statement": "x".repeat(200 * 1024)})];
+        let bounded = bound_evidence(&huge, &[], &[]);
+        assert!(bounded.facts.is_empty());
+        let text = host_context_output("SessionStart", &bounded).expect("an omission notice");
+        assert!(text.contains("omitted_count"));
+        assert!(text.contains("1"));
     }
 
     #[test]
