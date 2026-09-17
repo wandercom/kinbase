@@ -788,7 +788,7 @@ pub fn current_view(
         events: admitted,
         unknowns,
         tombstones,
-        revocations: trust_state.revocations.clone(),
+        revocations: trust_state.observed_revocations(),
         as_of: as_of.to_owned(),
         authority_cursor: trust_state.cursor.to_string(),
         revocation_fresh: true,
@@ -1824,7 +1824,7 @@ fn admit_fact(
     result
 }
 fn replay_projection(db: &CompanyDb, trust_state: &TrustState, event: &FactEvent) -> (bool, bool) {
-    let revocation_observed = trust_state.is_revoked(&event.signer);
+    let revocation_observed = trust_state.is_revoked_in(&event.signer, &event.authority_scope);
     if !revocation_observed {
         return (false, false);
     }
@@ -1840,7 +1840,15 @@ fn replay_projection(db: &CompanyDb, trust_state: &TrustState, event: &FactEvent
                 && payload
                     .get("signer")
                     .and_then(Value::as_str)
-                    .is_some_and(|signer| !trust_state.is_revoked(signer))
+                    .is_some_and(|signer| {
+                        !trust_state.is_revoked_in(
+                            signer,
+                            payload
+                                .get("authority_scope")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default(),
+                        )
+                    })
         })
         .count();
     (true, independent_support == 0)
@@ -2175,6 +2183,7 @@ fn snapshot(
         "unknowns": unknowns,
         "registry": trust_state.public_registry(),
         "revocations": trust_state.revocations,
+        "scope_revocations": trust_state.scope_revocations,
         "relaxations": db.relaxations().map_err(|error| refuse(500, error))?,
         "certificates": db.all_certificates().map_err(|error| refuse(500, error))?,
         "fact_versions": fact_versions,
@@ -2477,8 +2486,64 @@ fn publish_registry(
     let published_cursor = crate::json::get_str(&document, "authority_cursor")
         .unwrap_or_default()
         .to_owned();
-    let previous_entries = db.registry_entries().map_err(|error| refuse(500, error))?;
-    with_immediate_transaction(db, || {
+    if published_cursor.is_empty() {
+        return Err(refuse(
+            400,
+            ContractError::invariant(
+                "registry document lacks authority_cursor; a publication must say where it stands",
+            ),
+        ));
+    }
+    let outcome = with_immediate_transaction(db, || {
+        // Publication only moves the registry forward. A registry document is
+        // a steward's statement at one authority cursor, and its signature stays
+        // valid forever: any token holder could fetch an old one and post it
+        // again, and every entry added since came back as an R-10 revocation.
+        // Decided here, inside the write transaction, against the service's own
+        // record rather than the trust state read before the request.
+        let latest = trust::published_registry(db).map_err(|error| refuse(500, error))?;
+        let current = latest
+            .as_ref()
+            .map(|(_, cursor)| cursor.clone())
+            .unwrap_or_default();
+        if let Some(existing) = db
+            .event_cursor(&event_id)
+            .map_err(|error| refuse(500, error))?
+        {
+            // Identity, not cursor equality: the document posted again is the
+            // one the service holds as current.
+            if latest.as_ref().is_some_and(|(row, _)| *row == existing) {
+                // The current document, posted again: the same receipt, no effects.
+                return Ok((
+                    200,
+                    registry_receipt(db, &digest, entries.len(), existing, &published_cursor)?,
+                ));
+            }
+            return Err(refuse(
+                409,
+                ContractError::refused(
+                    "APPROVAL_REPLAY",
+                    "this registry document was published before and has been superseded",
+                    "Publish a newly signed registry at a newer authority_cursor.",
+                ),
+            ));
+        }
+        if !current.is_empty()
+            && crate::reducer::cursor_order(&published_cursor, &current)
+                != std::cmp::Ordering::Greater
+        {
+            return Err(refuse(
+                409,
+                ContractError::refused(
+                    "APPROVAL_REPLAY",
+                    format!(
+                        "registry authority_cursor {published_cursor} does not advance past the published {current}"
+                    ),
+                    "Publish a newly signed registry at a newer authority_cursor.",
+                ),
+            ));
+        }
+        let previous_entries = db.registry_entries().map_err(|error| refuse(500, error))?;
         let cursor = match db
             .append_event(
                 &event_id,
@@ -2533,6 +2598,20 @@ fn publish_registry(
             let public_key = crate::json::get_str(&existing, "public_key")
                 .unwrap_or_default()
                 .to_owned();
+            let mut retired = existing.clone();
+            retired["status"] = Value::String("revoked".to_owned());
+            db.upsert_registry_entry(&retired, cursor)
+                .map_err(|error| refuse(500, error))?;
+            revoked_count += 1;
+            // Revocations name keys, not scopes. A key the new document still
+            // lists under another scope stays authorized there (as the loop
+            // below already holds); revoking it here withdrew it everywhere.
+            if entries
+                .iter()
+                .any(|published| crate::json::get_str(published, "public_key") == Some(&public_key))
+            {
+                continue;
+            }
             let revocation = json!({
                 "schema": "kinbase-revocation/1",
                 "revoked_key": public_key,
@@ -2555,11 +2634,6 @@ fn publish_registry(
                 None,
             )
             .map_err(|error| refuse(500, error))?;
-            let mut retired = existing.clone();
-            retired["status"] = Value::String("revoked".to_owned());
-            db.upsert_registry_entry(&retired, cursor)
-                .map_err(|error| refuse(500, error))?;
-            revoked_count += 1;
         }
         if revoked_count > 0 {
             db.set_meta("revocation_cursor", &cursor.to_string())
@@ -2586,6 +2660,7 @@ fn publish_registry(
             })
         };
         let mut revoked_keys: BTreeSet<String> = BTreeSet::new();
+        let mut revoked_scopes: BTreeSet<(String, String)> = BTreeSet::new();
         for entry in &previous_entries {
             if crate::json::get_str(entry, "status") != Some("active") {
                 continue;
@@ -2610,12 +2685,21 @@ fn publish_registry(
                 .map_err(|error| refuse(500, error))?;
             }
             // A key still listed under another exact scope stays authorized
-            // there; only a key no published entry carries is revoked.
+            // there; only a key no published entry carries is revoked. What
+            // it warranted in the scope it lost is withdrawn all the same:
+            // otherwise a dropped scope kept every fact it had admitted current.
+            let scope = crate::json::get_str(entry, "scope").unwrap_or_default();
             let still_listed = entries
                 .iter()
                 .any(|published| crate::json::get_str(published, "public_key") == Some(key));
+            let still_in_scope = entries.iter().any(|published| {
+                crate::json::get_str(published, "public_key") == Some(key)
+                    && crate::json::get_str(published, "scope") == Some(scope)
+            });
             if !still_listed {
                 revoked_keys.insert(key.to_owned());
+            } else if !still_in_scope {
+                revoked_scopes.insert((key.to_owned(), scope.to_owned()));
             }
         }
         for key in &revoked_keys {
@@ -2643,26 +2727,101 @@ fn publish_registry(
                 )
                 .map_err(|error| refuse(500, error))?
                 .unwrap_or(cursor);
-            revocation_cascade(db, key, revocation_cursor, &published_cursor, now, &digest)?;
+            revocation_cascade(
+                db,
+                key,
+                None,
+                revocation_cursor,
+                &published_cursor,
+                now,
+                &digest,
+            )?;
+        }
+        for (key, scope) in &revoked_scopes {
+            let revocation = json!({
+                "schema": crate::model::REVOCATION_SCHEMA,
+                "revoked_key": key,
+                "revoked_scope": scope,
+                "authority_cursor": published_cursor,
+                "effective_at": now,
+                "derived_from": event_id,
+                "reason": "entry absent from the steward-republished authority registry; the key stays registered under other scopes"
+            });
+            let revocation_id = format!(
+                "revocation_{}",
+                &crate::hash::sha256_text(&format!("{key}\0{scope}\0{published_cursor}"))[..40]
+            );
+            let revocation_cursor = db
+                .append_event(
+                    &revocation_id,
+                    "revocation",
+                    "revocation",
+                    &revocation,
+                    crate::json::get_str(&document, "signer").unwrap_or_default(),
+                    "verified",
+                    None,
+                )
+                .map_err(|error| refuse(500, error))?
+                .unwrap_or(cursor);
+            revocation_cascade(
+                db,
+                key,
+                Some(scope),
+                revocation_cursor,
+                &published_cursor,
+                now,
+                &digest,
+            )?;
         }
         db.audit(
             "registry-published",
-            &json!({"digest": digest, "entries": entries.len(), "cursor": cursor, "revoked": revoked_count, "revoked_keys": revoked_keys.len()}),
+            &json!({"digest": digest, "entries": entries.len(), "cursor": cursor, "revoked": revoked_count, "revoked_keys": revoked_keys.len(), "revoked_scopes": revoked_scopes.len()}),
         )
         .map_err(|error| refuse(500, error))?;
         Ok((
             201,
-            json!({
-                "schema": crate::model::RECEIPT_SCHEMA,
-                "status": "published",
-                "registry_digest": digest,
-                "entries": entries.len(),
-                "cursor": cursor.to_string(),
-                "authority_cursor": crate::json::get_str(&document, "authority_cursor").unwrap_or_default(),
-                "recorded_at": now
-            }),
+            registry_receipt(db, &digest, entries.len(), cursor, &published_cursor)?,
         ))
-    })
+    });
+    if let Err((_, error)) = &outcome
+        && error.code == "APPROVAL_REPLAY"
+    {
+        // A refused replay is itself worth knowing about; the transaction
+        // that decided it has rolled back, so the record is written after.
+        let _ = db.audit(
+            "registry-publication-refused",
+            &json!({"digest": digest, "authority_cursor": published_cursor, "reason": error.message}),
+        );
+    }
+    outcome
+}
+
+/// The receipt of one registry publication, read back from the row that
+/// recorded it, so a retry of the current document answers with the bytes the
+/// first post did rather than a receipt stamped with the retry's own clock.
+fn registry_receipt(
+    db: &CompanyDb,
+    digest: &str,
+    entries: usize,
+    cursor: i64,
+    authority_cursor: &str,
+) -> Result<Value, (u16, ContractError)> {
+    let recorded_at = db
+        .all_events(cursor - 1, 1)
+        .map_err(|error| refuse(500, error))?
+        .first()
+        .and_then(|row| crate::json::get_str(row, "recorded_at"))
+        .unwrap_or_default()
+        .to_owned();
+    Ok(json!({
+        "schema": crate::model::RECEIPT_SCHEMA,
+        "status": "published",
+        "registry_digest": digest,
+        "entries": entries,
+        "cursor": cursor.to_string(),
+        "authority_cursor": authority_cursor,
+        "recorded_at": recorded_at
+    }))
 }
 
 fn directory_write(
@@ -3422,7 +3581,7 @@ fn steward_event(
             .unwrap_or(trust_state.cursor);
         if kind == "revocation" {
             let revoked = crate::json::get_str(&document, "revoked_key").unwrap_or_default();
-            revocation_cascade(db, revoked, cursor, &cursor.to_string(), now, &digest)?;
+            revocation_cascade(db, revoked, None, cursor, &cursor.to_string(), now, &digest)?;
         }
         Ok((
             201,
@@ -3437,6 +3596,7 @@ fn steward_event(
 fn revocation_cascade(
     db: &CompanyDb,
     revoked: &str,
+    scope: Option<&str>,
     cursor: i64,
     authority_cursor: &str,
     now: &str,
@@ -3449,7 +3609,12 @@ fn revocation_cascade(
         .events_of_kind("fact-event")
         .map_err(|error| refuse(500, error))?
     {
-        if verification == "verified" && crate::json::get_str(&payload, "signer") == Some(revoked) {
+        if verification == "verified"
+            && crate::json::get_str(&payload, "signer") == Some(revoked)
+            && scope.is_none_or(|scope| {
+                crate::json::get_str(&payload, "authority_scope") == Some(scope)
+            })
+        {
             affected += 1;
             let fact_id = crate::json::get_str(&payload, "fact_id").unwrap_or_default();
             let unknown = json!({
@@ -3467,7 +3632,7 @@ fn revocation_cascade(
                 .map_err(|error| refuse(500, error))?;
         }
     }
-    let residual = json!({
+    let mut residual = json!({
         "schema": "kinbase-unreachable-clone-residual/1",
         "revoked_key": revoked,
         "cursor": cursor.to_string(),
@@ -3476,10 +3641,17 @@ fn revocation_cascade(
         "max_offline_revocation_freshness_seconds": 900,
         "statement": "unknown clones may keep projecting until they sync or their revocation freshness window expires"
     });
+    let residual_key = match scope {
+        Some(scope) => {
+            residual["revoked_scope"] = Value::String(scope.to_owned());
+            format!("{revoked}\0{scope}\0{digest}")
+        }
+        None => format!("{revoked}\0{digest}"),
+    };
     db.append_event(
         &format!(
             "residual_{}",
-            &crate::hash::sha256_text(&format!("{revoked}\0{digest}"))[..32]
+            &crate::hash::sha256_text(&residual_key)[..32]
         ),
         "revocation",
         "unreachable_clone_residual",

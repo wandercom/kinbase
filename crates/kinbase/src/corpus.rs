@@ -631,6 +631,17 @@ pub(crate) fn load_store(
                             .flatten()
                             .filter_map(|record| serde_json::from_value(record.clone()).ok()),
                     );
+                    // One scope of a key that stays registered elsewhere; the
+                    // reducer withdraws only what the key warranted there.
+                    revocations.extend(
+                        crate::json::get_array(&snapshot, "scope_revocations")
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|record| {
+                                serde_json::from_value::<Revocation>(record.clone()).ok()
+                            })
+                            .filter(|revocation| revocation.scope.is_some()),
+                    );
                 }
                 // The signed snapshot also publishes Company's derived current
                 // view; proxy each fact into reducer input unless the admitted

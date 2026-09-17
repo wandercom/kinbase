@@ -1594,11 +1594,7 @@ pub fn trust_facts(
     if let Ok(private) = launcher.private_store() {
         if let Ok(now_cursor) = private.observation_cursor() {
             for (revoked_key, cursor, _) in facts.revocations.clone() {
-                let revocation = Revocation {
-                    revoked_key,
-                    cursor,
-                    effective_at: String::new(),
-                };
+                let revocation = Revocation::of_key(revoked_key, cursor, String::new());
                 let key = format!(
                     "revocation-watermark:{}:{}",
                     revocation.revoked_key, revocation.cursor
