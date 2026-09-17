@@ -1781,8 +1781,31 @@ pub fn build_trust(
                     crate::company::cache::PinOutcome::Unchanged => {
                         trust.pin_state = "stable".to_owned()
                     }
-                    crate::company::cache::PinOutcome::Conflict(other) => {
+                    crate::company::cache::PinOutcome::Conflict {
+                        uuid: pinned_uuid,
+                        digest: pinned_digest,
+                    } => {
+                        // Architecture §2: a later hint returning a different
+                        // UUID or certificate blocks; it was reported and
+                        // then trusted anyway.
+                        let mismatch = if pinned_uuid == uuid {
+                            format!(
+                                "the certificate for repository UUID {uuid} changed since the discovery hint was pinned (pinned digest {}, installed {})",
+                                short_digest(&pinned_digest),
+                                short_digest(
+                                    trust.certificate_digest.as_deref().unwrap_or_default()
+                                )
+                            )
+                        } else {
+                            format!(
+                                "the discovery hint was pinned to repository UUID {pinned_uuid}, and this worktree names {uuid}"
+                            )
+                        };
                         trust.pin_state = "conflict".to_owned();
+                        trust.certificate_valid = false;
+                        trust.certificate_reason = format!(
+                            "{mismatch}; nothing is trusted until a signed Company lineage/move event updates the binding"
+                        );
                         trust.unknowns.push(json!({
                             "kind": "identity",
                             "unknown_id": format!("unknown_identity_{}", &crate::hash::sha256_text(&hint)[..24]),
@@ -1791,7 +1814,7 @@ pub fn build_trust(
                             "repin_unknown_owner_roles": ["company-steward"],
                             "repin_blocked": true,
                             "response_due_at": crate::time::plus_seconds(&now, 24 * 3600).unwrap_or_default(),
-                            "question": format!("discovery hint resolves to UUID {uuid} but was pinned to {other}; only a signed Company lineage/move event may update the binding"),
+                            "question": format!("{mismatch}; only a signed Company lineage/move event may update the binding"),
                             "status": "open"
                         }));
                     }
@@ -1800,6 +1823,10 @@ pub fn build_trust(
         }
     }
     Ok(trust)
+}
+
+fn short_digest(digest: &str) -> &str {
+    digest.get(..16).unwrap_or(digest)
 }
 
 fn cache_needs_refresh(cache: &crate::company::cache::Cache, now: &str) -> bool {
@@ -4095,7 +4122,9 @@ pub fn doctor(
     let kindex = crate::adapters::kindex_seam_conformance();
     let mut boundaries = Vec::new();
     if let Some(repo) = &repo {
-        boundaries.push(json!({"root": repo.root.to_string_lossy(), "common_dir": repo.common_dir.to_string_lossy(), "certified": repo.config.is_some(), "kind": "worktree"}));
+        // `.kin/kinbase.toml` says the worktree was initialized, not that an
+        // out-of-worktree certificate verifies it; `status` reports that.
+        boundaries.push(json!({"root": repo.root.to_string_lossy(), "common_dir": repo.common_dir.to_string_lossy(), "initialized": repo.config.is_some(), "kind": "worktree"}));
         if let Ok(modules) = crate::codebase::git(&repo.root, &["submodule", "status"]) {
             for line in modules.lines() {
                 if let Some(path) = line.split_whitespace().nth(1) {

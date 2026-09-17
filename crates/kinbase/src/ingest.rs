@@ -401,6 +401,11 @@ pub fn ingest(
             merged.effective_until = fresh.effective_until.clone();
             merged.disposition = fresh.disposition.clone();
             merged.parents = fresh.parents.clone();
+            // The key and statement are the adapter's conclusions too: a symbol
+            // whose name crossed the convention threshold is re-keyed per file
+            // (and back) instead of staying on the key it was first read under.
+            merged.logical_key = fresh.logical_key.clone();
+            merged.statement = fresh.statement.clone();
             if !record.present && merged.lifecycle == "observed" {
                 merged.lifecycle = "absent".to_owned();
             } else if record.present

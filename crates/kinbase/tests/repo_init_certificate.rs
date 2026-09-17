@@ -329,8 +329,10 @@ fn repo_init_caches_certificate_outside_worktree() {
     assert_eq!(foreign_error["error"]["code"], "FOREIGN_REPO_EVENTS");
     assert_eq!(fs::read(&cached_certificate).unwrap(), certificate_bytes);
 
-    let config_text = fs::read_to_string(repo.join(".kin/kinbase.toml")).expect("read .kin/kinbase.toml");
-    let config = kinbase::codebase::RepoConfig::parse(&config_text).expect("parse .kin/kinbase.toml");
+    let config_text =
+        fs::read_to_string(repo.join(".kin/kinbase.toml")).expect("read .kin/kinbase.toml");
+    let config =
+        kinbase::codebase::RepoConfig::parse(&config_text).expect("parse .kin/kinbase.toml");
     assert_eq!(config.repository_uuid_hint, repository_uuid);
     assert_eq!(config.schema_version, "kinbase-repo/1");
 }
@@ -1381,4 +1383,101 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
     assert_eq!(result["as_of_source"], "recorded-proof-clock");
     assert_eq!(result["company_reference_resolved"], true);
     assert_eq!(result["company_statement"], company_statement);
+}
+
+#[test]
+fn a_hint_pinned_to_another_repository_blocks_certification() {
+    let root = TempDir::new().expect("temporary root");
+    let home = root.path().join("home");
+    let config_home = root.path().join("config-home");
+    let kinbase_config = config_home.join("kinbase");
+    let cache_root = root.path().join("company-cache");
+    let personal_root = root.path().join("personal");
+    fs::create_dir_all(&home).expect("create home");
+    fs::create_dir_all(&kinbase_config).expect("create config directory");
+    fs::create_dir_all(&personal_root).expect("create personal root");
+    let root_key = PrivateKey::generate();
+    let root_public_key_file = kinbase_config.join("root-public.key");
+    let facts_token_file = kinbase_config.join("facts.token");
+    private_write(
+        &root_public_key_file,
+        format!("{}\n", root_key.public().to_hex()).as_bytes(),
+    );
+    private_write(&facts_token_file, b"facts-token\n");
+    private_write(
+        &kinbase_config.join("config.toml"),
+        format!(
+            "schema_version = \"1\"\n\n[personal]\ndata_root = {}\n\n[company]\nurl = \"http://127.0.0.1:1\"\nfacts_token_file = {}\nroot_public_key_file = {}\ncache_root = {}\n",
+            quoted(&personal_root),
+            quoted(&facts_token_file),
+            quoted(&root_public_key_file),
+            quoted(&cache_root)
+        )
+        .as_bytes(),
+    );
+
+    // Two worktrees name one upstream (a fork re-certified, a moved clone)
+    // under different repository UUIDs.
+    let certify = |name: &str, uuid: &str| {
+        let repo = root.path().join(name);
+        for args in [
+            vec!["init", "--initial-branch=main", repo.to_str().unwrap()],
+            vec![
+                "-C",
+                repo.to_str().unwrap(),
+                "remote",
+                "add",
+                "origin",
+                "https://git.example.com/acme/service.git",
+            ],
+        ] {
+            let git = Command::new("git").args(&args).output_alone().expect("git");
+            assert!(
+                git.status.success(),
+                "{}",
+                String::from_utf8_lossy(&git.stderr)
+            );
+        }
+        let certificate = root.path().join(format!("{name}-certificate.json"));
+        private_write(
+            &certificate,
+            &signed_certificate(&root_key, uuid, "2026-09-07T12:00:00.000Z"),
+        );
+        let init = run_init(&home, &config_home, &repo, &certificate);
+        assert!(
+            init.status.success(),
+            "{}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+        repo
+    };
+    let status_certificate = |repo: &Path| -> Value {
+        let output = run_status(&home, &config_home, repo);
+        let document: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+            panic!(
+                "status JSON: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+        document["certificate"].clone()
+    };
+
+    let first = certify("first", "11111111-1111-4111-8111-111111111111");
+    let pinned = status_certificate(&first);
+    assert_eq!(pinned["valid"], true, "{pinned}");
+    assert_eq!(pinned["pin_state"], "pinned", "{pinned}");
+
+    let second = certify("second", "22222222-2222-4222-8222-222222222222");
+    let blocked = status_certificate(&second);
+    assert_eq!(blocked["valid"], false, "{blocked}");
+    assert_eq!(blocked["pin_state"], "conflict", "{blocked}");
+    let reason = blocked["reason"].as_str().expect("reason");
+    assert!(
+        reason.contains("pinned to repository UUID 11111111-1111-4111-8111-111111111111"),
+        "{reason}"
+    );
+
+    // The pin is not rewritten by the conflicting read.
+    assert_eq!(status_certificate(&first)["pin_state"], "stable");
 }

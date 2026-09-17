@@ -542,7 +542,7 @@ impl Cache {
             {
                 Ok(PinOutcome::Unchanged)
             }
-            Some((uuid, _)) => Ok(PinOutcome::Conflict(uuid)),
+            Some((uuid, digest)) => Ok(PinOutcome::Conflict { uuid, digest }),
             None => {
                 connection
                     .execute(
@@ -805,7 +805,11 @@ fn enforce_certificate_file_mode(path: &Path) -> Result<(), ContractError> {
 pub enum PinOutcome {
     Pinned,
     Unchanged,
-    Conflict(String),
+    /// The hint is pinned to this UUID and certificate digest.
+    Conflict {
+        uuid: String,
+        digest: String,
+    },
 }
 
 #[derive(Debug, Clone)]
