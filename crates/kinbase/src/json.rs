@@ -498,7 +498,29 @@ fn reject_duplicate_keys(text: &str, identity: KeyIdentity) -> Result<(), String
 
 pub fn strict<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, String> {
     let value = parse_strict_value(bytes)?;
-    serde_json::from_value(value).map_err(|error| error.to_string())
+    serde_json::from_value(value).map_err(|error| serde_error_text(&error))
+}
+
+/// A serde error as text that never carries the input. A typed parse error
+/// quotes the offending value (`invalid type: string "..."`, `unknown variant
+/// `...``), and that text reached diagnostics, fsck output and HTTP bodies;
+/// only its kind and position leave the parser. A syntax error names a
+/// position, never a value, and is kept; so is a missing field, which names
+/// the type's own field.
+pub fn serde_error_text(error: &serde_json::Error) -> String {
+    let text = error.to_string();
+    if error.classify() != serde_json::error::Category::Data || text.starts_with("missing field") {
+        return text;
+    }
+    if error.line() > 0 {
+        format!(
+            "a value does not match the record type (line {}, column {})",
+            error.line(),
+            error.column()
+        )
+    } else {
+        "a value does not match the record type".to_owned()
+    }
 }
 
 pub fn to_value<T: Serialize>(value: &T) -> Value {
@@ -562,6 +584,24 @@ mod duplicate_key_tests {
         assert_eq!(envelope.as_object().map(Map::len), Some(2));
         let repeated = parse_user_document(br#"{"a":1,"\u0061":2}"#).expect_err("one key");
         assert!(repeated.contains("duplicate object key"), "{repeated}");
+    }
+
+    #[test]
+    fn a_typed_parse_error_does_not_carry_the_value() {
+        #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Row {
+            count: u64,
+        }
+        let error = strict::<Row>(br#"{"count":"sk-live-0123456789"}"#).expect_err("typed");
+        assert!(!error.contains("sk-live"), "{error}");
+        let direct =
+            serde_json::from_str::<Row>(r#"{"count":"sk-live-0123456789"}"#).expect_err("typed");
+        let text = serde_error_text(&direct);
+        assert!(!text.contains("sk-live"), "{text}");
+        assert!(text.contains("line 1"), "{text}");
+        let missing = strict::<Row>(b"{}").expect_err("missing");
+        assert!(missing.contains("missing field `count`"), "{missing}");
     }
 
     #[test]
