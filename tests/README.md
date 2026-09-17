@@ -164,7 +164,7 @@ KINBASE_ACCEPT_GATE_VECTOR=/tmp/gates.json tests/run-acceptance.sh
 
 | variable | meaning |
 |---|---|
-| `KINBASE_BIN` | argv prefix for the ratified CLI. Default: `kinbase` on `PATH`, then `python -m kinbase`. |
+| `KINBASE_BIN` | **required** argv prefix for the ratified CLI; its first word is the absolute path of the build under test. Nothing is taken from `PATH`. The census records the path, SHA-256 and `--version`. |
 | `KINBASE_SPEC_ROOT` | repository containing `spec/`. Default: discovered upward from the suite. |
 | `KINBASE_TESTER_VAULT` | mode-0700 canary vault root. Default: `$TMPDIR/kinbase-acceptance-vault-<uid>`. |
 | `KINBASE_HOST_CODEX` / `KINBASE_HOST_CLAUDE` | absolute paths to the pinned host executables (V-9). |
@@ -338,6 +338,13 @@ only generators, placeholder IDs, structural gold labels, and policies."*
 
 `tests/fixtures/` holds exactly that. Every message template was deliberately
 constructed for this instrument; none derives from a real private conversation.
+`fixtures/hosts/envelopes.json` holds the V-9 native envelopes: Claude's were
+recorded from the pinned build in a scratch repository with a synthetic prompt
+(session id, paths and prompt replaced by placeholders); Codex's carry exactly
+the required fields of the pinned executable's own input schemas, kept beside
+them. `hosts.envelope_for` fills the placeholders and refuses any field the host
+does not send, and the V-9 native-events node refuses a host whose version
+differs from the frozen one.
 Raw canary values are generated at run time into a mode-0700 vault that
 `acceptance/_harness/vault.py` refuses to place inside any repository, worktree,
 agent home or evidence packet, and destroys on its 24-hour clock.
@@ -381,4 +388,5 @@ tests/
   fixtures/
     gold/                    structural gold labels and generators
     policies/                the auxiliary-corpus request for the Detector Reviewer
+    hosts/                   native V-9 envelopes and the Codex input schemas
 ```

@@ -66,12 +66,18 @@ fn commands(document: &Value, event: &str) -> Vec<String> {
 
 /// The exact standalone dispatcher this build installs for `event`.
 fn own_command(host: &str, event: &str) -> String {
-    format!("'{}' hooks dispatch {host} {event}", env!("CARGO_BIN_EXE_kinbase"))
+    format!(
+        "'{}' hooks dispatch {host} {event}",
+        env!("CARGO_BIN_EXE_kinbase")
+    )
 }
 
 fn own(commands: &[String], host: &str, event: &str) -> usize {
     let expected = own_command(host, event);
-    commands.iter().filter(|command| **command == expected).count()
+    commands
+        .iter()
+        .filter(|command| **command == expected)
+        .count()
 }
 
 #[test]
@@ -116,7 +122,10 @@ fn claude_plan_keeps_foreign_handlers_and_replaces_only_its_own() {
         "foreign handler must be preserved byte for byte"
     );
     let stop = commands(&document, "Stop");
-    assert!(stop.contains(&"/usr/local/bin/stop.sh".to_owned()), "{stop:?}");
+    assert!(
+        stop.contains(&"/usr/local/bin/stop.sh".to_owned()),
+        "{stop:?}"
+    );
     assert!(
         stop.contains(&"audit-hook; '/old/build/kinbase' hooks dispatch claude Stop".to_owned()),
         "a compound command ending in a dispatcher is someone's action: {stop:?}"
@@ -185,7 +194,9 @@ fn codex_plan_keeps_foreign_handlers_and_replaces_only_its_own() {
         "a compound command ending in a dispatcher is someone's action: {stop:?}"
     );
     assert_eq!(
-        stop.iter().filter(|command| command.contains("/old/build/")).count(),
+        stop.iter()
+            .filter(|command| command.contains("/old/build/"))
+            .count(),
         1,
         "only the stale standalone dispatcher is replaced: {stop:?}"
     );
@@ -425,8 +436,14 @@ fn dispatch_accepts_host_envelopes_with_control_characters_and_floats() {
     // PreToolUse: a multi-line shell command, then an MCP tool whose input
     // carries a float and multi-line prose, as the host sends each of them.
     for (tool_name, tool_input) in [
-        ("Bash", json!({"command": "echo a\necho b", "timeout": 600000})),
-        ("mcp__kindex__link", json!({"weight": 0.8, "reason": "why\nbecause"})),
+        (
+            "Bash",
+            json!({"command": "echo a\necho b", "timeout": 600000}),
+        ),
+        (
+            "mcp__kindex__link",
+            json!({"weight": 0.8, "reason": "why\nbecause"}),
+        ),
     ] {
         let mut pre = base.clone();
         pre["hook_event_name"] = json!("PreToolUse");
@@ -450,13 +467,22 @@ fn dispatch_accepts_host_envelopes_with_control_characters_and_floats() {
     prompt["hook_event_name"] = json!("UserPromptSubmit");
     prompt["id"] = json!("evt-1");
     prompt["prompt"] = json!(raw_prompt);
-    let output = dispatch(&world, "UserPromptSubmit", prompt.to_string().as_bytes(), false);
+    let output = dispatch(
+        &world,
+        "UserPromptSubmit",
+        prompt.to_string().as_bytes(),
+        false,
+    );
     assert!(
         output.status.success(),
         "UserPromptSubmit refused: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.stdout.is_empty(), "no evidence, no context noise: {:?}", output.stdout);
+    assert!(
+        output.stdout.is_empty(),
+        "no evidence, no context noise: {:?}",
+        output.stdout
+    );
     let observation = wait_for_observation(&world.personal, "session:host-session-1");
     let folded = kinbase::json::fold_to_canonical_text(raw_prompt);
     assert_eq!(
@@ -498,9 +524,16 @@ fn dispatch_refuses_dirty_identifiers_and_paths_instead_of_folding_them() {
         });
         stop[field] = json!(value);
         let output = dispatch(&world, "Stop", stop.to_string().as_bytes(), false);
-        assert_eq!(output.status.code(), Some(3), "dirty {field} must be refused");
+        assert_eq!(
+            output.status.code(),
+            Some(3),
+            "dirty {field} must be refused"
+        );
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(stderr.contains(field), "the refusal names the field: {stderr:?}");
+        assert!(
+            stderr.contains(field),
+            "the refusal names the field: {stderr:?}"
+        );
     }
     assert!(
         !world.personal.join("session-checkpoints.jsonl").exists(),
@@ -516,9 +549,13 @@ fn append_jsonl_refuses_a_record_that_is_not_canonical() {
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).expect("chmod records");
     let path = dir.join("ledger.jsonl");
     let refused = kinbase::store::append_jsonl(&path, &json!({"statement": "one\ntwo"}));
-    assert!(refused.is_err(), "a non-canonical record is refused, not blanked");
+    assert!(
+        refused.is_err(),
+        "a non-canonical record is refused, not blanked"
+    );
     assert!(!path.exists(), "nothing was appended: {path:?}");
-    kinbase::store::append_jsonl(&path, &json!({"statement": "one two"})).expect("canonical record");
+    kinbase::store::append_jsonl(&path, &json!({"statement": "one two"}))
+        .expect("canonical record");
     let text = fs::read_to_string(&path).expect("ledger");
     assert_eq!(text.lines().count(), 1);
     assert!(text.lines().all(|line| !line.trim().is_empty()));
@@ -529,7 +566,11 @@ fn dispatch_refuses_a_malformed_envelope_and_says_so_on_stderr() {
     let temp = TempDir::new().expect("tempdir");
     let world = host_world(&temp);
     let output = dispatch(&world, "Stop", b"not json at all", false);
-    assert_eq!(output.status.code(), Some(3), "a malformed envelope is still refused");
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "a malformed envelope is still refused"
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("UNSUPPORTED_HOST_VERSION"),
@@ -561,9 +602,11 @@ fn host_envelope_parser_folds_text_keeps_numbers_and_rejects_duplicates() {
         dirty.as_ref().is_err_and(|error| error.contains("cwd")),
         "an identifier is refused, not folded: {dirty:?}"
     );
-    assert_eq!(kinbase::json::fold_to_canonical_text("no controls"), "no controls");
+    assert_eq!(
+        kinbase::json::fold_to_canonical_text("no controls"),
+        "no controls"
+    );
 }
-
 
 #[test]
 fn checkpoint_streams_only_this_sessions_records_from_shared_ledgers() {
@@ -573,9 +616,7 @@ fn checkpoint_streams_only_this_sessions_records_from_shared_ledgers() {
     let ledger = world.personal.join("observations.jsonl");
     // A quote in the id: escaped on disk, and the marker must spell it the same.
     let session = "host-session-3\"quoted";
-    let record = |source: &str, id: &str| {
-        json!({"observation_id": id, "source_identity": source, "statement": "x"})
-    };
+    let record = |source: &str, id: &str| json!({"observation_id": id, "source_identity": source, "statement": "x"});
     // Through the canonical writer, as every real record is.
     for value in [
         record(&format!("session:{session}"), "obs_mine"),
@@ -600,7 +641,9 @@ fn checkpoint_streams_only_this_sessions_records_from_shared_ledgers() {
         .expect("binary line");
     // A large foreign line that is not UTF-8 must cost nothing to skip.
     let mut large = Vec::with_capacity(4 << 20);
-    large.extend_from_slice(b"{\"observation_id\":\"obs_big\",\"source_identity\":\"session:other\",\"statement\":\"");
+    large.extend_from_slice(
+        b"{\"observation_id\":\"obs_big\",\"source_identity\":\"session:other\",\"statement\":\"",
+    );
     large.resize(4 << 20, 0xff);
     large.extend_from_slice(b"\"}\n");
     raw.write_all(&large).expect("large binary line");
@@ -696,10 +739,27 @@ fn a_host_hook_never_exits_2_even_for_a_user_action_refusal() {
     let output = child.wait_with_output().expect("output");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(output.status.code(), Some(3), "{stderr}");
-    assert!(stderr.contains("REPO_UNCERTIFIED"), "the reason is kept: {stderr}");
+    assert!(
+        stderr.contains("REPO_UNCERTIFIED"),
+        "the reason is kept: {stderr}"
+    );
     assert!(
         stderr.lines().any(|line| line.starts_with("remediation: ")),
         "so is the remediation: {stderr}"
+    );
+    // Every candidate's outcome reaches the channel the host shows, and the
+    // checkpoint is written even though the refusal carried git's own words.
+    assert!(
+        stderr
+            .lines()
+            .any(|line| line == "admission cand_probe -> company:root: failed (REPO_UNCERTIFIED)"),
+        "{stderr}"
+    );
+    let checkpoints =
+        fs::read_to_string(world.personal.join("session-checkpoints.jsonl")).expect("checkpoint");
+    assert!(
+        checkpoints.contains("\"candidate_id\":\"cand_probe\""),
+        "{checkpoints}"
     );
 
     // The same refusal from an ordinary command still exits 2.

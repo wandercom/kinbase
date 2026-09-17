@@ -54,12 +54,7 @@ impl Client {
     }
 
     fn nonce(&self) -> String {
-        let sequence = SEQUENCE.fetch_add(1, Ordering::SeqCst);
-        format!(
-            "{}{:03}",
-            crate::time::now_utc().timestamp_millis(),
-            sequence % 1000
-        )
+        request_nonce()
     }
 
     pub fn request(
@@ -354,4 +349,32 @@ pub fn deliver_to_channel(
         &bytes,
         Duration::from_secs(5),
     )
+}
+
+/// A request nonce unique across processes: several processes share one
+/// client key, and the time-plus-counter nonce collided between them, so the
+/// service refused one of the requests as a replay.
+fn request_nonce() -> String {
+    let sequence = SEQUENCE.fetch_add(1, Ordering::SeqCst);
+    format!(
+        "{}{:03}-{:016x}",
+        crate::time::now_utc().timestamp_millis(),
+        sequence % 1000,
+        rand::random::<u64>()
+    )
+}
+
+#[cfg(test)]
+mod nonce_tests {
+    #[test]
+    fn nonces_differ_even_with_the_same_time_and_counter() {
+        let nonces: std::collections::BTreeSet<String> =
+            (0..1000).map(|_| super::request_nonce()).collect();
+        assert_eq!(nonces.len(), 1000);
+        // Two processes share the time and counter prefix; the suffix differs.
+        let (left, right) = (super::request_nonce(), super::request_nonce());
+        let suffix = |nonce: &str| nonce.split_once('-').map(|(_, rest)| rest.to_owned());
+        assert_ne!(suffix(&left), suffix(&right));
+        assert!(left.len() <= 128);
+    }
 }

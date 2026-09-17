@@ -9,12 +9,54 @@ use unicode_normalization::UnicodeNormalization;
 
 pub const JSON_INTEGER_BOUND: i128 = 9_007_199_254_740_991;
 
+/// Canonical bytes of `value`. A value that fails the canonical rule is not
+/// written as nothing: it becomes a marker record naming the rule it broke
+/// and the digest of its unchecked rendering. An empty result had been
+/// stored as an empty record, and every invalid value shared the digest of
+/// the empty string. Callers that must refuse use [`try_canonical_bytes`].
 pub fn canonical_bytes(value: &Value) -> Vec<u8> {
-    try_canonical_bytes(value).unwrap_or_default()
+    match try_canonical_bytes(value) {
+        Ok(bytes) => bytes,
+        Err(error) => noncanonical_marker(value, &error),
+    }
 }
 
 pub fn canonical_text(value: &Value) -> String {
     String::from_utf8(canonical_bytes(value)).unwrap_or_default()
+}
+
+/// Canonical bytes for a durable record. A writer refuses a value that fails
+/// the canonical rule; it never stores a marker or nothing in its place.
+pub fn record_bytes(value: &Value) -> Result<Vec<u8>, crate::error::ContractError> {
+    try_canonical_bytes(value).map_err(|error| {
+        crate::error::ContractError::internal(format!("record is not canonical: {error}"))
+    })
+}
+
+/// [`record_bytes`] as text.
+pub fn record_text(value: &Value) -> Result<String, crate::error::ContractError> {
+    String::from_utf8(record_bytes(value)?)
+        .map_err(|_| crate::error::ContractError::internal("record is not UTF-8"))
+}
+
+/// The field a noncanonical value is replaced by.
+pub const NONCANONICAL_MARKER: &str = "kinbase_noncanonical_record";
+
+fn noncanonical_marker(value: &Value, error: &str) -> Vec<u8> {
+    let mut unchecked = Vec::new();
+    canonical_unchecked(value, &mut unchecked);
+    let digest = crate::hash::sha256_bytes(&unchecked);
+    // The rule's wording can name a field; the value itself never appears.
+    let rule = fold_to_canonical_text(error);
+    crate::output::diagnostic(
+        "noncanonical-record",
+        serde_json::json!({"rule": rule, "unchecked_digest": digest}),
+    );
+    let marker =
+        serde_json::json!({NONCANONICAL_MARKER: {"rule": rule, "unchecked_digest": digest}});
+    let mut out = Vec::new();
+    canonical_unchecked(&marker, &mut out);
+    out
 }
 
 pub fn try_canonical_bytes(value: &Value) -> Result<Vec<u8>, String> {
@@ -498,7 +540,29 @@ fn reject_duplicate_keys(text: &str, identity: KeyIdentity) -> Result<(), String
 
 pub fn strict<T: for<'de> Deserialize<'de>>(bytes: &[u8]) -> Result<T, String> {
     let value = parse_strict_value(bytes)?;
-    serde_json::from_value(value).map_err(|error| error.to_string())
+    serde_json::from_value(value).map_err(|error| serde_error_text(&error))
+}
+
+/// A serde error as text that never carries the input. A typed parse error
+/// quotes the offending value (`invalid type: string "..."`, `unknown variant
+/// `...``), and that text reached diagnostics, fsck output and HTTP bodies;
+/// only its kind and position leave the parser. A syntax error names a
+/// position, never a value, and is kept; so is a missing field, which names
+/// the type's own field.
+pub fn serde_error_text(error: &serde_json::Error) -> String {
+    let text = error.to_string();
+    if error.classify() != serde_json::error::Category::Data || text.starts_with("missing field") {
+        return text;
+    }
+    if error.line() > 0 {
+        format!(
+            "a value does not match the record type (line {}, column {})",
+            error.line(),
+            error.column()
+        )
+    } else {
+        "a value does not match the record type".to_owned()
+    }
 }
 
 pub fn to_value<T: Serialize>(value: &T) -> Value {
@@ -565,11 +629,55 @@ mod duplicate_key_tests {
     }
 
     #[test]
+    fn a_typed_parse_error_does_not_carry_the_value() {
+        #[derive(Debug, serde::Deserialize)]
+        #[allow(dead_code)]
+        struct Row {
+            count: u64,
+        }
+        let error = strict::<Row>(br#"{"count":"sk-live-0123456789"}"#).expect_err("typed");
+        assert!(!error.contains("sk-live"), "{error}");
+        let direct =
+            serde_json::from_str::<Row>(r#"{"count":"sk-live-0123456789"}"#).expect_err("typed");
+        let text = serde_error_text(&direct);
+        assert!(!text.contains("sk-live"), "{text}");
+        assert!(text.contains("line 1"), "{text}");
+        let missing = strict::<Row>(b"{}").expect_err("missing");
+        assert!(missing.contains("missing field `count`"), "{missing}");
+    }
+
+    #[test]
     fn keys_that_normalize_alike_cannot_be_written() {
         let mut map = Map::new();
         map.insert("e\u{301}".to_owned(), Value::from(1));
         map.insert("\u{e9}".to_owned(), Value::from(2));
         let error = validate_json(&Value::Object(map)).expect_err("collision");
         assert!(error.contains("Unicode normalization"), "{error}");
+    }
+}
+
+#[cfg(test)]
+mod noncanonical_tests {
+    use super::*;
+
+    #[test]
+    fn an_invalid_value_is_a_marker_with_its_own_digest() {
+        let left = serde_json::json!({"text": "a\u{202e}b"});
+        let right = serde_json::json!({"text": "c\u{0007}d"});
+        let marker = canonical_text(&left);
+        assert!(!marker.is_empty());
+        let parsed = parse_strict_value(marker.as_bytes()).expect("the marker is canonical");
+        assert!(parsed.get(NONCANONICAL_MARKER).is_some());
+        assert!(
+            !marker.contains('\u{202e}'),
+            "the value itself never appears"
+        );
+        assert_ne!(digest(&left), digest(&right));
+        assert_ne!(digest(&left), crate::hash::sha256_bytes(b""));
+        // A valid value is unchanged.
+        assert_eq!(
+            canonical_text(&serde_json::json!({"b": 1, "a": 2})),
+            r#"{"a":2,"b":1}"#
+        );
     }
 }

@@ -120,7 +120,11 @@ pub struct SharedConfig {
     pub classifier: Option<SharedClassifier>,
     pub hosts: SharedHosts,
     pub canary_digests: Vec<String>,
-    pub forbidden_identifiers: Vec<String>,
+    /// Digests, like the canaries': a shared process holds no raw registered
+    /// value.
+    pub forbidden_identifier_digests: Vec<String>,
+    /// The word counts registered values span (see `scanner::Registry`).
+    pub registry_digest_word_counts: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -222,6 +226,26 @@ fn host_version_range(section: &toml::Table, key: &str) -> Result<String, Contra
     Ok(text.to_owned())
 }
 
+/// A TOML parse failure as its position and rule, never the source line:
+/// the toml crate's own text quotes the offending line, which may hold a
+/// secret the user put in their config.
+pub fn toml_error_text(text: &str, error: &toml::de::Error) -> String {
+    match error.span() {
+        Some(span) => {
+            let before = &text.as_bytes()[..span.start.min(text.len())];
+            let line = before.iter().filter(|byte| **byte == b'\n').count() + 1;
+            let column = before
+                .iter()
+                .rev()
+                .take_while(|byte| **byte != b'\n')
+                .count()
+                + 1;
+            format!("line {line}, column {column}: {}", error.message())
+        }
+        None => error.message().to_owned(),
+    }
+}
+
 fn config_error(message: impl Into<String>) -> ContractError {
     ContractError::refused(
         "CONFIG_INVARIANT",
@@ -309,7 +333,10 @@ pub fn load_user_config() -> Result<Option<UserConfig>, ContractError> {
 
 pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, ContractError> {
     let table: toml::Table = text.parse().map_err(|error: toml::de::Error| {
-        config_error(format!("user config is not valid TOML: {error}"))
+        config_error(format!(
+            "user config is not valid TOML ({})",
+            toml_error_text(text, &error)
+        ))
     })?;
     closed_keys(
         &table,
@@ -670,17 +697,26 @@ impl UserConfig {
                 })
             }
         };
-        let canary_digests = match &self.scanner.canary_file {
+        let canaries = match &self.scanner.canary_file {
             None => Vec::new(),
-            Some(path) => load_registry_lines(path, "canary registry")?
-                .into_iter()
-                .map(|value| crate::scanner::canary_digest(&value))
-                .collect(),
+            Some(path) => load_registry_lines(path, "canary registry")?,
         };
         let forbidden_identifiers = match &self.scanner.forbidden_identifier_file {
             None => Vec::new(),
             Some(path) => load_registry_lines(path, "forbidden identifier registry")?,
         };
+        let registry_digest_word_counts =
+            crate::scanner::registered_word_counts(canaries.iter().chain(&forbidden_identifiers))
+                .into_iter()
+                .collect();
+        let canary_digests = canaries
+            .iter()
+            .map(|value| crate::scanner::canary_digest(value))
+            .collect();
+        let forbidden_identifier_digests = forbidden_identifiers
+            .iter()
+            .map(|value| crate::scanner::identifier_digest(value))
+            .collect();
         Ok(SharedConfig {
             mode: Mode::Full,
             principal_id: self.principal_id.clone(),
@@ -699,7 +735,8 @@ impl UserConfig {
                 claude_version: self.hosts.claude_version.clone(),
             },
             canary_digests,
-            forbidden_identifiers,
+            forbidden_identifier_digests,
+            registry_digest_word_counts,
         })
     }
 }
@@ -738,7 +775,8 @@ pub fn codebase_only_shared() -> SharedConfig {
             claude_version: ">=0.0.0".to_owned(),
         },
         canary_digests: Vec::new(),
-        forbidden_identifiers: Vec::new(),
+        forbidden_identifier_digests: Vec::new(),
+        registry_digest_word_counts: Vec::new(),
     }
 }
 
@@ -774,7 +812,10 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
     let text = std::fs::read_to_string(path)
         .map_err(|error| ContractError::unreadable("service config", &error))?;
     let table: toml::Table = text.parse().map_err(|error: toml::de::Error| {
-        config_error(format!("service config is not valid TOML: {error}"))
+        config_error(format!(
+            "service config is not valid TOML ({})",
+            toml_error_text(&text, &error)
+        ))
     })?;
     closed_keys(
         &table,
@@ -937,6 +978,15 @@ mod host_range_tests {
             "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n\n[hosts]\n{extra}\n"
         );
         parse_user_config(Path::new("/private/example/config.toml"), &text)
+    }
+
+    #[test]
+    fn a_toml_error_names_its_place_not_its_line() {
+        let text = "schema_version = \"1\"\ntoken = \"sk-live-SECRET\" oops\n";
+        let error = parse_user_config(Path::new("/private/example/config.toml"), text)
+            .expect_err("invalid TOML");
+        assert!(error.message.contains("line 2"), "{}", error.message);
+        assert!(!error.message.contains("SECRET"), "{}", error.message);
     }
 
     #[test]

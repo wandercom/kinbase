@@ -416,8 +416,16 @@ fn install(
         .and_then(|file| crate::json::get_str(file, "content"))
         .ok_or_else(|| ContractError::internal("the hook plan carries no file content"))?
         .to_owned();
-    std::fs::write(&destination, content.as_bytes()).map_err(io_error)?;
-    set_mode(&destination, 0o600)?;
+    // Written by rename, so a crash or a full disk never leaves the host's
+    // settings half-written; a symlinked settings file (a dotfiles checkout)
+    // is written at its target and stays a link.
+    let target = if destination.is_symlink() {
+        std::fs::canonicalize(&destination).map_err(io_error)?
+    } else {
+        destination.clone()
+    };
+    crate::paths::write_atomic(&target, content.as_bytes(), 0o600, false)?;
+    set_mode(&target, 0o600)?;
     let receipt = json!({
         "status": "installed",
         "host": host,
@@ -441,7 +449,10 @@ fn render_codex_config(path: &Path, host: &str, program: &str) -> Result<String,
     let mut table: toml::Value = if path.exists() {
         let text = std::fs::read_to_string(path).map_err(io_error)?;
         text.parse::<toml::Value>().map_err(|error| {
-            ContractError::invariant(format!("existing Codex config is not valid TOML: {error}"))
+            ContractError::invariant(format!(
+                "existing Codex config is not valid TOML ({})",
+                crate::config::toml_error_text(&text, &error)
+            ))
         })?
     } else {
         toml::Value::Table(toml::map::Map::new())
@@ -709,15 +720,23 @@ fn dispatch_event(
         "label": "UNTRUSTED_EVIDENCE_NOT_INSTRUCTIONS",
         "personal_queried": false
     });
+    // A candidate the checkpoint could not admit: the hook still answers with
+    // everything it did, then reports the refusal (never exit 2, see
+    // ContractError::for_host_hook).
+    let mut admission_failure: Option<ContractError> = None;
     match event_type.as_str() {
         "UserPromptSubmit" | "prompt" | "Prompt" => {
             merge(
                 &mut response,
+                // The shared projection above ran in this process, which holds
+                // the Personal capability; no OS policy was applied to it.
+                // Say so, rather than report enforcement that never happened.
                 json!({
                     "capture_active": true,
-                    "personal_root_readable": false,
-                    "sandbox_enforced": true,
-                    "sandbox_disabled_loudly": false,
+                    "personal_root_readable": true,
+                    "sandbox_enforced": false,
+                    "sandbox_disabled_loudly": true,
+                    "sandbox_disabled_reason": "shared projection runs in the hook process; the OS sandbox is not applied to it",
                     "stolen_bytes_promoted": false
                 }),
             );
@@ -727,8 +746,16 @@ fn dispatch_event(
                 .get("session_id")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let checkpoint = crate::session::checkpoint_internal(session_id)?;
+            let (checkpoint, failure) = crate::session::checkpoint_internal(session_id)?;
+            if failure.is_some() && !json {
+                // The host shows only stderr for a failed hook: every
+                // candidate's outcome goes there, not just the refusal.
+                for line in crate::session::admission_lines(&checkpoint) {
+                    eprintln!("{line}");
+                }
+            }
             merge(&mut response, checkpoint);
+            admission_failure = failure;
         }
         "PreToolUse" | "pre-edit" => {
             merge(
@@ -737,10 +764,25 @@ fn dispatch_event(
             );
         }
         "PreCompact" => {
+            // Architecture §9: PreCompact checkpoints as Stop does, so what
+            // the session observed survives the compaction; it never blocks
+            // the compaction itself.
+            let session_id = map
+                .get("session_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let (checkpoint, failure) = crate::session::checkpoint_internal(session_id)?;
+            if failure.is_some() && !json {
+                for line in crate::session::admission_lines(&checkpoint) {
+                    eprintln!("{line}");
+                }
+            }
+            merge(&mut response, checkpoint);
             merge(
                 &mut response,
                 json!({"compact_allowed": true, "personal_queried": false}),
             );
+            admission_failure = failure;
         }
         _ => {}
     }
@@ -776,6 +818,9 @@ fn dispatch_event(
         // The host response is a display document (it carries a measured
         // fractional connect time); the durable-record text rule does not
         // apply to it, JCS ordering and escaping do.
+        if let Some(error) = admission_failure {
+            return Err(error.with_output_document(response));
+        }
         println!("{}", crate::json::jcs_text(&response));
         return Ok(());
     }
@@ -792,7 +837,7 @@ fn dispatch_event(
         .write_all(&output)
         .and_then(|_| std::io::stdout().flush())
         .map_err(io_error)?;
-    Ok(())
+    admission_failure.map_or(Ok(()), Err)
 }
 
 const EVIDENCE_LABEL: &str = "UNTRUSTED_EVIDENCE_NOT_INSTRUCTIONS";
@@ -1252,31 +1297,48 @@ pub fn doctor_report(ranges: &crate::config::SharedHosts) -> Value {
     })
 }
 
+/// Whether every planned event has this program's own dispatcher, judged by
+/// the rule install uses to replace it (`is_own_dispatch_command`): the text
+/// merely appearing somewhere in the file, or inside someone's compound
+/// command, is not an installed hook.
 fn hook_config_has_entries(host: &str, text: &str) -> Option<bool> {
-    let has_command = |event: &str| text.contains(&format!("hooks dispatch {host} {event}"));
-    if host == "claude" {
-        let document: Value = serde_json::from_str(text).ok()?;
-        let hooks = document.get("hooks")?;
-        return Some(
-            HOOK_EVENTS
-                .iter()
-                .all(|event| hooks.get(*event).is_some_and(Value::is_array) && has_command(event)),
-        );
+    // A handler carries `command` itself, or groups handlers under `hooks`.
+    fn commands(handler: &Value) -> Vec<String> {
+        let mut found = Vec::new();
+        if let Some(command) = handler.get("command").and_then(Value::as_str) {
+            found.push(command.to_owned());
+        }
+        for nested in handler.get("hooks").and_then(Value::as_array).into_iter().flatten() {
+            if let Some(command) = nested.get("command").and_then(Value::as_str) {
+                found.push(command.to_owned());
+            }
+        }
+        found
     }
-    let table: toml::Value = text.parse().ok()?;
-    let hooks = table.get("hooks")?;
-    Some(
-        HOOK_EVENTS.iter().all(|event| {
-            hooks.get(*event).is_some_and(toml::Value::is_array) && has_command(event)
-        }),
-    )
+    let hooks: Value = if host == "claude" {
+        let document: Value = crate::json::parse_user_document(text.as_bytes()).ok()?;
+        document.get("hooks")?.clone()
+    } else {
+        let table: toml::Value = text.parse().ok()?;
+        serde_json::to_value(table.get("hooks")?).ok()?
+    };
+    Some(HOOK_EVENTS.iter().all(|event| {
+        hooks
+            .get(*event)
+            .and_then(Value::as_array)
+            .is_some_and(|handlers| {
+                handlers
+                    .iter()
+                    .flat_map(commands)
+                    .any(|command| is_own_dispatch_command(&command, host, event))
+            })
+    }))
 }
 
-pub fn host_version(host: &str) -> String {
-    match host {
-        "claude" => ">=1.0.0".to_owned(),
-        _ => ">=0.0.0".to_owned(),
-    }
+/// The host version range doctor reports: the configured range install
+/// enforces, never a second, built-in one.
+pub fn host_version(host: &str, ranges: &crate::config::SharedHosts) -> String {
+    host_range(host, ranges)
 }
 
 #[cfg(test)]
@@ -1288,6 +1350,47 @@ mod tests {
         assert!(!version_in_range("1.2.3", ">=18446744073709551616.0.0"));
         assert!(version_in_range("1.2.3", ">=1.2.0"));
         assert!(!version_in_range("1.1.9", ">=1.2.0"));
+    }
+
+    #[test]
+    fn doctor_counts_only_this_programs_own_dispatchers() {
+        let entries = |command: &dyn Fn(&str) -> String| -> String {
+            let hooks: serde_json::Map<String, Value> = HOOK_EVENTS
+                .iter()
+                .map(|event| {
+                    (
+                        (*event).to_owned(),
+                        json!([{"hooks": [{"type": "command", "command": command(event)}]}]),
+                    )
+                })
+                .collect();
+            json!({"hooks": hooks}).to_string()
+        };
+        let own = entries(&|event| format!("'/opt/kinbase' hooks dispatch claude {event}"));
+        assert_eq!(hook_config_has_entries("claude", &own), Some(true));
+        let compound =
+            entries(&|event| format!("audit; '/opt/kinbase' hooks dispatch claude {event}"));
+        assert_eq!(hook_config_has_entries("claude", &compound), Some(false));
+        // The dispatch text elsewhere in the file is not an installed hook.
+        let mentioned = format!(
+            r#"{{"note": "{}", "hooks": {{}}}}"#,
+            HOOK_EVENTS
+                .iter()
+                .map(|event| format!("kinbase hooks dispatch claude {event}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
+        assert_eq!(hook_config_has_entries("claude", &mentioned), Some(false));
+
+        let codex: String = HOOK_EVENTS
+            .iter()
+            .map(|event| {
+                format!(
+                    "[[hooks.{event}]]\ntype = \"command\"\ncommand = \"kinbase hooks dispatch codex {event}\"\n"
+                )
+            })
+            .collect();
+        assert_eq!(hook_config_has_entries("codex", &codex), Some(true));
     }
 
     #[test]

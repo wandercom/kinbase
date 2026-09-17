@@ -1,6 +1,6 @@
 use crate::error::{ContractError, ExitCode};
 use crate::hash::{sha256_bytes, sha256_text};
-use crate::json::{canonical_text, parse_strict_object};
+use crate::json::parse_strict_object;
 use crate::model::{CompanyReference, Distortion, FactEvent, Observation, UnknownEvent};
 use crate::time::{format_rfc3339_millis, now_rfc3339_millis, parse_rfc3339_millis};
 use chrono::Duration;
@@ -489,9 +489,16 @@ pub fn observe(
     event: &Path,
     json: bool,
 ) -> Result<(), ContractError> {
-    ensure_session_record(session)?;
     let bytes = std::fs::read(event).map_err(io_error)?;
     let parsed_records = parse_session_corpus(&bytes)?;
+    // The session belongs to the host the batch names, not always Codex.
+    let host = parsed_records
+        .first()
+        .and_then(|record| record.get("source_kind"))
+        .and_then(Value::as_str)
+        .map(host_of_source_kind)
+        .unwrap_or("unknown");
+    ensure_session_record(session, host)?;
     if parsed_records.len() > SESSION_OBSERVATION_LIMIT {
         return Err(ContractError::limit(
             format!(
@@ -619,6 +626,8 @@ pub fn observe(
 
     let mut atom_records = Vec::new();
     let mut candidate_records = Vec::new();
+    // Each atom carries its observation's own source kind; every one was
+    // labelled codex_jsonl, whichever host the batch came from.
     for (observation, event) in &observations {
         let native_id = event
             .get("event_id")
@@ -628,7 +637,7 @@ pub fn observe(
         let mut atoms = Vec::new();
         if blocked_observations.contains(&observation.observation_id) {
             let mut atom = crate::classify::atomize(
-                "codex_jsonl",
+                &observation.source_kind,
                 native_id,
                 &text,
                 "host-session",
@@ -645,7 +654,7 @@ pub fn observe(
             for item in external {
                 atoms.push(atom_from_classifier(
                     item,
-                    "codex_jsonl",
+                    &observation.source_kind,
                     native_id,
                     &observation.observation_id,
                     &observation.content_digest,
@@ -662,7 +671,7 @@ pub fn observe(
                 // confidence with destination none. No rule provider guesses
                 // in its place inside a pinned live run.
                 let mut atom = crate::classify::atomize(
-                    "codex_jsonl",
+                    &observation.source_kind,
                     native_id,
                     &text,
                     "host-session",
@@ -680,7 +689,7 @@ pub fn observe(
                 atoms.push(atom);
             } else {
                 atoms.push(crate::classify::atomize(
-                    "codex_jsonl",
+                    &observation.source_kind,
                     native_id,
                     &text,
                     "host-session",
@@ -796,7 +805,16 @@ pub fn observe(
 
 /// A host session token is caller-supplied and opaque.  Record it as active
 /// when it has not been seen before so Stop/SessionEnd can checkpoint it.
-fn ensure_session_record(session: &str) -> Result<(), ContractError> {
+/// The host a session source kind comes from.
+fn host_of_source_kind(source_kind: &str) -> &'static str {
+    match source_kind {
+        "claude_jsonl" => "claude",
+        "codex_jsonl" => "codex",
+        _ => "other",
+    }
+}
+
+fn ensure_session_record(session: &str, host: &str) -> Result<(), ContractError> {
     if personal_records("sessions.jsonl")
         .into_iter()
         .any(|record| {
@@ -809,7 +827,7 @@ fn ensure_session_record(session: &str) -> Result<(), ContractError> {
     let repo = std::env::current_dir().map_err(io_error)?;
     let record = json!({
         "session_id": session,
-        "host": "codex",
+        "host": host,
         "repository_id": crate::repository::repository_id(&repo).ok(),
         "started_at": now_rfc3339_millis(),
         "status": "started",
@@ -1590,6 +1608,15 @@ pub(crate) fn atom_from_classifier(
                 .collect()
         })
         .unwrap_or_default();
+    // A hard-block taint the classifier reports blocks the atom as the
+    // scanner's would; it used to be recorded and the atom admitted anyway.
+    if external_taints.iter().any(|taint| taint.hard_block()) && !atom.hard_blocked {
+        atom.hard_blocked = true;
+        atom.proposed_destinations
+            .retain(|destination| destination == "personal");
+        atom.eligible_destinations
+            .retain(|destination| destination == "personal");
+    }
     if let Some(values) = external
         .get("proposed_destinations")
         .and_then(Value::as_array)
@@ -1640,12 +1667,13 @@ pub(crate) fn atom_from_classifier(
         atom.proposed_destinations = proposed_destinations;
         atom.eligible_destinations = eligible_destinations;
     }
+    // The classifier adds taints; it never erases what the scanner found.
     if let Some(values) = external.get("taint").and_then(Value::as_array) {
-        atom.taints = values
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect();
+        for value in values.iter().filter_map(Value::as_str) {
+            if !atom.taints.iter().any(|taint| taint == value) {
+                atom.taints.push(value.to_owned());
+            }
+        }
     }
     if let Some(value) = external
         .get("unresolved_uncertainty")
@@ -1771,7 +1799,7 @@ fn build_candidate(
         "scope": atom.scope,
         "statement": statement
     });
-    let canonical = canonical_text(&payload);
+    let canonical = crate::json::record_text(&payload)?;
     let payload_digest = sha256_text(&canonical);
     let candidate_id = format!(
         "cand_{}",
@@ -1906,14 +1934,27 @@ fn split_sentences_keep(text: &str) -> Vec<String> {
 }
 
 pub fn checkpoint(session: &str, json: bool) -> Result<(), ContractError> {
-    let record = checkpoint_internal(session)?;
+    let (record, failure) = checkpoint_internal(session)?;
+    if let Some(error) = failure {
+        // The checkpoint is written; the command still reports the refusal,
+        // and a text reader sees every candidate's outcome with it.
+        if !json {
+            for line in admission_lines(&record) {
+                println!("{line}");
+            }
+        }
+        return Err(error.with_output_document(record));
+    }
     print_value(&record, json);
     Ok(())
 }
 
 /// Checkpoint a session without emitting host output.  Stop and SessionEnd
 /// use this path so Personal facts survive the host process.
-pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
+/// Checkpoint a session, admitting each automatic candidate on its own.
+/// Returns the checkpoint record and the first admission refusal, if any; the
+/// record (with every candidate's outcome) is written either way.
+pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError>), ContractError> {
     // A failed Company delivery or a crash after journaling is retried by the
     // ordinary session lifecycle; there is no proposal command to drain it.
     // The ledgers hold every session's records and one Stop wants one
@@ -1942,12 +1983,31 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
         }
     }
     let pending_observation_count = settle_pending(&session_text);
+    // Each candidate is admitted on its own: one that fails (an uncertified
+    // repository for a Company candidate, a digest mismatch, an unreachable
+    // service) is recorded as that candidate's failure and retried at a
+    // later checkpoint; it used to end the checkpoint and starve the rest.
     let mut admissions = Vec::new();
+    let mut admission_failures = 0usize;
+    let mut first_failure: Option<ContractError> = None;
     if !candidates.is_empty() {
-        let launcher = crate::launcher::Launcher::load()?;
         let repo = std::env::current_dir().map_err(io_error)?;
+        let launcher = crate::launcher::Launcher::load();
         for candidate in candidates.values() {
-            admissions.push(admit_candidate(&launcher, &repo, candidate)?);
+            let admitted = match &launcher {
+                Ok(launcher) => admit_candidate(launcher, &repo, candidate),
+                Err(error) => Err(error.clone()),
+            };
+            match admitted {
+                Ok(receipt) => admissions.push(receipt),
+                Err(error) => {
+                    admission_failures += 1;
+                    let failure = admission_failure(candidate, &error);
+                    crate::output::diagnostic("candidate-admission-failed", failure.clone());
+                    admissions.push(failure);
+                    first_failure.get_or_insert(error);
+                }
+            }
         }
     }
     let source_identity = format!("session:{session_text}");
@@ -1995,6 +2055,9 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
     };
     let core = crate::private::PrivateStore::open_core()?;
     let now = now_rfc3339_millis();
+    // Expiries (pending candidates, unanswered prompt reservations, raw
+    // bodies past retention) are applied here, on the write path.
+    let sweep = core.sweep(&now)?;
     let mut personal_fact_count = 0;
     for atom in &atoms {
         let personal = atom
@@ -2037,10 +2100,62 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
         "pending_observation_count": pending_observation_count,
         "atom_count": atoms.len(),
         "personal_fact_count": personal_fact_count,
-        "admissions": admissions
+        "sweep": sweep,
+        "admissions": admissions,
+        "admission_failures": admission_failures
     });
     append_personal("session-checkpoints.jsonl", &record)?;
-    Ok(record)
+    Ok((record, first_failure))
+}
+
+/// One candidate's failed admission, as its checkpoint row: the candidate,
+/// its destination and the typed refusal, with no receipt (nothing was
+/// decided). The prose is folded to canonical text: a refusal carrying a
+/// newline (git's stderr) made the checkpoint record unwritable.
+fn admission_failure(candidate: &Value, error: &ContractError) -> Value {
+    let text = crate::json::fold_to_canonical_text;
+    json!({
+        "candidate_id": text(crate::json::get_str(candidate, "candidate_id").unwrap_or_default()),
+        "destination": text(crate::json::get_str(candidate, "destination").unwrap_or_default()),
+        "state": "failed",
+        "error": {
+            "code": error.code,
+            "message": text(&error.message),
+            "remediation": text(&error.remediation),
+            "retryable": error.retryable
+        }
+    })
+}
+
+/// The admissions a checkpoint decided, one line each, for a reader who sees
+/// only text (a host shows a failed hook's stderr and nothing else).
+pub fn admission_lines(record: &Value) -> Vec<String> {
+    record
+        .get("admissions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|row| {
+            let field = |name: &str| crate::json::get_str(row, name).unwrap_or("-");
+            match row.get("error") {
+                Some(error) => format!(
+                    "admission {} -> {}: failed ({})",
+                    field("candidate_id"),
+                    field("destination"),
+                    crate::json::get_str(error, "code").unwrap_or("-")
+                ),
+                None => format!(
+                    "admission {} -> {}: {} ({})",
+                    field("candidate_id"),
+                    field("destination"),
+                    crate::json::get_str(row, "state")
+                        .or_else(|| crate::json::get_str(row, "decision"))
+                        .unwrap_or("-"),
+                    field("receipt_id")
+                ),
+            }
+        })
+        .collect()
 }
 
 pub fn end(session: &str, json: bool) -> Result<(), ContractError> {
@@ -2088,6 +2203,23 @@ fn personal_records(name: &str) -> Vec<Value> {
 fn personal_records_complete(name: &str) -> Result<Vec<Value>, ContractError> {
     let repo = std::env::current_dir().map_err(io_error)?;
     crate::store::read_records_complete(crate::StoreKind::Personal, &repo, name)
+}
+
+/// The text a record line holding `value` carries, for a marker filter:
+/// only lines holding it are parsed, and the exact filter runs on the record.
+/// The value alone, not `"key":value`, so a record written with other
+/// spacing still matches.
+fn value_marker(value: &str) -> String {
+    crate::json::jcs_text(&Value::String(value.to_owned()))
+}
+
+/// `personal_records_complete` for the lines holding `marker`, read by
+/// stream: one candidate's receipts, not every candidate's.
+fn personal_records_complete_marked(name: &str, marker: &str) -> Result<Vec<Value>, ContractError> {
+    let repo = std::env::current_dir().map_err(io_error)?;
+    crate::store::read_records_complete_where(crate::StoreKind::Personal, &repo, name, |line| {
+        crate::store::bytes_contain(line, marker.as_bytes())
+    })
 }
 
 /// `personal_records` restricted to the lines `keep` accepts, read by stream.
@@ -2185,6 +2317,96 @@ mod tests {
 }
 
 #[cfg(test)]
+mod admission_failure_tests {
+    use super::{admission_failure, admission_lines};
+    use crate::error::ContractError;
+    use serde_json::json;
+
+    #[test]
+    fn a_multi_line_refusal_is_still_a_writable_record() {
+        let error = ContractError::user_action(
+            "REPO_UNCERTIFIED",
+            "git rev-parse failed: fatal: not a git repository\nStopping at filesystem boundary",
+            "Run the command inside a Git worktree;\tthen retry.",
+        );
+        let row = admission_failure(
+            &json!({"candidate_id": "cand_1", "destination": "company:root"}),
+            &error,
+        );
+        crate::json::validate_json(&row).expect("canonical record");
+        assert!(!crate::json::canonical_text(&row).is_empty());
+        assert_eq!(
+            admission_lines(&json!({"admissions": [row]})),
+            ["admission cand_1 -> company:root: failed (REPO_UNCERTIFIED)"]
+        );
+    }
+}
+
+#[cfg(test)]
+mod external_classifier_tests {
+    use super::atom_from_classifier;
+    use serde_json::json;
+
+    fn atom(external: serde_json::Value) -> crate::model::Atom {
+        atom_from_classifier(
+            &external,
+            "claude_jsonl",
+            "native-1",
+            "obs-1",
+            "digest-1",
+            Some("repo-uuid"),
+        )
+        .expect("atom")
+    }
+
+    #[test]
+    fn a_hard_block_taint_from_the_classifier_blocks_the_atom() {
+        let blocked = atom(json!({
+            "text": "Retries are capped at three attempts.",
+            "confidence": "high",
+            "taint": ["credential"],
+            "proposed_destinations": ["codebase", "company"]
+        }));
+        assert!(blocked.hard_blocked);
+        assert!(blocked.eligible_destinations.is_empty());
+        assert_eq!(blocked.proposed_destinations, ["none"]);
+
+        // Without proposed destinations, only the Personal home remains.
+        let bare = atom(json!({
+            "text": "Retries are capped at three attempts.",
+            "taint": ["secret"]
+        }));
+        assert!(bare.hard_blocked);
+        assert!(
+            bare.eligible_destinations
+                .iter()
+                .all(|destination| destination == "personal")
+        );
+    }
+
+    #[test]
+    fn classifier_taints_add_to_the_scanners() {
+        let atom = atom(json!({
+            "text": "Retries are capped at three attempts.",
+            "confidence": "high",
+            "taint": ["public"],
+            "proposed_destinations": ["codebase"]
+        }));
+        assert!(
+            atom.taints.iter().any(|taint| taint == "personal-session"),
+            "{:?}",
+            atom.taints
+        );
+        assert!(
+            atom.taints.iter().any(|taint| taint == "public"),
+            "{:?}",
+            atom.taints
+        );
+        assert!(!atom.hard_blocked);
+    }
+}
+
+#[cfg(test)]
 mod consistency_tests {
     use super::*;
 
@@ -2277,15 +2499,18 @@ fn finalize_principal_receipt(base: &Value, saga: &Value) -> Result<Value, Contr
     let mut receipt = base.clone();
     merge_receipt(&mut receipt, saga);
     let repo_root = repo()?;
-    let already = personal_records_complete("proposal-decisions.jsonl")?
-        .into_iter()
-        .any(|record| {
-            crate::json::get_str(&record, "candidate_id")
-                == crate::json::get_str(&receipt, "candidate_id")
-                && crate::json::get_str(&record, "receipt_id")
-                    == crate::json::get_str(&receipt, "receipt_id")
-                && crate::json::get_str(&record, "state") == crate::json::get_str(&receipt, "state")
-        });
+    let already = personal_records_complete_marked(
+        "proposal-decisions.jsonl",
+        &value_marker(crate::json::get_str(&receipt, "candidate_id").unwrap_or_default()),
+    )?
+    .into_iter()
+    .any(|record| {
+        crate::json::get_str(&record, "candidate_id")
+            == crate::json::get_str(&receipt, "candidate_id")
+            && crate::json::get_str(&record, "receipt_id")
+                == crate::json::get_str(&receipt, "receipt_id")
+            && crate::json::get_str(&record, "state") == crate::json::get_str(&receipt, "state")
+    });
     if already {
         // Found, possibly from an attempt whose sync failed.
         crate::store::sync_record(
@@ -2411,7 +2636,7 @@ impl FanoutJournal {
         marker["updated_at"] = Value::String(now_rfc3339_millis());
         crate::paths::write_atomic(
             &self.marker_path(transition),
-            &crate::json::canonical_bytes(&marker),
+            &crate::json::record_bytes(&marker)?,
             0o600,
             false,
         )?;
@@ -2538,7 +2763,7 @@ fn reserve_nonce(
         }
         None => {
             let event = build_destination_event(Some(launcher), store, repository_uuid, record)?;
-            (canonical_text(&event), event)
+            (crate::json::record_text(&event)?, event)
         }
     };
     if !journal.is_complete("nonce_reservation") {
@@ -2653,7 +2878,7 @@ fn commit_codebase(
             });
             crate::paths::write_atomic(
                 &receipt_path,
-                &crate::json::canonical_bytes(&receipt),
+                &crate::json::record_bytes(&receipt)?,
                 0o600,
                 false,
             )?;
@@ -2917,16 +3142,39 @@ fn committed_siblings(record: &Value) -> Result<Vec<Value>, ContractError> {
     let message_id = crate::json::get_str(record, "message_id").unwrap_or_default();
     let session_id = crate::json::get_str(record, "session_id").unwrap_or_default();
     let candidate_id = crate::json::get_str(record, "candidate_id").unwrap_or_default();
-    let siblings: Vec<Value> = personal_records("candidates.jsonl")
-        .into_iter()
-        .filter(|other| {
-            crate::json::get_str(other, "message_id") == Some(message_id)
-                && crate::json::get_str(other, "session_id") == Some(session_id)
-                && crate::json::get_str(other, "candidate_id") != Some(candidate_id)
-        })
+    let message_marker = value_marker(message_id);
+    let siblings: Vec<Value> = personal_records_where("candidates.jsonl", |line| {
+        crate::store::bytes_contain(line, message_marker.as_bytes())
+    })
+    .into_iter()
+    .filter(|other| {
+        crate::json::get_str(other, "message_id") == Some(message_id)
+            && crate::json::get_str(other, "session_id") == Some(session_id)
+            && crate::json::get_str(other, "candidate_id") != Some(candidate_id)
+    })
+    .collect();
+    // Whether a sibling committed decides whether an apology is owed; only
+    // the siblings' receipts are read.
+    let sibling_markers: Vec<String> = siblings
+        .iter()
+        .filter_map(|sibling| crate::json::get_str(sibling, "candidate_id"))
+        .map(value_marker)
         .collect();
-    // Whether a sibling committed decides whether an apology is owed.
-    let decisions = personal_records_complete("proposal-decisions.jsonl")?;
+    let decisions = if sibling_markers.is_empty() {
+        Vec::new()
+    } else {
+        let repo = std::env::current_dir().map_err(io_error)?;
+        crate::store::read_records_complete_where(
+            crate::StoreKind::Personal,
+            &repo,
+            "proposal-decisions.jsonl",
+            |line| {
+                sibling_markers
+                    .iter()
+                    .any(|marker| crate::store::bytes_contain(line, marker.as_bytes()))
+            },
+        )?
+    };
     let mut committed = Vec::new();
     for sibling in siblings {
         let sibling_id = crate::json::get_str(&sibling, "candidate_id").unwrap_or_default();
@@ -3110,7 +3358,8 @@ fn write_apology(
     let closing_name = closing_identity
         .clone()
         .unwrap_or_else(|| closing_role.clone());
-    let now = crate::time::now_utc();
+    // The same proof clock that later decides the apology is overdue.
+    let now = crate::time::proof_clock_instant();
     let response_due_at =
         format_rfc3339_millis(now + Duration::hours(APOLOGY_RESPONSE_WINDOW_HOURS));
     let store = destination_store(&committed_destination)?;
@@ -3771,6 +4020,7 @@ pub(crate) fn destination_signing_key(
 pub(crate) fn emit_due_orphan_abandonments(
     launcher: &crate::launcher::Launcher,
     repository_root: &Path,
+    clock: &crate::time::AsOf,
 ) -> Result<usize, ContractError> {
     let existing: BTreeSet<String> = personal_records_complete("orphan-abandonments.jsonl")?
         .into_iter()
@@ -3785,7 +4035,9 @@ pub(crate) fn emit_due_orphan_abandonments(
         return Ok(existing.len());
     };
     let this_destination = format!("codebase:{repository_uuid}");
-    let now = crate::time::now_utc();
+    // The caller's clock: the proof clock, so a pinned acceptance run closes
+    // exactly what it expects and a report can say which clock it read.
+    let now = parse_rfc3339_millis(&clock.as_of).map_err(ContractError::internal)?;
     let due: Vec<Value> = current_apologies_complete()?
         .into_iter()
         .filter(|apology| {
@@ -3974,24 +4226,26 @@ fn admit_candidate(
             "Preserve the candidate and inspect its source.",
         ));
     }
-    if let Some(previous) = personal_records_complete("proposal-decisions.jsonl")?
-        .into_iter()
-        .rev()
-        .find(|receipt| {
-            crate::json::get_str(receipt, "candidate_id") == Some(candidate)
-                && crate::json::get_str(receipt, "destination") == Some(destination)
-                && crate::json::get_str(receipt, "digest") == Some(digest.as_str())
-        })
+    // The Stop path admits every automatic candidate; each reads only its
+    // own receipts rather than the whole decision ledger.
+    if let Some(previous) =
+        personal_records_complete_marked("proposal-decisions.jsonl", &value_marker(candidate))?
+            .into_iter()
+            .rev()
+            .find(|receipt| {
+                crate::json::get_str(receipt, "candidate_id") == Some(candidate)
+                    && crate::json::get_str(receipt, "destination") == Some(destination)
+                    && crate::json::get_str(receipt, "digest") == Some(digest.as_str())
+            })
+        && matches!(decision_state(&previous), "committed" | "refused")
     {
-        if matches!(decision_state(&previous), "committed" | "refused") {
-            // Acting on a found receipt: make sure it is on disk first.
-            crate::store::sync_record(
-                crate::StoreKind::Personal,
-                &std::env::current_dir().map_err(io_error)?,
-                "proposal-decisions.jsonl",
-            )?;
-            return Ok(previous);
-        }
+        // Acting on a found receipt: make sure it is on disk first.
+        crate::store::sync_record(
+            crate::StoreKind::Personal,
+            &std::env::current_dir().map_err(io_error)?,
+            "proposal-decisions.jsonl",
+        )?;
+        return Ok(previous);
     }
     let receipt_id = receipt_id(candidate, destination, &digest);
     let receipt = json!({
@@ -4143,7 +4397,7 @@ mod saga_identity_tests {
     use crate::crypto::{PrivateKey, PublicKey};
 
     fn record(scope: &str, statement: &str) -> Value {
-        let canonical = canonical_text(&json!({
+        let canonical = crate::json::canonical_text(&json!({
             "destination": "codebase:repo-uuid",
             "atom_kind": "constraint",
             "scope": scope,

@@ -1201,7 +1201,10 @@ pub fn admit(
         crate::store::write_content_addressed_event(
             &destination_root,
             &serde_json::from_value(signed).map_err(|error| {
-                ContractError::invariant(format!("admitted event is not a fact event: {error}"))
+                ContractError::invariant(format!(
+                    "admitted event is not a fact event: {}",
+                    crate::json::serde_error_text(&error)
+                ))
             })?,
         )?;
         *by_provenance.entry(event.provenance.clone()).or_insert(0) += 1;
@@ -1343,7 +1346,8 @@ pub fn admit(
                 &destination_root,
                 &serde_json::from_value(signed).map_err(|error| {
                     ContractError::invariant(format!(
-                        "admitted atom event is not a fact event: {error}"
+                        "admitted atom event is not a fact event: {}",
+                        crate::json::serde_error_text(&error)
                     ))
                 })?,
             )?;
