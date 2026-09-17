@@ -42,6 +42,41 @@ pub fn diagnostic(kind: &str, detail: Value) {
     eprintln!("{}", single_line(&line));
 }
 
+/// Rows a reader skipped: a total and the first few, described without
+/// their bytes. The total is what a rising count is judged on; retaining
+/// every skipped row's detail turned a corrupt ledger into a memory spike.
+#[derive(Default)]
+pub(crate) struct Skipped {
+    total: usize,
+    samples: Vec<Value>,
+}
+
+impl Skipped {
+    const SAMPLES: usize = 8;
+
+    pub(crate) fn push(&mut self, position: usize, bytes: usize, error: &str) {
+        self.total += 1;
+        if self.samples.len() < Self::SAMPLES {
+            self.samples
+                .push(serde_json::json!({"position": position, "bytes": bytes, "error": error}));
+        }
+    }
+
+    /// The Recovered signal: one diagnostic per read naming the source, the
+    /// total skipped and the first samples, so a rising count is visible
+    /// before it becomes a lost ledger. Silence here is how the loss stayed
+    /// hidden.
+    pub(crate) fn report(&self, source: &str) {
+        if self.total == 0 {
+            return;
+        }
+        diagnostic(
+            "unreadable-ledger-rows",
+            serde_json::json!({"source": source, "skipped": self.total, "rows": self.samples}),
+        );
+    }
+}
+
 /// Render a typed error as the nested error document. Extra top-level keys
 /// (counts) travel beside `error`.
 pub fn error_document(error: &crate::error::ContractError) -> Value {

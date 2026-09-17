@@ -25,6 +25,22 @@ pub fn dispatch(
     command: crate::command_types::HookCommand,
     json: bool,
 ) -> Result<(), ContractError> {
+    let hosted = matches!(command, crate::command_types::HookCommand::Dispatch { .. });
+    let result = run(command, json);
+    // The host shows a failed hook's stderr and hides its stdout; a refusal
+    // whose reason lived only on stdout surfaced as "No stderr output". This
+    // covers a failed launcher load as well as a refused envelope. In JSON
+    // mode the top-level boundary already mirrors the document.
+    if hosted
+        && !json
+        && let Err(error) = &result
+    {
+        eprintln!("{}: {}", error.code, error.message);
+    }
+    result
+}
+
+fn run(command: crate::command_types::HookCommand, json: bool) -> Result<(), ContractError> {
     let launcher = crate::launcher::Launcher::load()?;
     let ranges = &launcher.shared.hosts;
     match command {
@@ -143,6 +159,38 @@ fn current_program() -> String {
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', r#"'"'"'"#))
+}
+
+/// True for this program's own `hooks dispatch <host> <event>` handler at any
+/// build path: the one entry an install may replace. The command must be
+/// exactly one program word followed by the dispatch arguments; a compound
+/// command that merely ends with a dispatcher (`audit; kinbase hooks dispatch
+/// …`) is someone's custom action and is never touched.
+fn is_own_dispatch_command(command: &str, host: &str, event: &str) -> bool {
+    command
+        .strip_suffix(&format!(" hooks dispatch {host} {event}"))
+        .is_some_and(is_one_program_word)
+}
+
+/// One shell word naming a program: `shell_quote`'s own output (a
+/// single-quoted string whose embedded quotes use its `'"'"'` encoding), or
+/// a bare word with no whitespace and no shell metacharacter.
+fn is_one_program_word(program: &str) -> bool {
+    if let Some(inner) = program
+        .strip_prefix('\'')
+        .and_then(|rest| rest.strip_suffix('\''))
+    {
+        return !inner.is_empty() && inner.split("'\"'\"'").all(|piece| !piece.contains('\''));
+    }
+    !program.is_empty()
+        && !program.chars().any(|c| {
+            c.is_whitespace()
+                || matches!(
+                    c,
+                    ';' | '&' | '|' | '(' | ')' | '<' | '>' | '`' | '$' | '"' | '\'' | '\\' | '#'
+                        | '*' | '?' | '[' | ']' | '{' | '}' | '~' | '!'
+                )
+        })
 }
 
 /// A disposable home for host probes. The host's own scratch files (session
@@ -372,10 +420,23 @@ fn render_codex_config(path: &Path, host: &str, program: &str) -> Result<String,
         let mut entry = toml::map::Map::new();
         entry.insert("type".to_owned(), toml::Value::String("command".to_owned()));
         entry.insert("command".to_owned(), toml::Value::String(command));
-        hooks.insert(
-            event.to_owned(),
-            toml::Value::Array(vec![toml::Value::Table(entry)]),
-        );
+        let handlers = hooks
+            .entry(event.to_owned())
+            .or_insert_with(|| toml::Value::Array(Vec::new()));
+        let toml::Value::Array(handlers) = handlers else {
+            return Err(ContractError::invariant(format!(
+                "existing Codex hooks.{event} must be an array"
+            )));
+        };
+        // Additive, as for Claude: foreign handlers stay; only this program's
+        // own dispatcher for the event is replaced.
+        handlers.retain(|handler| {
+            !handler
+                .get("command")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|command| is_own_dispatch_command(command, host, event))
+        });
+        handlers.push(toml::Value::Table(entry));
     }
     toml::to_string_pretty(&table).map_err(|error| {
         ContractError::internal(format!("Codex config serialization failed: {error}"))
@@ -412,12 +473,33 @@ fn render_claude_settings(
     };
     for event in HOOK_EVENTS {
         let command = format!("{} hooks dispatch {} {}", shell_quote(program), host, event);
-        hooks.insert(
-            event.to_owned(),
-            json!([
-                {"hooks": [{"type": "command", "command": command}]}
-            ]),
-        );
+        let entries = hooks.entry(event.to_owned()).or_insert_with(|| json!([]));
+        let Value::Array(entries) = entries else {
+            return Err(ContractError::invariant(format!(
+                "existing Claude hooks.{event} must be an array"
+            )));
+        };
+        // Install is additive: every handler another tool or the user placed
+        // here stays exactly as it is. Only this program's own dispatcher for
+        // the event (any earlier build path) is replaced, so a reinstall is
+        // idempotent instead of stacking or, as before, wiping the array.
+        for entry in entries.iter_mut() {
+            if let Some(Value::Array(handlers)) = entry.get_mut("hooks") {
+                handlers.retain(|handler| {
+                    !handler
+                        .get("command")
+                        .and_then(Value::as_str)
+                        .is_some_and(|command| is_own_dispatch_command(command, host, event))
+                });
+            }
+        }
+        entries.retain(|entry| {
+            entry
+                .get("hooks")
+                .and_then(Value::as_array)
+                .is_none_or(|handlers| !handlers.is_empty())
+        });
+        entries.push(json!({"hooks": [{"type": "command", "command": command}]}));
     }
     Ok(crate::json::canonical_bytes(&document))
 }
@@ -455,7 +537,7 @@ fn dispatch_event(
     let map: Map<String, Value> = if stdin.is_empty() {
         Map::new()
     } else {
-        crate::json::parse_strict_value(&stdin)
+        crate::json::parse_host_envelope(&stdin)
             .map_err(|error| {
                 ContractError::degraded(
                     "UNSUPPORTED_HOST_VERSION",

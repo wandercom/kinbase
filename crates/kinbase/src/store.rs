@@ -11,7 +11,7 @@ use crate::json::{canonical_bytes, canonical_text, parse_strict_object};
 use crate::model::FactEvent;
 use serde_json::{Map, Value, json};
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead as _, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -56,17 +56,149 @@ pub fn read_records(
     read_jsonl(&root.join(filename))
 }
 
+/// The records of `filename` whose raw canonical line satisfies `keep`, read
+/// by stream. A ledger holds every session's records and one host event
+/// wants one session's: the caller passes a marker only that session's
+/// canonical lines can contain, only those lines are parsed, and the exact
+/// filter still runs on the parsed record. Nothing else is materialised, so
+/// the cost is a scan of the file rather than a parse of it. A line that is
+/// not the caller's is never parsed and never decoded, so it cannot hide the
+/// caller's; a kept line that cannot be read is skipped and reported, the
+/// disposition every ledger reader here takes. A ledger that was never
+/// written holds no records.
+pub fn read_records_where(
+    store: crate::StoreKind,
+    repo: &Path,
+    filename: &str,
+    keep: impl Fn(&[u8]) -> bool,
+) -> Result<Vec<Value>, ContractError> {
+    let root = store_root(store, repo);
+    read_jsonl_where(&root.join(filename), keep)
+}
+
+/// Where `needle` first occurs in `haystack`, for marker checks on raw
+/// ledger bytes. A line is small and a marker starts with a quote, so a
+/// first-byte scan with an early-exit compare is enough, and nothing is
+/// decoded to find out whether a line is the caller's.
+pub fn bytes_find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    let last_start = haystack.len() - needle.len();
+    let mut start = 0;
+    while let Some(offset) = haystack[start..=last_start]
+        .iter()
+        .position(|&byte| byte == needle[0])
+    {
+        let at = start + offset;
+        if &haystack[at..at + needle.len()] == needle {
+            return Some(at);
+        }
+        start = at + 1;
+    }
+    None
+}
+
+pub fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
+    bytes_find(haystack, needle).is_some()
+}
+
+/// A line without its terminator.
+fn trim_line(buffer: &[u8]) -> &[u8] {
+    let line = buffer.strip_suffix(b"\n").unwrap_or(buffer);
+    line.strip_suffix(b"\r").unwrap_or(line)
+}
+
+pub fn read_jsonl_where(
+    path: &Path,
+    keep: impl Fn(&[u8]) -> bool,
+) -> Result<Vec<Value>, ContractError> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(ContractError::io("read JSONL", error)),
+    };
+    // The signal names the ledger, never its directory.
+    let ledger = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut reader = std::io::BufReader::new(file);
+    let mut buffer = Vec::new();
+    let mut output = Vec::new();
+    let mut skipped = crate::output::Skipped::default();
+    let mut position = 0usize;
+    loop {
+        buffer.clear();
+        let read = reader
+            .read_until(b'\n', &mut buffer)
+            .map_err(|error| ContractError::io("read JSONL", error))?;
+        if read == 0 {
+            break;
+        }
+        position += 1;
+        // The predicate sees raw bytes: a foreign line is neither decoded nor
+        // copied, however large or broken it is, and a kept one that is not
+        // UTF-8 is reported rather than decoded.
+        let line = trim_line(&buffer);
+        if line.iter().all(u8::is_ascii_whitespace) || !keep(line) {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(line) else {
+            skipped.push(position, line.len(), "invalid UTF-8");
+            continue;
+        };
+        match parse_strict_object(text.as_bytes()) {
+            Ok(map) => output.push(Value::Object(map)),
+            Err(error) => skipped.push(position, text.len(), &error),
+        }
+    }
+    skipped.report(&ledger);
+    Ok(output)
+}
+
+/// Whether `canonical` already appears as a whole line of `path`, scanned by
+/// stream: materialising the ledger for a line comparison cost 1.6 GB per
+/// append on a 275 MB file.
+fn line_present(path: &Path, canonical: &str) -> Result<bool, ContractError> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(ContractError::io("read JSONL", error)),
+    };
+    let mut reader = std::io::BufReader::new(file);
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        let read = reader
+            .read_until(b'\n', &mut buffer)
+            .map_err(|error| ContractError::io("read JSONL", error))?;
+        if read == 0 {
+            return Ok(false);
+        }
+        if trim_line(&buffer) == canonical.as_bytes() {
+            return Ok(true);
+        }
+    }
+}
+
 pub fn append_jsonl(path: &Path, value: &Value) -> Result<(), ContractError> {
     if let Some(parent) = path.parent() {
         crate::paths::ensure_private_dir(parent, "record directory")?;
     }
-    let canonical = canonical_text(value);
-    if path.exists() {
-        let prior =
-            fs::read_to_string(path).map_err(|error| ContractError::io("read JSONL", error))?;
-        if prior.lines().any(|existing| existing == canonical) {
-            return Ok(());
-        }
+    // `canonical_text` yields "" for a record that fails the canonical rule,
+    // and the empty line it appended was skipped on read: a silent drop, the
+    // same shape that lost observations and blanked query_log. Refuse instead.
+    let canonical = crate::json::try_canonical_bytes(value)
+        .map_err(|error| ContractError::internal(format!("record is not canonical: {error}")))
+        .and_then(|bytes| {
+            String::from_utf8(bytes).map_err(|_| ContractError::internal("record is not UTF-8"))
+        })?;
+    if line_present(path, &canonical)? {
+        return Ok(());
     }
     let mut file = fs::OpenOptions::new()
         .create(true)

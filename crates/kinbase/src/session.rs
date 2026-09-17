@@ -58,6 +58,9 @@ pub fn record_hook_observation(
         return Ok(None);
     };
     let repo = std::env::current_dir().map_err(io_error)?;
+    // The prompt arrived through the host envelope, so it is already folded
+    // to canonical text: this digest names the stored text, not the host's
+    // raw bytes, and a transcript that kept those bytes will not reproduce it.
     let digest = sha256_bytes(prompt.as_bytes());
     let observed_at = map
         .get("timestamp")
@@ -1463,9 +1466,23 @@ pub fn checkpoint(session: &str, json: bool) -> Result<(), ContractError> {
 pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
     // A failed Company delivery or a crash after journaling is retried by the
     // ordinary session lifecycle; there is no proposal command to drain it.
+    // The ledgers hold every session's records and one Stop wants one
+    // session's. Read them by stream and parse only the lines that carry this
+    // session's marker, spelled exactly as the canonical writer spells the
+    // value (escaped, NFC), never the whole ledger: at 275 MB the
+    // whole-ledger read cost 1.9 s and 1.6 GB at every turn end to find
+    // nothing. The exact filter below still decides, against the same
+    // normalised text a stored record carries.
+    let canonical_session = crate::json::jcs_text(&Value::String(session.to_owned()));
+    let session_text: String = serde_json::from_str(&canonical_session).map_err(|error| {
+        ContractError::internal(format!("session id is not canonical text: {error}"))
+    })?;
+    let session_marker = format!("\"session_id\":{canonical_session}");
     let mut candidates = BTreeMap::new();
-    for candidate in personal_records("candidates.jsonl") {
-        if crate::json::get_str(&candidate, "session_id") == Some(session)
+    for candidate in personal_records_where("candidates.jsonl", |line| {
+        crate::store::bytes_contain(line, session_marker.as_bytes())
+    }) {
+        if crate::json::get_str(&candidate, "session_id") == Some(session_text.as_str())
             && crate::json::get_str(&candidate, "admission_mode") == Some("automatic")
         {
             let id = crate::json::get_str(&candidate, "candidate_id")
@@ -1482,25 +1499,49 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
             admissions.push(admit_candidate(&launcher, &repo, candidate)?);
         }
     }
-    let observations = personal_records("observations.jsonl")
-        .into_iter()
-        .filter(|record| {
-            record.get("source_identity").and_then(Value::as_str)
-                == Some(&format!("session:{session}"))
-        })
-        .collect::<Vec<_>>();
+    let source_identity = format!("session:{session_text}");
+    let source_marker = format!(
+        "\"source_identity\":{}",
+        crate::json::jcs_text(&Value::String(source_identity.clone()))
+    );
+    let observations = personal_records_where("observations.jsonl", |line| {
+        crate::store::bytes_contain(line, source_marker.as_bytes())
+    })
+    .into_iter()
+    .filter(|record| {
+        record.get("source_identity").and_then(Value::as_str) == Some(&source_identity)
+    })
+    .collect::<Vec<_>>();
     let observation_ids = observations
         .iter()
         .filter_map(|record| record.get("observation_id").and_then(Value::as_str))
         .collect::<BTreeSet<_>>();
-    let atoms = personal_records("atoms.jsonl")
+    // A session with no observations has no atoms; do not read the ledger.
+    // One search per line: the id after the key is looked up in the set,
+    // rather than every id searched for in every line.
+    let atoms = if observation_ids.is_empty() {
+        Vec::new()
+    } else {
+        const ATOM_KEY: &[u8] = b"\"observation_id\":\"";
+        personal_records_where("atoms.jsonl", |line| {
+            crate::store::bytes_find(line, ATOM_KEY).is_some_and(|start| {
+                let rest = &line[start + ATOM_KEY.len()..];
+                rest.iter()
+                    .position(|&byte| byte == b'"')
+                    .is_some_and(|end| {
+                        std::str::from_utf8(&rest[..end])
+                            .is_ok_and(|id| observation_ids.contains(id))
+                    })
+            })
+        })
         .into_iter()
         .filter(|atom| {
             atom.get("observation_id")
                 .and_then(Value::as_str)
                 .is_some_and(|id| observation_ids.contains(id))
         })
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+    };
     let core = crate::private::PrivateStore::open_core()?;
     let now = now_rfc3339_millis();
     let mut personal_fact_count = 0;
@@ -1587,6 +1628,25 @@ fn personal_records(name: &str) -> Vec<Value> {
         .ok()
         .and_then(|repo| crate::store::read_records(crate::StoreKind::Personal, &repo, name).ok())
         .unwrap_or_default()
+}
+
+/// `personal_records` restricted to the lines `keep` accepts, read by stream.
+/// A ledger that cannot be read is Degraded, not empty: the failure is
+/// signalled so a zero count is never mistaken for no records.
+fn personal_records_where(name: &str, keep: impl Fn(&[u8]) -> bool) -> Vec<Value> {
+    let Ok(repo) = std::env::current_dir() else {
+        return Vec::new();
+    };
+    match crate::store::read_records_where(crate::StoreKind::Personal, &repo, name, keep) {
+        Ok(records) => records,
+        Err(error) => {
+            crate::output::diagnostic(
+                "unreadable-ledger",
+                json!({"ledger": name, "code": error.code, "message": error.message}),
+            );
+            Vec::new()
+        }
+    }
 }
 
 fn append_personal(name: &str, value: &Value) -> Result<(), ContractError> {
