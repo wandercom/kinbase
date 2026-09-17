@@ -268,7 +268,7 @@ def test_native_host_events_prime_capture_and_exclude_personal(
         {
             "events_dispatched": sorted(dispatched),
             "host_invocation_records": len(invocations),
-            "not_mocked": True,
+            "not_mocked": bool(witness.session_records()),
             "session_start": {
                 "repository_root": field(start, "repository_root"),
                 "company_state": field(start, "company_state"),
