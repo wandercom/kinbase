@@ -75,6 +75,20 @@ pub fn load(db: &CompanyDb, root: &PublicKey) -> Result<TrustState, ContractErro
             steward_keys.remove(key);
         }
     }
+    let authority_cursor = published_authority_cursor(db)?;
+    Ok(TrustState {
+        root: root.clone(),
+        steward_keys,
+        revocations,
+        registry,
+        authority_cursor,
+        cursor: db.cursor()?,
+    })
+}
+
+/// The authority cursor of the newest verified registry publication, or ""
+/// when none has been published.
+pub fn published_authority_cursor(db: &CompanyDb) -> Result<String, ContractError> {
     let mut authority_cursor = String::new();
     let mut latest_registry_row = None;
     for (row_cursor, payload, verification) in db.events_of_kind("registry")? {
@@ -89,14 +103,7 @@ pub fn load(db: &CompanyDb, root: &PublicKey) -> Result<TrustState, ContractErro
             authority_cursor = published.to_owned();
         }
     }
-    Ok(TrustState {
-        root: root.clone(),
-        steward_keys,
-        revocations,
-        registry,
-        authority_cursor,
-        cursor: db.cursor()?,
-    })
+    Ok(authority_cursor)
 }
 
 impl TrustState {

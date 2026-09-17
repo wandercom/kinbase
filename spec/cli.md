@@ -282,7 +282,7 @@ may grow only through a new schema version.
 | `MANIFEST_HEAD_REGRESSION` | published reachable lineage lowers event count without rewrite event | 4 | no | Supply a maintainer-signed rollback/rewrite event or correct the publication. |
 | `LIMIT_EXCEEDED` | size/rate/cost ceiling would be crossed | 4 | conditional | Reduce one bounded input or obtain a new ratified run budget; never truncate silently. |
 | `APPROVAL_EXPIRED` | candidate/token expired before commit | 2 | no | Reissue the candidate and review its new exact bytes/digest. |
-| `APPROVAL_REPLAY` | consumed nonce is reused with nonmatching bytes/destination | 4 | no | Use the original receipt or create/review a new candidate. |
+| `APPROVAL_REPLAY` | consumed nonce is reused with nonmatching bytes/destination, or a registry document does not advance the published authority cursor | 4 | no | Use the original receipt or create/review a new candidate; publish a newly signed registry at a newer cursor. |
 | `AUTHORITY_WRONG_SCOPE` | signer does not own exact scope | 4 | no | Resolve the registered authority; role prestige cannot widen scope. |
 | `AUTHORITY_SCOPE_DENIED` | token lacks exact canonical authority scope | 4 | no | Issue a least-privilege exact-scope token; empty and wildcard-like sets grant nothing. |
 | `UNKNOWN_OWNER_UNRESOLVED` | no exact person/closing authority can be resolved | 3 | yes | Company steward repairs the registry entry before guidance is trusted. |

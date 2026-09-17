@@ -2315,8 +2315,66 @@ fn publish_registry(
     let published_cursor = crate::json::get_str(&document, "authority_cursor")
         .unwrap_or_default()
         .to_owned();
-    let previous_entries = db.registry_entries().map_err(|error| refuse(500, error))?;
+    if published_cursor.is_empty() {
+        return Err(refuse(
+            400,
+            ContractError::invariant(
+                "registry document lacks authority_cursor; a publication must say where it stands",
+            ),
+        ));
+    }
     with_immediate_transaction(db, || {
+        // Publication only moves the registry forward. A registry document is
+        // a steward's statement at one authority cursor, and its signature stays
+        // valid forever: any token holder could fetch an old one and post it
+        // again, and every entry added since came back as an R-10 revocation.
+        // Decided here, inside the write transaction, against the service's own
+        // record rather than the trust state read before the request.
+        let current = trust::published_authority_cursor(db).map_err(|error| refuse(500, error))?;
+        if let Some(existing) = db
+            .event_cursor(&event_id)
+            .map_err(|error| refuse(500, error))?
+        {
+            if published_cursor == current {
+                // The current document, posted again: the same receipt, no effects.
+                return Ok((
+                    200,
+                    json!({
+                        "schema": crate::model::RECEIPT_SCHEMA,
+                        "status": "published",
+                        "registry_digest": digest,
+                        "entries": entries.len(),
+                        "cursor": existing.to_string(),
+                        "authority_cursor": published_cursor,
+                        "recorded_at": now
+                    }),
+                ));
+            }
+            return Err(refuse(
+                409,
+                ContractError::refused(
+                    "APPROVAL_REPLAY",
+                    "this registry document was published before and has been superseded",
+                    "Publish a newly signed registry at a newer authority_cursor.",
+                ),
+            ));
+        }
+        if !current.is_empty()
+            && crate::reducer::cursor_order(&published_cursor, &current)
+                != std::cmp::Ordering::Greater
+        {
+            return Err(refuse(
+                409,
+                ContractError::refused(
+                    "APPROVAL_REPLAY",
+                    format!(
+                        "registry authority_cursor {published_cursor} does not advance past the published {current}"
+                    ),
+                    "Publish a newly signed registry at a newer authority_cursor.",
+                ),
+            ));
+        }
+        let previous_entries = db.registry_entries().map_err(|error| refuse(500, error))?;
         let cursor = match db
             .append_event(
                 &event_id,
@@ -2371,6 +2429,20 @@ fn publish_registry(
             let public_key = crate::json::get_str(&existing, "public_key")
                 .unwrap_or_default()
                 .to_owned();
+            let mut retired = existing.clone();
+            retired["status"] = Value::String("revoked".to_owned());
+            db.upsert_registry_entry(&retired, cursor)
+                .map_err(|error| refuse(500, error))?;
+            revoked_count += 1;
+            // Revocations name keys, not scopes. A key the new document still
+            // lists under another scope stays authorized there (as the loop
+            // below already holds); revoking it here withdrew it everywhere.
+            if entries
+                .iter()
+                .any(|published| crate::json::get_str(published, "public_key") == Some(&public_key))
+            {
+                continue;
+            }
             let revocation = json!({
                 "schema": "kinbase-revocation/1",
                 "revoked_key": public_key,
@@ -2393,11 +2465,6 @@ fn publish_registry(
                 None,
             )
             .map_err(|error| refuse(500, error))?;
-            let mut retired = existing.clone();
-            retired["status"] = Value::String("revoked".to_owned());
-            db.upsert_registry_entry(&retired, cursor)
-                .map_err(|error| refuse(500, error))?;
-            revoked_count += 1;
         }
         if revoked_count > 0 {
             db.set_meta("revocation_cursor", &cursor.to_string())
@@ -3871,5 +3938,220 @@ mod packet11_tests {
         };
         assert_eq!(status, 429);
         assert_eq!(error.detail.as_ref().unwrap()["omitted_count"], 1);
+    }
+}
+
+#[cfg(test)]
+mod registry_publication_tests {
+    use super::*;
+    use serde_json::json;
+
+    struct Service {
+        _temp: tempfile::TempDir,
+        db: CompanyDb,
+        auth: AuthContext,
+        root: PrivateKey,
+    }
+
+    /// A service whose only credential is the facts token: registry
+    /// publication is authorised by the steward signature (ruling C6).
+    fn service() -> Service {
+        let temp = tempfile::tempdir().unwrap();
+        let root = PrivateKey::generate();
+        let token = "facts-registry";
+        let root_path = temp.path().join("company-root.key");
+        let token_path = temp.path().join("facts.token");
+        let config_path = temp.path().join("kinbased.toml");
+        root.save_new(&root_path, "Company root key").unwrap();
+        crate::crypto::write_0600(&token_path, token.as_bytes(), "facts token").unwrap();
+        let config = format!(
+            r#"schema_version = "1"
+company_id = "company-demo"
+sqlite_path = "{db}"
+bind = "127.0.0.1:0"
+root_key_file = "{root_key}"
+facts_token_file = "{token}"
+auth_failures_per_minute = 100
+default_fact_freshness_seconds = 900
+candidate_lifetime_seconds = 900
+clock_skew_seconds = 300
+nonce_retention_seconds = 1300
+"#,
+            db = temp.path().join("company.sqlite").display(),
+            root_key = root_path.display(),
+            token = token_path.display(),
+        );
+        crate::crypto::write_0600(&config_path, config.as_bytes(), "service config").unwrap();
+        let config = crate::config::load_service_config(&config_path).unwrap();
+        let db = CompanyDb::open(&config.sqlite_path).unwrap();
+        db.set_meta("company_id", &config.company_id).unwrap();
+        register_tokens(&db, &config).unwrap();
+        let auth = AuthContext {
+            token: db.token(token).unwrap().unwrap(),
+            client_key: "bb".repeat(32),
+            principal_key: "registry-principal".to_owned(),
+        };
+        Service {
+            _temp: temp,
+            db,
+            auth,
+            root,
+        }
+    }
+
+    fn entry(authority_id: &str, scope: &str, key: &PrivateKey) -> Value {
+        json!({
+            "authority_id": authority_id,
+            "scope": scope,
+            "public_key": key.public().to_hex(),
+            "channel": "company:root",
+            "capabilities": ["answer"]
+        })
+    }
+
+    fn registry(service: &Service, cursor: Option<&str>, entries: Vec<Value>) -> Value {
+        let mut document = json!({"schema": crate::model::REGISTRY_SCHEMA, "entries": entries});
+        if let Some(cursor) = cursor {
+            document["authority_cursor"] = Value::String(cursor.to_owned());
+        }
+        service
+            .root
+            .sign_document("authority-registry-entry", &document)
+            .unwrap()
+    }
+
+    fn publish(service: &Service, document: &Value) -> Result<u16, (u16, String)> {
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let now = crate::time::now_rfc3339_millis();
+        publish_registry(
+            &service.db,
+            &service.auth,
+            &trust,
+            Some(document.clone()),
+            &now,
+        )
+        .map(|(status, _)| status)
+        .map_err(|(status, error)| (status, error.code))
+    }
+
+    fn revoked(service: &Service, key: &PrivateKey) -> bool {
+        trust::load(&service.db, &service.root.public())
+            .unwrap()
+            .is_revoked(&key.public().to_hex())
+    }
+
+    #[test]
+    fn an_old_registry_posted_again_revokes_nothing() {
+        let service = service();
+        let steward = entry("company-steward", "company:root", &service.root);
+        let architect = PrivateKey::generate();
+        let first = registry(&service, Some("1000"), vec![steward.clone()]);
+        let second = registry(
+            &service,
+            Some("1001"),
+            vec![
+                steward.clone(),
+                entry("chief-architect", "architecture:scheduling", &architect),
+            ],
+        );
+        assert_eq!(publish(&service, &first), Ok(201));
+        assert_eq!(publish(&service, &second), Ok(201));
+        let events_before = service.db.cursor().unwrap();
+
+        assert_eq!(
+            publish(&service, &first),
+            Err((409, "APPROVAL_REPLAY".to_owned()))
+        );
+        assert_eq!(
+            service.db.cursor().unwrap(),
+            events_before,
+            "no event was written"
+        );
+        assert!(!revoked(&service, &architect));
+        assert_eq!(
+            trust::published_authority_cursor(&service.db).unwrap(),
+            "1001"
+        );
+    }
+
+    #[test]
+    fn the_current_registry_posted_again_is_the_same_receipt() {
+        let service = service();
+        let document = registry(
+            &service,
+            Some("1000"),
+            vec![entry("company-steward", "company:root", &service.root)],
+        );
+        assert_eq!(publish(&service, &document), Ok(201));
+        let events_before = service.db.cursor().unwrap();
+        assert_eq!(publish(&service, &document), Ok(200));
+        assert_eq!(service.db.cursor().unwrap(), events_before);
+    }
+
+    #[test]
+    fn a_registry_must_advance_its_cursor() {
+        let service = service();
+        let steward = entry("company-steward", "company:root", &service.root);
+        let other = PrivateKey::generate();
+        assert_eq!(
+            publish(
+                &service,
+                &registry(&service, Some("1000"), vec![steward.clone()])
+            ),
+            Ok(201)
+        );
+        let same_cursor = registry(
+            &service,
+            Some("1000"),
+            vec![steward.clone(), entry("maintainer", "codebase:x", &other)],
+        );
+        assert_eq!(
+            publish(&service, &same_cursor),
+            Err((409, "APPROVAL_REPLAY".to_owned()))
+        );
+        let older = registry(&service, Some("999"), vec![steward.clone()]);
+        assert_eq!(
+            publish(&service, &older),
+            Err((409, "APPROVAL_REPLAY".to_owned()))
+        );
+        assert_eq!(
+            publish(&service, &registry(&service, None, vec![steward])),
+            Err((400, "CONFIG_INVARIANT".to_owned()))
+        );
+    }
+
+    #[test]
+    fn a_key_still_listed_under_another_scope_stays_authorized() {
+        // Row cursors on a fresh service are far below these authority cursors,
+        // which is exactly when a scope-level retirement read as a key revocation.
+        let service = service();
+        let steward = entry("company-steward", "company:root", &service.root);
+        let architect = PrivateKey::generate();
+        let both = registry(
+            &service,
+            Some("1000"),
+            vec![
+                steward.clone(),
+                entry("chief-architect", "architecture:scheduling", &architect),
+                entry("chief-architect", "architecture:storage", &architect),
+            ],
+        );
+        let one = registry(
+            &service,
+            Some("1001"),
+            vec![
+                steward.clone(),
+                entry("chief-architect", "architecture:scheduling", &architect),
+            ],
+        );
+        assert_eq!(publish(&service, &both), Ok(201));
+        assert_eq!(publish(&service, &one), Ok(201));
+        assert!(!revoked(&service, &architect));
+        let dropped = registry(&service, Some("1002"), vec![steward]);
+        assert_eq!(publish(&service, &dropped), Ok(201));
+        assert!(
+            revoked(&service, &architect),
+            "a key no entry lists is revoked"
+        );
     }
 }

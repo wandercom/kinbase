@@ -291,6 +291,12 @@ stewards issue repository certificates and publish scoped authority/maintainer p
 keys through the signed AuthorityRegistry. A fresh clone resolves by URL hint to a
 UUID certificate, then treats the UUID as identity. No trust-on-first-use exists.
 
+The registry only moves forward. Company admits a registry document only at an
+authority cursor greater than the one it has published; posting the current document
+again returns its receipt with no effect, and any older or equal-cursor document
+refuses with `APPROVAL_REPLAY`, because a steward signature on a superseded registry
+stays valid and would otherwise roll every later entry back into revocations.
+
 Rotation is a Company event signed by an already authorized steward and names old
 key, new key, effective cursor, and scope. Revocation is a signed Company event with
 its own cursor and effective time. Pre-revocation facts remain historical but any
