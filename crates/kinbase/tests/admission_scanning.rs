@@ -223,6 +223,31 @@ fn bulk_admission_withholds_what_the_scanner_blocks() {
         "ingest: {}",
         String::from_utf8_lossy(&ingest.stderr)
     );
+    // A document is split into claims by the classifier, and each claim is
+    // scanned as it is classified.
+    let documents = world.repo.join("docs-export");
+    fs::create_dir_all(&documents).expect("create document export");
+    fs::write(
+        documents.join("notes.jsonl"),
+        format!(
+            "{}\n",
+            json!({"id": "DOC-1", "title": "Guest notes", "body": format!("{REGISTERED_NAME} prefers the late checkout window.")})
+        ),
+    )
+    .expect("write documents");
+    let ingest = world.kinbase(&[
+        "ingest",
+        "document",
+        &documents.display().to_string(),
+        "--repo",
+        &repo_arg,
+        "--json",
+    ]);
+    assert!(
+        ingest.status.success(),
+        "document ingest: {}",
+        String::from_utf8_lossy(&ingest.stderr)
+    );
     let admit = world.kinbase(&[
         "corpus", "admit", "--store", "codebase", "--repo", &repo_arg, "--json",
     ]);
@@ -233,7 +258,8 @@ fn bulk_admission_withholds_what_the_scanner_blocks() {
     );
     let report: Value = serde_json::from_slice(&admit.stdout).expect("admit report is JSON");
     assert_eq!(report["admitted"], 1, "{report}");
-    assert_eq!(report["withheld_for_privacy"], 2, "{report}");
+    // Two tickets at admission, one document claim when it was classified.
+    assert_eq!(report["withheld_for_privacy"], 3, "{report}");
     let written = event_bytes(&world.repo);
     assert!(
         written.contains("The scheduler retries"),

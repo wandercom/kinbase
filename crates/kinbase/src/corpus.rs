@@ -1213,6 +1213,8 @@ pub fn admit(
                 break;
             }
             if atom.get("hard_blocked").and_then(Value::as_bool) == Some(true) {
+                // Blocked when it was classified; withheld from every store.
+                withheld_for_privacy += 1;
                 continue;
             }
             let Some(statement) = crate::json::get_str(atom, "statement") else {
