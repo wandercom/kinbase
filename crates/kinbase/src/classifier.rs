@@ -420,6 +420,15 @@ pub(crate) fn agy_available() -> Result<(), String> {
 }
 
 fn antigravity(model: &str, document: &Value) -> Result<Value, ContractError> {
+    antigravity_with(&AGY_PATHS, &KIN_PATHS, model, document)
+}
+
+fn antigravity_with(
+    agy_paths: &[&str],
+    kin_paths: &[&str],
+    model: &str,
+    document: &Value,
+) -> Result<Value, ContractError> {
     let input_observations = observations(document)?;
     for observation in input_observations {
         require_observation(
@@ -460,7 +469,7 @@ fn antigravity(model: &str, document: &Value) -> Result<Value, ContractError> {
         },
         "required": ["atoms"]
     });
-    let binary = AGY_PATHS
+    let binary = agy_paths
         .iter()
         .find(|path| std::path::Path::new(path).is_file())
         .ok_or_else(|| unauthorized("Antigravity CLI is not installed"))?;
@@ -533,7 +542,7 @@ fn antigravity(model: &str, document: &Value) -> Result<Value, ContractError> {
                     {
                         registration_tried = true;
                         registration =
-                            register_automation_session(&KIN_PATHS, &conversation, cwd.as_deref());
+                            register_automation_session(kin_paths, &conversation, cwd.as_deref());
                     }
                     stdout_bytes.extend_from_slice(&line);
                 }
@@ -551,7 +560,11 @@ fn antigravity(model: &str, document: &Value) -> Result<Value, ContractError> {
         // exit status below is the error that matters.
         let _ = writer.join();
     }
-    if let Some(registration) = registration {
+    // A registration still running when the turn ends is not waited for: the
+    // turn's answer must not miss its caller's deadline on its account, and
+    // the sandbox ends what this process leaves in its group. It started at
+    // `init`, so it has normally finished long before the turn has.
+    if let Some(registration) = registration.filter(|handle| handle.is_finished()) {
         let _ = registration.join();
     }
     if !status.success() {
@@ -1671,6 +1684,57 @@ mod tests {
                 String::from_utf8_lossy(other)
             );
         }
+    }
+
+    #[test]
+    fn a_slow_registration_never_holds_the_turn() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().expect("temporary directory");
+        let executable = |name: &str, body: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).expect("write fake executable");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+            path.display().to_string()
+        };
+        // Answers at once: `init`, then a schema-checked result.
+        let agy = executable(
+            "agy",
+            concat!(
+                "#!/bin/sh\n",
+                "read -r _prompt\n",
+                "echo '{\"event\":\"init\",\"conversation_id\":\"turn-1\",\"init\":{\"cwd\":\"/\"}}'\n",
+                "echo '{\"event\":\"result\",\"result\":{\"conversation_id\":\"turn-1\",\"status\":\"SUCCESS\",",
+                "\"structured_output\":{\"atoms\":[{\"id\":\"obs-1\",\"text\":\"Retries back off exponentially.\",",
+                "\"destination\":\"codebase\",\"confidence\":\"high\"}]}}}'\n",
+            ),
+        );
+        let kin = executable("kin", "#!/bin/sh\nsleep 30\n");
+        let document = json!({"observations": [{
+            "observation_id": "obs-1",
+            "source_kind": "claude_jsonl",
+            "source_identity": "session:test",
+            "content_digest": "digest-1",
+            "observed_at": "2026-09-17T00:00:00.000Z",
+            "disposition": "current",
+            "extraction_version": "1",
+            "scope": "unscoped",
+            "body": "Retries back off exponentially."
+        }]});
+
+        let started = std::time::Instant::now();
+        let output = antigravity_with(&[agy.as_str()], &[kin.as_str()], "default", &document)
+            .expect("the turn's answer");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the answer waited {:?} on a registration that never finishes",
+            started.elapsed()
+        );
+        assert_eq!(
+            output["atoms"].as_array().map(Vec::len),
+            Some(1),
+            "{output}"
+        );
     }
 
     #[test]
