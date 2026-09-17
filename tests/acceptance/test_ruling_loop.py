@@ -8,11 +8,10 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
-from pathlib import Path
 
 import pytest
 
-from ._harness import canonical, synth, trust
+from ._harness import synth, trust
 from ._harness import obligations as O
 from ._harness.cli import Kinbase
 from ._harness.admission import required_rows

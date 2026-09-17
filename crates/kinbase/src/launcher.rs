@@ -128,8 +128,20 @@ impl Launcher {
         }))
     }
 
-    /// Company cache only (no network), for offline/degraded reads.
+    /// Company cache only (no network), for offline/degraded reads. A cache
+    /// that does not exist yet reads as cold and is not created by reading.
     pub fn company_cache(&self) -> Result<Option<(Cache, PublicKey)>, ContractError> {
+        let Some(access) = &self.shared.company else {
+            return Ok(None);
+        };
+        Ok(Some((
+            Cache::open_for_read(&access.cache_root)?,
+            access.root_key()?,
+        )))
+    }
+
+    /// Company cache for a command that records something in it.
+    pub fn company_cache_for_write(&self) -> Result<Option<(Cache, PublicKey)>, ContractError> {
         let Some(access) = &self.shared.company else {
             return Ok(None);
         };

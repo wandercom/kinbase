@@ -50,7 +50,10 @@ impl RepoConfig {
         let table: toml::Table = text.parse().map_err(|error: toml::de::Error| {
             ContractError::integrity(
                 "DIGEST_MISMATCH",
-                format!(".kin/config is not valid TOML ({error})"),
+                format!(
+                    ".kin/config is not valid TOML ({})",
+                    crate::config::toml_error_text(text, &error)
+                ),
                 "Quarantine the malformed config; no trust-on-first-use fallback exists.",
             )
         })?;
@@ -290,10 +293,12 @@ impl Repository {
         let root = git(&start, &["rev-parse", "--show-toplevel"])?;
         let common = git(&start, &["rev-parse", "--git-common-dir"])?;
         let root = PathBuf::from(root);
+        // Git reports a relative common directory relative to where it ran
+        // (`../.git` from a subdirectory), not to the top level.
         let common_dir = if Path::new(&common).is_absolute() {
             PathBuf::from(common)
         } else {
-            root.join(common)
+            start.join(common)
         };
         let common_dir = common_dir.canonicalize().unwrap_or(common_dir);
         let kin = root.join(".kin");
@@ -930,7 +935,7 @@ impl Repository {
         paths::write_atomic(&staged, canonical, 0o600, false)?;
         paths::write_atomic(
             &journal_path,
-            &crate::json::canonical_bytes(&entry),
+            &crate::json::record_bytes(&entry)?,
             0o600,
             false,
         )?;
@@ -942,7 +947,7 @@ impl Repository {
         entry["created"] = Value::Bool(created);
         paths::write_atomic(
             &journal_path,
-            &crate::json::canonical_bytes(&entry),
+            &crate::json::record_bytes(&entry)?,
             0o600,
             false,
         )?;
@@ -951,7 +956,7 @@ impl Repository {
         entry["state"] = Value::String("indexed".to_owned());
         paths::write_atomic(
             &journal_path,
-            &crate::json::canonical_bytes(&entry),
+            &crate::json::record_bytes(&entry)?,
             0o600,
             false,
         )?;
@@ -980,21 +985,21 @@ impl Repository {
         }
         paths::write_atomic(
             &receipt_path,
-            &crate::json::canonical_bytes(&receipt),
+            &crate::json::record_bytes(&receipt)?,
             0o600,
             false,
         )?;
         entry["state"] = Value::String("receipted".to_owned());
         paths::write_atomic(
             &journal_path,
-            &crate::json::canonical_bytes(&entry),
+            &crate::json::record_bytes(&entry)?,
             0o600,
             false,
         )?;
         entry["state"] = Value::String("done".to_owned());
         paths::write_atomic(
             &journal_path,
-            &crate::json::canonical_bytes(&entry),
+            &crate::json::record_bytes(&entry)?,
             0o600,
             false,
         )?;
@@ -1107,7 +1112,7 @@ impl Repository {
                     });
                     paths::write_atomic(
                         &receipt_path,
-                        &crate::json::canonical_bytes(&receipt),
+                        &crate::json::record_bytes(&receipt)?,
                         0o600,
                         false,
                     )?;
@@ -1115,7 +1120,7 @@ impl Repository {
             }
             entry["state"] = Value::String("done".to_owned());
             entry["recovery"] = Value::String(action.to_owned());
-            paths::write_atomic(&path, &crate::json::canonical_bytes(&entry), 0o600, false)?;
+            paths::write_atomic(&path, &crate::json::record_bytes(&entry)?, 0o600, false)?;
             replayed.push(json!({"generation": entry.get("generation").cloned().unwrap_or(Value::Null), "digest": digest, "from_state": state, "action": action}));
         }
         Ok(replayed)
@@ -1127,7 +1132,7 @@ impl Repository {
         let files = self.stored_events()?;
         let index = index_value(&files);
         let path = self.local_dir().join("kinbase-index.json");
-        paths::write_atomic(&path, &crate::json::canonical_bytes(&index), 0o600, false)?;
+        paths::write_atomic(&path, &crate::json::record_bytes(&index)?, 0o600, false)?;
         Ok(())
     }
 
@@ -1205,7 +1210,7 @@ impl Repository {
             manifest["skew_seconds"] = Value::from(seconds);
         }
         let signed = signer.sign_document("manifest", &manifest)?;
-        let bytes = crate::json::canonical_bytes(&signed);
+        let bytes = crate::json::record_bytes(&signed)?;
         let digest = crate::hash::sha256_bytes(&bytes);
         let relative = paths::sharded_relative(&digest)?;
         let path = paths::contained(&self.kin.join("manifests"), &relative)?;

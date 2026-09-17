@@ -1418,6 +1418,23 @@ fn normalise_stamp(value: Option<&str>) -> Option<String> {
     )
 }
 
+/// When an exported record last changed: the latest of the named envelope
+/// times and, for a thread, of its messages. Re-ingesting an older export
+/// must not make its snapshot the head.
+fn export_updated_at(document: &Value, fields: &[&str]) -> Option<String> {
+    let messages = document
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|message| normalise_stamp(crate::json::get_str(message, "ts")));
+    fields
+        .iter()
+        .filter_map(|field| normalise_stamp(crate::json::get_str(document, field)))
+        .chain(messages)
+        .max()
+}
+
 fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, ContractError> {
     let mut scan = SourceScan::default();
     for path in source_files(source)? {
@@ -1462,6 +1479,11 @@ fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, C
                 _ => "unknown".to_owned(),
             };
             record.asserted_at = normalise_stamp(crate::json::get_str(&document, "created_at"));
+            if let Some(updated) = export_updated_at(&document, &["updated_at", "created_at"]) {
+                record
+                    .attributes
+                    .insert("updated_at".to_owned(), json!(updated));
+            }
 
             // Every outbound link is an edge in the association graph. Labels are the
             // subjects: `wandercom/app.wander.com` names a component, `Bug` names a
@@ -1573,6 +1595,13 @@ fn scan_pull_request(source: &Path, _repo: &Repository) -> Result<SourceScan, Co
                 _ => "unknown".to_owned(),
             };
             record.asserted_at = normalise_stamp(crate::json::get_str(&document, "merged_at"));
+            if let Some(updated) =
+                export_updated_at(&document, &["updated_at", "merged_at", "created_at"])
+            {
+                record
+                    .attributes
+                    .insert("updated_at".to_owned(), json!(updated));
+            }
             record.revision = revision.clone();
 
             let mut anchors = Vec::new();
@@ -1701,6 +1730,11 @@ fn scan_chat_thread(source: &Path, _repo: &Repository) -> Result<SourceScan, Con
                 "unknown".to_owned()
             };
             record.asserted_at = normalise_stamp(crate::json::get_str(&document, "started_at"));
+            if let Some(updated) = export_updated_at(&document, &["started_at"]) {
+                record
+                    .attributes
+                    .insert("updated_at".to_owned(), json!(updated));
+            }
 
             let mut references = vec![format!("channel:{channel}")];
             if let Some(permalink) = crate::json::get_str(&document, "permalink") {
@@ -2821,9 +2855,33 @@ pub struct TrustFacts {
     /// and gets it wrong. `None` means no authority answer was read and the
     /// cursor comparison below is the only evidence available.
     pub governing_revoked_keys: Option<BTreeSet<String>>,
+    /// The operator's certificate-bound maintainer keys, which warrant a
+    /// certified repository without a registry entry.
+    pub maintainer_keys: BTreeSet<String>,
+    /// Every key a registry entry has named for this repository's
+    /// `codebase:`/`repository:` scope, whether still active or since
+    /// revoked.
+    pub repository_keys: BTreeSet<String>,
 }
 
 impl TrustFacts {
+    /// Whether an unrevoked key still warrants this repository's derived
+    /// facts: an active `codebase:`/`repository:` owner, or a
+    /// certificate-bound maintainer key (as `TrustContext::is_maintainer`
+    /// accepts them).
+    fn repository_warranted(&self) -> bool {
+        let Some(uuid) = &self.repository_uuid else {
+            return false;
+        };
+        let scopes = [format!("codebase:{uuid}"), format!("repository:{uuid}")];
+        self.active_entries
+            .iter()
+            .filter(|(scope, _, _, _)| scopes.contains(scope))
+            .map(|(_, key, _, _)| key)
+            .chain(self.maintainer_keys.iter())
+            .any(|key| !self.key_revoked(key))
+    }
+
     fn owner_of_scope(&self, scope: &str) -> Option<(String, String)> {
         let owners: Vec<&(String, String, String, String)> = self
             .active_entries
@@ -3312,17 +3370,21 @@ fn revocation_of(trust: &TrustFacts, observation: &Observation) -> Option<String
         if nothing_revoked {
             return None;
         }
-        if let Some(scope) = trust.maintainer_scope() {
-            if trust.certificate_valid && trust.owner_of_scope(&scope).is_none() {
-                let effective = trust
-                    .revocations
-                    .iter()
-                    .map(|(_, _, effective)| effective.clone())
-                    .max()
-                    .unwrap_or_default();
-                return Some(effective);
-            }
+        // Withdrawn only when nothing unrevoked warrants this repository any
+        // more and a revocation names a key that did. A revocation of some
+        // other repository's key, with a registry that never named a
+        // per-repository owner, used to withdraw every derived fact.
+        if !trust.certificate_valid || trust.repository_warranted() {
+            return None;
         }
+        return trust
+            .revocations
+            .iter()
+            .filter(|(key, _, _)| {
+                trust.repository_keys.contains(key) || trust.maintainer_keys.contains(key)
+            })
+            .map(|(_, _, effective)| effective.clone())
+            .max();
     }
     None
 }
@@ -3359,6 +3421,10 @@ pub fn derive(observations: &[Observation], trust: &TrustFacts, as_of: &str) -> 
             "repo_tests" | "runtime_evidence" => derive_ordered(&mut builder, &key, &rows),
             "git_history" => derive_git(&mut builder, &key, &rows),
             "github_export" => derive_github(&mut builder, &key, &rows),
+            "issue_tracker" | "pull_request" | "chat_thread" | "document" => {
+                derive_export(&mut builder, &key, &rows)
+            }
+            "repo_symbols" => derive_symbols(&mut builder, &key, &rows),
             "kindex" => derive_kindex(&mut builder, &key, &rows),
             "authority_answer" => derive_answers(&mut builder, &key, &rows),
             _ => derive_ordered(&mut builder, &key, &rows),
@@ -3877,6 +3943,177 @@ fn derive_github(builder: &mut FactBuilder<'_>, _key: &str, rows: &[&Observation
     }
 }
 
+/// A row whose warranting repository authority was revoked: quarantined, its
+/// fact withdrawn, and, when it was trusted before the revocation, the
+/// steward-owned question reopened (as the ordered derivation does).
+fn withdraw_revoked(builder: &mut FactBuilder<'_>, row: &Observation) {
+    builder.set_state(row, "quarantined", "revoked_observation");
+    builder.push_fact(row, &[], "withdrawn", "repository authority revoked");
+    if admitted_before_revocation(
+        builder.trust,
+        row,
+        warranting_key(builder.trust, row).as_deref(),
+    ) {
+        let owner = builder
+            .trust
+            .steward_authority_id
+            .clone()
+            .map(|id| ("company-steward".to_owned(), id));
+        builder.push_unknown(
+            row,
+            "revoked",
+            "reopened",
+            format!("The authority warranting {} was revoked.", row.native_id),
+            vec![row.observation_id.clone()],
+            owner,
+        );
+    }
+}
+
+/// Exported declarations sharing one key: each definition site is its own
+/// reading, not a version of the others. Sites that agree on the shape support
+/// one current fact; sites that disagree are a conflict with an open Unknown.
+/// The ordered derivation kept only the newest site and called the rest
+/// superseded, which is exactly the disagreement the shared key exists to
+/// surface.
+fn derive_symbols(builder: &mut FactBuilder<'_>, _key: &str, rows: &[&Observation]) {
+    let as_of = builder.as_of;
+    let alive_rows = settle_history(builder, rows, |row| would_be_current(row, as_of));
+    if alive_rows.is_empty() {
+        return;
+    }
+    // Rows arrive in observation order: the last reading of a site is its head.
+    let mut sites: BTreeMap<&str, &Observation> = BTreeMap::new();
+    for row in &alive_rows {
+        if let Some(previous) = sites.insert(row.native_id.as_str(), row) {
+            builder.set_state(previous, "stale", "superseded");
+            builder.push_history(
+                previous,
+                "superseded",
+                "an earlier reading of the same declaration",
+            );
+        }
+    }
+    let heads: Vec<&Observation> = sites.into_values().collect();
+    if heads
+        .iter()
+        .any(|row| revocation_of(builder.trust, row).is_some())
+    {
+        for row in &heads {
+            withdraw_revoked(builder, row);
+        }
+        return;
+    }
+    let shapes: BTreeSet<&str> = heads
+        .iter()
+        .map(|row| attr_str(row, "shape").unwrap_or_default())
+        .collect();
+    let head = heads[0];
+    let others: Vec<&Observation> = heads[1..].to_vec();
+    if shapes.len() > 1 {
+        for row in &heads {
+            builder.set_state(row, "current", "conflicting_observations");
+        }
+        builder.push_fact(
+            head,
+            &others,
+            "conflict",
+            "definitions of one exported name disagree in shape",
+        );
+        let evidence = heads.iter().map(|row| row.observation_id.clone()).collect();
+        builder.push_unknown(
+            head,
+            "conflict",
+            "open",
+            format!(
+                "{} is declared with {} different shapes across {} sites. Which declaration is the interface?",
+                attr_str(head, "symbol").unwrap_or("the symbol"),
+                shapes.len(),
+                heads.len()
+            ),
+            evidence,
+            None,
+        );
+        return;
+    }
+    builder.set_state(head, "current", head.disposition.as_str());
+    for row in &others {
+        builder.set_state(row, "current", "supporting");
+    }
+    builder.push_fact(head, &others, "current", "the exported declaration's shape");
+}
+
+/// Exported records (tickets, pull requests, threads, documents). The newest
+/// snapshot by the record's own update time is the head, and it is current
+/// direction only when its disposition is eligible (an accepted ticket, a
+/// merged pull request); a proposed, open or cancelled record is reported
+/// with its disposition. The generic ordered derivation reported every one of
+/// them as a current fact.
+fn derive_export(builder: &mut FactBuilder<'_>, _key: &str, rows: &[&Observation]) {
+    let as_of = builder.as_of;
+    let alive_rows = settle_history(builder, rows, |row| would_be_current(row, as_of));
+    if alive_rows.is_empty() {
+        return;
+    }
+    let updated = |row: &Observation| -> Option<String> {
+        attr_str(row, "updated_at")
+            .map(str::to_owned)
+            .or_else(|| row.asserted_at.clone())
+    };
+    let mut ordered = alive_rows;
+    ordered.sort_by(|a, b| {
+        updated(a)
+            .cmp(&updated(b))
+            .then_with(|| a.observed_at.cmp(&b.observed_at))
+            .then_with(|| a.observation_id.cmp(&b.observation_id))
+    });
+    let head = *ordered.last().unwrap();
+    for row in ordered
+        .iter()
+        .filter(|row| row.observation_id != head.observation_id)
+    {
+        builder.set_state(row, "stale", "superseded");
+        builder.push_history(
+            row,
+            "superseded",
+            "an earlier version of the exported record",
+        );
+    }
+    if revocation_of(builder.trust, head).is_some() {
+        withdraw_revoked(builder, head);
+        return;
+    }
+    if expired(head, as_of) {
+        builder.set_state(head, "stale", "expired_raw_withheld");
+        builder.push_fact(
+            head,
+            &[],
+            "withdrawn",
+            "the observation passed its effective_until",
+        );
+        return;
+    }
+    if would_be_current(head, as_of) {
+        builder.set_state(head, "current", head.disposition.as_str());
+        builder.push_fact(
+            head,
+            &[],
+            "current",
+            "the newest version of an accepted exported record",
+        );
+        return;
+    }
+    // The observation is the record's current version; what it states is
+    // not durable direction.
+    builder.set_state(head, "current", head.disposition.as_str());
+    builder.push_fact(
+        head,
+        &[],
+        head.disposition.as_str(),
+        "an exported record that is not accepted is not durable direction",
+    );
+}
+
 fn derive_kindex(builder: &mut FactBuilder<'_>, _key: &str, rows: &[&Observation]) {
     let as_of = builder.as_of;
     let alive_rows = settle_history(builder, rows, |row| {
@@ -4216,6 +4453,181 @@ mod tests {
     }
 
     #[test]
+    fn an_export_is_current_only_when_accepted() {
+        let open_pr = observation(
+            "pull_request",
+            "pr-1",
+            "pull_request:1",
+            "1: add retries",
+            "proposed",
+        );
+        let cancelled = observation(
+            "issue_tracker",
+            "ENG-2",
+            "issue_tracker:ENG-2",
+            "ENG-2: drop the cache",
+            "rejected",
+        );
+        let thread = observation(
+            "chat_thread",
+            "t-1",
+            "chat_thread:t-1",
+            "we might cap retries",
+            "proposed",
+        );
+        let accepted = observation(
+            "issue_tracker",
+            "ENG-3",
+            "issue_tracker:ENG-3",
+            "ENG-3: cap retries at three",
+            "accepted",
+        );
+        let view = derive(
+            &[open_pr, cancelled, thread, accepted.clone()],
+            &TrustFacts::default(),
+            "2026-09-08T00:00:03.000Z",
+        );
+        let current: Vec<&str> = view
+            .facts
+            .iter()
+            .filter(|fact| fact.state == "current")
+            .map(|fact| fact.logical_key.as_str())
+            .collect();
+        assert_eq!(current, ["issue_tracker:ENG-3"]);
+        let states: BTreeMap<&str, &str> = view
+            .facts
+            .iter()
+            .map(|fact| (fact.logical_key.as_str(), fact.state.as_str()))
+            .collect();
+        assert_eq!(states["pull_request:1"], "proposed");
+        assert_eq!(states["issue_tracker:ENG-2"], "rejected");
+        assert_eq!(states["chat_thread:t-1"], "proposed");
+    }
+
+    #[test]
+    fn a_revoked_export_or_symbol_is_withdrawn_and_reopened() {
+        let trust = TrustFacts {
+            revocations: vec![(
+                "key-a".to_owned(),
+                "rev-1".to_owned(),
+                "2026-09-05T00:00:00.000Z".to_owned(),
+            )],
+            ..TrustFacts::default()
+        };
+        let mut accepted = observation(
+            "issue_tracker",
+            "ENG-5",
+            "issue_tracker:ENG-5",
+            "ENG-5: cap retries at three",
+            "accepted",
+        );
+        let mut declared = observation(
+            "repo_symbols",
+            "a.ts:1",
+            "symbol:function:retry",
+            "function retry has shape (n)",
+            "current",
+        );
+        declared.attributes = Some(json!({"symbol": "retry", "shape": "(n)"}));
+        for row in [&mut accepted, &mut declared] {
+            row.signer = Some("key-a".to_owned());
+            row.asserted_at = Some("2026-09-01T00:00:00.000Z".to_owned());
+        }
+        let view = derive(&[accepted, declared], &trust, "2026-09-08T00:00:03.000Z");
+        assert!(
+            view.facts.iter().all(|fact| fact.state == "withdrawn"),
+            "{:?}",
+            view.facts
+        );
+        assert_eq!(view.facts.len(), 2);
+        let reopened = view
+            .unknowns
+            .iter()
+            .filter(|u| u.kind == "revoked" && u.status == "reopened")
+            .count();
+        assert_eq!(reopened, 2);
+    }
+
+    #[test]
+    fn an_export_snapshot_is_ordered_by_its_update_time() {
+        let mut newer = observation(
+            "issue_tracker",
+            "ENG-4",
+            "issue_tracker:ENG-4",
+            "ENG-4: retries capped at five",
+            "accepted",
+        );
+        newer.observation_id = "obs_new".to_owned();
+        newer.attributes = Some(json!({"updated_at": "2026-09-07T00:00:00.000Z"}));
+        newer.observed_at = "2026-09-08T00:00:00.000Z".to_owned();
+        // An older export ingested later.
+        let mut older = observation(
+            "issue_tracker",
+            "ENG-4",
+            "issue_tracker:ENG-4",
+            "ENG-4: retries capped at three",
+            "accepted",
+        );
+        older.observation_id = "obs_old".to_owned();
+        older.attributes = Some(json!({"updated_at": "2026-09-01T00:00:00.000Z"}));
+        older.observed_at = "2026-09-08T00:00:01.000Z".to_owned();
+        let view = derive(
+            &[newer, older],
+            &TrustFacts::default(),
+            "2026-09-08T00:00:03.000Z",
+        );
+        let current: Vec<&DerivedFact> =
+            view.facts.iter().filter(|f| f.state == "current").collect();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].evidence_refs, ["obs_new"]);
+        assert_eq!(view.observation_states["obs_old"].0, "stale");
+    }
+
+    #[test]
+    fn differing_declarations_on_one_symbol_key_are_a_conflict() {
+        let symbol = |native: &str, shape: &str| {
+            let mut row = observation(
+                "repo_symbols",
+                native,
+                "symbol:function:retry",
+                &format!("function retry has shape {shape}"),
+                "current",
+            );
+            row.attributes = Some(json!({"symbol": "retry", "shape": shape}));
+            row
+        };
+        let agreeing = derive(
+            &[symbol("a.ts:1", "(n)"), symbol("b.ts:4", "(n)")],
+            &TrustFacts::default(),
+            "2026-09-08T00:00:03.000Z",
+        );
+        assert_eq!(agreeing.facts.len(), 1);
+        assert_eq!(agreeing.facts[0].state, "current");
+        assert_eq!(agreeing.facts[0].evidence_refs.len(), 2);
+
+        let disagreeing = derive(
+            &[symbol("a.ts:1", "(n)"), symbol("b.ts:4", "(n, delay)")],
+            &TrustFacts::default(),
+            "2026-09-08T00:00:03.000Z",
+        );
+        assert_eq!(disagreeing.facts.len(), 1);
+        assert_eq!(disagreeing.facts[0].state, "conflict");
+        assert!(
+            disagreeing
+                .observation_states
+                .values()
+                .all(|(state, _)| state == "current"),
+            "neither site is superseded by the other"
+        );
+        assert!(
+            disagreeing
+                .unknowns
+                .iter()
+                .any(|u| u.kind == "conflict" && u.status == "open")
+        );
+    }
+
+    #[test]
     fn transcripts_keep_stable_record_ids_and_detect_edits() {
         let (dir, repo) = git_repo();
         let root = dir.path().join("sources/codex");
@@ -4411,6 +4823,86 @@ mod tests {
         assert_eq!(
             clean_text("# title\n\nbody\tline\u{202e}x"),
             "# title body line x"
+        );
+    }
+}
+
+#[cfg(test)]
+mod revocation_warrant_tests {
+    use super::*;
+
+    const UUID: &str = "00000000-0000-4000-8000-000000000001";
+
+    fn derived() -> Observation {
+        Observation {
+            observation_id: "obs_adr".to_owned(),
+            source_kind: "adr".to_owned(),
+            native_id: "adr-1".to_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn certified() -> TrustFacts {
+        TrustFacts {
+            repository_uuid: Some(UUID.to_owned()),
+            certificate_valid: true,
+            ..Default::default()
+        }
+    }
+
+    fn revoke(trust: &mut TrustFacts, key: &str, effective_at: &str) {
+        trust
+            .revocations
+            .push((key.to_owned(), "7".to_owned(), effective_at.to_owned()));
+        trust
+            .governing_revoked_keys
+            .get_or_insert_with(BTreeSet::new)
+            .insert(key.to_owned());
+    }
+
+    #[test]
+    fn another_repositorys_revocation_withdraws_nothing() {
+        let mut trust = certified();
+        revoke(&mut trust, "other-key", "2026-09-01T00:00:00.000Z");
+        assert_eq!(revocation_of(&trust, &derived()), None);
+    }
+
+    #[test]
+    fn revoking_the_repository_key_withdraws_its_derived_facts() {
+        let mut trust = certified();
+        trust.repository_keys.insert("repo-key".to_owned());
+        revoke(&mut trust, "other-key", "2026-09-03T00:00:00.000Z");
+        revoke(&mut trust, "repo-key", "2026-09-02T00:00:00.000Z");
+        assert_eq!(
+            revocation_of(&trust, &derived()).as_deref(),
+            Some("2026-09-02T00:00:00.000Z")
+        );
+    }
+
+    #[test]
+    fn a_live_warrant_keeps_derived_facts() {
+        let mut trust = certified();
+        trust
+            .repository_keys
+            .extend(["old-key".to_owned(), "new-key".to_owned()]);
+        trust.active_entries.push((
+            format!("codebase:{UUID}"),
+            "new-key".to_owned(),
+            "owner".to_owned(),
+            "9".to_owned(),
+        ));
+        revoke(&mut trust, "old-key", "2026-09-02T00:00:00.000Z");
+        assert_eq!(revocation_of(&trust, &derived()), None);
+
+        let mut trust = certified();
+        trust.repository_keys.insert("repo-key".to_owned());
+        trust.maintainer_keys.insert("maintainer-key".to_owned());
+        revoke(&mut trust, "repo-key", "2026-09-02T00:00:00.000Z");
+        assert_eq!(revocation_of(&trust, &derived()), None);
+        revoke(&mut trust, "maintainer-key", "2026-09-04T00:00:00.000Z");
+        assert_eq!(
+            revocation_of(&trust, &derived()).as_deref(),
+            Some("2026-09-04T00:00:00.000Z")
         );
     }
 }

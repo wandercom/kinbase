@@ -233,18 +233,21 @@ LEDGER: tuple[DebtEntry, ...] = (
         "revoking state and reading the result back.",
         "V-8 ranges over a Company that holds the referenced fact",
     ),
-    _closed(
-        18, "V-9 performs no approved install or native host invocation", ("V-9",),
-        "Setup tests only dry-ran and refused; envelopes were synthetic; the "
-        "invocation assertion was conditional; the 250 ms bound was asserted as "
-        "5 s; fsck used eight events; no submodule was created.",
-        "The real host executables are typed prerequisites behind an invocation "
-        "recorder; plan, denied install and approved install are compared by "
-        "filesystem digest; the 250 ms Company connect budget is asserted at its "
-        "ratified value; the fsck and soak corpora are built at the "
-        "10,000-event ceiling; a real submodule and nested repository are "
-        "created.",
-        "V-9 exercises the real host lifecycle",
+    DebtEntry(
+        18, "V-9 performs no approved install or native host invocation", OPEN,
+        ("V-9",),
+        "The invocation witness passed on a single `--version` probe of the "
+        "host: the harness itself sends every native envelope through `hooks "
+        "dispatch`, so no host ever ran a session or delivered a hook. The "
+        "earlier closure (real executables behind a recorder, filesystem-digest "
+        "install comparison, the 250 ms budget, 10,000-event corpora, a real "
+        "submodule) stands; host-driven delivery was never shown.",
+        "Run each real host non-interactively with Kinbase hooks installed in "
+        "the isolated HOME and credentials the operator supplies, derive "
+        "`not_mocked` from dispatcher invocations the host made during that "
+        "session, and pin the KINBASE_HOST_* versions in a frozen fixture.",
+        "V-9 native-event evidence is INVALID_HARNESS until a host delivers "
+        "its own hooks",
     ),
     _closed(
         19, "V-9 permits zero operator work and trusts reported adequacy", ("V-9",),

@@ -20,6 +20,8 @@ use std::time::Duration;
 pub const FACTS_TOKEN_SCOPES: [&str; 2] = ["facts:read", "questions:write"];
 pub const DIRECTORY_TOKEN_SCOPES: [&str; 2] = ["directory:read", "admin:issue"];
 pub const AUTHORITY_TOKEN_SCOPES: [&str; 2] = ["answers:write", "questions:write"];
+/// The failure-counter subject for a request presenting no known token.
+const UNAUTHENTICATED_SUBJECT: &str = "unauthenticated";
 pub const REQUEST_EXPIRY_MAX_SECONDS: i64 = 15 * 60;
 pub const MAX_READ_ITEMS: usize = 500;
 
@@ -98,51 +100,78 @@ fn now_hour() -> i64 {
 /// Register/refresh the token records from the token files (idempotent at
 /// startup) and validate `facts_token_scopes`.
 pub fn register_tokens(db: &CompanyDb, config: &ServiceConfig) -> Result<Value, ContractError> {
-    let facts = crate::config::TokenRecord::load(&config.facts_token_file, "facts token")?;
-    db.register_token(
-        &facts.token,
-        "facts",
-        &FACTS_TOKEN_SCOPES,
-        &config.facts_token_scopes,
-        "facts-principal",
-    )?;
-    let mut roles = vec!["facts"];
-    if let Some(path) = &config.directory_token_file {
-        let directory = crate::config::TokenRecord::load(path, "directory token")?;
-        db.register_token(
-            &directory.token,
+    // A role's file holds its one current token. Registering it retires
+    // every other token of that role, and a role whose file is no longer
+    // configured keeps none: rotating a file used to leave the previous
+    // bearer token valid forever.
+    // Every file is read before anything changes, and the registrations and
+    // retirements commit together: a later unreadable file used to abort
+    // startup after earlier roles had already lost their tokens.
+    let mut loaded = Vec::new();
+    for (path, label, role, scopes, authority_scopes, principal) in [
+        (
+            Some(&config.facts_token_file),
+            "facts token",
+            "facts",
+            &FACTS_TOKEN_SCOPES[..],
+            &config.facts_token_scopes[..],
+            "facts-principal",
+        ),
+        (
+            config.directory_token_file.as_ref(),
+            "directory token",
             "directory",
-            &DIRECTORY_TOKEN_SCOPES,
-            &[],
+            &DIRECTORY_TOKEN_SCOPES[..],
+            &[][..],
             "directory-principal",
-        )?;
-        roles.push("directory");
-    }
-    if let Some(path) = &config.admin_token_file {
-        let admin = crate::config::TokenRecord::load(path, "administrative token")?;
-        db.register_token(
-            &admin.token,
+        ),
+        (
+            config.admin_token_file.as_ref(),
+            "administrative token",
             "admin",
-            &["admin:issue"],
-            &[],
+            &["admin:issue"][..],
+            &[][..],
             "admin-principal",
-        )?;
-        roles.push("admin");
-    }
-    if let Some(path) = &config.authority_token_file {
-        let authority = crate::config::TokenRecord::load(path, "authority token")?;
-        db.register_token(
-            &authority.token,
+        ),
+        (
+            config.authority_token_file.as_ref(),
+            "authority token",
             "authority",
-            &AUTHORITY_TOKEN_SCOPES,
-            &[],
+            &AUTHORITY_TOKEN_SCOPES[..],
+            &[][..],
             "authority-principal",
-        )?;
-        roles.push("authority");
+        ),
+    ] {
+        let record = path
+            .map(|path| crate::config::TokenRecord::load(path, label))
+            .transpose()?;
+        loaded.push((record, role, scopes, authority_scopes, principal));
     }
-    Ok(
-        json!({"roles": roles, "facts_token_scopes_configured": !config.facts_token_scopes.is_empty()}),
-    )
+    let (roles, retired) = with_immediate_transaction(db, || {
+        let mut roles = Vec::new();
+        let mut retired = 0usize;
+        for (record, role, scopes, authority_scopes, principal) in &loaded {
+            let Some(record) = record else {
+                retired += db
+                    .retire_tokens_with_role(role)
+                    .map_err(|error| refuse(500, error))?;
+                continue;
+            };
+            db.register_token(&record.token, role, scopes, authority_scopes, principal)
+                .map_err(|error| refuse(500, error))?;
+            retired += db
+                .retire_other_tokens(role, &record.token)
+                .map_err(|error| refuse(500, error))?;
+            roles.push(*role);
+        }
+        Ok((roles, retired))
+    })
+    .map_err(|(_, error)| error)?;
+    Ok(json!({
+        "roles": roles,
+        "facts_token_scopes_configured": !config.facts_token_scopes.is_empty(),
+        "retired_token_count": retired
+    }))
 }
 
 pub fn serve(
@@ -217,18 +246,25 @@ fn handle_connection(mut stream: TcpStream, state: Arc<ServiceState>) {
             return;
         }
     };
-    let outcome =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(&state, &request)));
-    let (status, body) = match outcome {
-        Ok(Ok((status, body))) => (status, body),
-        Ok(Err((status, error))) => (status, http::error_body(&error)),
-        Err(_) => (
+    // Rendering the refusal happens inside the guard as well: a panic there
+    // closed the connection with no response at all, which the client
+    // reports as an outage.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        match handle(&state, &request) {
+            Ok(answer) => answer,
+            Err((status, error)) => (status, http::error_body(&error)),
+        }
+    }));
+    // The fallback's message is constant ASCII, so rendering it cannot panic;
+    // it keeps the whole typed envelope (remediation, retryable, evidence).
+    let (status, body) = outcome.unwrap_or_else(|_| {
+        (
             500,
             http::error_body(&ContractError::internal(
                 "request handler failed; evidence preserved in the service audit",
             )),
-        ),
-    };
+        )
+    });
     let _ = http::respond(&mut stream, status, &body);
 }
 
@@ -280,7 +316,7 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
         && request.header("x-kinbase-signature").is_none()
     {
         // Unauthenticated status is refused like every other read.
-        db.record_auth_failure(now_minute())
+        db.record_auth_failure(now_minute(), UNAUTHENTICATED_SUBJECT)
             .map_err(|error| refuse(500, error))?;
         return Err(auth_refusal());
     }
@@ -305,7 +341,7 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
         ("GET", "/facts") => facts(&db, state, &auth, &trust_state, request, &now),
         ("POST", "/facts") => admit_fact(&db, state, &auth, &trust_state, parsed_body, &now),
         ("GET", "/snapshot") => snapshot(&db, state, &auth, &trust_state, request, &now),
-        ("GET", "/events") => events(&db, &auth, request),
+        ("GET", "/events") => events(&db, state, &auth, &trust_state, request),
         ("POST", "/authority-registry") => {
             publish_registry(&db, &auth, &trust_state, parsed_body, &now)
         }
@@ -484,8 +520,29 @@ fn authenticate(
     now: &str,
 ) -> Result<AuthContext, (u16, ContractError)> {
     let minute = now_minute();
+    let bearer = request
+        .header("authorization")
+        .and_then(|value| {
+            value
+                .strip_prefix("Bearer ")
+                .or_else(|| value.strip_prefix("bearer "))
+        })
+        .map(str::trim)
+        .filter(|token| !token.is_empty());
+    let token = match bearer {
+        Some(bearer) => db.token(bearer).map_err(|error| refuse(500, error))?,
+        None => None,
+    };
+    // Failures are counted per subject: the presented token, or one bucket
+    // for requests presenting none the service holds. A single global
+    // counter checked before credentials let any local process lock every
+    // client out for the rest of the minute.
+    let subject = token
+        .as_ref()
+        .map(|token| token.digest.clone())
+        .unwrap_or_else(|| UNAUTHENTICATED_SUBJECT.to_owned());
     let failures = db
-        .auth_failures(minute)
+        .auth_failures(minute, &subject)
         .map_err(|error| refuse(500, error))?;
     if failures >= state.config.auth_failures_per_minute {
         return Err(refuse(
@@ -497,22 +554,10 @@ fn authenticate(
         ));
     }
     let fail = |db: &CompanyDb| -> (u16, ContractError) {
-        let _ = db.record_auth_failure(minute);
+        let _ = db.record_auth_failure(minute, &subject);
         auth_refusal()
     };
-    let bearer = request
-        .header("authorization")
-        .and_then(|value| {
-            value
-                .strip_prefix("Bearer ")
-                .or_else(|| value.strip_prefix("bearer "))
-        })
-        .map(str::trim)
-        .filter(|token| !token.is_empty());
-    let Some(bearer) = bearer else {
-        return Err(fail(db));
-    };
-    let Some(token) = db.token(bearer).map_err(|error| refuse(500, error))? else {
+    let Some(token) = token else {
         return Err(fail(db));
     };
     let nonce = request
@@ -550,7 +595,7 @@ fn authenticate(
     let skew_seconds = expires.signed_duration_since(now_dt).num_seconds();
     let skew_bound = state.config.clock_skew_seconds.max(0);
     if skew_seconds.abs() > skew_bound {
-        let _ = db.record_auth_failure(minute);
+        let _ = db.record_auth_failure(minute, &subject);
         let direction = if skew_seconds > 0 { "ahead" } else { "behind" };
         let _ = db.audit(
             "request-clock-skew",
@@ -647,6 +692,19 @@ fn readable_scopes(auth: &AuthContext, trust_state: &TrustState) -> BTreeSet<Str
             .collect();
     }
     BTreeSet::new()
+}
+
+/// Whether a reader may see a derived Unknown: every authority scope whose
+/// evidence it came from is readable. Its `scope` is the evidence's subject
+/// scope, which is not an authority scope whenever the two differ.
+fn unknown_readable(unknown: &crate::reducer::DerivedUnknown, readable: &BTreeSet<String>) -> bool {
+    if unknown.authority_scopes.is_empty() {
+        return readable.contains(&unknown.scope);
+    }
+    unknown
+        .authority_scopes
+        .iter()
+        .all(|scope| readable.contains(scope))
 }
 
 fn charge_read(
@@ -806,7 +864,11 @@ fn lifecycle_authorized(
 /// Lifecycle admissions and refusals as the Company records them: admitted
 /// withdrawal events (with the authority outcome the reducer applied) plus
 /// audited refusals, so a client can report who was allowed to withdraw what.
-fn lifecycle_admissions(db: &CompanyDb, trust_state: &TrustState) -> Vec<Value> {
+fn lifecycle_admissions(
+    db: &CompanyDb,
+    trust_state: &TrustState,
+    readable: &BTreeSet<String>,
+) -> Vec<Value> {
     let mut rows = Vec::new();
     for (cursor, payload, verification) in db.events_of_kind("fact-event").unwrap_or_default() {
         let Ok(event) = FactEvent::from_value(&payload) else {
@@ -821,6 +883,13 @@ fn lifecycle_admissions(db: &CompanyDb, trust_state: &TrustState) -> Vec<Value> 
         let targets = lifecycle_targets(db, &event);
         let (authorized, target_scope) =
             lifecycle_authorized(trust_state, &event, action, &targets);
+        if !readable.contains(&event.authority_scope)
+            && !target_scope
+                .as_deref()
+                .is_some_and(|scope| readable.contains(scope))
+        {
+            continue;
+        }
         let accepted = verification == "verified" && authorized;
         rows.push(json!({
             "action": action,
@@ -838,6 +907,12 @@ fn lifecycle_admissions(db: &CompanyDb, trust_state: &TrustState) -> Vec<Value> 
         }));
     }
     for record in db.audit_records("lifecycle-refusal").unwrap_or_default() {
+        let visible = ["authority_scope", "target_scope"].iter().any(|key| {
+            crate::json::get_str(&record, key).is_some_and(|scope| readable.contains(scope))
+        });
+        if !visible {
+            continue;
+        }
         let mut row = record.clone();
         row["accepted"] = Value::Bool(false);
         if row.get("refusal_code").is_none() {
@@ -851,7 +926,11 @@ fn lifecycle_admissions(db: &CompanyDb, trust_state: &TrustState) -> Vec<Value> 
 /// Parent bindings of every current fact, resolved to the parent's logical
 /// key, so a client holding other stores can reopen dependent decisions when
 /// a parent fact loses its last support anywhere.
-fn fact_parents(db: &CompanyDb, view: &crate::reducer::CurrentView) -> Value {
+fn fact_parents(
+    db: &CompanyDb,
+    view: &crate::reducer::CurrentView,
+    sent_ids: &BTreeSet<String>,
+) -> Value {
     let mut by_event: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
     for (_, payload, _) in db.events_of_kind("fact-event").unwrap_or_default() {
         let event_id = crate::json::get_str(&payload, "event_id").unwrap_or_default();
@@ -868,7 +947,11 @@ fn fact_parents(db: &CompanyDb, view: &crate::reducer::CurrentView) -> Value {
         by_event.insert(event_id.to_owned(), (logical_key.to_owned(), parents));
     }
     let mut map = serde_json::Map::new();
-    for fact in &view.facts {
+    for fact in view
+        .facts
+        .iter()
+        .filter(|fact| sent_ids.contains(&fact.fact_id))
+    {
         let Some((_, parents)) = by_event.get(&fact.event_id) else {
             continue;
         };
@@ -1139,7 +1222,7 @@ fn facts(
             "next_after": next_after,
             "as_of": as_of,
             "authority_cursor": trust_state.cursor.to_string(),
-            "unknowns": view.unknowns.iter().filter(|u| scope.is_empty() || u.scope == scope).map(crate::model::value_of).collect::<Vec<_>>()
+            "unknowns": view.unknowns.iter().filter(|u| unknown_readable(u, &readable) && (scope.is_empty() || u.scope == scope || u.authority_scopes.contains(&scope))).map(crate::model::value_of).collect::<Vec<_>>()
         }),
     ))
 }
@@ -1544,42 +1627,63 @@ fn admit_fact(
                 .and_then(|record| crate::json::get_str(record, "client_key"))
                 == Some(auth.client_key.as_str());
             if same_bytes && same_client {
-                // Path-exists fast path: the original scoped client replays
-                // bytes Company already admitted. It receives the historical
-                // receipt for that admission and nothing is re-admitted or
-                // projected; a revocation observed since is reported on it.
-                db.bump("retry_receipt_returned")
-                    .map_err(|error| refuse(500, error))?;
                 let mut receipt = record
                     .and_then(|record| record.get("receipt").cloned())
                     .unwrap_or(Value::Null);
                 if !receipt.is_object() {
                     receipt = json!({"schema": crate::model::RECEIPT_SCHEMA, "destination": "company", "status": "committed"});
                 }
-                let (revocation_observed, support_withdrawn) =
-                    replay_projection(db, trust_state, &event);
-                receipt["retry"] = Value::Bool(true);
-                receipt["historical_receipt"] = Value::Bool(true);
-                receipt["readmitted"] = Value::Bool(false);
-                receipt["projected"] = Value::Bool(false);
-                receipt["receipt_scope_restricted"] = Value::Bool(true);
-                receipt["revocation_observed"] = Value::Bool(revocation_observed);
-                receipt["support_withdrawn"] = Value::Bool(support_withdrawn);
-                receipt["projection_state"] = Value::String(if support_withdrawn {
-                    "support_withdrawn".to_owned()
-                } else {
-                    "historical".to_owned()
-                });
-                return Ok((200, receipt));
+                // A submission that waited for a steward: committed once the
+                // event is in the log; admitted now (below) when its signer
+                // has since become an authority for the scope; otherwise
+                // still waiting, as the stored receipt says.
+                let awaiting_steward =
+                    crate::json::get_str(&receipt, "status") == Some("pending-steward-review");
+                let admitted_since = awaiting_steward
+                    && db
+                        .event_cursor(&event.event_id)
+                        .map_err(|error| refuse(500, error))?
+                        .is_some();
+                let admit_now =
+                    awaiting_steward && !admitted_since && admission_status == "committed";
+                if !admit_now {
+                    // Path-exists fast path: the original scoped client
+                    // replays bytes Company already admitted. It receives the
+                    // historical receipt for that admission and nothing is
+                    // re-admitted or projected; a revocation observed since is
+                    // reported on it.
+                    db.bump("retry_receipt_returned")
+                        .map_err(|error| refuse(500, error))?;
+                    if admitted_since {
+                        receipt["status"] = Value::String("committed".to_owned());
+                        receipt["steward_admitted"] = Value::Bool(true);
+                    }
+                    let (revocation_observed, support_withdrawn) =
+                        replay_projection(db, trust_state, &event);
+                    receipt["retry"] = Value::Bool(true);
+                    receipt["historical_receipt"] = Value::Bool(true);
+                    receipt["readmitted"] = Value::Bool(false);
+                    receipt["projected"] = Value::Bool(false);
+                    receipt["receipt_scope_restricted"] = Value::Bool(true);
+                    receipt["revocation_observed"] = Value::Bool(revocation_observed);
+                    receipt["support_withdrawn"] = Value::Bool(support_withdrawn);
+                    receipt["projection_state"] = Value::String(if support_withdrawn {
+                        "support_withdrawn".to_owned()
+                    } else {
+                        "historical".to_owned()
+                    });
+                    return Ok((200, receipt));
+                }
+            } else {
+                return Err(refuse(
+                    409,
+                    ContractError::refused(
+                        "APPROVAL_REPLAY",
+                        "consumed nonce reused with nonmatching bytes, destination, or client",
+                        "Use the original receipt or create and review a new candidate.",
+                    ),
+                ));
             }
-            return Err(refuse(
-                409,
-                ContractError::refused(
-                    "APPROVAL_REPLAY",
-                    "consumed nonce reused with nonmatching bytes, destination, or client",
-                    "Use the original receipt or create and review a new candidate.",
-                ),
-            ));
         }
 
         if let Some(existing_cursor) = db
@@ -1969,13 +2073,21 @@ fn snapshot(
     // Stated, never silent: a fact withheld because it governs somewhere else
     // is reported by count, and `GET /facts` still serves the whole set.
     let facts_elsewhere_count = readable_facts.len() - facts.len();
-    let denied: Vec<Value> = view
+    // Facts the token may not read are counted, never described: their ids,
+    // scopes and sizes were an oracle for guessed statements (architecture
+    // §2, §6). Unknowns, traces, parents and lifecycle rows follow the same
+    // readable scopes as the facts.
+    let denied_count = view
         .facts
         .iter()
         .filter(|fact| !readable.contains(&fact.authority_scope))
-        .map(|fact| json!({"fact_id": fact.fact_id, "authority_scope": fact.authority_scope, "bytes": fact.statement.len()}))
+        .count();
+    let unknowns: Vec<Value> = view
+        .unknowns
+        .iter()
+        .filter(|unknown| unknown_readable(unknown, &readable))
+        .map(crate::model::value_of)
         .collect();
-    let unknowns: Vec<Value> = view.unknowns.iter().map(crate::model::value_of).collect();
     // The admitted event set behind the view, so a client reducer can reduce
     // Company and Codebase evidence for one logical key from immutable
     // signed events (architecture §6: the reducer is a pure function of the
@@ -2007,19 +2119,20 @@ fn snapshot(
         .iter()
         .filter_map(|fact| crate::json::get_str(fact, "fact_id").map(str::to_owned))
         .collect();
-    let sent_keys: BTreeSet<&str> = if repository.is_empty() {
-        BTreeSet::new()
-    } else {
-        facts
-            .iter()
-            .filter_map(|fact| crate::json::get_str(fact, "logical_key"))
-            .collect()
-    };
+    let sent_keys: BTreeSet<&str> = facts
+        .iter()
+        .filter_map(|fact| crate::json::get_str(fact, "logical_key"))
+        .chain(
+            view.unknowns
+                .iter()
+                .filter(|unknown| unknown_readable(unknown, &readable))
+                .map(|unknown| unknown.logical_key.as_str()),
+        )
+        .collect();
     let mut fact_versions = fact_versions_index(db, &view).map_err(|error| refuse(500, error))?;
     if let Some(map) = fact_versions.as_object_mut() {
-        if !repository.is_empty() {
-            map.retain(|fact_id, _| sent_ids.contains(fact_id.as_str()));
-        }
+        // Only the facts sent: the index named every fact in every scope.
+        map.retain(|fact_id, _| sent_ids.contains(fact_id.as_str()));
         // A client needs to know a fact has been revised and what the newest
         // revisions were, not every revision ever made. Four republications of
         // 563 claims put 315 KiB of superseded history into every snapshot.
@@ -2058,14 +2171,14 @@ fn snapshot(
         "events_omitted_count": events_omitted_count,
         "events_since": events_since,
         "events_sealed_cursor": events_sealed_cursor,
-        "denied": denied,
+        "denied_count": denied_count,
         "unknowns": unknowns,
         "registry": trust_state.public_registry(),
         "revocations": trust_state.revocations,
         "relaxations": db.relaxations().map_err(|error| refuse(500, error))?,
         "certificates": db.all_certificates().map_err(|error| refuse(500, error))?,
         "fact_versions": fact_versions,
-        "lifecycle_admissions": lifecycle_admissions(db, trust_state),
+        "lifecycle_admissions": lifecycle_admissions(db, trust_state, &readable),
         // Every revocation ever recorded, including keys the steward later
         // republished: a later epoch authorizes new events, but facts asserted
         // before the revocation remain historical (architecture §3).
@@ -2087,8 +2200,8 @@ fn snapshot(
                 }))
             })
             .collect::<Vec<_>>(),
-        "fact_parents": fact_parents(db, &view),
-        "traces": view.traces.iter().filter(|trace| sent_keys.is_empty() || sent_keys.contains(trace.logical_key.as_str())).map(|trace| json!({
+        "fact_parents": fact_parents(db, &view, &sent_ids),
+        "traces": view.traces.iter().filter(|trace| sent_keys.contains(trace.logical_key.as_str())).map(|trace| json!({
             "logical_key": trace.logical_key,
             "state": trace.state,
             "admitted_event_ids": trace.admitted_event_ids,
@@ -2207,23 +2320,72 @@ fn fact_versions_index(
     Ok(Value::Object(map))
 }
 
-fn events(db: &CompanyDb, auth: &AuthContext, request: &Request) -> Handled {
-    require_scope(auth, "admin:issue")?;
+/// The admitted event log, paged. A facts reader receives the bodies of
+/// events in scopes it may read (this is where a snapshot's omitted history
+/// is paged from); everything else, and everything the administrative
+/// issuance capability sees, is metadata with a payload digest: issuance
+/// cannot read fact bodies (architecture §6).
+fn events(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    request: &Request,
+) -> Handled {
+    let reads_facts = auth.token.has_scope("facts:read");
+    if !reads_facts {
+        require_scope(auth, "admin:issue")?;
+    }
+    let readable = if reads_facts {
+        readable_scopes(auth, trust_state)
+    } else {
+        BTreeSet::new()
+    };
     let since = request
         .query
         .get("since")
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(0);
+    // SQLite reads a negative LIMIT as no limit at all.
     let limit = request
         .query
         .get("limit")
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(200)
-        .min(1000);
-    Ok((
-        200,
-        json!({"events": db.all_events(since, limit).map_err(|error| refuse(500, error))?}),
-    ))
+        .clamp(1, 1000);
+    let mut rows = db
+        .all_events(since, limit)
+        .map_err(|error| refuse(500, error))?;
+    for row in &mut rows {
+        let scope = row
+            .get("payload")
+            .and_then(|payload| crate::json::get_str(payload, "authority_scope"))
+            .unwrap_or_default()
+            .to_owned();
+        if readable.contains(&scope) {
+            continue;
+        }
+        if let Some(Value::Object(map)) = Some(&mut *row)
+            && let Some(payload) = map.remove("payload")
+        {
+            map.insert(
+                "payload_digest".to_owned(),
+                Value::String(crate::json::digest(&payload)),
+            );
+            map.insert("payload_withheld".to_owned(), Value::Bool(true));
+        }
+    }
+    // Event bodies are fact reads, under the same per-principal budget as
+    // /facts and /snapshot; a reader refused there was served here.
+    if reads_facts {
+        let bytes: usize = rows
+            .iter()
+            .filter_map(|row| row.get("payload"))
+            .map(|payload| crate::json::canonical_bytes(payload).len())
+            .sum();
+        charge_read(db, state, auth, rows.len().max(1), bytes)?;
+    }
+    Ok((200, json!({"events": rows})))
 }
 
 fn publish_registry(
@@ -2293,7 +2455,7 @@ fn publish_registry(
         {
             return Err(refuse(
                 400,
-                ContractError::refused(
+                ContractError::integrity(
                     "PERSONAL_TAINT_BLOCKED",
                     "registry entries may not carry directory/contact data or private keys",
                     "Publish contact data through the directory endpoint and keep private keys out of the registry.",
@@ -2687,7 +2849,9 @@ fn post_answer(
     body: Option<Value>,
     now: &str,
 ) -> Handled {
-    if !(auth.token.has_scope("answers:write") || auth.token.has_scope("questions:write")) {
+    // Architecture §6: the ordinary facts token (which may write questions)
+    // cannot post an answer; only an answer-scoped token can.
+    if !auth.token.has_scope("answers:write") {
         return Err(auth_refusal_403());
     }
     let document = body.ok_or_else(|| {
@@ -3871,5 +4035,669 @@ mod packet11_tests {
         };
         assert_eq!(status, 429);
         assert_eq!(error.detail.as_ref().unwrap()["omitted_count"], 1);
+    }
+}
+
+#[cfg(test)]
+mod auth_subject_tests {
+    use super::*;
+    use crate::crypto::PrivateKey;
+
+    fn service(temp: &std::path::Path) -> (CompanyDb, ServiceState) {
+        let token_path = temp.join("facts.token");
+        crate::crypto::write_0600(&token_path, b"facts-subject", "facts token").unwrap();
+        let config = ServiceConfig {
+            path: temp.join("kinbased.toml"),
+            company_id: "subject".to_owned(),
+            sqlite_path: temp.join("company.sqlite"),
+            bind: "127.0.0.1:0".parse().unwrap(),
+            root_key_file: temp.join("root.key"),
+            facts_token_file: token_path,
+            directory_token_file: None,
+            admin_token_file: None,
+            authority_token_file: None,
+            auth_failures_per_minute: 3,
+            default_fact_freshness_seconds: 900,
+            candidate_lifetime_seconds: 900,
+            clock_skew_seconds: 300,
+            nonce_retention_seconds: 1300,
+            read_volume_per_hour: 2_000,
+            read_bytes_per_hour: 64 * 1024 * 1024,
+            requests_per_minute: 600,
+            revocation_freshness_seconds: 900,
+            directory_retention_seconds: 365 * 24 * 3600,
+            facts_token_scopes: Vec::new(),
+        };
+        let db = CompanyDb::open(&config.sqlite_path).unwrap();
+        register_tokens(&db, &config).unwrap();
+        let state = ServiceState {
+            config,
+            root: PrivateKey::generate(),
+            started_at: crate::time::now_rfc3339_millis(),
+        };
+        (db, state)
+    }
+
+    fn request(bearer: &str, key: &PrivateKey, nonce: &str, expires_at: &str) -> Request {
+        let signed = json!({
+            "method": "GET",
+            "path": "/status",
+            "body_sha256": crate::hash::sha256_bytes(b""),
+            "nonce": nonce,
+            "expires_at": expires_at
+        });
+        let signature = key
+            .sign("receipt", &crate::json::canonical_bytes(&signed))
+            .unwrap();
+        Request {
+            method: "GET".to_owned(),
+            path: "/status".to_owned(),
+            route: "/status".to_owned(),
+            query: BTreeMap::new(),
+            headers: vec![
+                ("authorization".to_owned(), format!("Bearer {bearer}")),
+                ("x-kinbase-nonce".to_owned(), nonce.to_owned()),
+                ("x-kinbase-expires-at".to_owned(), expires_at.to_owned()),
+                ("x-kinbase-client-key".to_owned(), key.public().to_hex()),
+                ("x-kinbase-signature".to_owned(), signature),
+            ],
+            body: Vec::new(),
+            peer: None,
+        }
+    }
+
+    #[test]
+    fn failures_without_a_token_never_lock_out_a_valid_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let (db, state) = service(temp.path());
+        let key = PrivateKey::generate();
+        let now = crate::time::now_rfc3339_millis();
+        let expires_at = crate::time::plus_seconds(&now, 60).unwrap();
+        for index in 0..5 {
+            let flood = request("guess", &key, &format!("flood-{index}"), &expires_at);
+            let Err((status, _)) = authenticate(&db, &state, &flood, &now) else {
+                panic!("a guessed token was accepted");
+            };
+            assert_eq!(status, if index < 3 { 401 } else { 429 });
+        }
+        let valid = request("facts-subject", &key, "valid", &expires_at);
+        assert!(authenticate(&db, &state, &valid, &now).is_ok());
+    }
+
+    #[test]
+    fn the_facts_token_cannot_post_an_answer() {
+        let temp = tempfile::tempdir().unwrap();
+        let (db, state) = service(temp.path());
+        let key = PrivateKey::generate();
+        let now = crate::time::now_rfc3339_millis();
+        let expires_at = crate::time::plus_seconds(&now, 60).unwrap();
+        let auth = authenticate(&db, &state, &request("facts-subject", &key, "n", &expires_at), &now)
+            .expect("facts token");
+        assert!(auth.token.has_scope("questions:write"));
+        let trust_state = trust::load(&db, &state.root.public()).unwrap();
+        let Err((status, _)) = post_answer(
+            &db,
+            &state,
+            &auth,
+            &trust_state,
+            Some(json!({"question_id": "q-1", "answer": "yes"})),
+            &now,
+        ) else {
+            panic!("the facts token posted an answer");
+        };
+        assert_eq!(status, 403);
+    }
+}
+
+#[cfg(test)]
+mod scope_and_token_tests {
+    use super::*;
+    use serde_json::json;
+    use std::collections::BTreeMap;
+
+    struct Service {
+        temp: tempfile::TempDir,
+        db: CompanyDb,
+        state: ServiceState,
+        root: PrivateKey,
+        config_path: std::path::PathBuf,
+    }
+
+    fn write_config(temp: &std::path::Path, extra: &str) -> std::path::PathBuf {
+        let config_path = temp.join("kinbased.toml");
+        let config = format!(
+            r#"schema_version = "1"
+company_id = "company-demo"
+sqlite_path = "{db}"
+bind = "127.0.0.1:0"
+root_key_file = "{root_key}"
+facts_token_file = "{token}"
+auth_failures_per_minute = 100
+default_fact_freshness_seconds = 900
+candidate_lifetime_seconds = 900
+clock_skew_seconds = 300
+nonce_retention_seconds = 1300
+{extra}
+"#,
+            db = temp.join("company.sqlite").display(),
+            root_key = temp.join("company-root.key").display(),
+            token = temp.join("facts.token").display(),
+        );
+        let _ = std::fs::remove_file(&config_path);
+        crate::crypto::write_0600(&config_path, config.as_bytes(), "service config").unwrap();
+        config_path
+    }
+
+    fn service(extra: &str) -> Service {
+        let temp = tempfile::tempdir().unwrap();
+        let root = PrivateKey::generate();
+        root.save_new(&temp.path().join("company-root.key"), "Company root key")
+            .unwrap();
+        crate::crypto::write_0600(
+            &temp.path().join("facts.token"),
+            b"facts-one",
+            "facts token",
+        )
+        .unwrap();
+        let config_path = write_config(temp.path(), extra);
+        let config = crate::config::load_service_config(&config_path).unwrap();
+        let db = CompanyDb::open(&config.sqlite_path).unwrap();
+        db.set_meta("company_id", &config.company_id).unwrap();
+        register_tokens(&db, &config).unwrap();
+        let state = ServiceState {
+            config,
+            root: root.clone(),
+            started_at: crate::time::now_rfc3339_millis(),
+        };
+        Service {
+            temp,
+            db,
+            state,
+            root,
+            config_path,
+        }
+    }
+
+    fn auth(service: &Service, token: &str) -> AuthContext {
+        AuthContext {
+            token: service.db.token(token).unwrap().unwrap(),
+            client_key: "cc".repeat(32),
+            principal_key: "scope-principal".to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_rotated_token_file_retires_the_previous_token() {
+        let service = service("");
+        assert!(service.db.token("facts-one").unwrap().is_some());
+        let token_path = service.temp.path().join("facts.token");
+        std::fs::remove_file(&token_path).unwrap();
+        crate::crypto::write_0600(&token_path, b"facts-two", "facts token").unwrap();
+        let summary = register_tokens(&service.db, &service.state.config).unwrap();
+        assert!(
+            service.db.token("facts-one").unwrap().is_none(),
+            "old token still valid"
+        );
+        assert!(service.db.token("facts-two").unwrap().is_some());
+        assert_eq!(summary["retired_token_count"], 1);
+    }
+
+    #[test]
+    fn a_role_whose_file_is_removed_keeps_no_token() {
+        let service = service("");
+        let admin_path = service.temp.path().join("admin.token");
+        crate::crypto::write_0600(&admin_path, b"admin-one", "administrative token").unwrap();
+        let config_path = write_config(
+            service.temp.path(),
+            &format!("admin_token_file = \"{}\"", admin_path.display()),
+        );
+        let with_admin = crate::config::load_service_config(&config_path).unwrap();
+        register_tokens(&service.db, &with_admin).unwrap();
+        assert!(service.db.token("admin-one").unwrap().is_some());
+        register_tokens(&service.db, &service.state.config).unwrap();
+        assert!(service.db.token("admin-one").unwrap().is_none());
+        assert_eq!(config_path, service.config_path);
+    }
+
+    fn fact(key: &PrivateKey, id: &str, authority: &str, scope: &str, statement: &str) -> Value {
+        key.sign_document(
+            "fact-event",
+            &json!({
+                "schema": crate::model::EVENT_SCHEMA,
+                "event_id": format!("evt_{id}"),
+                "store_kind": "company",
+                "authority_id": authority,
+                "authority_scope": scope,
+                "fact_id": format!("fact_{id}"),
+                "logical_key": scope,
+                "atom_kind": "constraint",
+                "scope": scope,
+                "statement": statement,
+                "evidence_refs": [],
+                "asserted_at": "2025-01-01T00:00:00.000Z",
+                "effective_from": "2025-01-01T00:00:00.000Z",
+                "disposition": "accepted",
+                "distortion": {"trigger": "deadline", "loss_if_absent": "safety_critical", "rationale": "test"},
+                "parents": [], "supersedes": [], "redundancy_with": [], "complements": [],
+                "company_refs": [], "authority_snapshot_cursor": "1000",
+                "confidence": "high", "unresolved_uncertainty": ""
+            }),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_token_sees_only_what_its_scopes_allow() {
+        let service = service("facts_token_scopes = [\"architecture:scheduling\"]");
+        let steward = auth(&service, "facts-one");
+        let scheduling = PrivateKey::generate();
+        let payments = PrivateKey::generate();
+        let now = crate::time::now_rfc3339_millis();
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let registry = service
+            .root
+            .sign_document(
+                "authority-registry-entry",
+                &json!({
+                    "schema": crate::model::REGISTRY_SCHEMA,
+                    "authority_cursor": "1000",
+                    "entries": [
+                        {"authority_id": "scheduling-architect", "scope": "architecture:scheduling",
+                         "public_key": scheduling.public().to_hex(), "channel": "process:architecture-answer",
+                         "capabilities": ["answer"]},
+                        {"authority_id": "payments-architect", "scope": "architecture:payments",
+                         "public_key": payments.public().to_hex(), "channel": "process:architecture-answer",
+                         "capabilities": ["answer"]}
+                    ]
+                }),
+            )
+            .unwrap();
+        publish_registry(&service.db, &steward, &trust, Some(registry), &now).unwrap();
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        for document in [
+            fact(
+                &scheduling,
+                "sched",
+                "scheduling-architect",
+                "architecture:scheduling",
+                "The scheduler bounds queue wait time.",
+            ),
+            fact(
+                &payments,
+                "pay",
+                "payments-architect",
+                "architecture:payments",
+                "Refunds settle within three days.",
+            ),
+        ] {
+            let event = FactEvent::parse(&crate::json::canonical_bytes(&document)).unwrap();
+            service
+                .db
+                .append_event(
+                    &event.event_id,
+                    "fact-event",
+                    "fact-event",
+                    &document,
+                    &event.signer,
+                    "verified",
+                    None,
+                )
+                .unwrap();
+        }
+        let reader = auth(&service, "facts-one");
+        let mut query = BTreeMap::new();
+        query.insert("nonce".to_owned(), "nonce-scope-test".to_owned());
+        let request = Request {
+            method: "GET".to_owned(),
+            path: "/snapshot".to_owned(),
+            route: "/snapshot".to_owned(),
+            query,
+            headers: Vec::new(),
+            body: Vec::new(),
+            peer: None,
+        };
+        let (_, snapshot) =
+            super::snapshot(&service.db, &service.state, &reader, &trust, &request, &now).unwrap();
+        let text = snapshot.to_string();
+        assert!(
+            snapshot.get("denied").is_none(),
+            "denied facts are not described"
+        );
+        assert_eq!(snapshot["denied_count"], 1);
+        assert!(
+            !text.contains("fact_pay"),
+            "the unreadable fact id leaked: {text}"
+        );
+        assert!(
+            !text.contains("architecture:payments\",\"state"),
+            "a trace for the unreadable key leaked"
+        );
+        assert!(text.contains("fact_sched"));
+
+        let (_, events) =
+            super::events(&service.db, &service.state, &reader, &trust, &request).unwrap();
+        let rows = events["events"].as_array().unwrap();
+        let payments_row = rows
+            .iter()
+            .find(|row| row["event_id"] == "evt_pay")
+            .unwrap();
+        assert!(payments_row.get("payload").is_none());
+        assert_eq!(payments_row["payload_withheld"], true);
+        let scheduling_row = rows
+            .iter()
+            .find(|row| row["event_id"] == "evt_sched")
+            .unwrap();
+        assert!(scheduling_row.get("payload").is_some());
+    }
+
+    #[test]
+    fn the_issuance_capability_reads_no_event_bodies() {
+        let service = service("");
+        let admin_path = service.temp.path().join("admin.token");
+        crate::crypto::write_0600(&admin_path, b"admin-two", "administrative token").unwrap();
+        let config_path = write_config(
+            service.temp.path(),
+            &format!("admin_token_file = \"{}\"", admin_path.display()),
+        );
+        let config = crate::config::load_service_config(&config_path).unwrap();
+        register_tokens(&service.db, &config).unwrap();
+        let key = PrivateKey::generate();
+        let document = fact(
+            &key,
+            "body",
+            "someone",
+            "architecture:scheduling",
+            "Secret body.",
+        );
+        let event = FactEvent::parse(&crate::json::canonical_bytes(&document)).unwrap();
+        service
+            .db
+            .append_event(
+                &event.event_id,
+                "fact-event",
+                "fact-event",
+                &document,
+                &event.signer,
+                "verified",
+                None,
+            )
+            .unwrap();
+        let admin = auth(&service, "admin-two");
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let request = Request {
+            method: "GET".to_owned(),
+            path: "/events".to_owned(),
+            route: "/events".to_owned(),
+            query: BTreeMap::new(),
+            headers: Vec::new(),
+            body: Vec::new(),
+            peer: None,
+        };
+        let (_, events) =
+            super::events(&service.db, &service.state, &admin, &trust, &request).unwrap();
+        assert!(!events.to_string().contains("Secret body."));
+        assert_eq!(events["events"][0]["payload_withheld"], true);
+    }
+
+    #[test]
+    fn an_unreadable_token_file_changes_no_registration() {
+        let service = service("");
+        let admin_path = service.temp.path().join("admin.token");
+        crate::crypto::write_0600(&admin_path, b"admin-one", "administrative token").unwrap();
+        let config_path = write_config(
+            service.temp.path(),
+            &format!("admin_token_file = \"{}\"", admin_path.display()),
+        );
+        let with_admin = crate::config::load_service_config(&config_path).unwrap();
+        register_tokens(&service.db, &with_admin).unwrap();
+
+        let token_path = service.temp.path().join("facts.token");
+        std::fs::remove_file(&token_path).unwrap();
+        crate::crypto::write_0600(&token_path, b"facts-two", "facts token").unwrap();
+        std::fs::remove_file(&admin_path).unwrap();
+        assert!(register_tokens(&service.db, &with_admin).is_err());
+        assert!(service.db.token("facts-one").unwrap().is_some());
+        assert!(service.db.token("facts-two").unwrap().is_none());
+        assert!(service.db.token("admin-one").unwrap().is_some());
+    }
+
+    fn append(service: &Service, document: &Value) {
+        let event = FactEvent::parse(&crate::json::canonical_bytes(document)).unwrap();
+        service
+            .db
+            .append_event(
+                &event.event_id,
+                "fact-event",
+                "fact-event",
+                document,
+                &event.signer,
+                "verified",
+                None,
+            )
+            .unwrap();
+    }
+
+    fn get(path: &str, query: &[(&str, &str)]) -> Request {
+        Request {
+            method: "GET".to_owned(),
+            path: path.to_owned(),
+            route: path.to_owned(),
+            query: query
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect(),
+            headers: Vec::new(),
+            body: Vec::new(),
+            peer: None,
+        }
+    }
+
+    #[test]
+    fn event_reads_are_bounded_and_charged() {
+        let service =
+            service("facts_token_scopes = [\"architecture:scheduling\"]\nread_volume_per_hour = 3");
+        let key = PrivateKey::generate();
+        for n in 0..3 {
+            append(
+                &service,
+                &fact(
+                    &key,
+                    &format!("n{n}"),
+                    "scheduling-architect",
+                    "architecture:scheduling",
+                    &format!("Queue rule {n}."),
+                ),
+            );
+        }
+        let reader = auth(&service, "facts-one");
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let (_, events) = super::events(
+            &service.db,
+            &service.state,
+            &reader,
+            &trust,
+            &get("/events", &[("limit", "-1")]),
+        )
+        .unwrap();
+        assert_eq!(events["events"].as_array().unwrap().len(), 1);
+        let (_, events) = super::events(
+            &service.db,
+            &service.state,
+            &reader,
+            &trust,
+            &get("/events", &[("limit", "2")]),
+        )
+        .unwrap();
+        assert_eq!(events["events"].as_array().unwrap().len(), 2);
+        let (status, error) = super::events(
+            &service.db,
+            &service.state,
+            &reader,
+            &trust,
+            &get("/events", &[("limit", "2")]),
+        )
+        .unwrap_err();
+        assert_eq!(status, 429);
+        assert_eq!(error.code, "LIMIT_EXCEEDED");
+    }
+
+    #[test]
+    fn a_conflict_unknown_follows_its_authority_scope() {
+        let service = service("facts_token_scopes = [\"architecture:scheduling\"]");
+        let steward = auth(&service, "facts-one");
+        let architect = PrivateKey::generate();
+        let now = crate::time::now_rfc3339_millis();
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let registry = service
+            .root
+            .sign_document(
+                "authority-registry-entry",
+                &json!({
+                    "schema": crate::model::REGISTRY_SCHEMA,
+                    "authority_cursor": "1000",
+                    "entries": [
+                        {"authority_id": "scheduling-architect", "scope": "architecture:scheduling",
+                         "public_key": architect.public().to_hex(), "channel": "process:architecture-answer",
+                         "capabilities": ["answer"]}
+                    ]
+                }),
+            )
+            .unwrap();
+        publish_registry(&service.db, &steward, &trust, Some(registry), &now).unwrap();
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        // Two rulings on one key, about the repository rather than the
+        // authority's own scope.
+        for (id, statement) in [
+            ("left", "Queue wait is bounded at five seconds."),
+            ("right", "Queue wait is bounded at thirty seconds."),
+        ] {
+            let mut document = fact(
+                &architect,
+                id,
+                "scheduling-architect",
+                "architecture:scheduling",
+                statement,
+            );
+            let map = document.as_object_mut().unwrap();
+            map.insert("scope".to_owned(), json!("repository"));
+            map.insert("logical_key".to_owned(), json!("scheduling/queue-wait"));
+            let unsigned = Value::Object(map.clone());
+            append(
+                &service,
+                &architect.sign_document("fact-event", &unsigned).unwrap(),
+            );
+        }
+        let view = current_view(&service.db, &trust, &now).unwrap();
+        let conflict = view
+            .unknowns
+            .iter()
+            .find(|unknown| unknown.kind == "conflict")
+            .expect("the reducer derives a conflict Unknown");
+        assert_eq!(conflict.scope, "repository");
+        assert_eq!(conflict.authority_scopes, ["architecture:scheduling"]);
+
+        let reader = auth(&service, "facts-one");
+        let request = get("/snapshot", &[("nonce", "nonce-conflict-test")]);
+        let (_, snapshot) =
+            super::snapshot(&service.db, &service.state, &reader, &trust, &request, &now).unwrap();
+        let unknowns = snapshot["unknowns"].as_array().unwrap();
+        assert!(
+            unknowns.iter().any(|unknown| unknown["kind"] == "conflict"),
+            "the conflict Unknown was dropped: {unknowns:?}"
+        );
+        assert!(
+            unknowns
+                .iter()
+                .all(|unknown| unknown.get("authority_scopes").is_none())
+        );
+        assert!(
+            snapshot.to_string().contains("scheduling/queue-wait"),
+            "the conflict key's trace was dropped"
+        );
+    }
+
+    #[test]
+    fn an_approved_proposal_waits_for_a_steward_and_is_admitted_once_authorized() {
+        let service = service("");
+        let steward = auth(&service, "facts-one");
+        let proposer = PrivateKey::generate();
+        let now = crate::time::now_rfc3339_millis();
+        let document = fact(
+            &proposer,
+            "proposal",
+            "repository-maintainer",
+            "company:root",
+            "Refunds settle within two days.",
+        );
+        let submission =
+            json!({"event": document, "approval_token": {"schema": "kinbase-approval/1"}});
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let (status, receipt) = admit_fact(
+            &service.db,
+            &service.state,
+            &steward,
+            &trust,
+            Some(submission.clone()),
+            &now,
+        )
+        .unwrap();
+        assert_eq!(
+            (status, receipt["status"].as_str()),
+            (202, Some("pending-steward-review"))
+        );
+        let (_, replay) = admit_fact(
+            &service.db,
+            &service.state,
+            &steward,
+            &trust,
+            Some(submission.clone()),
+            &now,
+        )
+        .unwrap();
+        assert_eq!(replay["status"], "pending-steward-review");
+
+        // The steward authorizes the proposer for the scope.
+        let registry = service
+            .root
+            .sign_document(
+                "authority-registry-entry",
+                &json!({
+                    "schema": crate::model::REGISTRY_SCHEMA,
+                    "authority_cursor": "1000",
+                    "entries": [
+                        {"authority_id": "repository-maintainer", "scope": "company:root",
+                         "public_key": proposer.public().to_hex(), "channel": "process:architecture-answer",
+                         "capabilities": ["answer"]}
+                    ]
+                }),
+            )
+            .unwrap();
+        publish_registry(&service.db, &steward, &trust, Some(registry), &now).unwrap();
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let (status, admitted) = admit_fact(
+            &service.db,
+            &service.state,
+            &steward,
+            &trust,
+            Some(submission.clone()),
+            &now,
+        )
+        .unwrap();
+        assert_eq!(
+            (status, admitted["status"].as_str()),
+            (201, Some("committed")),
+            "{admitted}"
+        );
+        let (_, historical) = admit_fact(
+            &service.db,
+            &service.state,
+            &steward,
+            &trust,
+            Some(submission),
+            &now,
+        )
+        .unwrap();
+        assert_eq!(historical["status"], "committed");
+        assert_eq!(historical["historical_receipt"], true);
     }
 }
