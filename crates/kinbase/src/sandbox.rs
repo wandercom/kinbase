@@ -636,31 +636,41 @@ mod pinned_check_tests {
     use std::os::unix::fs::PermissionsExt;
 
     /// A directory whose whole chain the verifier accepts (no symlink, no
-    /// group/other-writable ancestor); `/tmp` itself is 1777.
-    fn accepted_base() -> Option<PathBuf> {
-        [
-            std::env::temp_dir(),
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+    /// group/other-writable ancestor); `/tmp` itself is 1777. An explicit
+    /// `KINBASE_TEST_VERIFIED_DIR` is tried first.
+    fn accepted_base() -> PathBuf {
+        let candidates: Vec<PathBuf> = [
+            std::env::var_os("KINBASE_TEST_VERIFIED_DIR").map(PathBuf::from),
+            Some(std::env::temp_dir()),
+            std::env::var_os("HOME").map(PathBuf::from),
+            Some(PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
         ]
         .into_iter()
-        .filter_map(|dir| dir.canonicalize().ok())
-        .find(|dir| {
-            dir.ancestors().all(|ancestor| {
-                std::fs::symlink_metadata(ancestor).is_ok_and(|metadata| {
-                    ancestor == Path::new("/")
-                        || (!metadata.file_type().is_symlink()
-                            && metadata.permissions().mode() & 0o022 == 0)
+        .flatten()
+        .collect();
+        candidates
+            .iter()
+            .filter_map(|dir| dir.canonicalize().ok())
+            .find(|dir| {
+                dir.ancestors().all(|ancestor| {
+                    std::fs::symlink_metadata(ancestor).is_ok_and(|metadata| {
+                        ancestor == Path::new("/")
+                            || (!metadata.file_type().is_symlink()
+                                && metadata.permissions().mode() & 0o022 == 0)
+                    })
                 })
             })
-        })
+            .unwrap_or_else(|| {
+                panic!(
+                    "no directory chain the classifier verifier accepts among {candidates:?}; \
+                     set KINBASE_TEST_VERIFIED_DIR to one"
+                )
+            })
     }
 
     #[test]
     fn a_rebuilt_executable_is_refused_with_the_digest_it_now_has() {
-        let Some(base) = accepted_base() else {
-            eprintln!("no directory chain the verifier accepts; skipped");
-            return;
-        };
+        let base = accepted_base();
         let dir = tempfile::TempDir::new_in(&base).expect("tempdir");
         let executable = dir.path().join("classifier");
         let body = b"#!/bin/sh\nexit 0\n";
