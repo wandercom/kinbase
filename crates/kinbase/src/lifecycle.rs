@@ -2452,13 +2452,13 @@ fn scan_kindex(source: &Path, repo: &Repository) -> Result<SourceScan, ContractE
             // older export shape has neither column and keeps its behaviour.
             if let Some(status) = kindex_status.as_deref() {
                 if !matches!(status, "active" | "open-question") {
-                    scan.skip(format!("kindex: node status {status}"));
+                    scan.skip("kindex: node is not active");
                     continue;
                 }
             }
             if let Some(audience) = kindex_audience.as_deref() {
                 if !matches!(audience, "team" | "public") {
-                    scan.skip(format!("kindex: {audience} audience"));
+                    scan.skip("kindex: audience is not team or public");
                     continue;
                 }
             }

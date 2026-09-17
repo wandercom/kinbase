@@ -478,6 +478,6 @@ fn only_standing_shareable_kindex_nodes_reach_the_codebase_ledger() {
     assert_eq!(receipt["observation_count"], 1, "{receipt}");
     assert_eq!(
         receipt["skipped_source_records"],
-        json!({"kindex: node status candidate": 1, "kindex: private audience": 1})
+        json!({"kindex: node is not active": 1, "kindex: audience is not team or public": 1})
     );
 }
