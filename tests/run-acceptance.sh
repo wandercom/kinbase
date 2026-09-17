@@ -11,7 +11,8 @@
 #   KINBASE_ACCEPT_MUTATION=v5.newest_wins tests/run-acceptance.sh -m v5
 #
 # Environment
-#   KINBASE_BIN                 argv prefix for the ratified CLI (default: PATH, then `python -m kinbase`)
+#   KINBASE_BIN                 required: argv prefix for the ratified CLI, starting with the
+#                               absolute path of the build under test (never taken from PATH)
 #   KINBASE_SPEC_ROOT           repository containing spec/ (default: discovered from this file)
 #   KINBASE_TESTER_VAULT        mode-0700 canary vault root (default: $TMPDIR/kinbase-acceptance-vault-$UID)
 #   KINBASE_HOST_CODEX          absolute path to the pinned Codex executable

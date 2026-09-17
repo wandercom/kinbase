@@ -86,6 +86,9 @@ def ingested(roots: ProofRoots, kinbase: Kinbase):
     )
     if result.returncode == 1:
         raise ProductFailure("`ingest kindex` returned the reserved ambiguous exit 1")
+    # The candidate-set evidence reads how the corpus really arrived.
+    world.ingest_exit = result.returncode
+    world.ingest_argv = tuple(result.argv)
     return world, planted, anchors
 
 
@@ -186,11 +189,13 @@ def test_frozen_candidate_set_contains_every_declared_role(
     O.check(
         "V-7.candidate-set",
         {
-            "ingested_through_shipping_surface": True,
+            "ingested_through_shipping_surface": world.ingest_exit == 0
+            and "ingest" in world.ingest_argv,
             "ingested_record_count": len(planted),
             "roles_present": sorted(set(roles)),
             "paraphrase_count": roles.count("high_scoring_paraphrase"),
-            "fixture_mode_selector_used": False,
+            "fixture_mode_selector_used": any(
+                "FIXTURE" in name.upper() for name in kinbase.base_env()),
         },
         label="frozen candidate roles recovered from the ingested corpus",
     )
@@ -521,7 +526,10 @@ def test_no_calibrated_causal_voi_claim_is_made(kinbase: Kinbase, ingested) -> N
         {
             "forbidden_claims_found": len(found),
             "voi_approximation": approximation,
-            "scope_limited_to_selector_mechanics": True,
+            # The product states its measure as an approximation, not a
+            # calibrated causal value.
+            "scope_limited_to_selector_mechanics": isinstance(approximation, str)
+            and "approximation" in approximation.lower(),
         },
         label="no calibrated causal VOI claim is made by this fixture",
     )

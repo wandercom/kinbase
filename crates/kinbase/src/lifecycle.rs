@@ -118,6 +118,24 @@ pub struct SourceScan {
     /// Shallow or sparse view of the repository, when the scan could tell.
     pub narrowed_view: Option<String>,
     pub bytes_read: usize,
+    /// Native input the adapter could not read, by reason. Reported with the
+    /// ingest receipt; never silently dropped.
+    pub skipped: BTreeMap<String, usize>,
+    /// Non-blank lines an export adapter examined.
+    pub export_lines: usize,
+    /// Identities the source still holds that this (windowed) scan did not
+    /// emit, with the origin class they would carry now. One whose recorded
+    /// origin still matches is not retired: leaving the window is not
+    /// leaving the source.
+    pub present_elsewhere: BTreeMap<String, String>,
+    /// Where the next page of a windowed source starts, when there is one.
+    pub next_checkpoint: Option<String>,
+}
+
+impl SourceScan {
+    pub fn skip(&mut self, reason: impl Into<String>) {
+        *self.skipped.entry(reason.into()).or_insert(0) += 1;
+    }
 }
 
 fn io_error(error: std::io::Error) -> ContractError {
@@ -219,16 +237,17 @@ pub fn clean_text(value: &str) -> String {
     let mut last_space = false;
     for character in value.chars() {
         let code = character as u32;
-        let control = code <= 0x1f || (0x80..=0x9f).contains(&code);
-        let bidi = matches!(code, 0x200e | 0x200f | 0x202a..=0x202e | 0x2066..=0x2069);
-        if control || bidi || character.is_whitespace() {
+        // Noncharacters carry nothing and are dropped; every other character
+        // the canonical rule rejects separates words. A private list here
+        // drifted from the rule once (U+061C) and aborted ingest mid-batch.
+        if (0xfdd0..=0xfdef).contains(&code) || (code & 0xfffe) == 0xfffe {
+            continue;
+        }
+        if crate::json::breaks_text_rule(character) || character.is_whitespace() {
             if !last_space {
                 out.push(' ');
                 last_space = true;
             }
-            continue;
-        }
-        if (0xfdd0..=0xfdef).contains(&code) || (code & 0xfffe) == 0xfffe {
             continue;
         }
         out.push(character);
@@ -354,6 +373,12 @@ fn content_text(map: &Map<String, Value>) -> Option<String> {
     if let Some(Value::String(text)) = map.get("text") {
         return Some(text.clone());
     }
+    // Claude Code writes a typed prompt as a plain string.
+    if let Some(Value::String(text)) = map.get("content") {
+        if !text.trim().is_empty() {
+            return Some(text.clone());
+        }
+    }
     if let Some(Value::Array(parts)) = map.get("content") {
         let text = parts
             .iter()
@@ -397,6 +422,13 @@ fn scan_transcripts(
             continue;
         }
         let stem = name.trim_end_matches(".jsonl").to_owned();
+        // One long session is not a reason to read none of the others.
+        if std::fs::metadata(&path).map_err(io_error)?.len() as usize > MAX_FILE_BYTES {
+            scan.skip(format!(
+                "{source_kind}: transcript exceeds the {MAX_FILE_BYTES}-byte bound"
+            ));
+            continue;
+        }
         let bytes = read_bounded(&path)?;
         check_budget(&mut scan, bytes.len())?;
         scan.unit_ids.insert(stem.clone());
@@ -421,9 +453,11 @@ fn scan_transcripts(
             if line.trim().is_empty() {
                 continue;
             }
-            let value: Value = serde_json::from_str(line).map_err(|error| {
-                ContractError::invariant(format!("native JSONL line {}: {error}", index + 1))
-            })?;
+            // A live session's last line may still be being written.
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                scan.skip(format!("{source_kind}: line is not JSON"));
+                continue;
+            };
             let Some(map) = value.as_object() else {
                 continue;
             };
@@ -488,10 +522,14 @@ fn scan_transcripts(
             if map.get("edited") == Some(&Value::Bool(true)) {
                 record.attributes.insert("edited".to_owned(), json!(true));
             }
-            record.attributes.insert(
-                "role".to_owned(),
-                map.get("role").cloned().unwrap_or(Value::Null),
-            );
+            // Neither host puts the role at the top level.
+            let role = map
+                .get("role")
+                .or_else(|| map.get("message").and_then(|message| message.get("role")))
+                .or_else(|| map.get("payload").and_then(|payload| payload.get("role")))
+                .cloned()
+                .unwrap_or(Value::Null);
+            record.attributes.insert("role".to_owned(), role);
             scan.records.push(record);
         }
     }
@@ -1168,11 +1206,6 @@ fn scan_envelopes(
         }
         envelope_count += 1;
         let relpath = relative_to(&repo.root, &path);
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("envelope")
-            .to_owned();
         let command = map
             .get("command")
             .and_then(Value::as_array)
@@ -1199,7 +1232,9 @@ fn scan_envelopes(
             .and_then(Value::as_str)
             .map(str::to_owned);
         let observed_at = time_string(map.get("observed_at").and_then(Value::as_str));
-        let mut record = SourceRecord::new(&stem, &relpath);
+        // Keyed on the repository path: two `result.json` files in different
+        // directories are two runs, not one amended twice.
+        let mut record = SourceRecord::new(&relpath, &relpath);
         record.logical_key = match &environment {
             Some(environment) => format!("{source_kind}:{environment}:{command}"),
             None => format!("{source_kind}:{command}"),
@@ -1250,6 +1285,58 @@ fn scan_envelopes(
         ));
     }
     Ok(scan)
+}
+
+/// The objects of one JSONL export file that carry a string `id`, with their
+/// line text. A byte-order mark is not part of the first line. A line that does
+/// not parse, is not an object, or has no id is skipped and counted: a
+/// malformed record is never guessed at, and never dropped unseen.
+fn export_documents(
+    scan: &mut SourceScan,
+    kind: &str,
+    bytes: &[u8],
+) -> Vec<(String, Value, String)> {
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let mut documents = Vec::new();
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        scan.export_lines += 1;
+        let Ok(document) = serde_json::from_str::<Value>(line) else {
+            scan.skip(format!("{kind}: line is not JSON"));
+            continue;
+        };
+        let id = match document.get("id") {
+            Some(Value::String(id)) if !id.is_empty() && document.is_object() => id.clone(),
+            _ => {
+                scan.skip(format!("{kind}: line has no string id"));
+                continue;
+            }
+        };
+        documents.push((line.to_owned(), document, id));
+    }
+    documents
+}
+
+/// An export with lines and no readable record is the wrong format, not an
+/// empty source: treating it as empty retired every record it held before.
+fn refuse_unreadable_export(scan: &SourceScan, kind: &str) -> Result<(), ContractError> {
+    if scan.export_lines == 0 || !scan.records.is_empty() {
+        return Ok(());
+    }
+    Err(ContractError::new(
+        "CONFIG_INVARIANT",
+        format!(
+            "{kind} source has {} line(s) and none is a record with a string id",
+            scan.export_lines
+        ),
+        "Export one JSON object per line, each with a string `id`; nothing was retired.",
+        false,
+        crate::error::ExitCode::Refused,
+    )
+    .with_detail(json!({"omitted_count": scan.export_lines})))
 }
 
 // --------------------------------------------------------------------------
@@ -1331,6 +1418,23 @@ fn normalise_stamp(value: Option<&str>) -> Option<String> {
     )
 }
 
+/// When an exported record last changed: the latest of the named envelope
+/// times and, for a thread, of its messages. Re-ingesting an older export
+/// must not make its snapshot the head.
+fn export_updated_at(document: &Value, fields: &[&str]) -> Option<String> {
+    let messages = document
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|message| normalise_stamp(crate::json::get_str(message, "ts")));
+    fields
+        .iter()
+        .filter_map(|field| normalise_stamp(crate::json::get_str(document, field)))
+        .chain(messages)
+        .max()
+}
+
 fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, ContractError> {
     let mut scan = SourceScan::default();
     for path in source_files(source)? {
@@ -1345,30 +1449,16 @@ fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, C
         check_budget(&mut scan, bytes.len())?;
         scan.unit_ids
             .insert(name.trim_end_matches(".jsonl").to_owned());
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
+        let unit = name.trim_end_matches(".jsonl").to_owned();
+        for (line, document, id) in export_documents(&mut scan, "issue_tracker", &bytes) {
+            let line = line.as_str();
             // A malformed ticket is skipped, never guessed at: half-parsed evidence
             // about why a change happened is worse than none.
-            let Ok(document) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            let id = crate::json::get_str(&document, "id")
-                .unwrap_or_default()
-                .to_owned();
-            if id.is_empty() {
-                continue;
-            }
             let title = crate::json::get_str(&document, "title").unwrap_or_default();
             let body = crate::json::get_str(&document, "body").unwrap_or_default();
             let state = crate::json::get_str(&document, "state").unwrap_or("unknown");
 
-            let mut record = SourceRecord::new(
-                &format!("issue_tracker:{id}"),
-                &format!("issue_tracker:{id}"),
-            );
+            let mut record = SourceRecord::new(&format!("issue_tracker:{id}"), &unit);
             record.logical_key = format!("issue_tracker:{id}");
             record.statement = bounded_statement(&format!("{id}: {title}\n{body}"));
             // A ticket states a problem and its resolution; it is not itself a ruling.
@@ -1389,6 +1479,11 @@ fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, C
                 _ => "unknown".to_owned(),
             };
             record.asserted_at = normalise_stamp(crate::json::get_str(&document, "created_at"));
+            if let Some(updated) = export_updated_at(&document, &["updated_at", "created_at"]) {
+                record
+                    .attributes
+                    .insert("updated_at".to_owned(), json!(updated));
+            }
 
             // Every outbound link is an edge in the association graph. Labels are the
             // subjects: `wandercom/app.wander.com` names a component, `Bug` names a
@@ -1422,6 +1517,7 @@ fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, C
             scan.records.push(record);
         }
     }
+    refuse_unreadable_export(&scan, "issue_tracker")?;
     Ok(scan)
 }
 
@@ -1465,20 +1561,9 @@ fn scan_pull_request(source: &Path, _repo: &Repository) -> Result<SourceScan, Co
         check_budget(&mut scan, bytes.len())?;
         scan.unit_ids
             .insert(name.trim_end_matches(".jsonl").to_owned());
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let Ok(document) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            let id = crate::json::get_str(&document, "id")
-                .unwrap_or_default()
-                .to_owned();
-            if id.is_empty() {
-                continue;
-            }
+        let unit = name.trim_end_matches(".jsonl").to_owned();
+        for (line, document, id) in export_documents(&mut scan, "pull_request", &bytes) {
+            let line = line.as_str();
             let title = crate::json::get_str(&document, "title").unwrap_or_default();
             let merged = document
                 .get("merged")
@@ -1486,8 +1571,7 @@ fn scan_pull_request(source: &Path, _repo: &Repository) -> Result<SourceScan, Co
                 .unwrap_or(false);
             let revision = crate::json::get_str(&document, "merge_commit").map(str::to_owned);
 
-            let mut record =
-                SourceRecord::new(&format!("pull_request:{id}"), &format!("pull_request:{id}"));
+            let mut record = SourceRecord::new(&format!("pull_request:{id}"), &unit);
             record.logical_key = format!("pull_request:{id}");
             record.statement = bounded_statement(&format!(
                 "{id}: {title}\n{}",
@@ -1511,6 +1595,13 @@ fn scan_pull_request(source: &Path, _repo: &Repository) -> Result<SourceScan, Co
                 _ => "unknown".to_owned(),
             };
             record.asserted_at = normalise_stamp(crate::json::get_str(&document, "merged_at"));
+            if let Some(updated) =
+                export_updated_at(&document, &["updated_at", "merged_at", "created_at"])
+            {
+                record
+                    .attributes
+                    .insert("updated_at".to_owned(), json!(updated));
+            }
             record.revision = revision.clone();
 
             let mut anchors = Vec::new();
@@ -1568,6 +1659,7 @@ fn scan_pull_request(source: &Path, _repo: &Repository) -> Result<SourceScan, Co
             scan.records.push(record);
         }
     }
+    refuse_unreadable_export(&scan, "pull_request")?;
     Ok(scan)
 }
 
@@ -1596,20 +1688,9 @@ fn scan_chat_thread(source: &Path, _repo: &Repository) -> Result<SourceScan, Con
         check_budget(&mut scan, bytes.len())?;
         scan.unit_ids
             .insert(name.trim_end_matches(".jsonl").to_owned());
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let Ok(document) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            let id = crate::json::get_str(&document, "id")
-                .unwrap_or_default()
-                .to_owned();
-            if id.is_empty() {
-                continue;
-            }
+        let unit = name.trim_end_matches(".jsonl").to_owned();
+        for (line, document, id) in export_documents(&mut scan, "chat_thread", &bytes) {
+            let line = line.as_str();
             let channel = crate::json::get_str(&document, "channel").unwrap_or_default();
             let messages = document
                 .get("messages")
@@ -1633,8 +1714,7 @@ fn scan_chat_thread(source: &Path, _repo: &Repository) -> Result<SourceScan, Con
                 body.push_str(&format!("{author}: {line_text}\n"));
             }
 
-            let mut record =
-                SourceRecord::new(&format!("chat_thread:{id}"), &format!("chat_thread:{id}"));
+            let mut record = SourceRecord::new(&format!("chat_thread:{id}"), &unit);
             record.logical_key = format!("chat_thread:{id}");
             record.statement = bounded_statement(&format!("#{channel}\n{body}"));
             // A thread records that something was discussed. Whether it settled
@@ -1650,6 +1730,11 @@ fn scan_chat_thread(source: &Path, _repo: &Repository) -> Result<SourceScan, Con
                 "unknown".to_owned()
             };
             record.asserted_at = normalise_stamp(crate::json::get_str(&document, "started_at"));
+            if let Some(updated) = export_updated_at(&document, &["started_at"]) {
+                record
+                    .attributes
+                    .insert("updated_at".to_owned(), json!(updated));
+            }
 
             let mut references = vec![format!("channel:{channel}")];
             if let Some(permalink) = crate::json::get_str(&document, "permalink") {
@@ -1677,6 +1762,7 @@ fn scan_chat_thread(source: &Path, _repo: &Repository) -> Result<SourceScan, Con
             scan.records.push(record);
         }
     }
+    refuse_unreadable_export(&scan, "chat_thread")?;
     Ok(scan)
 }
 
@@ -1706,23 +1792,11 @@ fn scan_document(source: &Path, _repo: &Repository) -> Result<SourceScan, Contra
         check_budget(&mut scan, bytes.len())?;
         scan.unit_ids
             .insert(name.trim_end_matches(".jsonl").to_owned());
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let Ok(document) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            let id = crate::json::get_str(&document, "id")
-                .unwrap_or_default()
-                .to_owned();
-            if id.is_empty() {
-                continue;
-            }
+        let unit = name.trim_end_matches(".jsonl").to_owned();
+        for (line, document, id) in export_documents(&mut scan, "document", &bytes) {
+            let line = line.as_str();
             let title = crate::json::get_str(&document, "title").unwrap_or_default();
-            let mut record =
-                SourceRecord::new(&format!("document:{id}"), &format!("document:{id}"));
+            let mut record = SourceRecord::new(&format!("document:{id}"), &unit);
             record.logical_key = format!("document:{id}");
             record.statement = bounded_statement(&format!(
                 "{title}\n{}",
@@ -1775,6 +1849,7 @@ fn scan_document(source: &Path, _repo: &Repository) -> Result<SourceScan, Contra
             scan.records.push(record);
         }
     }
+    refuse_unreadable_export(&scan, "document")?;
     Ok(scan)
 }
 
@@ -1880,7 +1955,11 @@ fn scan_git_history(
         &repo.root,
         &[
             "log",
-            "--all",
+            // Branches and remote branches only: `--all` also walked stashes,
+            // notes, filter-branch backups and prefetch refs, whose commits
+            // are nobody's history.
+            "--branches",
+            "--remotes",
             &max_flag,
             &skip_flag,
             // The changed paths ride along in the same walk rather than costing
@@ -1942,12 +2021,40 @@ fn scan_git_history(
     let reachable: BTreeSet<String> = git(&repo.root, &["rev-list", &default])
         .map(|text| text.lines().map(|l| l.trim().to_owned()).collect())
         .unwrap_or_default();
+    // The window is a partial view of the history. A commit outside it that
+    // a branch still reaches is present; only one no branch reaches any more
+    // (a rewrite) may be retired. Retiring everything outside the window
+    // withdrew every trusted merge once it aged past 6,000 commits.
+    let windowed: BTreeSet<&str> = commits.iter().map(|commit| commit.sha.as_str()).collect();
+    if let Ok(all) = git(&repo.root, &["rev-list", "--branches", "--remotes"]) {
+        scan.present_elsewhere = all
+            .lines()
+            .map(str::trim)
+            .filter(|sha| !sha.is_empty() && !windowed.contains(sha))
+            .map(|sha| {
+                let origin = if reachable.contains(sha) {
+                    "merged-default"
+                } else {
+                    "unreviewed-branch"
+                };
+                (format!("commit:{sha}"), origin.to_owned())
+            })
+            .collect();
+    }
+    if commits.len() == max {
+        scan.next_checkpoint = Some(format!("skip:{}", skip + max));
+    }
     // Git-evidenced revert detection: a commit undid its parent when every
     // path the parent changed (against the parent's first parent) is back at
     // the grandparent's blob. Tree identity is the exact case; the path rule
     // also covers reverts that carry unrelated worktree additions.
     let mut reverted_by: BTreeMap<String, String> = BTreeMap::new();
     for commit in &commits {
+        // A revert that never reached the default branch undid nothing
+        // there: an unmerged `revert-…` branch must not withdraw a merge.
+        if !reachable.contains(&commit.sha) {
+            continue;
+        }
         let Some(parent_sha) = commit.parents.first() else {
             continue;
         };
@@ -1968,10 +2075,13 @@ fn scan_git_history(
         if !message_revert && parent.parents.len() < 2 {
             continue;
         }
+        // NUL-separated, so a path git would quote (non-ASCII, controls) is
+        // the path itself rather than a quoted spelling no lookup resolves.
         let Ok(changed) = git(
             &repo.root,
             &[
                 "diff-tree",
+                "-z",
                 "--no-commit-id",
                 "--name-only",
                 "-r",
@@ -1981,26 +2091,25 @@ fn scan_git_history(
         ) else {
             continue;
         };
-        let paths: Vec<&str> = changed
-            .lines()
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .collect();
+        let paths: Vec<&str> = changed.split('\0').filter(|p| !p.is_empty()).collect();
         if paths.is_empty() {
             continue;
         }
+        // A path is restored when both commits hold the same entry for it,
+        // or both hold none. A lookup that fails says nothing either way, and
+        // a revert is never inferred from two failures.
+        let entry = |sha: &str, path: &str| {
+            git(
+                &repo.root,
+                &["--literal-pathspecs", "ls-tree", "-z", sha, "--", path],
+            )
+            .ok()
+        };
         let restored = paths.iter().all(|path| {
-            let before = git(
-                &repo.root,
-                &["rev-parse", &format!("{}:{path}", grandparent.sha)],
-            )
-            .ok();
-            let after = git(
-                &repo.root,
-                &["rev-parse", &format!("{}:{path}", commit.sha)],
-            )
-            .ok();
-            before == after
+            match (entry(&grandparent.sha, path), entry(&commit.sha, path)) {
+                (Some(before), Some(after)) => before == after,
+                _ => false,
+            }
         });
         if restored {
             reverted_by.insert(parent.sha.clone(), commit.sha.clone());
@@ -2165,20 +2274,56 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
         .map(|path| (file_mtime(&path).unwrap_or(0), path))
         .collect();
     files.sort();
-    let mut latest: BTreeMap<String, SourceRecord> = BTreeMap::new();
-    let mut newest_ids: BTreeSet<String> = BTreeSet::new();
-    let mut document_count = 0usize;
-    let total = files.len();
-    for (index, (_, path)) in files.into_iter().enumerate() {
+    // Only a parsed export can say what exists now. The most recently
+    // written file failing to parse is most likely a download still in
+    // progress: the scan is refused rather than read as "everything was
+    // removed". Any other unreadable or unrelated JSON is skipped and counted.
+    let last_written = files.last().map(|(_, path)| path.clone());
+    let mut exports: Vec<(String, i64, PathBuf, Map<String, Value>)> = Vec::new();
+    for (mtime, path) in files {
         let bytes = read_bounded(&path)?;
         check_budget(&mut scan, bytes.len())?;
-        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        let Ok(parsed) = serde_json::from_slice::<Value>(&bytes) else {
+            if Some(&path) == last_written.as_ref() {
+                return Err(ContractError::new(
+                    "CONFIG_INVARIANT",
+                    format!(
+                        "the most recent GitHub export ({}) is not valid JSON",
+                        relative_to(&repo.root, &path)
+                    ),
+                    "Finish or remove the partial export, then ingest again.",
+                    false,
+                    crate::error::ExitCode::Refused,
+                ));
+            }
+            scan.skip("github_export: file is not valid JSON");
             continue;
         };
-        let Some(map) = value.as_object() else {
+        // Valid JSON of another shape is some other document, not a
+        // half-written export.
+        let Value::Object(map) = parsed else {
+            scan.skip("github_export: JSON document is not an export");
             continue;
         };
-        document_count += 1;
+        let is_export = ["issues", "pullRequests"]
+            .iter()
+            .any(|key| map.get(*key).is_some_and(Value::is_array));
+        if !is_export {
+            scan.skip("github_export: JSON document is not an export");
+            continue;
+        }
+        let time = export_time(&map).unwrap_or_else(|| mtime_rfc3339(mtime));
+        exports.push((time, mtime, path, map));
+    }
+    // The export's own time orders snapshots (its header, else its latest
+    // item update); a checkout gives files near-identical modification times,
+    // which made "newest" a lexical accident.
+    exports.sort_by(|a, b| (&a.0, a.1, &a.2).cmp(&(&b.0, b.1, &b.2)));
+    let mut latest: BTreeMap<String, SourceRecord> = BTreeMap::new();
+    let mut newest_ids: BTreeSet<String> = BTreeSet::new();
+    let document_count = exports.len();
+    let total = exports.len();
+    for (index, (_, _, path, map)) in exports.into_iter().enumerate() {
         let relpath = relative_to(&repo.root, &path);
         scan.unit_ids.insert(relpath.clone());
         let is_newest = index + 1 == total;
@@ -2188,9 +2333,14 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
             };
             for item in items {
                 let Some(object) = item.as_object() else {
+                    scan.skip("github_export: item is not an object");
                     continue;
                 };
-                let number = object.get("number").and_then(Value::as_i64).unwrap_or(0);
+                // Items without a number used to collapse into one `…:0`.
+                let Some(number) = object.get("number").and_then(Value::as_i64) else {
+                    scan.skip("github_export: item has no number");
+                    continue;
+                };
                 let native_id = format!("{prefix}:{number}");
                 let title = object
                     .get("title")
@@ -2276,7 +2426,7 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
     if document_count == 0 {
         return Err(ContractError::new(
             "CONFIG_INVARIANT",
-            "GitHub export contains no JSON object",
+            "GitHub export contains no export document",
             "Use a valid native source envelope.",
             false,
             crate::error::ExitCode::Refused,
@@ -2287,6 +2437,33 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
         scan.records.push(record);
     }
     Ok(scan)
+}
+
+/// An export's own time: an `exported_at`/`generated_at` header, else the
+/// latest `updatedAt` among the items that are records (objects with a
+/// number). None when it carries neither; the caller then uses file time.
+fn export_time(map: &Map<String, Value>) -> Option<String> {
+    let header = ["exported_at", "exportedAt", "generated_at", "generatedAt"]
+        .iter()
+        .filter_map(|key| map.get(*key).and_then(Value::as_str))
+        .find_map(crate::time::normalize_foreign_time);
+    if header.is_some() {
+        return header;
+    }
+    ["issues", "pullRequests"]
+        .iter()
+        .filter_map(|key| map.get(*key).and_then(Value::as_array))
+        .flatten()
+        .filter(|item| item.get("number").and_then(Value::as_i64).is_some())
+        .filter_map(|item| item.get("updatedAt").and_then(Value::as_str))
+        .filter_map(crate::time::normalize_foreign_time)
+        .max()
+}
+
+fn mtime_rfc3339(seconds: i64) -> String {
+    chrono::DateTime::from_timestamp(seconds, 0)
+        .map(crate::time::format_rfc3339_millis)
+        .unwrap_or_default()
 }
 
 // --------------------------------------------------------------------------
@@ -2412,6 +2589,22 @@ fn scan_kindex(source: &Path, repo: &Repository) -> Result<SourceScan, ContractE
             let kindex_provenance: Option<String> = row.get(6).ok();
             let kindex_status: Option<String> = row.get(7).ok();
             let kindex_audience: Option<String> = row.get(8).ok();
+            // Kindex says who a node is for and whether it stands. This adapter
+            // feeds the Codebase store, which ships with the repository, so it
+            // takes only standing nodes meant for the team or the public. The
+            // older export shape has neither column and keeps its behaviour.
+            if let Some(status) = kindex_status.as_deref() {
+                if !matches!(status, "active" | "open-question") {
+                    scan.skip("kindex: node is not active");
+                    continue;
+                }
+            }
+            if let Some(audience) = kindex_audience.as_deref() {
+                if !matches!(audience, "team" | "public") {
+                    scan.skip("kindex: audience is not team or public");
+                    continue;
+                }
+            }
             let payload_text = payload
                 .as_ref()
                 .map(|bytes| String::from_utf8_lossy(bytes).trim().to_owned())
@@ -2662,9 +2855,33 @@ pub struct TrustFacts {
     /// and gets it wrong. `None` means no authority answer was read and the
     /// cursor comparison below is the only evidence available.
     pub governing_revoked_keys: Option<BTreeSet<String>>,
+    /// The operator's certificate-bound maintainer keys, which warrant a
+    /// certified repository without a registry entry.
+    pub maintainer_keys: BTreeSet<String>,
+    /// Every key a registry entry has named for this repository's
+    /// `codebase:`/`repository:` scope, whether still active or since
+    /// revoked.
+    pub repository_keys: BTreeSet<String>,
 }
 
 impl TrustFacts {
+    /// Whether an unrevoked key still warrants this repository's derived
+    /// facts: an active `codebase:`/`repository:` owner, or a
+    /// certificate-bound maintainer key (as `TrustContext::is_maintainer`
+    /// accepts them).
+    fn repository_warranted(&self) -> bool {
+        let Some(uuid) = &self.repository_uuid else {
+            return false;
+        };
+        let scopes = [format!("codebase:{uuid}"), format!("repository:{uuid}")];
+        self.active_entries
+            .iter()
+            .filter(|(scope, _, _, _)| scopes.contains(scope))
+            .map(|(_, key, _, _)| key)
+            .chain(self.maintainer_keys.iter())
+            .any(|key| !self.key_revoked(key))
+    }
+
     fn owner_of_scope(&self, scope: &str) -> Option<(String, String)> {
         let owners: Vec<&(String, String, String, String)> = self
             .active_entries
@@ -3153,17 +3370,21 @@ fn revocation_of(trust: &TrustFacts, observation: &Observation) -> Option<String
         if nothing_revoked {
             return None;
         }
-        if let Some(scope) = trust.maintainer_scope() {
-            if trust.certificate_valid && trust.owner_of_scope(&scope).is_none() {
-                let effective = trust
-                    .revocations
-                    .iter()
-                    .map(|(_, _, effective)| effective.clone())
-                    .max()
-                    .unwrap_or_default();
-                return Some(effective);
-            }
+        // Withdrawn only when nothing unrevoked warrants this repository any
+        // more and a revocation names a key that did. A revocation of some
+        // other repository's key, with a registry that never named a
+        // per-repository owner, used to withdraw every derived fact.
+        if !trust.certificate_valid || trust.repository_warranted() {
+            return None;
         }
+        return trust
+            .revocations
+            .iter()
+            .filter(|(key, _, _)| {
+                trust.repository_keys.contains(key) || trust.maintainer_keys.contains(key)
+            })
+            .map(|(_, _, effective)| effective.clone())
+            .max();
     }
     None
 }
@@ -3200,6 +3421,10 @@ pub fn derive(observations: &[Observation], trust: &TrustFacts, as_of: &str) -> 
             "repo_tests" | "runtime_evidence" => derive_ordered(&mut builder, &key, &rows),
             "git_history" => derive_git(&mut builder, &key, &rows),
             "github_export" => derive_github(&mut builder, &key, &rows),
+            "issue_tracker" | "pull_request" | "chat_thread" | "document" => {
+                derive_export(&mut builder, &key, &rows)
+            }
+            "repo_symbols" => derive_symbols(&mut builder, &key, &rows),
             "kindex" => derive_kindex(&mut builder, &key, &rows),
             "authority_answer" => derive_answers(&mut builder, &key, &rows),
             _ => derive_ordered(&mut builder, &key, &rows),
@@ -3718,6 +3943,177 @@ fn derive_github(builder: &mut FactBuilder<'_>, _key: &str, rows: &[&Observation
     }
 }
 
+/// A row whose warranting repository authority was revoked: quarantined, its
+/// fact withdrawn, and, when it was trusted before the revocation, the
+/// steward-owned question reopened (as the ordered derivation does).
+fn withdraw_revoked(builder: &mut FactBuilder<'_>, row: &Observation) {
+    builder.set_state(row, "quarantined", "revoked_observation");
+    builder.push_fact(row, &[], "withdrawn", "repository authority revoked");
+    if admitted_before_revocation(
+        builder.trust,
+        row,
+        warranting_key(builder.trust, row).as_deref(),
+    ) {
+        let owner = builder
+            .trust
+            .steward_authority_id
+            .clone()
+            .map(|id| ("company-steward".to_owned(), id));
+        builder.push_unknown(
+            row,
+            "revoked",
+            "reopened",
+            format!("The authority warranting {} was revoked.", row.native_id),
+            vec![row.observation_id.clone()],
+            owner,
+        );
+    }
+}
+
+/// Exported declarations sharing one key: each definition site is its own
+/// reading, not a version of the others. Sites that agree on the shape support
+/// one current fact; sites that disagree are a conflict with an open Unknown.
+/// The ordered derivation kept only the newest site and called the rest
+/// superseded, which is exactly the disagreement the shared key exists to
+/// surface.
+fn derive_symbols(builder: &mut FactBuilder<'_>, _key: &str, rows: &[&Observation]) {
+    let as_of = builder.as_of;
+    let alive_rows = settle_history(builder, rows, |row| would_be_current(row, as_of));
+    if alive_rows.is_empty() {
+        return;
+    }
+    // Rows arrive in observation order: the last reading of a site is its head.
+    let mut sites: BTreeMap<&str, &Observation> = BTreeMap::new();
+    for row in &alive_rows {
+        if let Some(previous) = sites.insert(row.native_id.as_str(), row) {
+            builder.set_state(previous, "stale", "superseded");
+            builder.push_history(
+                previous,
+                "superseded",
+                "an earlier reading of the same declaration",
+            );
+        }
+    }
+    let heads: Vec<&Observation> = sites.into_values().collect();
+    if heads
+        .iter()
+        .any(|row| revocation_of(builder.trust, row).is_some())
+    {
+        for row in &heads {
+            withdraw_revoked(builder, row);
+        }
+        return;
+    }
+    let shapes: BTreeSet<&str> = heads
+        .iter()
+        .map(|row| attr_str(row, "shape").unwrap_or_default())
+        .collect();
+    let head = heads[0];
+    let others: Vec<&Observation> = heads[1..].to_vec();
+    if shapes.len() > 1 {
+        for row in &heads {
+            builder.set_state(row, "current", "conflicting_observations");
+        }
+        builder.push_fact(
+            head,
+            &others,
+            "conflict",
+            "definitions of one exported name disagree in shape",
+        );
+        let evidence = heads.iter().map(|row| row.observation_id.clone()).collect();
+        builder.push_unknown(
+            head,
+            "conflict",
+            "open",
+            format!(
+                "{} is declared with {} different shapes across {} sites. Which declaration is the interface?",
+                attr_str(head, "symbol").unwrap_or("the symbol"),
+                shapes.len(),
+                heads.len()
+            ),
+            evidence,
+            None,
+        );
+        return;
+    }
+    builder.set_state(head, "current", head.disposition.as_str());
+    for row in &others {
+        builder.set_state(row, "current", "supporting");
+    }
+    builder.push_fact(head, &others, "current", "the exported declaration's shape");
+}
+
+/// Exported records (tickets, pull requests, threads, documents). The newest
+/// snapshot by the record's own update time is the head, and it is current
+/// direction only when its disposition is eligible (an accepted ticket, a
+/// merged pull request); a proposed, open or cancelled record is reported
+/// with its disposition. The generic ordered derivation reported every one of
+/// them as a current fact.
+fn derive_export(builder: &mut FactBuilder<'_>, _key: &str, rows: &[&Observation]) {
+    let as_of = builder.as_of;
+    let alive_rows = settle_history(builder, rows, |row| would_be_current(row, as_of));
+    if alive_rows.is_empty() {
+        return;
+    }
+    let updated = |row: &Observation| -> Option<String> {
+        attr_str(row, "updated_at")
+            .map(str::to_owned)
+            .or_else(|| row.asserted_at.clone())
+    };
+    let mut ordered = alive_rows;
+    ordered.sort_by(|a, b| {
+        updated(a)
+            .cmp(&updated(b))
+            .then_with(|| a.observed_at.cmp(&b.observed_at))
+            .then_with(|| a.observation_id.cmp(&b.observation_id))
+    });
+    let head = *ordered.last().unwrap();
+    for row in ordered
+        .iter()
+        .filter(|row| row.observation_id != head.observation_id)
+    {
+        builder.set_state(row, "stale", "superseded");
+        builder.push_history(
+            row,
+            "superseded",
+            "an earlier version of the exported record",
+        );
+    }
+    if revocation_of(builder.trust, head).is_some() {
+        withdraw_revoked(builder, head);
+        return;
+    }
+    if expired(head, as_of) {
+        builder.set_state(head, "stale", "expired_raw_withheld");
+        builder.push_fact(
+            head,
+            &[],
+            "withdrawn",
+            "the observation passed its effective_until",
+        );
+        return;
+    }
+    if would_be_current(head, as_of) {
+        builder.set_state(head, "current", head.disposition.as_str());
+        builder.push_fact(
+            head,
+            &[],
+            "current",
+            "the newest version of an accepted exported record",
+        );
+        return;
+    }
+    // The observation is the record's current version; what it states is
+    // not durable direction.
+    builder.set_state(head, "current", head.disposition.as_str());
+    builder.push_fact(
+        head,
+        &[],
+        head.disposition.as_str(),
+        "an exported record that is not accepted is not durable direction",
+    );
+}
+
 fn derive_kindex(builder: &mut FactBuilder<'_>, _key: &str, rows: &[&Observation]) {
     let as_of = builder.as_of;
     let alive_rows = settle_history(builder, rows, |row| {
@@ -4057,6 +4453,181 @@ mod tests {
     }
 
     #[test]
+    fn an_export_is_current_only_when_accepted() {
+        let open_pr = observation(
+            "pull_request",
+            "pr-1",
+            "pull_request:1",
+            "1: add retries",
+            "proposed",
+        );
+        let cancelled = observation(
+            "issue_tracker",
+            "ENG-2",
+            "issue_tracker:ENG-2",
+            "ENG-2: drop the cache",
+            "rejected",
+        );
+        let thread = observation(
+            "chat_thread",
+            "t-1",
+            "chat_thread:t-1",
+            "we might cap retries",
+            "proposed",
+        );
+        let accepted = observation(
+            "issue_tracker",
+            "ENG-3",
+            "issue_tracker:ENG-3",
+            "ENG-3: cap retries at three",
+            "accepted",
+        );
+        let view = derive(
+            &[open_pr, cancelled, thread, accepted.clone()],
+            &TrustFacts::default(),
+            "2026-09-08T00:00:03.000Z",
+        );
+        let current: Vec<&str> = view
+            .facts
+            .iter()
+            .filter(|fact| fact.state == "current")
+            .map(|fact| fact.logical_key.as_str())
+            .collect();
+        assert_eq!(current, ["issue_tracker:ENG-3"]);
+        let states: BTreeMap<&str, &str> = view
+            .facts
+            .iter()
+            .map(|fact| (fact.logical_key.as_str(), fact.state.as_str()))
+            .collect();
+        assert_eq!(states["pull_request:1"], "proposed");
+        assert_eq!(states["issue_tracker:ENG-2"], "rejected");
+        assert_eq!(states["chat_thread:t-1"], "proposed");
+    }
+
+    #[test]
+    fn a_revoked_export_or_symbol_is_withdrawn_and_reopened() {
+        let trust = TrustFacts {
+            revocations: vec![(
+                "key-a".to_owned(),
+                "rev-1".to_owned(),
+                "2026-09-05T00:00:00.000Z".to_owned(),
+            )],
+            ..TrustFacts::default()
+        };
+        let mut accepted = observation(
+            "issue_tracker",
+            "ENG-5",
+            "issue_tracker:ENG-5",
+            "ENG-5: cap retries at three",
+            "accepted",
+        );
+        let mut declared = observation(
+            "repo_symbols",
+            "a.ts:1",
+            "symbol:function:retry",
+            "function retry has shape (n)",
+            "current",
+        );
+        declared.attributes = Some(json!({"symbol": "retry", "shape": "(n)"}));
+        for row in [&mut accepted, &mut declared] {
+            row.signer = Some("key-a".to_owned());
+            row.asserted_at = Some("2026-09-01T00:00:00.000Z".to_owned());
+        }
+        let view = derive(&[accepted, declared], &trust, "2026-09-08T00:00:03.000Z");
+        assert!(
+            view.facts.iter().all(|fact| fact.state == "withdrawn"),
+            "{:?}",
+            view.facts
+        );
+        assert_eq!(view.facts.len(), 2);
+        let reopened = view
+            .unknowns
+            .iter()
+            .filter(|u| u.kind == "revoked" && u.status == "reopened")
+            .count();
+        assert_eq!(reopened, 2);
+    }
+
+    #[test]
+    fn an_export_snapshot_is_ordered_by_its_update_time() {
+        let mut newer = observation(
+            "issue_tracker",
+            "ENG-4",
+            "issue_tracker:ENG-4",
+            "ENG-4: retries capped at five",
+            "accepted",
+        );
+        newer.observation_id = "obs_new".to_owned();
+        newer.attributes = Some(json!({"updated_at": "2026-09-07T00:00:00.000Z"}));
+        newer.observed_at = "2026-09-08T00:00:00.000Z".to_owned();
+        // An older export ingested later.
+        let mut older = observation(
+            "issue_tracker",
+            "ENG-4",
+            "issue_tracker:ENG-4",
+            "ENG-4: retries capped at three",
+            "accepted",
+        );
+        older.observation_id = "obs_old".to_owned();
+        older.attributes = Some(json!({"updated_at": "2026-09-01T00:00:00.000Z"}));
+        older.observed_at = "2026-09-08T00:00:01.000Z".to_owned();
+        let view = derive(
+            &[newer, older],
+            &TrustFacts::default(),
+            "2026-09-08T00:00:03.000Z",
+        );
+        let current: Vec<&DerivedFact> =
+            view.facts.iter().filter(|f| f.state == "current").collect();
+        assert_eq!(current.len(), 1);
+        assert_eq!(current[0].evidence_refs, ["obs_new"]);
+        assert_eq!(view.observation_states["obs_old"].0, "stale");
+    }
+
+    #[test]
+    fn differing_declarations_on_one_symbol_key_are_a_conflict() {
+        let symbol = |native: &str, shape: &str| {
+            let mut row = observation(
+                "repo_symbols",
+                native,
+                "symbol:function:retry",
+                &format!("function retry has shape {shape}"),
+                "current",
+            );
+            row.attributes = Some(json!({"symbol": "retry", "shape": shape}));
+            row
+        };
+        let agreeing = derive(
+            &[symbol("a.ts:1", "(n)"), symbol("b.ts:4", "(n)")],
+            &TrustFacts::default(),
+            "2026-09-08T00:00:03.000Z",
+        );
+        assert_eq!(agreeing.facts.len(), 1);
+        assert_eq!(agreeing.facts[0].state, "current");
+        assert_eq!(agreeing.facts[0].evidence_refs.len(), 2);
+
+        let disagreeing = derive(
+            &[symbol("a.ts:1", "(n)"), symbol("b.ts:4", "(n, delay)")],
+            &TrustFacts::default(),
+            "2026-09-08T00:00:03.000Z",
+        );
+        assert_eq!(disagreeing.facts.len(), 1);
+        assert_eq!(disagreeing.facts[0].state, "conflict");
+        assert!(
+            disagreeing
+                .observation_states
+                .values()
+                .all(|(state, _)| state == "current"),
+            "neither site is superseded by the other"
+        );
+        assert!(
+            disagreeing
+                .unknowns
+                .iter()
+                .any(|u| u.kind == "conflict" && u.status == "open")
+        );
+    }
+
+    #[test]
     fn transcripts_keep_stable_record_ids_and_detect_edits() {
         let (dir, repo) = git_repo();
         let root = dir.path().join("sources/codex");
@@ -4252,6 +4823,86 @@ mod tests {
         assert_eq!(
             clean_text("# title\n\nbody\tline\u{202e}x"),
             "# title body line x"
+        );
+    }
+}
+
+#[cfg(test)]
+mod revocation_warrant_tests {
+    use super::*;
+
+    const UUID: &str = "00000000-0000-4000-8000-000000000001";
+
+    fn derived() -> Observation {
+        Observation {
+            observation_id: "obs_adr".to_owned(),
+            source_kind: "adr".to_owned(),
+            native_id: "adr-1".to_owned(),
+            ..Default::default()
+        }
+    }
+
+    fn certified() -> TrustFacts {
+        TrustFacts {
+            repository_uuid: Some(UUID.to_owned()),
+            certificate_valid: true,
+            ..Default::default()
+        }
+    }
+
+    fn revoke(trust: &mut TrustFacts, key: &str, effective_at: &str) {
+        trust
+            .revocations
+            .push((key.to_owned(), "7".to_owned(), effective_at.to_owned()));
+        trust
+            .governing_revoked_keys
+            .get_or_insert_with(BTreeSet::new)
+            .insert(key.to_owned());
+    }
+
+    #[test]
+    fn another_repositorys_revocation_withdraws_nothing() {
+        let mut trust = certified();
+        revoke(&mut trust, "other-key", "2026-09-01T00:00:00.000Z");
+        assert_eq!(revocation_of(&trust, &derived()), None);
+    }
+
+    #[test]
+    fn revoking_the_repository_key_withdraws_its_derived_facts() {
+        let mut trust = certified();
+        trust.repository_keys.insert("repo-key".to_owned());
+        revoke(&mut trust, "other-key", "2026-09-03T00:00:00.000Z");
+        revoke(&mut trust, "repo-key", "2026-09-02T00:00:00.000Z");
+        assert_eq!(
+            revocation_of(&trust, &derived()).as_deref(),
+            Some("2026-09-02T00:00:00.000Z")
+        );
+    }
+
+    #[test]
+    fn a_live_warrant_keeps_derived_facts() {
+        let mut trust = certified();
+        trust
+            .repository_keys
+            .extend(["old-key".to_owned(), "new-key".to_owned()]);
+        trust.active_entries.push((
+            format!("codebase:{UUID}"),
+            "new-key".to_owned(),
+            "owner".to_owned(),
+            "9".to_owned(),
+        ));
+        revoke(&mut trust, "old-key", "2026-09-02T00:00:00.000Z");
+        assert_eq!(revocation_of(&trust, &derived()), None);
+
+        let mut trust = certified();
+        trust.repository_keys.insert("repo-key".to_owned());
+        trust.maintainer_keys.insert("maintainer-key".to_owned());
+        revoke(&mut trust, "repo-key", "2026-09-02T00:00:00.000Z");
+        assert_eq!(revocation_of(&trust, &derived()), None);
+        revoke(&mut trust, "maintainer-key", "2026-09-04T00:00:00.000Z");
+        assert_eq!(
+            revocation_of(&trust, &derived()).as_deref(),
+            Some("2026-09-04T00:00:00.000Z")
         );
     }
 }

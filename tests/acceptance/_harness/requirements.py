@@ -69,6 +69,11 @@ TRACE_ONLY_ARTIFACTS: tuple[str, ...] = (
     "spec/reviews/pre-ratification-disposition.md",
     "spec/receipts/founder-ratification-12dd4c18.json",
     "spec/receipts/validator-ratification-12dd4c18.json",
+    # A working brief, absent from spec/ratification-manifest.json and never
+    # digested. Until its requirements are ratified into spec/ it only traces
+    # intent: a test citing nothing else fails the authority backreference
+    # check rather than outranking the ratified chain.
+    "tests/RULING-CONTRACT.md",
 )
 
 #: The two ratification receipts the Tester is permitted to read.
@@ -346,7 +351,7 @@ class SpecRef:
             raise HarnessInvalid(f"unknown gate {self.gate!r}")
         if self.artifact in TRACE_ONLY_ARTIFACTS:
             object.__setattr__(self, "trace_only", True)
-        elif self.artifact not in AUTHORITY_PRECEDENCE and self.artifact != "tests/RULING-CONTRACT.md":
+        elif self.artifact not in AUTHORITY_PRECEDENCE:
             raise HarnessInvalid(
                 f"{self.artifact!r} is neither a ratified authority artifact "
                 "nor a permitted trace artifact"
@@ -357,8 +362,6 @@ class SpecRef:
         """Lower is higher authority. Trace artifacts rank after everything."""
         if self.trace_only:
             return len(AUTHORITY_PRECEDENCE)
-        if self.artifact == "tests/RULING-CONTRACT.md":
-            return -1  # Current explicit user task supersedes historical gate requirements.
         return AUTHORITY_PRECEDENCE.index(self.artifact)
 
     def resolve(self) -> bool:
@@ -458,4 +461,5 @@ def TRACE(gate: str, artifact: str, anchor: str, quote: str) -> SpecRef:
 
 
 def RULING(gate: str, anchor: str, quote: str) -> SpecRef:
+    """A trace reference to the unratified ruling brief; it creates no requirement."""
     return SpecRef(gate, "tests/RULING-CONTRACT.md", anchor, quote)

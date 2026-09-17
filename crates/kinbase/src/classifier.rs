@@ -32,6 +32,7 @@ pub fn run(
     provider: Option<&str>,
     model: Option<&str>,
     configured_model: &str,
+    processor_scope: &str,
     json: bool,
 ) -> Result<(), ContractError> {
     let mut input = Vec::new();
@@ -66,6 +67,7 @@ pub fn run(
                 .map(|model| model.trim_start_matches("agy:"))
                 .or_else(|| configured_model.strip_prefix("agy:"))
                 .unwrap_or("default");
+            authorize_processor("agy", processor_scope, &format!("agy:{}", name.trim()))?;
             antigravity(name.trim(), &document)?
         }
         "ollama" => {
@@ -80,6 +82,12 @@ pub fn run(
                     "Ollama provider requires a nonempty model name",
                 ));
             }
+            let processor = ollama_model_available(name.trim()).map_err(unreachable)?;
+            authorize_processor(
+                processor,
+                processor_scope,
+                &format!("ollama:{}", name.trim()),
+            )?;
             ollama(name.trim(), &document)?
         }
         other => {
@@ -238,35 +246,62 @@ Rules:
 Answer with exactly one JSON object and nothing else (no prose, no markdown fences):
 {"atoms":[{"id":"<message id>","text":"<verbatim atom text>","destination":"personal|company|codebase|none","confidence":"high|medium|low"}]}"#;
 
-/// Report whether the local Ollama daemon serves `model` (R-11 provider
-/// selection). The check is a loopback list call within the connect budget;
-/// it never sends observation bytes.
-pub(crate) fn ollama_model_available(model: &str) -> Result<(), String> {
+/// Report which processor serves `model` through the local Ollama daemon
+/// (R-11 provider selection): `local`, or `ollama-cloud` for a model the
+/// daemon forwards to a remote host. The check is a loopback list call within
+/// the connect budget; it never sends observation bytes.
+pub(crate) fn ollama_model_available(model: &str) -> Result<&'static str, String> {
     let response = ollama_request("GET", "/api/tags", None, Duration::from_secs(5))
         .map_err(|error| error.message)?;
     let parsed: Value = serde_json::from_slice(&response)
         .map_err(|error| format!("Ollama model list is not JSON: {error}"))?;
-    let listed = parsed
+    ollama_processor(&parsed, model)
+        .ok_or_else(|| format!("Ollama does not serve the configured model `{model}`"))
+}
+
+/// The processor behind `model` in an Ollama model list, if it is listed. A
+/// listed model with a remote host is served off this machine.
+fn ollama_processor(tags: &Value, model: &str) -> Option<&'static str> {
+    let entry = tags
         .get("models")
-        .and_then(Value::as_array)
-        .map(|models| {
-            models.iter().any(|entry| {
-                ["name", "model"].iter().any(|key| {
-                    entry.get(key).and_then(Value::as_str).is_some_and(|name| {
-                        name == model
-                            || name.trim_end_matches(":latest") == model.trim_end_matches(":latest")
-                    })
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|entry| {
+            ["name", "model"].iter().any(|key| {
+                entry.get(key).and_then(Value::as_str).is_some_and(|name| {
+                    name == model
+                        || name.trim_end_matches(":latest") == model.trim_end_matches(":latest")
                 })
             })
-        })
-        .unwrap_or(false);
-    if listed {
-        Ok(())
-    } else {
-        Err(format!(
-            "Ollama does not serve the configured model `{model}`"
-        ))
+        })?;
+    let remote = ["remote_host", "remote_model"].iter().any(|key| {
+        entry
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.is_empty())
+    });
+    Some(if remote { "ollama-cloud" } else { "local" })
+}
+
+/// Refuse a provider whose processor the classifier configuration does not
+/// name, before any observation byte is sent to it.
+pub(crate) fn authorize_processor(
+    processor: &str,
+    processor_scope: &str,
+    model: &str,
+) -> Result<(), ContractError> {
+    if processor == "local" || processor == processor_scope {
+        return Ok(());
     }
+    Err(ContractError::integrity(
+        "PROCESSOR_UNAUTHORIZED",
+        format!(
+            "`{model}` sends session text to the `{processor}` processor, which classifier.processor_scope (`{processor_scope}`) does not authorize"
+        ),
+        format!(
+            "Set classifier.processor_scope = \"{processor}\" to authorize that processor, or use a local model; nothing was sent."
+        ),
+    ))
 }
 
 /// Where the Antigravity CLI lives. It is a routing classifier here, not a
@@ -353,6 +388,9 @@ fn antigravity(model: &str, document: &Value) -> Result<Value, ContractError> {
     // real home, so the routing turn gets the home back, inside Antigravity's
     // own sandbox, with slash commands off and a single non-interactive turn:
     // the only thing it can do with that home is find its credentials.
+    //
+    // The prompt carries session text, so it travels on stdin as one
+    // stream-json user message; argv is readable by every local process.
     let mut command = std::process::Command::new(binary);
     command
         .env_clear()
@@ -362,19 +400,40 @@ fn antigravity(model: &str, document: &Value) -> Result<Value, ContractError> {
         .arg("--sandbox")
         .arg("--effort")
         .arg("low")
+        .arg("--input-format")
+        .arg("stream-json")
         .arg("--output-format")
-        .arg("json")
+        .arg("stream-json")
         .arg("--disable-slash-commands")
         .arg("--json-schema")
         .arg(schema.to_string());
     if model != "default" && !model.is_empty() {
         command.arg("--model").arg(model);
     }
-    command.arg(format!("--print={prompt}"));
-    let output = command
-        .stdin(std::process::Stdio::null())
-        .output()
+    let mut message = serde_json::to_vec(&json!({
+        "event": "user",
+        "message": {"content": prompt}
+    }))
+    .unwrap_or_default();
+    message.push(b'\n');
+    let mut child = command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|error| unauthorized(format!("Antigravity CLI failed to start: {error}")))?;
+    let writer = child
+        .stdin
+        .take()
+        .map(|mut stdin| std::thread::spawn(move || stdin.write_all(&message)));
+    let output = child
+        .wait_with_output()
+        .map_err(|error| unauthorized(format!("Antigravity CLI failed: {error}")))?;
+    if let Some(writer) = writer {
+        // A child that exits without reading its prompt breaks the pipe; its
+        // exit status below is the error that matters.
+        let _ = writer.join();
+    }
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let first = stderr
@@ -387,8 +446,13 @@ fn antigravity(model: &str, document: &Value) -> Result<Value, ContractError> {
             first.chars().take(200).collect::<String>()
         )));
     }
-    let envelope: Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| unauthorized(format!("Antigravity response is not JSON: {error}")))?;
+    let envelope = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|event| event.get("event").and_then(Value::as_str) == Some("result"))
+        .filter_map(|event| event.get("result").cloned())
+        .next_back()
+        .ok_or_else(|| unauthorized("Antigravity stream carries no result"))?;
     if envelope.get("status").and_then(Value::as_str) != Some("SUCCESS") {
         return Err(unauthorized(format!(
             "Antigravity turn did not succeed: {}",
@@ -398,12 +462,19 @@ fn antigravity(model: &str, document: &Value) -> Result<Value, ContractError> {
                 .unwrap_or("unknown")
         )));
     }
-    let content = envelope
-        .get("response")
-        .and_then(Value::as_str)
-        .ok_or_else(|| unauthorized("Antigravity envelope carries no response"))?;
-    let candidate = extract_json_object(content)
-        .ok_or_else(|| unauthorized("Antigravity response carries no JSON object"))?;
+    // The schema-checked answer when the CLI reports one; otherwise the
+    // first JSON object in the reply text.
+    let candidate = match envelope.get("structured_output") {
+        Some(structured) if structured.is_object() => structured.clone(),
+        _ => {
+            let content = envelope
+                .get("response")
+                .and_then(Value::as_str)
+                .ok_or_else(|| unauthorized("Antigravity envelope carries no response"))?;
+            extract_json_object(content)
+                .ok_or_else(|| unauthorized("Antigravity response carries no JSON object"))?
+        }
+    };
     let normalized = normalize_ollama_output(document, &candidate)?;
     validate_output(&normalized)?;
     Ok(normalized)
@@ -1453,6 +1524,37 @@ fn unreachable(message: impl Into<String>) -> ContractError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_ollama_cloud_model_is_its_own_processor() {
+        let tags = json!({"models": [
+            {"name": "qwen3:0.6b", "model": "qwen3:0.6b"},
+            {"name": "glm-5.3:cloud", "remote_model": "glm-5.3", "remote_host": "https://ollama.example"}
+        ]});
+        assert_eq!(ollama_processor(&tags, "qwen3:0.6b"), Some("local"));
+        assert_eq!(ollama_processor(&tags, "qwen3:0.6b:latest"), Some("local"));
+        assert_eq!(
+            ollama_processor(&tags, "glm-5.3:cloud"),
+            Some("ollama-cloud")
+        );
+        assert_eq!(ollama_processor(&tags, "absent"), None);
+    }
+
+    #[test]
+    fn a_non_local_processor_runs_only_when_named() {
+        assert!(authorize_processor("local", "local", "ollama:qwen3").is_ok());
+        assert!(authorize_processor("agy", "agy", "agy:default").is_ok());
+        assert!(authorize_processor("ollama-cloud", "ollama-cloud", "ollama:m:cloud").is_ok());
+        for (processor, scope) in [
+            ("agy", "local"),
+            ("agy", "ollama-cloud"),
+            ("ollama-cloud", "local"),
+        ] {
+            let error = authorize_processor(processor, scope, "model").expect_err(processor);
+            assert_eq!(error.code, "PROCESSOR_UNAUTHORIZED");
+            assert_eq!(error.exit(), 5);
+        }
+    }
 
     #[test]
     fn deterministic_provider_routes_mixed_atoms_to_different_destinations() {

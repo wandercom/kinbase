@@ -35,6 +35,10 @@ pub enum Command {
         provider: Option<String>,
         #[arg(long)]
         model: Option<String>,
+        /// The processors the caller authorizes; defaults to the configured
+        /// `classifier.processor_scope`, else `local`.
+        #[arg(long = "processor-scope")]
+        processor_scope: Option<String>,
     },
     #[command(subcommand)]
     Corpus(CorpusCommand),
@@ -156,6 +160,9 @@ pub enum SessionCommand {
         session: String,
         #[arg(long)]
         event: PathBuf,
+        /// Remove the event file afterwards (a prompt a host hook queued).
+        #[arg(long, hide = true)]
+        consume: bool,
     },
     Checkpoint {
         session: String,

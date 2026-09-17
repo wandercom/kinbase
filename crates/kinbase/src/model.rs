@@ -843,8 +843,8 @@ impl FactEvent {
             return Err("unsupported event schema".to_owned());
         }
         let raw = Value::Object(map.clone());
-        let mut event: FactEvent =
-            serde_json::from_value(Value::Object(map)).map_err(|error| error.to_string())?;
+        let mut event: FactEvent = serde_json::from_value(Value::Object(map))
+            .map_err(|error| crate::json::serde_error_text(&error))?;
         event.raw = Some(raw);
         event.validate()?;
         Ok(event)
@@ -949,8 +949,8 @@ impl UnknownEvent {
             return Err("unsupported unknown-event schema".to_owned());
         }
         let raw = Value::Object(map.clone());
-        let mut event: UnknownEvent =
-            serde_json::from_value(Value::Object(map)).map_err(|error| error.to_string())?;
+        let mut event: UnknownEvent = serde_json::from_value(Value::Object(map))
+            .map_err(|error| crate::json::serde_error_text(&error))?;
         event.raw = Some(raw);
         if !UNKNOWN_STATUSES.contains(&event.status.as_str()) {
             return Err("unknown status is outside the closed set".to_owned());

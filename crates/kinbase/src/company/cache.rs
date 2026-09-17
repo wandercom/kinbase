@@ -25,11 +25,40 @@ pub struct Cache {
     pub state: CacheState,
 }
 
+/// Meta key prefix for a certificate a Company snapshot published for a UUID
+/// already pinned to another.
+const SNAPSHOT_CLAIM_PREFIX: &str = "certificate_snapshot_claim:";
+
 fn sqlite_error(context: &str) -> impl Fn(rusqlite::Error) -> ContractError + '_ {
     move |error| ContractError::internal(format!("{context}: {error}"))
 }
 
+const CACHE_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS snapshot(id INTEGER PRIMARY KEY CHECK(id=1), bytes BLOB NOT NULL, digest TEXT NOT NULL, stored_at TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS pins(hint TEXT PRIMARY KEY, repository_uuid TEXT NOT NULL, certificate_digest TEXT NOT NULL, pinned_at TEXT NOT NULL, cursor TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS certificates(repository_uuid TEXT PRIMARY KEY, document TEXT NOT NULL, digest TEXT NOT NULL, installed_at TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS pending_sagas(candidate_id TEXT PRIMARY KEY, record TEXT NOT NULL, updated_at TEXT NOT NULL);";
+
 impl Cache {
+    /// Open the cache for reading. One that does not exist yet is cold, held
+    /// in memory, and nothing is created on disk; an existing one opens as
+    /// usual.
+    pub fn open_for_read(root: &Path) -> Result<Self, ContractError> {
+        if root.join(CACHE_FILE).exists() {
+            return Self::open(root);
+        }
+        let connection = Connection::open_in_memory()
+            .map_err(|error| ContractError::internal(format!("open cache: {error}")))?;
+        connection
+            .execute_batch(CACHE_SCHEMA)
+            .map_err(sqlite_error("cache schema"))?;
+        Ok(Self {
+            root: root.to_path_buf(),
+            connection: Some(connection),
+            state: CacheState::Cold,
+        })
+    }
+
     pub fn open(root: &Path) -> Result<Self, ContractError> {
         crate::paths::ensure_private_dir(root, "Company cache root")?;
         let path = root.join(CACHE_FILE);
@@ -62,14 +91,8 @@ impl Cache {
         connection
             .busy_timeout(std::time::Duration::from_secs(5))
             .map_err(sqlite_error("busy timeout"))?;
-        let migrated = connection.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS snapshot(id INTEGER PRIMARY KEY CHECK(id=1), bytes BLOB NOT NULL, digest TEXT NOT NULL, stored_at TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS pins(hint TEXT PRIMARY KEY, repository_uuid TEXT NOT NULL, certificate_digest TEXT NOT NULL, pinned_at TEXT NOT NULL, cursor TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS certificates(repository_uuid TEXT PRIMARY KEY, document TEXT NOT NULL, digest TEXT NOT NULL, installed_at TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS pending_sagas(candidate_id TEXT PRIMARY KEY, record TEXT NOT NULL, updated_at TEXT NOT NULL);",
-        );
+        let migrated =
+            connection.execute_batch(&format!("PRAGMA journal_mode=WAL;\n{CACHE_SCHEMA}"));
         if migrated.is_err() {
             let quarantine = root.join(format!(
                 "{CACHE_FILE}.invalid-{}",
@@ -160,17 +183,35 @@ impl Cache {
         let cursor = crate::json::get_str(snapshot, "cursor")
             .unwrap_or("0")
             .to_owned();
-        let high_water = self.high_water();
-        if crate::reducer::cursor_order(&cursor, &high_water) == std::cmp::Ordering::Less {
-            return Err(ContractError::integrity(
-                "SIGNATURE_INVALID",
-                format!(
-                    "snapshot cursor {cursor} is older than the sealed high-water mark {high_water} (replay)"
-                ),
-                "Refresh from the live Company; a replayed snapshot cannot rebuild trust.",
+        // One cache belongs to one Company: a snapshot naming another is
+        // refused before its cursor is compared with this one's.
+        if let (Some(cached), Some(offered)) = (
+            self.meta("company_id"),
+            crate::json::get_str(snapshot, "company_id"),
+        ) && !cached.is_empty()
+            && cached != offered
+        {
+            return Err(ContractError::refused(
+                "CONFIG_INVARIANT",
+                format!("snapshot is from Company {offered}; this cache holds Company {cached}"),
+                "Point the configuration at the Company this cache belongs to, or move the cache root aside to start a new one.",
             ));
         }
-        let bytes = crate::json::canonical_bytes(snapshot);
+        let high_water = self.high_water();
+        if crate::reducer::cursor_order(&cursor, &high_water) == std::cmp::Ordering::Less {
+            // The signature is good; the authority state is older than state
+            // already sealed here (a restored or replaying service). The
+            // sealed state stays in use; refreshing again cannot help until
+            // the Company catches up.
+            return Err(ContractError::degraded(
+                "REVOCATION_STALE",
+                format!(
+                    "the Company answered at cursor {cursor}, older than the sealed high-water mark {high_water}; the older snapshot was not stored"
+                ),
+                "Keep using the sealed cache; ask the Company steward why the service is behind the state this machine already verified.",
+            ));
+        }
+        let bytes = crate::json::record_bytes(snapshot)?;
         let digest = crate::hash::sha256_bytes(&bytes);
         let connection = self.connection()?;
         connection
@@ -210,13 +251,38 @@ impl Cache {
             if let Some(uuid) = crate::json::get_str(&certificate, "repository_uuid") {
                 let document = super::db::signed_certificate(&certificate);
                 let digest = crate::json::digest(&document);
-                self.connection()?
-                    .execute(
-                        "INSERT INTO certificates(repository_uuid, document, digest, installed_at) VALUES (?1, ?2, ?3, ?4)
-                         ON CONFLICT(repository_uuid) DO UPDATE SET document=excluded.document, digest=excluded.digest",
-                        params![uuid, crate::json::canonical_text(&document), digest, now],
+                // The index never repins. A snapshot naming a different
+                // certificate for a pinned UUID is the Company publishing a
+                // second binding: it is kept as a claim of its own, so the
+                // binding reads as ambiguous and nothing is trusted until the
+                // steward retires one (architecture §2).
+                let pinned: Option<String> = self
+                    .connection()?
+                    .query_row(
+                        "SELECT digest FROM certificates WHERE repository_uuid=?1",
+                        params![uuid],
+                        |row| row.get(0),
                     )
-                    .map_err(sqlite_error("store certificate"))?;
+                    .optional()
+                    .map_err(sqlite_error("certificate lookup"))?;
+                match pinned {
+                    Some(pinned) if pinned != digest => {
+                        self.set_meta(&format!("{SNAPSHOT_CLAIM_PREFIX}{uuid}"), &digest)?;
+                        crate::output::diagnostic(
+                            "certificate-pin-conflict",
+                            json!({"repository_uuid": uuid, "pinned_digest": pinned, "offered_digest": digest}),
+                        );
+                    }
+                    Some(_) => {}
+                    None => {
+                        self.connection()?
+                            .execute(
+                                "INSERT OR IGNORE INTO certificates(repository_uuid, document, digest, installed_at) VALUES (?1, ?2, ?3, ?4)",
+                                params![uuid, crate::json::record_text(&document)?, digest, now],
+                            )
+                            .map_err(sqlite_error("store certificate"))?;
+                    }
+                }
             }
         }
         self.state = CacheState::Warm;
@@ -363,7 +429,7 @@ impl Cache {
         connection
             .execute(
                 "INSERT OR IGNORE INTO certificates(repository_uuid, document, digest, installed_at) VALUES (?1, ?2, ?3, ?4)",
-                params![uuid, crate::json::canonical_text(document), digest, now],
+                params![uuid, crate::json::record_text(document)?, digest, now],
             )
             .map_err(sqlite_error("install certificate"))?;
         Ok(json!({
@@ -458,6 +524,14 @@ impl Cache {
                 }
             }
         }
+        if let Some(digest) = self.meta(&format!("{SNAPSHOT_CLAIM_PREFIX}{repository_uuid}")) {
+            claims.push(json!({
+                "source": "snapshot",
+                "path": CACHE_FILE,
+                "digest": digest,
+                "issued_at": Value::Null
+            }));
+        }
         if let Some(connection) = self.connection.as_ref() {
             let indexed: Option<(String, String)> = connection
                 .query_row(
@@ -523,7 +597,7 @@ impl Cache {
             {
                 Ok(PinOutcome::Unchanged)
             }
-            Some((uuid, _)) => Ok(PinOutcome::Conflict(uuid)),
+            Some((uuid, digest)) => Ok(PinOutcome::Conflict { uuid, digest }),
             None => {
                 connection
                     .execute(
@@ -582,7 +656,7 @@ impl Cache {
         self.connection()?
             .execute(
                 "INSERT INTO pending_sagas(candidate_id, record, updated_at) VALUES (?1, ?2, ?3) ON CONFLICT(candidate_id) DO UPDATE SET record=excluded.record, updated_at=excluded.updated_at",
-                params![candidate_id, crate::json::canonical_text(record), now],
+                params![candidate_id, crate::json::record_text(record)?, now],
             )
             .map(|_| ())
             .map_err(sqlite_error("saga"))
@@ -786,7 +860,11 @@ fn enforce_certificate_file_mode(path: &Path) -> Result<(), ContractError> {
 pub enum PinOutcome {
     Pinned,
     Unchanged,
-    Conflict(String),
+    /// The hint is pinned to this UUID and certificate digest.
+    Conflict {
+        uuid: String,
+        digest: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -926,5 +1004,105 @@ mod freshness_tests {
         let later = value.at("2026-01-04T00:00:00.000Z");
         assert!(!later.revocation_fresh);
         assert!(!later.fact_fresh);
+    }
+}
+
+#[cfg(test)]
+mod snapshot_guard_tests {
+    use super::*;
+    use crate::crypto::PrivateKey;
+
+    fn snapshot(
+        root: &PrivateKey,
+        cursor: &str,
+        company: &str,
+        certificate_digest_seed: &str,
+    ) -> Value {
+        root.sign_document(
+            "receipt",
+            &json!({
+                "cursor": cursor,
+                "company_id": company,
+                "certificates": [{
+                    "schema": crate::model::CERTIFICATE_SCHEMA,
+                    "repository_uuid": "repo-1",
+                    "issued_at": certificate_digest_seed
+                }]
+            }),
+        )
+        .expect("sign")
+    }
+
+    fn indexed_digest(cache: &Cache) -> String {
+        cache
+            .connection
+            .as_ref()
+            .expect("connection")
+            .query_row(
+                "SELECT digest FROM certificates WHERE repository_uuid='repo-1'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("indexed")
+    }
+
+    #[test]
+    fn an_older_snapshot_is_stale_not_forged() {
+        let dir = tempfile::tempdir().expect("dir");
+        let root = PrivateKey::generate();
+        let mut cache = Cache::open(dir.path()).expect("cache");
+        let now = crate::time::now_rfc3339_millis();
+        cache
+            .store_snapshot(&snapshot(&root, "5", "acme", "a"), &root.public(), &now)
+            .expect("first");
+        let error = cache
+            .store_snapshot(&snapshot(&root, "3", "acme", "a"), &root.public(), &now)
+            .expect_err("older");
+        assert_eq!(error.code, "REVOCATION_STALE");
+        assert_eq!(cache.high_water(), "5");
+    }
+
+    #[test]
+    fn a_snapshot_from_another_company_is_refused() {
+        let dir = tempfile::tempdir().expect("dir");
+        let root = PrivateKey::generate();
+        let mut cache = Cache::open(dir.path()).expect("cache");
+        let now = crate::time::now_rfc3339_millis();
+        cache
+            .store_snapshot(&snapshot(&root, "5", "acme", "a"), &root.public(), &now)
+            .expect("first");
+        let error = cache
+            .store_snapshot(&snapshot(&root, "9", "globex", "a"), &root.public(), &now)
+            .expect_err("foreign company");
+        assert_eq!(error.code, "CONFIG_INVARIANT");
+        assert_eq!(cache.meta("company_id").as_deref(), Some("acme"));
+    }
+
+    #[test]
+    fn a_snapshot_never_repins_a_certificate() {
+        let dir = tempfile::tempdir().expect("dir");
+        let root = PrivateKey::generate();
+        let mut cache = Cache::open(dir.path()).expect("cache");
+        let now = crate::time::now_rfc3339_millis();
+        cache
+            .store_snapshot(&snapshot(&root, "5", "acme", "first"), &root.public(), &now)
+            .expect("first");
+        let pinned = indexed_digest(&cache);
+        cache
+            .store_snapshot(
+                &snapshot(&root, "6", "acme", "second"),
+                &root.public(),
+                &now,
+            )
+            .expect("second");
+        assert_eq!(indexed_digest(&cache), pinned);
+        // The second binding is a claim of its own: the binding is ambiguous.
+        let claims = cache.certificate_claims("repo-1").expect("claims");
+        let digests: std::collections::BTreeSet<&str> = claims
+            .iter()
+            .filter_map(|claim| crate::json::get_str(claim, "digest"))
+            .collect();
+        assert_eq!(digests.len(), 2, "{claims:?}");
+        assert!(claims.iter().any(|claim| claim["source"] == "snapshot"));
     }
 }

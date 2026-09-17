@@ -28,7 +28,8 @@ if [ -z "$PYTHON" ]; then
     PYTHON="python3"
   fi
 fi
-REAL="${KINBASE_BIN:-$(command -v kinbase || true)}"
+# The build under test is named, never taken from PATH.
+REAL="${KINBASE_BIN:-}"
 if [ -z "$REAL" ]; then
   echo "mutation-run: no product entry point; set KINBASE_BIN" >&2
   echo "mutation-run: INVALID_HARNESS -- a mutation run without a product" >&2

@@ -282,7 +282,7 @@ pub fn run_shared(
         command.arg("-p").arg(&profile).arg(&exe);
         command
     } else {
-        return Err(ContractError::refused(
+        return Err(ContractError::integrity(
             "PROCESSOR_UNAUTHORIZED",
             "no supported kernel enforcement is available; shared projection/publication is disabled",
             "Run on macOS with sandbox-exec (or a Landlock/bubblewrap backend) to enable shared work.",
@@ -346,6 +346,187 @@ fn clear_cloexec(fd: i32) -> Result<(), ContractError> {
     Ok(())
 }
 
+/// An executable opened once and verified through that descriptor.
+struct VerifiedExecutable {
+    file: std::fs::File,
+    metadata: std::fs::Metadata,
+}
+
+/// What verifying a pinned executable found: the digest it read, when it got
+/// that far, and the rule that refused the executable, if any. These are the
+/// checks `run_verified_executable` makes before it runs anything.
+pub struct PinnedCheck {
+    pub observed_sha256: Option<String>,
+    pub refusal: Option<ContractError>,
+}
+
+pub fn check_pinned_executable(executable: &Path, expected_sha256: &str) -> PinnedCheck {
+    match open_verified(executable, expected_sha256) {
+        Ok((_, observed)) => PinnedCheck {
+            observed_sha256: Some(observed),
+            refusal: None,
+        },
+        Err((observed, error)) => PinnedCheck {
+            observed_sha256: observed,
+            refusal: Some(error),
+        },
+    }
+}
+
+/// Open the absolute executable once and verify owner, mode, regular file,
+/// the containing directory chain and the pinned SHA-256 through that
+/// descriptor. A refusal carries the digest when it was read.
+fn open_verified(
+    executable: &Path,
+    expected_sha256: &str,
+) -> Result<(VerifiedExecutable, String), (Option<String>, ContractError)> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let refuse = |error: ContractError| (None, error);
+    if !executable.is_absolute() {
+        return Err(refuse(ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            "classifier executable must be an absolute path",
+            "Configure an absolute regular-file path; no PATH or shell resolution exists.",
+        )));
+    }
+    let file = std::fs::File::open(executable).map_err(|error| {
+        refuse(ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            format!("classifier executable cannot be opened ({})", error.kind()),
+            "Configure a readable absolute executable.",
+        ))
+    })?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| refuse(ContractError::io("fstat classifier", error)))?;
+    // SAFETY: geteuid has no preconditions.
+    let euid = unsafe { libc::geteuid() };
+    if !metadata.is_file() || metadata.uid() != euid || metadata.permissions().mode() & 0o022 != 0 {
+        return Err(refuse(ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            "classifier executable is not a regular file owned by the effective user without group/other write",
+            "Fix ownership and mode of the classifier executable.",
+        )));
+    }
+    let mut ancestor = executable.parent();
+    while let Some(dir) = ancestor {
+        if let Ok(dir_metadata) = std::fs::symlink_metadata(dir) {
+            if dir_metadata.file_type().is_symlink() {
+                return Err(refuse(ContractError::integrity(
+                    "PROCESSOR_UNAUTHORIZED",
+                    "classifier containing-directory chain traverses a symlink",
+                    "Place the classifier under a symlink-free directory chain.",
+                )));
+            }
+            if dir_metadata.permissions().mode() & 0o022 != 0 && dir != Path::new("/") {
+                return Err(refuse(ContractError::integrity(
+                    "PROCESSOR_UNAUTHORIZED",
+                    "classifier containing directory is writable by group or other",
+                    "Tighten the directory chain to 0755 or stricter.",
+                )));
+            }
+        }
+        ancestor = dir.parent();
+    }
+    let mut bytes = Vec::new();
+    {
+        let mut reader = &file;
+        std::io::Read::read_to_end(&mut reader, &mut bytes)
+            .map_err(|error| refuse(ContractError::io("read classifier", error)))?;
+    }
+    let observed = crate::hash::sha256_bytes(&bytes);
+    if observed != expected_sha256 {
+        // A rebuilt classifier stops every classification until it is
+        // re-pinned; say what was read and how to pin it.
+        let error = ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            "classifier executable digest differs from the pinned SHA-256",
+            "Review the executable, then record its digest (`shasum -a 256` of the configured \
+             path; `kinbase doctor` shows it as classifier.observed_sha256) as \
+             classifier.executable_sha256 in a reviewed configuration change; no input was sent.",
+        )
+        .with_detail(json!({
+            "pinned_sha256": expected_sha256,
+            "observed_sha256": observed
+        }));
+        return Err((Some(observed), error));
+    }
+    Ok((VerifiedExecutable { file, metadata }, observed))
+}
+
+/// The most classifier stdout kept (the input bound).
+pub const MAX_CLASSIFIER_OUTPUT: usize = 8 * 1024 * 1024;
+/// The most classifier stderr kept; its first line is reported.
+const MAX_CLASSIFIER_STDERR: usize = 64 * 1024;
+/// How long output may keep arriving after the classifier exits.
+const OUTPUT_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// One child pipe, read without blocking on the calling thread, keeping at
+/// most `limit` bytes (the rest is read and discarded, so the writer never
+/// blocks on a full pipe). The descriptor closes when the pipe ends or the
+/// capture is dropped.
+struct Capture {
+    pipe: Option<std::fs::File>,
+    kept: Vec<u8>,
+    limit: usize,
+    over: bool,
+}
+
+impl Capture {
+    fn new(pipe: Option<std::os::fd::OwnedFd>, limit: usize) -> std::io::Result<Self> {
+        let pipe = pipe.map(std::fs::File::from);
+        if let Some(pipe) = &pipe {
+            set_nonblocking(pipe.as_raw_fd())?;
+        }
+        Ok(Self {
+            pipe,
+            kept: Vec::new(),
+            limit,
+            over: false,
+        })
+    }
+
+    fn fd(&self) -> Option<i32> {
+        self.pipe.as_ref().map(AsRawFd::as_raw_fd)
+    }
+
+    /// Read whatever is available now.
+    fn drain(&mut self) {
+        let Some(pipe) = self.pipe.as_mut() else {
+            return;
+        };
+        let mut chunk = [0u8; 64 * 1024];
+        loop {
+            match std::io::Read::read(pipe, &mut chunk) {
+                Ok(0) => {
+                    self.pipe = None;
+                    return;
+                }
+                Ok(read) => {
+                    let room = self.limit.saturating_sub(self.kept.len());
+                    self.over |= read > room;
+                    self.kept.extend_from_slice(&chunk[..read.min(room)]);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => return,
+                Err(_) => {
+                    self.pipe = None;
+                    return;
+                }
+            }
+        }
+    }
+}
+
+fn set_nonblocking(fd: i32) -> std::io::Result<()> {
+    // SAFETY: fcntl on a descriptor this process owns.
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// Descriptor-backed classifier execution (architecture §5): open the
 /// absolute executable once, verify owner/mode/regular file/containing
 /// directory chain and the pinned SHA-256 through that descriptor, then
@@ -358,66 +539,9 @@ pub fn run_verified_executable(
     input: &[u8],
     timeout: std::time::Duration,
 ) -> Result<Vec<u8>, ContractError> {
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-    if !executable.is_absolute() {
-        return Err(ContractError::integrity(
-            "PROCESSOR_UNAUTHORIZED",
-            "classifier executable must be an absolute path",
-            "Configure an absolute regular-file path; no PATH or shell resolution exists.",
-        ));
-    }
-    let file = std::fs::File::open(executable).map_err(|error| {
-        ContractError::integrity(
-            "PROCESSOR_UNAUTHORIZED",
-            format!("classifier executable cannot be opened ({})", error.kind()),
-            "Configure a readable absolute executable.",
-        )
-    })?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| ContractError::io("fstat classifier", error))?;
-    // SAFETY: geteuid has no preconditions.
-    let euid = unsafe { libc::geteuid() };
-    if !metadata.is_file() || metadata.uid() != euid || metadata.permissions().mode() & 0o022 != 0 {
-        return Err(ContractError::integrity(
-            "PROCESSOR_UNAUTHORIZED",
-            "classifier executable is not a regular file owned by the effective user without group/other write",
-            "Fix ownership and mode of the classifier executable.",
-        ));
-    }
-    let mut ancestor = executable.parent();
-    while let Some(dir) = ancestor {
-        if let Ok(dir_metadata) = std::fs::symlink_metadata(dir) {
-            if dir_metadata.file_type().is_symlink() {
-                return Err(ContractError::integrity(
-                    "PROCESSOR_UNAUTHORIZED",
-                    "classifier containing-directory chain traverses a symlink",
-                    "Place the classifier under a symlink-free directory chain.",
-                ));
-            }
-            if dir_metadata.permissions().mode() & 0o022 != 0 && dir != Path::new("/") {
-                return Err(ContractError::integrity(
-                    "PROCESSOR_UNAUTHORIZED",
-                    "classifier containing directory is writable by group or other",
-                    "Tighten the directory chain to 0755 or stricter.",
-                ));
-            }
-        }
-        ancestor = dir.parent();
-    }
-    let mut bytes = Vec::new();
-    {
-        let mut reader = &file;
-        std::io::Read::read_to_end(&mut reader, &mut bytes)
-            .map_err(|error| ContractError::io("read classifier", error))?;
-    }
-    if crate::hash::sha256_bytes(&bytes) != expected_sha256 {
-        return Err(ContractError::integrity(
-            "PROCESSOR_UNAUTHORIZED",
-            "classifier executable digest differs from the pinned SHA-256",
-            "Update the pinned digest only through a reviewed configuration change; no input was sent.",
-        ));
-    }
+    use std::os::unix::fs::MetadataExt;
+    let (VerifiedExecutable { file, metadata }, _) =
+        open_verified(executable, expected_sha256).map_err(|(_, error)| error)?;
     let fd = file.as_raw_fd();
     // The verified descriptor is exposed to exactly this child: CLOEXEC stays
     // set in the parent and is cleared after fork, so a concurrently spawned
@@ -441,6 +565,8 @@ pub fn run_verified_executable(
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Its own process group, so a timeout reaches everything it started.
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
     // SAFETY: the hook only calls fcntl, which is async-signal-safe.
     unsafe {
         std::os::unix::process::CommandExt::pre_exec(&mut command, inherit_verified_descriptor);
@@ -481,6 +607,7 @@ pub fn run_verified_executable(
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
+            std::os::unix::process::CommandExt::process_group(&mut fallback_command, 0);
             // SAFETY: the hook only calls fcntl, which is async-signal-safe.
             unsafe {
                 std::os::unix::process::CommandExt::pre_exec(
@@ -500,61 +627,156 @@ pub fn run_verified_executable(
             ));
         }
     };
-    // Write stdin independently and read both pipes concurrently. A
-    // classifier can emit more than a pipe buffer of atoms before consuming
-    // all input; doing this synchronously deadlocks both processes.
-    let stdin_writer = child.stdin.take().map(|mut stdin| {
-        let input = input.to_vec();
-        std::thread::spawn(move || {
-            let _ = std::io::Write::write_all(&mut stdin, &input);
-            // Drop closes stdin even if the child exits before reading all bytes.
-        })
-    });
-    let stdout_reader = child.stdout.take().map(|mut pipe| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = std::io::Read::read_to_end(&mut pipe, &mut bytes);
-            bytes
-        })
-    });
-    let stderr_reader = child.stderr.take().map(|mut pipe| {
-        std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            let _ = std::io::Read::read_to_end(&mut pipe, &mut bytes);
-            bytes
-        })
-    });
-    let started = std::time::Instant::now();
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) => {
-                if started.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    let _ = stdin_writer.map(std::thread::JoinHandle::join);
-                    let _ = stdout_reader.map(std::thread::JoinHandle::join);
-                    let _ = stderr_reader.map(std::thread::JoinHandle::join);
-                    return Err(ContractError::degraded(
-                        "UNKNOWN_OWNER_UNRESOLVED",
-                        "classifier exceeded its wall timeout; extraction abstained",
-                        "Increase classifier.timeout_seconds or use a faster local processor.",
-                    ));
-                }
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
-            Err(error) => return Err(ContractError::io("wait classifier", error)),
+    // The input is written and both outputs read with poll on this thread,
+    // against deadlines: a descendant that keeps a pipe open after the
+    // classifier exits (or is killed) is never waited on past them, no
+    // thread outlives the call, and every descriptor is closed when it
+    // returns. Writing all input first would deadlock a classifier that
+    // fills its output before reading it.
+    let io_error = |error| ContractError::io("classifier pipes", error);
+    let mut stdin = match child.stdin.take() {
+        Some(pipe) if !input.is_empty() => {
+            let pipe = std::fs::File::from(std::os::fd::OwnedFd::from(pipe));
+            set_nonblocking(pipe.as_raw_fd()).map_err(io_error)?;
+            Some(pipe)
         }
+        _ => None,
     };
-    let _ = stdin_writer.map(std::thread::JoinHandle::join);
-    let stdout = stdout_reader
-        .map(std::thread::JoinHandle::join)
-        .map(|joined| joined.unwrap_or_default())
-        .unwrap_or_default();
-    let stderr = stderr_reader
-        .map(std::thread::JoinHandle::join)
-        .map(|joined| joined.unwrap_or_default())
-        .unwrap_or_default();
+    let mut written = 0usize;
+    let mut stdout = Capture::new(
+        child.stdout.take().map(std::os::fd::OwnedFd::from),
+        MAX_CLASSIFIER_OUTPUT,
+    )
+    .map_err(io_error)?;
+    let mut stderr = Capture::new(
+        child.stderr.take().map(std::os::fd::OwnedFd::from),
+        MAX_CLASSIFIER_STDERR,
+    )
+    .map_err(io_error)?;
+    let group = child.id() as libc::pid_t;
+    let started = std::time::Instant::now();
+    let mut status = None;
+    let mut exited_at: Option<std::time::Instant> = None;
+    let mut late = false;
+    loop {
+        if status.is_none() {
+            // Peek at the exit without reaping: while the exited child is an
+            // unreaped zombie its process-group id cannot be reused, so the
+            // group can be signalled safely before the child is collected.
+            // SAFETY: waitid writes only into `info`, a zeroed siginfo_t.
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let peeked = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    group as libc::id_t,
+                    &mut info,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            if peeked != 0 {
+                return Err(ContractError::io(
+                    "wait classifier",
+                    std::io::Error::last_os_error(),
+                ));
+            }
+            // SAFETY: si_pid is set by waitid (zero while the child runs).
+            if unsafe { info.si_pid() } != 0 {
+                // What the classifier left running in its group goes with it.
+                // SAFETY: killpg only signals our child's (unreaped) group.
+                unsafe {
+                    libc::killpg(group, libc::SIGKILL);
+                }
+                status = Some(
+                    child
+                        .wait()
+                        .map_err(|error| ContractError::io("wait classifier", error))?,
+                );
+                exited_at = Some(std::time::Instant::now());
+                stdin = None;
+            } else if started.elapsed() > timeout {
+                // SAFETY: killpg only signals our child's (unreaped) group.
+                unsafe {
+                    libc::killpg(group, libc::SIGKILL);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ContractError::degraded(
+                    "UNKNOWN_OWNER_UNRESOLVED",
+                    "classifier exceeded its wall timeout; extraction abstained",
+                    "Increase classifier.timeout_seconds or use a faster local processor.",
+                ));
+            }
+        }
+        if status.is_some() && stdout.pipe.is_none() && stderr.pipe.is_none() {
+            break;
+        }
+        if exited_at.is_some_and(|at| at.elapsed() > OUTPUT_GRACE) {
+            late = stdout.pipe.is_some();
+            break;
+        }
+        let mut fds: Vec<libc::pollfd> = Vec::with_capacity(3);
+        if let Some(pipe) = &stdin {
+            fds.push(libc::pollfd {
+                fd: pipe.as_raw_fd(),
+                events: libc::POLLOUT,
+                revents: 0,
+            });
+        }
+        for fd in [stdout.fd(), stderr.fd()].into_iter().flatten() {
+            fds.push(libc::pollfd {
+                fd,
+                events: libc::POLLIN,
+                revents: 0,
+            });
+        }
+        if fds.is_empty() {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            continue;
+        }
+        // SAFETY: `fds` is a live, correctly sized pollfd array.
+        unsafe {
+            libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 20);
+        }
+        if let Some(pipe) = stdin.as_mut() {
+            match std::io::Write::write(pipe, &input[written..]) {
+                Ok(count) => {
+                    written += count;
+                    if written >= input.len() {
+                        // Closing stdin tells the classifier the input ended.
+                        stdin = None;
+                    }
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+                    ) => {}
+                Err(_) => stdin = None,
+            }
+        }
+        stdout.drain();
+        stderr.drain();
+    }
+    drop(stdin);
+    let status = status.ok_or_else(|| ContractError::internal("classifier status missing"))?;
+    if stdout.over {
+        return Err(ContractError::limit(
+            format!(
+                "classifier output exceeds the {MAX_CLASSIFIER_OUTPUT}-byte bound; extraction abstained"
+            ),
+            serde_json::json!({"refused_count": 1, "omitted_count": 1, "ceiling_bytes": MAX_CLASSIFIER_OUTPUT}),
+        ));
+    }
+    if late {
+        return Err(ContractError::degraded(
+            "UNKNOWN_OWNER_UNRESOLVED",
+            "classifier output did not close after it exited; extraction abstained",
+            "Repair the classifier so its output ends when it does.",
+        ));
+    }
+    let stdout = stdout.kept;
+    let stderr_truncated = stderr.over;
+    let stderr = stderr.kept;
     if !status.success() {
         // The child's own words travel with the failure. An exit status alone
         // cannot tell a provider pushing back from a malformed answer, and the
@@ -568,13 +790,244 @@ pub fn run_verified_executable(
             .collect();
         return Err(ContractError::degraded(
             "UNKNOWN_OWNER_UNRESOLVED",
-            if excerpt.is_empty() {
-                format!("classifier exited with {status}; extraction abstained")
-            } else {
-                format!("classifier exited with {status}: {excerpt}; extraction abstained")
+            // A long stderr keeps its first bytes, and says it was cut.
+            match (excerpt.is_empty(), stderr_truncated) {
+                (true, _) => format!("classifier exited with {status}; extraction abstained"),
+                (false, false) => {
+                    format!("classifier exited with {status}: {excerpt}; extraction abstained")
+                }
+                (false, true) => format!(
+                    "classifier exited with {status}: {excerpt} (stderr truncated); extraction abstained"
+                ),
             },
             "Repair the classifier; abstention creates a private Unknown.",
         ));
     }
     Ok(stdout)
+}
+
+#[cfg(test)]
+mod pinned_check_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A directory whose whole chain the verifier accepts (no symlink, no
+    /// group/other-writable ancestor); `/tmp` itself is 1777. An explicit
+    /// `KINBASE_TEST_VERIFIED_DIR` is tried first.
+    fn accepted_base() -> PathBuf {
+        let candidates: Vec<PathBuf> = [
+            std::env::var_os("KINBASE_TEST_VERIFIED_DIR").map(PathBuf::from),
+            Some(std::env::temp_dir()),
+            std::env::var_os("HOME").map(PathBuf::from),
+            Some(PathBuf::from(env!("CARGO_MANIFEST_DIR"))),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        candidates
+            .iter()
+            .filter_map(|dir| dir.canonicalize().ok())
+            .find(|dir| {
+                dir.ancestors().all(|ancestor| {
+                    std::fs::symlink_metadata(ancestor).is_ok_and(|metadata| {
+                        ancestor == Path::new("/")
+                            || (!metadata.file_type().is_symlink()
+                                && metadata.permissions().mode() & 0o022 == 0)
+                    })
+                })
+            })
+            .unwrap_or_else(|| {
+                panic!(
+                    "no directory chain the classifier verifier accepts among {candidates:?}; \
+                     set KINBASE_TEST_VERIFIED_DIR to one"
+                )
+            })
+    }
+
+    #[test]
+    fn a_rebuilt_executable_is_refused_with_the_digest_it_now_has() {
+        let base = accepted_base();
+        let dir = tempfile::TempDir::new_in(&base).expect("tempdir");
+        let executable = dir.path().join("classifier");
+        let body = b"#!/bin/sh\nexit 0\n";
+        std::fs::write(&executable, body).expect("write");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod");
+        let digest = crate::hash::sha256_bytes(body);
+
+        let pinned = check_pinned_executable(&executable, &digest);
+        assert!(
+            pinned.refusal.is_none(),
+            "{:?}",
+            pinned.refusal.map(|error| error.message)
+        );
+        assert_eq!(pinned.observed_sha256.as_deref(), Some(digest.as_str()));
+
+        let rebuilt = check_pinned_executable(&executable, &"0".repeat(64));
+        assert_eq!(rebuilt.observed_sha256.as_deref(), Some(digest.as_str()));
+        let error = rebuilt.refusal.expect("a stale pin is refused");
+        assert_eq!(error.code, "PROCESSOR_UNAUTHORIZED");
+        assert_eq!(
+            error
+                .detail
+                .as_ref()
+                .and_then(|detail| detail["observed_sha256"].as_str()),
+            Some(digest.as_str())
+        );
+        assert!(
+            error.remediation.contains("shasum -a 256"),
+            "{}",
+            error.remediation
+        );
+
+        let relative = check_pinned_executable(Path::new("classifier"), &digest);
+        assert!(relative.refusal.is_some());
+        assert!(relative.observed_sha256.is_none());
+    }
+
+    fn pinned_script(dir: &Path, body: &str) -> (PathBuf, String) {
+        let executable = dir.join("classifier");
+        std::fs::write(&executable, body).expect("write");
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+            .expect("chmod");
+        (executable, crate::hash::sha256_bytes(body.as_bytes()))
+    }
+
+    #[test]
+    fn a_timeout_ends_a_classifier_whose_child_holds_its_output() {
+        let base = accepted_base();
+        let dir = tempfile::TempDir::new_in(&base).expect("tempdir");
+        // The classifier starts a long-lived child that inherits stdout,
+        // then hangs; before, the wall timeout killed only the classifier
+        // and then waited on the pipe the child still held.
+        let (executable, digest) = pinned_script(
+            dir.path(),
+            "#!/bin/sh
+sleep 30 &
+sleep 30
+",
+        );
+        let started = std::time::Instant::now();
+        let error = run_verified_executable(
+            &executable,
+            &digest,
+            &[],
+            b"",
+            std::time::Duration::from_millis(300),
+        )
+        .expect_err("timed out");
+        assert!(error.message.contains("wall timeout"), "{}", error.message);
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn classifier_output_is_bounded() {
+        let base = accepted_base();
+        let dir = tempfile::TempDir::new_in(&base).expect("tempdir");
+        let (executable, digest) = pinned_script(
+            dir.path(),
+            "#!/bin/sh
+head -c 9000000 /dev/zero
+",
+        );
+        let error = run_verified_executable(
+            &executable,
+            &digest,
+            &[],
+            b"",
+            std::time::Duration::from_secs(20),
+        )
+        .expect_err("over the bound");
+        assert_eq!(error.code, "LIMIT_EXCEEDED");
+
+        let (executable, digest) = pinned_script(
+            dir.path(),
+            "#!/bin/sh
+printf ok
+",
+        );
+        let output = run_verified_executable(
+            &executable,
+            &digest,
+            &[],
+            b"",
+            std::time::Duration::from_secs(20),
+        )
+        .expect("small output");
+        assert_eq!(output, b"ok");
+    }
+
+    #[test]
+    fn a_long_stderr_keeps_its_first_line() {
+        let base = accepted_base();
+        let dir = tempfile::TempDir::new_in(&base).expect("tempdir");
+        let (executable, digest) = pinned_script(
+            dir.path(),
+            "#!/bin/sh\necho 'provider refused: rate limited' >&2\nhead -c 200000 /dev/zero | tr '\\0' x >&2\nexit 3\n",
+        );
+        let error = run_verified_executable(
+            &executable,
+            &digest,
+            &[],
+            b"",
+            std::time::Duration::from_secs(20),
+        )
+        .expect_err("failed");
+        assert!(
+            error.message.contains("provider refused: rate limited"),
+            "{}",
+            error.message
+        );
+        assert!(
+            error.message.contains("stderr truncated"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn input_larger_than_a_pipe_reaches_a_classifier_that_answers_as_it_reads() {
+        let base = accepted_base();
+        let dir = tempfile::TempDir::new_in(&base).expect("tempdir");
+        let (executable, digest) = pinned_script(dir.path(), "#!/bin/sh\ncat\n");
+        let input = vec![b'y'; 1024 * 1024];
+        let output = run_verified_executable(
+            &executable,
+            &digest,
+            &[],
+            &input,
+            std::time::Duration::from_secs(20),
+        )
+        .expect("echoed");
+        assert_eq!(output, input);
+    }
+
+    #[test]
+    fn an_exited_classifier_does_not_wait_on_a_detached_descendant() {
+        let base = accepted_base();
+        let dir = tempfile::TempDir::new_in(&base).expect("tempdir");
+        // A descendant in its own session keeps the output pipe open after
+        // the classifier exits; the run ends within the grace period.
+        let (executable, digest) = pinned_script(
+            dir.path(),
+            "#!/bin/sh
+printf done
+( trap '' HUP; exec perl -e 'use POSIX; POSIX::setsid(); sleep 30' ) &
+exit 0
+",
+        );
+        let started = std::time::Instant::now();
+        let result = run_verified_executable(
+            &executable,
+            &digest,
+            &[],
+            b"",
+            std::time::Duration::from_secs(20),
+        );
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        match result {
+            Ok(output) => assert_eq!(output, b"done"),
+            Err(error) => assert!(error.message.contains("did not close"), "{}", error.message),
+        }
+    }
 }

@@ -62,6 +62,40 @@ pub struct Revocation {
     pub revoked_key: String,
     pub cursor: String,
     pub effective_at: String,
+    /// The one exact authority scope this revocation withdraws, when the key
+    /// stays registered under others (a registry republication dropped one of
+    /// its entries). `None` revokes the key everywhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<String>,
+    /// The reader holds this revocation from its own record and has observed
+    /// it whatever its cursor says. The Company service is that reader: a
+    /// registry-derived revocation is numbered in the steward's authority
+    /// cursors, which the service's row cursor does not order against, and it
+    /// was being skipped as not yet observed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub observed: bool,
+}
+
+impl Revocation {
+    /// A revocation of `key` everywhere.
+    pub fn of_key(revoked_key: String, cursor: String, effective_at: String) -> Self {
+        Revocation {
+            revoked_key,
+            cursor,
+            effective_at,
+            scope: None,
+            observed: false,
+        }
+    }
+
+    /// Does this revocation withdraw what `signer` warranted in `authority_scope`?
+    pub fn covers(&self, signer: &str, authority_scope: &str) -> bool {
+        self.revoked_key == signer
+            && self
+                .scope
+                .as_deref()
+                .is_none_or(|scope| scope == authority_scope)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +169,11 @@ pub struct DerivedUnknown {
     pub discriminating_evidence: Vec<String>,
     pub status: String,
     pub kind: String,
+    /// The authority scopes of the evidence the Unknown was derived from,
+    /// which decide who may read it: `scope` is that evidence's subject
+    /// scope and need not be an authority scope. Not part of the wire form.
+    #[serde(default, skip_serializing)]
+    pub authority_scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -434,14 +473,24 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             .then_with(|| left.event.event_id.cmp(&right.event.event_id))
     });
 
-    let revoked_keys: BTreeMap<&str, &Revocation> = input
+    let observed_revocations: Vec<&Revocation> = input
         .revocations
         .iter()
         .filter(|revocation| {
-            cursor_order(&revocation.cursor, &input.authority_cursor) != std::cmp::Ordering::Greater
+            revocation.observed
+                || cursor_order(&revocation.cursor, &input.authority_cursor)
+                    != std::cmp::Ordering::Greater
         })
-        .map(|revocation| (revocation.revoked_key.as_str(), revocation))
         .collect();
+    // The newest observed revocation withdrawing this event's support, if any:
+    // one of its key everywhere, or of the exact scope it was signed in.
+    let revocation_of = |event: &FactEvent| -> Option<&Revocation> {
+        observed_revocations
+            .iter()
+            .copied()
+            .filter(|revocation| revocation.covers(&event.signer, &event.authority_scope))
+            .max_by(|left, right| cursor_order(&left.cursor, &right.cursor))
+    };
 
     // Group by logical key.
     let mut groups: BTreeMap<String, Vec<&AdmittedEvent>> = BTreeMap::new();
@@ -529,12 +578,10 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 }
             };
             let reason = reason.or_else(|| {
-                if revoked_keys
-                    .get(event.signer.as_str())
-                    .is_some_and(|revocation| {
-                        revocation.effective_at.as_str() <= event.asserted_at.as_str()
-                    })
-                {
+                if observed_revocations.iter().any(|revocation| {
+                    revocation.covers(&event.signer, &event.authority_scope)
+                        && revocation.effective_at.as_str() <= event.asserted_at.as_str()
+                }) {
                     Some("REVOKED: signer key was revoked at an earlier cursor than this event")
                 } else if event.store_kind != input.store_kind && input.store_kind != "mixed" {
                     Some("WRONG_STORE: event belongs to another store kind")
@@ -899,12 +946,12 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             let revoked_members: Vec<&AdmittedEvent> = members
                 .iter()
                 .copied()
-                .filter(|member| revoked_keys.contains_key(member.event.signer.as_str()))
+                .filter(|member| revocation_of(&member.event).is_some())
                 .collect();
             let members: Vec<&AdmittedEvent> = if revoked_members.len() == members.len() {
                 let revoked_at = revoked_members
                     .first()
-                    .and_then(|member| revoked_keys.get(member.event.signer.as_str()))
+                    .and_then(|member| revocation_of(&member.event))
                     .map(|revocation| revocation.cursor.clone())
                     .unwrap_or_default();
                 for member in &revoked_members {
@@ -935,7 +982,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 }
                 members
                     .into_iter()
-                    .filter(|member| !revoked_keys.contains_key(member.event.signer.as_str()))
+                    .filter(|member| revocation_of(&member.event).is_none())
                     .collect()
             };
             let mut sources: BTreeSet<String> = BTreeSet::new();
@@ -1248,7 +1295,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             let owner_role = owner_role_for_scope(input, &scope);
             let owner_identity =
                 authority_owner_for_scope(input, &scope, repository_scope(&group).as_deref());
-            let unknown = derive_unknown(
+            let mut unknown = derive_unknown(
                 &logical_key,
                 &input.store_kind,
                 "conflict",
@@ -1265,6 +1312,12 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 conflict_ids.clone(),
                 input.as_of.as_str(),
             );
+            unknown.authority_scopes = heads
+                .iter()
+                .map(|head| head.representative.event.authority_scope.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
             trace.state = "conflict".to_owned();
             trace.unknown_id = Some(unknown.unknown_id.clone());
             trace.counterfactual.push("a parent-bound supersession or retraction from the owning authority resolves the conflict".to_owned());
@@ -1565,7 +1618,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                         "Every proposal for logical key {logical_key} was rejected or reverted. What is the intended rule?"
                     ),
                 };
-                let unknown = derive_unknown(
+                let mut unknown = derive_unknown(
                     &logical_key,
                     &input.store_kind,
                     kind,
@@ -1588,6 +1641,17 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                         .collect(),
                     input.as_of.as_str(),
                 );
+                unknown.authority_scopes = eligible
+                    .iter()
+                    .map(|admitted| admitted.event.authority_scope.clone())
+                    .chain(
+                        negative
+                            .iter()
+                            .map(|admitted| admitted.event.authority_scope.clone()),
+                    )
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
                 if kind == "revoked" {
                     trace.counterfactual.push(
                         "an independently admissible support signed by an active registered key, or a steward republication that re-registers the key at a newer authority cursor, would restore the statement".to_owned(),
@@ -1665,6 +1729,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 discriminating_evidence: unknown.evidence_refs.clone(),
                 status: unknown.status.clone(),
                 kind: "explicit".to_owned(),
+                authority_scopes: vec![unknown.authority_scope.clone()],
             });
         }
     }
@@ -1760,6 +1825,7 @@ fn derive_unknown(
         discriminating_evidence: evidence,
         status: "open".to_owned(),
         kind: kind.to_owned(),
+        authority_scopes: vec![scope.to_owned()],
     }
 }
 
@@ -2643,5 +2709,33 @@ mod packet10_tests {
         assert_eq!(governance.standing_for(&prevalent), "present");
         assert_eq!(governance.standing_for(&enforced), "enforced");
         assert_eq!(governance.standing_for(&exemplary), "exemplary");
+    }
+}
+
+#[cfg(test)]
+mod revocation_scope_tests {
+    use super::Revocation;
+
+    #[test]
+    fn a_scope_revocation_covers_only_its_scope() {
+        let key = Revocation::of_key("k".to_owned(), "1".to_owned(), String::new());
+        assert!(key.covers("k", "architecture:storage"));
+        assert!(key.covers("k", "architecture:scheduling"));
+        assert!(!key.covers("other", "architecture:storage"));
+        let mut scoped = key.clone();
+        scoped.scope = Some("architecture:storage".to_owned());
+        assert!(scoped.covers("k", "architecture:storage"));
+        assert!(!scoped.covers("k", "architecture:scheduling"));
+    }
+
+    #[test]
+    fn a_key_revocation_keeps_its_published_bytes() {
+        // Snapshots publish key revocations; the new fields stay off the wire
+        // unless set, so an existing snapshot's bytes do not change.
+        let key = Revocation::of_key("k".to_owned(), "1".to_owned(), "t".to_owned());
+        assert_eq!(
+            serde_json::to_value(&key).unwrap(),
+            serde_json::json!({"revoked_key": "k", "cursor": "1", "effective_at": "t"})
+        );
     }
 }

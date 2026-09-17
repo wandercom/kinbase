@@ -178,6 +178,20 @@ impl ContractError {
         self
     }
 
+    /// The same error as a coding host's hook returns it. A host reads exit 2
+    /// from a hook as "block": PreToolUse refuses the tool, UserPromptSubmit
+    /// drops the prompt, Stop refuses to stop and fires again. Kinbase holds
+    /// no host permission capability (architecture section 9), and an
+    /// ordinary non-repository session may continue (cli.md), so a hook
+    /// never exits 2: a user-action refusal leaves as degraded-safe (3), with
+    /// its code and message unchanged.
+    pub fn for_host_hook(mut self) -> Self {
+        if self.exit() == ExitCode::UserActionRequired as i32 {
+            self.exit_override = Some(ExitCode::DegradedSafe as i32);
+        }
+        self
+    }
+
     pub fn exit(&self) -> i32 {
         self.exit_override.unwrap_or_else(|| exit_for(&self.code))
     }
@@ -315,3 +329,102 @@ impl fmt::Display for ContractError {
 impl std::error::Error for ContractError {}
 
 pub type Result<T, E = ContractError> = std::result::Result<T, E>;
+
+#[cfg(test)]
+mod exit_agreement_tests {
+    use super::*;
+
+    /// Every taxonomy code a call site passes to a typed constructor must be
+    /// one that constructor's exit carries; a mismatch is silently rewritten
+    /// to RUN_INTEGRITY_FAILED at run time.
+    #[test]
+    fn every_literal_code_agrees_with_its_constructor_exit() {
+        let constructors = [
+            ("ContractError::refused(", ExitCode::Refused as i32),
+            (
+                "ContractError::integrity(",
+                ExitCode::IntegrityFailure as i32,
+            ),
+            ("ContractError::degraded(", ExitCode::DegradedSafe as i32),
+            (
+                "ContractError::user_action(",
+                ExitCode::UserActionRequired as i32,
+            ),
+        ];
+        let exits = [
+            (
+                "ExitCode::UserActionRequired",
+                ExitCode::UserActionRequired as i32,
+            ),
+            ("ExitCode::DegradedSafe", ExitCode::DegradedSafe as i32),
+            ("ExitCode::Refused", ExitCode::Refused as i32),
+            (
+                "ExitCode::IntegrityFailure",
+                ExitCode::IntegrityFailure as i32,
+            ),
+            (
+                "ExitCode::DependencyUnavailable",
+                ExitCode::DependencyUnavailable as i32,
+            ),
+            (
+                "ExitCode::InternalFailure",
+                ExitCode::InternalFailure as i32,
+            ),
+        ];
+        let mut mismatches = Vec::new();
+        let mut stack = vec![std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src"
+        ))];
+        while let Some(path) = stack.pop() {
+            if path.is_dir() {
+                for entry in std::fs::read_dir(&path).expect("source dir").flatten() {
+                    stack.push(entry.path());
+                }
+                continue;
+            }
+            if path.extension().is_none_or(|extension| extension != "rs") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("source");
+            let literal = |from: &str| -> Option<String> {
+                let rest = from.trim_start().strip_prefix('"')?;
+                let code: String = rest.chars().take_while(|c| *c != '"').collect();
+                (!code.is_empty() && code.bytes().all(|b| b.is_ascii_uppercase() || b == b'_'))
+                    .then_some(code)
+            };
+            for (constructor, exit) in constructors {
+                for (at, _) in text.match_indices(constructor) {
+                    if let Some(code) = literal(&text[at + constructor.len()..])
+                        && CODES.contains(&code.as_str())
+                        && exit_for(&code) != exit
+                    {
+                        mismatches.push(format!("{}: {constructor}\"{code}\"", path.display()));
+                    }
+                }
+            }
+            for (at, _) in text.match_indices("ContractError::new(") {
+                let call = &text[at + "ContractError::new(".len()..];
+                let Some(code) = literal(call) else { continue };
+                let window: String = call.chars().take(800).collect();
+                let Some((name, exit)) = exits
+                    .iter()
+                    .filter_map(|(name, exit)| {
+                        window.find(name).map(|position| (position, name, exit))
+                    })
+                    .min_by_key(|(position, _, _)| *position)
+                    .map(|(_, name, exit)| (name, exit))
+                else {
+                    continue;
+                };
+                if CODES.contains(&code.as_str()) && exit_for(&code) != *exit {
+                    mismatches.push(format!("{}: new(\"{code}\", .., {name})", path.display()));
+                }
+            }
+        }
+        assert!(
+            mismatches.is_empty(),
+            "code/exit mismatches: {mismatches:#?}"
+        );
+    }
+}

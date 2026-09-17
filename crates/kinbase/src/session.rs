@@ -1,6 +1,6 @@
 use crate::error::{ContractError, ExitCode};
 use crate::hash::{sha256_bytes, sha256_text};
-use crate::json::{canonical_text, parse_strict_object};
+use crate::json::parse_strict_object;
 use crate::model::{CompanyReference, Distortion, FactEvent, Observation, UnknownEvent};
 use crate::time::{format_rfc3339_millis, now_rfc3339_millis, parse_rfc3339_millis};
 use chrono::Duration;
@@ -35,12 +35,381 @@ pub fn start(repo: &Path, host: crate::HostKind, json: bool) -> Result<(), Contr
     Ok(())
 }
 
+/// Directory under the Personal root where a host prompt waits for its
+/// detached `session observe` worker.
+pub const PENDING_OBSERVATIONS: &str = "pending-observations";
+/// A worker gets this many attempts at a prompt before it is dropped (and
+/// the drop audited).
+const PENDING_MAX_ATTEMPTS: u32 = 3;
+/// A raw prompt is kept no longer than the private raw-session default
+/// retention (verification.md, operational limits).
+const PENDING_RETENTION_SECONDS: i64 = 24 * 3600;
+/// A queued prompt whose worker has not held its lock for this long is
+/// presumed stranded (the worker crashed or was never scheduled) and is
+/// started again.
+const PENDING_STALE_SECONDS: i64 = 120;
+/// How long a Stop waits for its session's queued prompts: a rule-based
+/// classification finishes well inside it; a slower one is reported as
+/// pending and counted by the next Stop instead of holding the host.
+const STOP_PENDING_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// What a queued prompt needs to be classified again: the session, the
+/// repository the host named, how often a worker has tried, and which
+/// worker holds it now.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PendingMeta {
+    session: String,
+    repo: String,
+    queued_at: String,
+    spawned_at: String,
+    attempts: u32,
+    #[serde(default)]
+    worker_pid: Option<u32>,
+}
+
+pub fn pending_observations_dir() -> std::path::PathBuf {
+    let repo = std::env::current_dir().unwrap_or_default();
+    crate::store::store_root(crate::StoreKind::Personal, &repo).join(PENDING_OBSERVATIONS)
+}
+
+// A queued prompt is `<token>.jsonl`; a worker claims it by renaming it to
+// `<token>.working.jsonl` (atomic, and no descriptor stays open under the
+// Personal root while it classifies); `<token>.meta.json` describes it.
+fn queued_path(directory: &Path, token: &str) -> std::path::PathBuf {
+    directory.join(format!("{token}.jsonl"))
+}
+
+fn working_path(directory: &Path, token: &str) -> std::path::PathBuf {
+    directory.join(format!("{token}.working.jsonl"))
+}
+
+fn meta_path(directory: &Path, token: &str) -> std::path::PathBuf {
+    directory.join(format!("{token}.meta.json"))
+}
+
+fn token_of(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let token = name.split('.').next()?;
+    (!token.is_empty() && token.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then(|| token.to_owned())
+}
+
+fn read_meta(directory: &Path, token: &str) -> Option<PendingMeta> {
+    serde_json::from_slice(&std::fs::read(meta_path(directory, token)).ok()?).ok()
+}
+
+fn write_meta(directory: &Path, token: &str, meta: &PendingMeta) -> Result<(), ContractError> {
+    let bytes =
+        serde_json::to_vec(meta).map_err(|error| ContractError::internal(error.to_string()))?;
+    let path = meta_path(directory, token);
+    let staged = directory.join(format!("{token}.meta.tmp"));
+    let _ = std::fs::remove_file(&staged);
+    write_new_private_file(&staged, &bytes)?;
+    std::fs::rename(&staged, &path).map_err(io_error)
+}
+
+fn remove_pending(directory: &Path, token: &str) {
+    let _ = std::fs::remove_file(queued_path(directory, token));
+    let _ = std::fs::remove_file(working_path(directory, token));
+    let _ = std::fs::remove_file(meta_path(directory, token));
+}
+
+fn process_alive(pid: u32) -> bool {
+    // SAFETY: signal 0 only checks that the process exists.
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Hand a host prompt to the session it belongs to, classified off the host's
+/// response path (architecture §9). The prompt goes to a private file that a
+/// detached `session observe` worker reads and classifies, so the
+/// observation and its atoms carry `session:<id>` and the session's Stop
+/// finds them; a prompt recorded only as `hook:UserPromptSubmit` was never
+/// counted or classified. The worker runs in `repo`, the repository the host
+/// named. Without a session id, or if no worker can be started, the prompt's
+/// minimized observation is recorded here instead.
+pub fn queue_hook_observation(
+    host: &str,
+    map: &Map<String, Value>,
+    repo: &Path,
+) -> Result<Option<String>, ContractError> {
+    let session = map
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty());
+    let prompt = map
+        .get("prompt")
+        .or_else(|| map.get("text"))
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty());
+    let (Some(session), Some(prompt)) = (session, prompt) else {
+        return record_hook_observation_as(host, map, None, repo);
+    };
+    // The host sends no event id with a prompt; one is derived from the
+    // session and the text, so a repeated delivery names the same event.
+    let event_id = map
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "prompt_{}",
+                &sha256_text(&format!("{session}\0{prompt}"))[..24]
+            )
+        });
+    let observed_at = map
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(|value| parse_rfc3339_millis(value).ok())
+        .map(format_rfc3339_millis)
+        .unwrap_or_else(now_rfc3339_millis);
+    let record = json!({
+        "id": event_id,
+        "role": "user",
+        "text": prompt,
+        "observed_at": observed_at,
+        "source_kind": if host == "claude" { "claude_jsonl" } else { "codex_jsonl" }
+    });
+    let directory = pending_observations_dir();
+    crate::paths::ensure_private_dir(&directory, "pending observations")?;
+    sweep_pending(&directory);
+    let token: String = crate::crypto::random_token()
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(24)
+        .collect();
+    let event = queued_path(&directory, &token);
+    let mut line = crate::json::jcs_text(&record);
+    line.push('\n');
+    let now = now_rfc3339_millis();
+    // Metadata first: a queued prompt is never without it.
+    write_meta(
+        &directory,
+        &token,
+        &PendingMeta {
+            session: session.to_owned(),
+            repo: repo.to_string_lossy().into_owned(),
+            queued_at: now.clone(),
+            spawned_at: now,
+            attempts: 0,
+            worker_pid: None,
+        },
+    )?;
+    write_new_private_file(&event, line.as_bytes())?;
+    if spawn_observe_worker(session, &event, repo) {
+        return Ok(Some(event_id));
+    }
+    remove_pending(&directory, &token);
+    let mut fallback = map.clone();
+    fallback.insert("id".to_owned(), Value::String(event_id));
+    record_hook_observation_as(host, &fallback, Some(session), repo)
+}
+
+fn write_new_private_file(path: &Path, bytes: &[u8]) -> Result<(), ContractError> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(io_error)?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(io_error)
+}
+
+fn spawn_observe_worker(session: &str, event: &Path, repo: &Path) -> bool {
+    use std::os::unix::process::CommandExt;
+    let Ok(program) = std::env::current_exe() else {
+        return false;
+    };
+    std::process::Command::new(program)
+        .args([
+            "session",
+            "observe",
+            session,
+            "--consume",
+            "--json",
+            "--event",
+        ])
+        .arg(event)
+        .current_dir(repo)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .is_ok()
+}
+
+/// A worker's hold on one queued prompt, which it has renamed to its
+/// working name.
+pub struct PendingClaim {
+    directory: std::path::PathBuf,
+    token: String,
+}
+
+impl PendingClaim {
+    /// The claimed prompt, for the worker to read.
+    pub fn path(&self) -> std::path::PathBuf {
+        working_path(&self.directory, &self.token)
+    }
+}
+
+/// Claim a queued prompt for this worker; None when it is not a queued
+/// prompt, is gone, or another worker took it first.
+pub fn claim_pending(event: &Path) -> Option<PendingClaim> {
+    let directory = pending_observations_dir();
+    let inside = match (
+        event.parent().map(std::fs::canonicalize),
+        std::fs::canonicalize(&directory),
+    ) {
+        (Some(Ok(parent)), Ok(expected)) => parent == expected,
+        _ => false,
+    };
+    let token = token_of(event)?;
+    if !inside || event != queued_path(event.parent()?, &token) {
+        return None;
+    }
+    let directory = event.parent()?.to_path_buf();
+    std::fs::rename(event, working_path(&directory, &token)).ok()?;
+    if let Some(mut meta) = read_meta(&directory, &token) {
+        meta.worker_pid = Some(std::process::id());
+        let _ = write_meta(&directory, &token, &meta);
+    }
+    Some(PendingClaim { directory, token })
+}
+
+/// Settle a claimed prompt: removed once its observation is recorded; after
+/// a failure it is queued again for a later attempt, up to the bound, then
+/// dropped with an audit record (which never carries the prompt).
+pub fn finish_pending(claim: PendingClaim, failure: Option<&ContractError>) {
+    let PendingClaim { directory, token } = claim;
+    match failure {
+        None => remove_pending(&directory, &token),
+        Some(error) => record_failed_attempt(&directory, &token, &error.code),
+    }
+}
+
+fn record_failed_attempt(directory: &Path, token: &str, code: &str) {
+    let Some(mut meta) = read_meta(directory, token) else {
+        remove_pending(directory, token);
+        return;
+    };
+    meta.attempts += 1;
+    meta.worker_pid = None;
+    if meta.attempts >= PENDING_MAX_ATTEMPTS {
+        remove_pending(directory, token);
+        if let Ok(private) = crate::private::PrivateStore::open_core() {
+            let _ = private.audit(
+                "pending-observation-dropped",
+                &json!({
+                    "session_id": meta.session,
+                    "attempts": meta.attempts,
+                    "code": code,
+                    "observed_at": now_rfc3339_millis()
+                }),
+            );
+        }
+        return;
+    }
+    // Retried by a later sweep, not at once.
+    meta.spawned_at = now_rfc3339_millis();
+    if write_meta(directory, token, &meta).is_ok() {
+        let _ = std::fs::rename(
+            working_path(directory, token),
+            queued_path(directory, token),
+        );
+    }
+}
+
+fn seconds_since(stamp: &str) -> i64 {
+    parse_rfc3339_millis(stamp)
+        .map(|then| (chrono::Utc::now() - then).num_seconds())
+        .unwrap_or(i64::MAX)
+}
+
+/// Every prompt still queued or being worked, by token.
+fn pending_entries(directory: &Path) -> Vec<(String, PendingMeta)> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let tokens: BTreeSet<String> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".jsonl"))
+        })
+        .filter_map(|path| token_of(&path))
+        .collect();
+    tokens
+        .into_iter()
+        .filter_map(|token| read_meta(directory, &token).map(|meta| (token, meta)))
+        .collect()
+}
+
+/// Drop prompts past retention, requeue ones whose worker died, and restart
+/// ones no worker has taken.
+fn sweep_pending(directory: &Path) {
+    for (token, mut meta) in pending_entries(directory) {
+        let working = working_path(directory, &token).exists();
+        if working && meta.worker_pid.is_some_and(process_alive) {
+            continue;
+        }
+        if seconds_since(&meta.queued_at) > PENDING_RETENTION_SECONDS {
+            remove_pending(directory, &token);
+            continue;
+        }
+        if working {
+            // Its worker died mid-classification: that was an attempt.
+            record_failed_attempt(directory, &token, "WORKER_LOST");
+            continue;
+        }
+        if seconds_since(&meta.spawned_at) > PENDING_STALE_SECONDS {
+            meta.spawned_at = now_rfc3339_millis();
+            if write_meta(directory, &token, &meta).is_ok() {
+                spawn_observe_worker(
+                    &meta.session,
+                    &queued_path(directory, &token),
+                    Path::new(&meta.repo),
+                );
+            }
+        }
+    }
+}
+
+/// Before a Stop reads its session: sweep, then wait briefly for this
+/// session's queued prompts. Returns how many are still queued or being
+/// classified; the receipt reports them, and a later Stop or SessionEnd
+/// counts them.
+fn settle_pending(session: &str) -> usize {
+    let directory = pending_observations_dir();
+    sweep_pending(&directory);
+    let deadline = std::time::Instant::now() + STOP_PENDING_WAIT;
+    loop {
+        let waiting = pending_entries(&directory)
+            .into_iter()
+            .filter(|(_, meta)| meta.session == session)
+            .count();
+        if waiting == 0 || std::time::Instant::now() >= deadline {
+            return waiting;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// Record the privacy-minimized observation identity of a host prompt. The
 /// body itself is not copied into the observation record; only its digest is
 /// retained for reset authorization.
-pub fn record_hook_observation(
+fn record_hook_observation_as(
     host: &str,
     map: &Map<String, Value>,
+    session: Option<&str>,
+    repo: &Path,
 ) -> Result<Option<String>, ContractError> {
     let Some(event_id) = map
         .get("id")
@@ -57,7 +426,6 @@ pub fn record_hook_observation(
     else {
         return Ok(None);
     };
-    let repo = std::env::current_dir().map_err(io_error)?;
     // The prompt arrived through the host envelope, so it is already folded
     // to canonical text: this digest names the stored text, not the host's
     // raw bytes, and a transcript that kept those bytes will not reproduce it.
@@ -71,7 +439,9 @@ pub fn record_hook_observation(
     let observation = Observation {
         observation_id: format!(
             "obs_{:x}",
-            Sha256::digest(format!("hook\0{event_id}\0{digest}").as_bytes())
+            Sha256::digest(
+                format!("{}\0{event_id}\0{digest}", session.unwrap_or("hook")).as_bytes()
+            )
         ),
         source_kind: if host == "claude" {
             "claude_jsonl"
@@ -79,10 +449,12 @@ pub fn record_hook_observation(
             "codex_jsonl"
         }
         .to_owned(),
-        source_identity: "hook:UserPromptSubmit".to_owned(),
+        source_identity: session
+            .map(|session| format!("session:{session}"))
+            .unwrap_or_else(|| "hook:UserPromptSubmit".to_owned()),
         native_id: event_id.to_owned(),
         content_digest: digest.clone(),
-        repository_id: crate::repository::repository_id(&repo).ok(),
+        repository_id: crate::repository::repository_id(repo).ok(),
         revision: None,
         branch: None,
         disposition: "current".to_owned(),
@@ -100,7 +472,12 @@ pub fn record_hook_observation(
     };
     let value = serde_json::to_value(&observation)
         .map_err(|error| ContractError::internal(error.to_string()))?;
-    append_personal("observations.jsonl", &value)?;
+    crate::store::append_record(
+        crate::StoreKind::Personal,
+        repo,
+        "observations.jsonl",
+        &value,
+    )?;
     Ok(Some(event_id.to_owned()))
 }
 
@@ -112,14 +489,21 @@ pub fn observe(
     event: &Path,
     json: bool,
 ) -> Result<(), ContractError> {
-    ensure_session_record(session)?;
-    // Loaded before anything is scanned: the scan needs the user's registered
-    // canaries and identifiers, and a registry that cannot be read stops the
-    // observation before any record is written.
+    // Loaded before anything is scanned or written: the scan needs the
+    // user's registered canaries and identifiers, and a registry that cannot
+    // be read stops the observation before any record is written.
     let launcher = crate::launcher::Launcher::load()?;
     let registry = launcher.scanner_registry()?;
     let bytes = std::fs::read(event).map_err(io_error)?;
     let parsed_records = parse_session_corpus(&bytes)?;
+    // The session belongs to the host the batch names, not always Codex.
+    let host = parsed_records
+        .first()
+        .and_then(|record| record.get("source_kind"))
+        .and_then(Value::as_str)
+        .map(host_of_source_kind)
+        .unwrap_or("unknown");
+    ensure_session_record(session, host)?;
     if parsed_records.len() > SESSION_OBSERVATION_LIMIT {
         return Err(ContractError::limit(
             format!(
@@ -198,8 +582,28 @@ pub fn observe(
         ));
     }
 
+    // An observation holding hard-blocking material yields no shared
+    // candidate at all, and its text reaches no classifier: blocking each
+    // atom on its own let the rest of the message (or a paraphrase of the
+    // secret) through.
+    // The configured canary and forbidden-identifier registries apply here
+    // too, and a scan that cannot complete blocks.
+    let blocked_observations: BTreeSet<String> = observations
+        .iter()
+        .filter(|(_, event)| {
+            let native_id = event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            crate::scanner::scan(&session_corpus_text(&records, native_id), &registry)
+                .map(|result| result.hard_block)
+                .unwrap_or(true)
+        })
+        .map(|(observation, _)| observation.observation_id.clone())
+        .collect();
     let classifier_observations = observations
         .iter()
+        .filter(|(observation, _)| !blocked_observations.contains(&observation.observation_id))
         .map(|(observation, event)| {
             let native_id = event
                 .get("event_id")
@@ -225,6 +629,8 @@ pub fn observe(
 
     let mut atom_records = Vec::new();
     let mut candidate_records = Vec::new();
+    // Each atom carries its observation's own source kind; every one was
+    // labelled codex_jsonl, whichever host the batch came from.
     for (observation, event) in &observations {
         let native_id = event
             .get("event_id")
@@ -232,11 +638,27 @@ pub fn observe(
             .unwrap_or_default();
         let text = session_corpus_text(&records, native_id);
         let mut atoms = Vec::new();
-        if let Some(external) = external_atoms.get(&observation.observation_id) {
+        if blocked_observations.contains(&observation.observation_id) {
+            let mut atom = crate::classify::atomize(
+                &observation.source_kind,
+                native_id,
+                &text,
+                "host-session",
+                8_000,
+                &observation.observation_id,
+                &observation.content_digest,
+                repository_id.as_deref(),
+                &registry,
+            );
+            atom.hard_blocked = true;
+            atom.proposed_destinations = vec!["none".to_owned()];
+            atom.eligible_destinations = Vec::new();
+            atoms.push(atom);
+        } else if let Some(external) = external_atoms.get(&observation.observation_id) {
             for item in external {
                 atoms.push(atom_from_classifier(
                     item,
-                    "codex_jsonl",
+                    &observation.source_kind,
                     native_id,
                     &observation.observation_id,
                     &observation.content_digest,
@@ -254,7 +676,7 @@ pub fn observe(
                 // confidence with destination none. No rule provider guesses
                 // in its place inside a pinned live run.
                 let mut atom = crate::classify::atomize(
-                    "codex_jsonl",
+                    &observation.source_kind,
                     native_id,
                     &text,
                     "host-session",
@@ -273,7 +695,7 @@ pub fn observe(
                 atoms.push(atom);
             } else {
                 atoms.push(crate::classify::atomize(
-                    "codex_jsonl",
+                    &observation.source_kind,
                     native_id,
                     &text,
                     "host-session",
@@ -302,10 +724,16 @@ pub fn observe(
                 .cloned()
                 .collect::<Vec<_>>();
             for destination in destinations {
-                let destination = if destination == "company" {
-                    "company:root".to_owned()
-                } else {
-                    destination
+                let destination = match destination.as_str() {
+                    "company" => "company:root".to_owned(),
+                    // Outside a certified repository there is no Codebase
+                    // to admit to; the bare destination failed the whole
+                    // observation.
+                    "codebase" => match &repository_id {
+                        Some(uuid) => format!("codebase:{uuid}"),
+                        None => continue,
+                    },
+                    _ => destination,
                 };
                 // Nothing is left to share once de-identification removed
                 // every word.
@@ -374,6 +802,8 @@ pub fn observe(
             "configured_model": provider.configured_model.clone(),
             "fallback_from": provider.fallback_from.clone(),
             "fallback_reason": provider.fallback_reason.clone(),
+            "processor": provider.processor,
+            "processor_scope": provider.processor_scope.clone(),
             "abstained_observations": extraction.abstained.len(),
             "requests": extraction.requests,
             "retries": extraction.retries
@@ -385,7 +815,16 @@ pub fn observe(
 
 /// A host session token is caller-supplied and opaque.  Record it as active
 /// when it has not been seen before so Stop/SessionEnd can checkpoint it.
-fn ensure_session_record(session: &str) -> Result<(), ContractError> {
+/// The host a session source kind comes from.
+fn host_of_source_kind(source_kind: &str) -> &'static str {
+    match source_kind {
+        "claude_jsonl" => "claude",
+        "codex_jsonl" => "codex",
+        _ => "other",
+    }
+}
+
+fn ensure_session_record(session: &str, host: &str) -> Result<(), ContractError> {
     if personal_records("sessions.jsonl")
         .into_iter()
         .any(|record| {
@@ -398,7 +837,7 @@ fn ensure_session_record(session: &str) -> Result<(), ContractError> {
     let repo = std::env::current_dir().map_err(io_error)?;
     let record = json!({
         "session_id": session,
-        "host": "codex",
+        "host": host,
         "repository_id": crate::repository::repository_id(&repo).ok(),
         "started_at": now_rfc3339_millis(),
         "status": "started",
@@ -491,13 +930,19 @@ fn session_corpus_text(records: &[Map<String, Value>], native_id: &str) -> Strin
 /// Which classifier provider a pinned run actually uses. The configured
 /// `model` selects the live Ollama provider (R-11); when Ollama does not
 /// serve that model the run falls back to the product's own deterministic
-/// rule provider and says so in every receipt, never silently.
+/// rule provider and says so in every receipt, never silently. A provider
+/// whose processor `processor_scope` does not name falls back the same way,
+/// before any session text is sent to it.
 #[derive(Debug, Clone)]
 pub(crate) struct SelectedProvider {
     pub configured_model: Option<String>,
     pub live_model: Option<String>,
     pub fallback_from: Option<String>,
     pub fallback_reason: Option<String>,
+    /// Where the run's session text goes: `local`, `agy` or `ollama-cloud`.
+    pub processor: &'static str,
+    /// The processors the configuration authorizes.
+    pub processor_scope: String,
 }
 
 impl SelectedProvider {
@@ -513,6 +958,9 @@ impl SelectedProvider {
 pub(crate) fn select_provider(
     classifier: Option<&crate::config::SharedClassifier>,
 ) -> SelectedProvider {
+    let processor_scope = classifier
+        .map(|classifier| classifier.processor_scope.clone())
+        .unwrap_or_else(|| "local".to_owned());
     let configured = classifier
         .map(|classifier| classifier.model.clone())
         .filter(|model| model.starts_with("ollama:") || model.starts_with("agy:"));
@@ -522,19 +970,35 @@ pub(crate) fn select_provider(
             live_model: None,
             fallback_from: None,
             fallback_reason: None,
+            processor: "local",
+            processor_scope,
         };
     };
+    // Authorization is settled before the availability probe where the
+    // model name alone decides the processor; an Ollama model's processor is
+    // known only from the daemon's list, which carries no session text.
     let available = if model.starts_with("agy:") {
-        crate::classifier::agy_available()
+        crate::classifier::authorize_processor("agy", &processor_scope, &model)
+            .map_err(|error| format!("{}: {}", error.code, error.message))
+            .and_then(|()| crate::classifier::agy_available())
+            .map(|()| "agy")
     } else {
-        crate::classifier::ollama_model_available(model.trim_start_matches("ollama:"))
+        crate::classifier::ollama_model_available(model.trim_start_matches("ollama:")).and_then(
+            |processor| {
+                crate::classifier::authorize_processor(processor, &processor_scope, &model)
+                    .map(|()| processor)
+                    .map_err(|error| format!("{}: {}", error.code, error.message))
+            },
+        )
     };
     match available {
-        Ok(()) => SelectedProvider {
+        Ok(processor) => SelectedProvider {
             configured_model: Some(model.clone()),
             live_model: Some(model),
             fallback_from: None,
             fallback_reason: None,
+            processor,
+            processor_scope,
         },
         Err(reason) => {
             crate::output::diagnostic(
@@ -550,6 +1014,8 @@ pub(crate) fn select_provider(
                 live_model: None,
                 fallback_from: Some(model),
                 fallback_reason: Some(reason),
+                processor: "local",
+                processor_scope,
             }
         }
     }
@@ -1044,6 +1510,8 @@ fn pinned_classifier_atoms(
             Some(model) => {
                 args.push("--model".to_owned());
                 args.push(model.clone());
+                args.push("--processor-scope".to_owned());
+                args.push(provider.processor_scope.clone());
             }
             None => {
                 args.push("--provider".to_owned());
@@ -1152,6 +1620,15 @@ pub(crate) fn atom_from_classifier(
                 .collect()
         })
         .unwrap_or_default();
+    // A hard-block taint the classifier reports blocks the atom as the
+    // scanner's would; it used to be recorded and the atom admitted anyway.
+    if external_taints.iter().any(|taint| taint.hard_block()) && !atom.hard_blocked {
+        atom.hard_blocked = true;
+        atom.proposed_destinations
+            .retain(|destination| destination == "personal");
+        atom.eligible_destinations
+            .retain(|destination| destination == "personal");
+    }
     if let Some(values) = external
         .get("proposed_destinations")
         .and_then(Value::as_array)
@@ -1202,12 +1679,13 @@ pub(crate) fn atom_from_classifier(
         atom.proposed_destinations = proposed_destinations;
         atom.eligible_destinations = eligible_destinations;
     }
+    // The classifier adds taints; it never erases what the scanner found.
     if let Some(values) = external.get("taint").and_then(Value::as_array) {
-        atom.taints = values
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::to_owned)
-            .collect();
+        for value in values.iter().filter_map(Value::as_str) {
+            if !atom.taints.iter().any(|taint| taint == value) {
+                atom.taints.push(value.to_owned());
+            }
+        }
     }
     if let Some(value) = external
         .get("unresolved_uncertainty")
@@ -1336,7 +1814,7 @@ fn build_candidate(
         "scope": atom.scope,
         "statement": statement
     });
-    let canonical = canonical_text(&payload);
+    let canonical = crate::json::record_text(&payload)?;
     let payload_digest = sha256_text(&canonical);
     let candidate_id = format!(
         "cand_{}",
@@ -1469,14 +1947,27 @@ fn split_sentences_keep(text: &str) -> Vec<String> {
 }
 
 pub fn checkpoint(session: &str, json: bool) -> Result<(), ContractError> {
-    let record = checkpoint_internal(session)?;
+    let (record, failure) = checkpoint_internal(session)?;
+    if let Some(error) = failure {
+        // The checkpoint is written; the command still reports the refusal,
+        // and a text reader sees every candidate's outcome with it.
+        if !json {
+            for line in admission_lines(&record) {
+                println!("{line}");
+            }
+        }
+        return Err(error.with_output_document(record));
+    }
     print_value(&record, json);
     Ok(())
 }
 
 /// Checkpoint a session without emitting host output.  Stop and SessionEnd
 /// use this path so Personal facts survive the host process.
-pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
+/// Checkpoint a session, admitting each automatic candidate on its own.
+/// Returns the checkpoint record and the first admission refusal, if any; the
+/// record (with every candidate's outcome) is written either way.
+pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError>), ContractError> {
     // A failed Company delivery or a crash after journaling is retried by the
     // ordinary session lifecycle; there is no proposal command to drain it.
     // The ledgers hold every session's records and one Stop wants one
@@ -1504,12 +1995,32 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
             candidates.insert(id, candidate);
         }
     }
+    let pending_observation_count = settle_pending(&session_text);
+    // Each candidate is admitted on its own: one that fails (an uncertified
+    // repository for a Company candidate, a digest mismatch, an unreachable
+    // service) is recorded as that candidate's failure and retried at a
+    // later checkpoint; it used to end the checkpoint and starve the rest.
     let mut admissions = Vec::new();
+    let mut admission_failures = 0usize;
+    let mut first_failure: Option<ContractError> = None;
     if !candidates.is_empty() {
-        let launcher = crate::launcher::Launcher::load()?;
         let repo = std::env::current_dir().map_err(io_error)?;
+        let launcher = crate::launcher::Launcher::load();
         for candidate in candidates.values() {
-            admissions.push(admit_candidate(&launcher, &repo, candidate)?);
+            let admitted = match &launcher {
+                Ok(launcher) => admit_candidate(launcher, &repo, candidate),
+                Err(error) => Err(error.clone()),
+            };
+            match admitted {
+                Ok(receipt) => admissions.push(receipt),
+                Err(error) => {
+                    admission_failures += 1;
+                    let failure = admission_failure(candidate, &error);
+                    crate::output::diagnostic("candidate-admission-failed", failure.clone());
+                    admissions.push(failure);
+                    first_failure.get_or_insert(error);
+                }
+            }
         }
     }
     let source_identity = format!("session:{session_text}");
@@ -1557,6 +2068,9 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
     };
     let core = crate::private::PrivateStore::open_core()?;
     let now = now_rfc3339_millis();
+    // Expiries (pending candidates, unanswered prompt reservations, raw
+    // bodies past retention) are applied here, on the write path.
+    let sweep = core.sweep(&now)?;
     let mut personal_fact_count = 0;
     for atom in &atoms {
         let personal = atom
@@ -1596,12 +2110,65 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
         "checkpointed": true,
         "checkpointed_at": now,
         "observation_count": observations.len(),
+        "pending_observation_count": pending_observation_count,
         "atom_count": atoms.len(),
         "personal_fact_count": personal_fact_count,
-        "admissions": admissions
+        "sweep": sweep,
+        "admissions": admissions,
+        "admission_failures": admission_failures
     });
     append_personal("session-checkpoints.jsonl", &record)?;
-    Ok(record)
+    Ok((record, first_failure))
+}
+
+/// One candidate's failed admission, as its checkpoint row: the candidate,
+/// its destination and the typed refusal, with no receipt (nothing was
+/// decided). The prose is folded to canonical text: a refusal carrying a
+/// newline (git's stderr) made the checkpoint record unwritable.
+fn admission_failure(candidate: &Value, error: &ContractError) -> Value {
+    let text = crate::json::fold_to_canonical_text;
+    json!({
+        "candidate_id": text(crate::json::get_str(candidate, "candidate_id").unwrap_or_default()),
+        "destination": text(crate::json::get_str(candidate, "destination").unwrap_or_default()),
+        "state": "failed",
+        "error": {
+            "code": error.code,
+            "message": text(&error.message),
+            "remediation": text(&error.remediation),
+            "retryable": error.retryable
+        }
+    })
+}
+
+/// The admissions a checkpoint decided, one line each, for a reader who sees
+/// only text (a host shows a failed hook's stderr and nothing else).
+pub fn admission_lines(record: &Value) -> Vec<String> {
+    record
+        .get("admissions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|row| {
+            let field = |name: &str| crate::json::get_str(row, name).unwrap_or("-");
+            match row.get("error") {
+                Some(error) => format!(
+                    "admission {} -> {}: failed ({})",
+                    field("candidate_id"),
+                    field("destination"),
+                    crate::json::get_str(error, "code").unwrap_or("-")
+                ),
+                None => format!(
+                    "admission {} -> {}: {} ({})",
+                    field("candidate_id"),
+                    field("destination"),
+                    crate::json::get_str(row, "state")
+                        .or_else(|| crate::json::get_str(row, "decision"))
+                        .unwrap_or("-"),
+                    field("receipt_id")
+                ),
+            }
+        })
+        .collect()
 }
 
 pub fn end(session: &str, json: bool) -> Result<(), ContractError> {
@@ -1636,11 +2203,36 @@ fn require_session(session: &str) -> Result<(), ContractError> {
     }
 }
 
+/// Every readable record of a Personal ledger. Unreadable lines are skipped
+/// and reported by the reader; a ledger that cannot be opened is signalled,
+/// so an empty result is never silent.
 fn personal_records(name: &str) -> Vec<Value> {
-    std::env::current_dir()
-        .ok()
-        .and_then(|repo| crate::store::read_records(crate::StoreKind::Personal, &repo, name).ok())
-        .unwrap_or_default()
+    personal_records_where(name, |_| true)
+}
+
+/// Every record of a Personal ledger, for a decision about whether a step
+/// already happened: an unreadable line refuses (see
+/// `store::read_records_complete`).
+fn personal_records_complete(name: &str) -> Result<Vec<Value>, ContractError> {
+    let repo = std::env::current_dir().map_err(io_error)?;
+    crate::store::read_records_complete(crate::StoreKind::Personal, &repo, name)
+}
+
+/// The text a record line holding `value` carries, for a marker filter:
+/// only lines holding it are parsed, and the exact filter runs on the record.
+/// The value alone, not `"key":value`, so a record written with other
+/// spacing still matches.
+fn value_marker(value: &str) -> String {
+    crate::json::jcs_text(&Value::String(value.to_owned()))
+}
+
+/// `personal_records_complete` for the lines holding `marker`, read by
+/// stream: one candidate's receipts, not every candidate's.
+fn personal_records_complete_marked(name: &str, marker: &str) -> Result<Vec<Value>, ContractError> {
+    let repo = std::env::current_dir().map_err(io_error)?;
+    crate::store::read_records_complete_where(crate::StoreKind::Personal, &repo, name, |line| {
+        crate::store::bytes_contain(line, marker.as_bytes())
+    })
 }
 
 /// `personal_records` restricted to the lines `keep` accepts, read by stream.
@@ -1665,6 +2257,11 @@ fn personal_records_where(name: &str, keep: impl Fn(&[u8]) -> bool) -> Vec<Value
 fn append_personal(name: &str, value: &Value) -> Result<(), ContractError> {
     let repo = std::env::current_dir().map_err(io_error)?;
     crate::store::append_record(crate::StoreKind::Personal, &repo, name, value)
+}
+
+fn append_personal_durable(name: &str, value: &Value) -> Result<(), ContractError> {
+    let repo = std::env::current_dir().map_err(io_error)?;
+    crate::store::append_record_durable(crate::StoreKind::Personal, &repo, name, value)
 }
 
 fn host_name(host: crate::HostKind) -> &'static str {
@@ -1738,6 +2335,97 @@ mod tests {
             (String::new(), 1)
         );
         assert_eq!(deidentify_statement(""), (String::new(), 0));
+    }
+}
+
+#[cfg(test)]
+mod admission_failure_tests {
+    use super::{admission_failure, admission_lines};
+    use crate::error::ContractError;
+    use serde_json::json;
+
+    #[test]
+    fn a_multi_line_refusal_is_still_a_writable_record() {
+        let error = ContractError::user_action(
+            "REPO_UNCERTIFIED",
+            "git rev-parse failed: fatal: not a git repository\nStopping at filesystem boundary",
+            "Run the command inside a Git worktree;\tthen retry.",
+        );
+        let row = admission_failure(
+            &json!({"candidate_id": "cand_1", "destination": "company:root"}),
+            &error,
+        );
+        crate::json::validate_json(&row).expect("canonical record");
+        assert!(!crate::json::canonical_text(&row).is_empty());
+        assert_eq!(
+            admission_lines(&json!({"admissions": [row]})),
+            ["admission cand_1 -> company:root: failed (REPO_UNCERTIFIED)"]
+        );
+    }
+}
+
+#[cfg(test)]
+mod external_classifier_tests {
+    use super::atom_from_classifier;
+    use serde_json::json;
+
+    fn atom(external: serde_json::Value) -> crate::model::Atom {
+        atom_from_classifier(
+            &external,
+            "claude_jsonl",
+            "native-1",
+            "obs-1",
+            "digest-1",
+            Some("repo-uuid"),
+            &crate::scanner::Registry::default(),
+        )
+        .expect("atom")
+    }
+
+    #[test]
+    fn a_hard_block_taint_from_the_classifier_blocks_the_atom() {
+        let blocked = atom(json!({
+            "text": "Retries are capped at three attempts.",
+            "confidence": "high",
+            "taint": ["credential"],
+            "proposed_destinations": ["codebase", "company"]
+        }));
+        assert!(blocked.hard_blocked);
+        assert!(blocked.eligible_destinations.is_empty());
+        assert_eq!(blocked.proposed_destinations, ["none"]);
+
+        // Without proposed destinations, only the Personal home remains.
+        let bare = atom(json!({
+            "text": "Retries are capped at three attempts.",
+            "taint": ["secret"]
+        }));
+        assert!(bare.hard_blocked);
+        assert!(
+            bare.eligible_destinations
+                .iter()
+                .all(|destination| destination == "personal")
+        );
+    }
+
+    #[test]
+    fn classifier_taints_add_to_the_scanners() {
+        let atom = atom(json!({
+            "text": "Retries are capped at three attempts.",
+            "confidence": "high",
+            "taint": ["public"],
+            "proposed_destinations": ["codebase"]
+        }));
+        assert!(
+            atom.taints.iter().any(|taint| taint == "personal-session"),
+            "{:?}",
+            atom.taints
+        );
+        assert!(
+            atom.taints.iter().any(|taint| taint == "public"),
+            "{:?}",
+            atom.taints
+        );
+        assert!(!atom.hard_blocked);
     }
 }
 
@@ -1834,32 +2522,32 @@ fn finalize_principal_receipt(base: &Value, saga: &Value) -> Result<Value, Contr
     let mut receipt = base.clone();
     merge_receipt(&mut receipt, saga);
     let repo_root = repo()?;
-    let already = personal_records("proposal-decisions.jsonl")
-        .into_iter()
-        .any(|record| {
-            crate::json::get_str(&record, "candidate_id")
-                == crate::json::get_str(&receipt, "candidate_id")
-                && crate::json::get_str(&record, "receipt_id")
-                    == crate::json::get_str(&receipt, "receipt_id")
-                && crate::json::get_str(&record, "state") == crate::json::get_str(&receipt, "state")
-        });
-    if !already {
-        crate::store::append_record(
+    let already = personal_records_complete_marked(
+        "proposal-decisions.jsonl",
+        &value_marker(crate::json::get_str(&receipt, "candidate_id").unwrap_or_default()),
+    )?
+    .into_iter()
+    .any(|record| {
+        crate::json::get_str(&record, "candidate_id")
+            == crate::json::get_str(&receipt, "candidate_id")
+            && crate::json::get_str(&record, "receipt_id")
+                == crate::json::get_str(&receipt, "receipt_id")
+            && crate::json::get_str(&record, "state") == crate::json::get_str(&receipt, "state")
+    });
+    if already {
+        // Found, possibly from an attempt whose sync failed.
+        crate::store::sync_record(
+            crate::StoreKind::Personal,
+            &repo_root,
+            "proposal-decisions.jsonl",
+        )?;
+    } else {
+        crate::store::append_record_durable(
             crate::StoreKind::Personal,
             &repo_root,
             "proposal-decisions.jsonl",
             &receipt,
         )?;
-        let path = crate::store::store_root(crate::StoreKind::Personal, &repo_root)
-            .join("proposal-decisions.jsonl");
-        if let Ok(file) = std::fs::File::open(&path) {
-            let _ = file.sync_all();
-        }
-        if let Some(parent) = path.parent() {
-            if let Ok(directory) = std::fs::File::open(parent) {
-                let _ = directory.sync_all();
-            }
-        }
     }
     Ok(receipt)
 }
@@ -1882,6 +2570,8 @@ fn merge_receipt(receipt: &mut Value, saga: &Value) {
 // ---------------------------------------------------------------------------
 
 const FANOUT_JOURNAL_SCHEMA: &str = "kinbase-fanout-journal/1";
+/// Company's admission status for an approved event awaiting a steward.
+const STEWARD_REVIEW: &str = "pending-steward-review";
 const APOLOGY_RESPONSE_WINDOW_HOURS: i64 = 24;
 
 /// The closed transition enum of the destination journal (architecture §3:
@@ -1969,7 +2659,7 @@ impl FanoutJournal {
         marker["updated_at"] = Value::String(now_rfc3339_millis());
         crate::paths::write_atomic(
             &self.marker_path(transition),
-            &crate::json::canonical_bytes(&marker),
+            &crate::json::record_bytes(&marker)?,
             0o600,
             false,
         )?;
@@ -2027,12 +2717,10 @@ fn fanout_saga_result(
     let repository_uuid = crate::repository::repository_id(repo_root)?;
     if let Some(bound) = destination.strip_prefix("codebase:") {
         if bound != repository_uuid {
-            return Err(ContractError::new(
+            return Err(ContractError::refused(
                 "AUTHORITY_SCOPE_DENIED",
                 "candidate names a different repository identity than the certified one",
                 "Create a candidate for the certified repository identity.",
-                false,
-                ExitCode::UserActionRequired,
             ));
         }
     }
@@ -2041,10 +2729,11 @@ fn fanout_saga_result(
     // admission lock; the journal carries the transaction between
     // generations, so the lock is never held across a Company round trip
     // and competing local writers retry from the committed generation.
-    recover_fanout_journal(&repository, &repository_uuid, Some(candidate_id))?;
+    recover_fanout_journal(launcher, &repository, &repository_uuid, Some(candidate_id))?;
     let journal = FanoutJournal::open(&repository, candidate_id, destination)?;
     if destination.starts_with("codebase:") {
         commit_codebase(
+            launcher,
             &repository,
             &repository_uuid,
             &journal,
@@ -2070,7 +2759,9 @@ fn fanout_saga_result(
 /// Build the destination event once and bind the admission nonce to its
 /// exact bytes in the journal (nonce reservation). A replay reuses the bound
 /// bytes, so a retry can never mint a second content-addressed event.
+#[allow(clippy::too_many_arguments)]
 fn reserve_nonce(
+    launcher: &crate::launcher::Launcher,
     repository: &crate::codebase::Repository,
     journal: &FanoutJournal,
     repository_uuid: &str,
@@ -2094,8 +2785,8 @@ fn reserve_nonce(
             (canonical, event)
         }
         None => {
-            let event = build_destination_event(store, repository_uuid, record)?;
-            (canonical_text(&event), event)
+            let event = build_destination_event(Some(launcher), store, repository_uuid, record)?;
+            (crate::json::record_text(&event)?, event)
         }
     };
     if !journal.is_complete("nonce_reservation") {
@@ -2114,7 +2805,7 @@ fn reserve_nonce(
                 "logical_key": event.get("logical_key").cloned().unwrap_or(Value::Null)
             }),
         )?;
-        append_personal(
+        append_personal_durable(
             "nonce-reservations.jsonl",
             &json!({
                 "nonce": record.get("nonce").cloned().unwrap_or(Value::Null),
@@ -2130,7 +2821,9 @@ fn reserve_nonce(
     Ok((canonical.into_bytes(), event))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn commit_codebase(
+    launcher: &crate::launcher::Launcher,
     repository: &crate::codebase::Repository,
     repository_uuid: &str,
     journal: &FanoutJournal,
@@ -2140,6 +2833,7 @@ fn commit_codebase(
     base_receipt: &Value,
 ) -> Result<Value, ContractError> {
     let (bytes, event) = reserve_nonce(
+        launcher,
         repository,
         journal,
         repository_uuid,
@@ -2207,7 +2901,7 @@ fn commit_codebase(
             });
             crate::paths::write_atomic(
                 &receipt_path,
-                &crate::json::canonical_bytes(&receipt),
+                &crate::json::record_bytes(&receipt)?,
                 0o600,
                 false,
             )?;
@@ -2285,6 +2979,7 @@ fn commit_company(
     base_receipt: &Value,
 ) -> Result<Value, ContractError> {
     let (_bytes, event) = reserve_nonce(
+        launcher,
         repository,
         journal,
         repository_uuid,
@@ -2310,8 +3005,24 @@ fn commit_company(
     // The Company destination runs its own transaction; the client sends
     // the event once per attempt and records the outcome it was given.
     let attempt = match launcher.company() {
-        Ok(Some(access)) => match access.client.post_fact(&event) {
-            Ok(body) => json!({"state": "committed", "company_receipt": body}),
+        Ok(Some(access)) => match approved_submission(launcher, repository, record, &event)
+            .and_then(|submission| access.client.post_fact(&submission))
+        {
+            // A signer that is not the Company authority for the scope is
+            // queued for steward review (202). Until a steward admits it the
+            // Company destination is pending: its apology stays open and
+            // later passes ask again.
+            Ok(body) => {
+                let admission = crate::json::get_str(&body, "status")
+                    .or_else(|| crate::json::get_str(&body, "admission_status"))
+                    .unwrap_or("committed")
+                    .to_owned();
+                json!({
+                    "state": if admission == STEWARD_REVIEW { "pending" } else { "committed" },
+                    "company_receipt": body,
+                    "company_admission": admission
+                })
+            }
             Err(error) => json!({
                 "state": if error.code == "COMPANY_UNREACHABLE" { "pending" } else { "refused" },
                 "error_code": error.code,
@@ -2338,14 +3049,20 @@ fn commit_company(
         .unwrap_or("refused")
         .to_owned();
     let mut apology_ids = Vec::new();
-    if state != "committed" {
+    if state == "committed" {
+        // The apology opened while Company had not answered is settled: the
+        // claim is no longer orphaned, and its deadline must not abandon it.
+        reconcile_apologies(launcher, receipt_id, &now_rfc3339_millis())?;
+    } else {
         // Divergence: another destination of the same source already holds
         // a durable commit that this failure cannot roll back. The
         // admitting principal owns the divergence; the committed
-        // destination receives the apology Unknown.
-        for sibling in committed_siblings(record) {
+        // destination receives the apology Unknown. A pending (unreachable)
+        // attempt is retried by later admissions, and a commit before the
+        // deadline reconciles the apology.
+        for sibling in committed_siblings(record)? {
             let apology_id = apology_id_for(receipt_id, &sibling);
-            if !journal.is_complete("apology") || !apology_exists(&apology_id) {
+            if !journal.is_complete("apology") || !apology_exists(&apology_id)? {
                 let _generation = repository.admission_lock(repository_uuid)?;
                 journal.begin("apology", json!({"apology_id": apology_id, "committed_receipt_id": sibling.get("receipt_id").cloned().unwrap_or(Value::Null)}))?;
                 let unknown_id = write_apology(
@@ -2361,6 +3078,12 @@ fn commit_company(
                 journal.complete("apology", json!({"unknown_id": unknown_id}))?;
             }
             apology_ids.push(apology_id);
+        }
+        // Outside the admission lock: a slow Company must not hold it. An
+        // unreachable Company gets the Unknowns from a later pass.
+        if !apology_ids.is_empty() && attempt.get("company_unreachable") != Some(&Value::Bool(true))
+        {
+            deliver_apology_unknowns(launcher, repository_uuid)?;
         }
     }
     let _generation = repository.admission_lock(repository_uuid)?;
@@ -2380,6 +3103,41 @@ fn commit_company(
         journal.finish()?;
     }
     Ok(summary)
+}
+
+/// The event with the admitting principal's approval of its exact bytes.
+/// Company admits a verified authority's event directly and queues any other
+/// signer's approved event for steward review; a bare event from a
+/// non-authority signer is refused.
+fn approved_submission(
+    launcher: &crate::launcher::Launcher,
+    repository: &crate::codebase::Repository,
+    record: &Value,
+    event: &Value,
+) -> Result<Value, ContractError> {
+    let key = destination_signing_key(Some(launcher), crate::StoreKind::Company, &repository.root)?;
+    approval_envelope(&key, record, event, &now_rfc3339_millis())
+}
+
+fn approval_envelope(
+    key: &crate::crypto::PrivateKey,
+    record: &Value,
+    event: &Value,
+    now: &str,
+) -> Result<Value, ContractError> {
+    let approval = key.sign_document(
+        "approval-token",
+        &json!({
+            "schema": "kinbase-approval/1",
+            "candidate_id": record.get("candidate_id").cloned().unwrap_or(Value::Null),
+            "destination": record.get("destination").cloned().unwrap_or(Value::Null),
+            "principal": record.get("principal").cloned().unwrap_or(Value::Null),
+            "event_id": event.get("event_id").cloned().unwrap_or(Value::Null),
+            "event_digest": crate::json::digest(event),
+            "approved_at": now
+        }),
+    )?;
+    Ok(json!({"event": event, "approval_token": approval}))
 }
 
 fn receipt_from_marker(marker: &Value, receipt_id: &str) -> Value {
@@ -2403,19 +3161,43 @@ fn receipt_from_marker(marker: &Value, receipt_id: &str) -> Value {
 
 /// Committed decisions of other destinations for the same source message
 /// (the siblings of one fan-out).
-fn committed_siblings(record: &Value) -> Vec<Value> {
+fn committed_siblings(record: &Value) -> Result<Vec<Value>, ContractError> {
     let message_id = crate::json::get_str(record, "message_id").unwrap_or_default();
     let session_id = crate::json::get_str(record, "session_id").unwrap_or_default();
     let candidate_id = crate::json::get_str(record, "candidate_id").unwrap_or_default();
-    let siblings: Vec<Value> = personal_records("candidates.jsonl")
-        .into_iter()
-        .filter(|other| {
-            crate::json::get_str(other, "message_id") == Some(message_id)
-                && crate::json::get_str(other, "session_id") == Some(session_id)
-                && crate::json::get_str(other, "candidate_id") != Some(candidate_id)
-        })
+    let message_marker = value_marker(message_id);
+    let siblings: Vec<Value> = personal_records_where("candidates.jsonl", |line| {
+        crate::store::bytes_contain(line, message_marker.as_bytes())
+    })
+    .into_iter()
+    .filter(|other| {
+        crate::json::get_str(other, "message_id") == Some(message_id)
+            && crate::json::get_str(other, "session_id") == Some(session_id)
+            && crate::json::get_str(other, "candidate_id") != Some(candidate_id)
+    })
+    .collect();
+    // Whether a sibling committed decides whether an apology is owed; only
+    // the siblings' receipts are read.
+    let sibling_markers: Vec<String> = siblings
+        .iter()
+        .filter_map(|sibling| crate::json::get_str(sibling, "candidate_id"))
+        .map(value_marker)
         .collect();
-    let decisions = personal_records("proposal-decisions.jsonl");
+    let decisions = if sibling_markers.is_empty() {
+        Vec::new()
+    } else {
+        let repo = std::env::current_dir().map_err(io_error)?;
+        crate::store::read_records_complete_where(
+            crate::StoreKind::Personal,
+            &repo,
+            "proposal-decisions.jsonl",
+            |line| {
+                sibling_markers
+                    .iter()
+                    .any(|marker| crate::store::bytes_contain(line, marker.as_bytes()))
+            },
+        )?
+    };
     let mut committed = Vec::new();
     for sibling in siblings {
         let sibling_id = crate::json::get_str(&sibling, "candidate_id").unwrap_or_default();
@@ -2434,7 +3216,41 @@ fn committed_siblings(record: &Value) -> Vec<Value> {
             }
         }
     }
-    committed
+    Ok(committed)
+}
+
+/// Mark every open apology for `failed_receipt_id` reconciled: the
+/// destination that had not answered has committed after all.
+fn reconcile_apologies(
+    launcher: &crate::launcher::Launcher,
+    failed_receipt_id: &str,
+    now: &str,
+) -> Result<(), ContractError> {
+    for apology in current_apologies_complete()? {
+        if crate::json::get_str(&apology, "failed_receipt_id") != Some(failed_receipt_id)
+            || crate::json::get_str(&apology, "state") != Some("awaiting_reconcile_or_abandon")
+        {
+            continue;
+        }
+        let update = json!({
+            "apology_id": apology.get("apology_id").cloned().unwrap_or(Value::Null),
+            "state": "reconciled",
+            "reconciled_at": now,
+            "reconciled_by": "failed-destination-committed"
+        });
+        append_personal_durable("apologies.jsonl", &update)?;
+        // The cached saga row `status` counts is settled with it.
+        if let Ok(Some((cache, _))) = launcher.company_cache() {
+            let mut settled = apology.clone();
+            merge_receipt(&mut settled, &update);
+            let _ = cache.save_saga(
+                crate::json::get_str(&apology, "candidate_id").unwrap_or_default(),
+                &settled,
+                now,
+            );
+        }
+    }
+    Ok(())
 }
 
 fn apology_id_for(failed_receipt_id: &str, committed: &Value) -> String {
@@ -2445,16 +3261,33 @@ fn apology_id_for(failed_receipt_id: &str, committed: &Value) -> String {
     )
 }
 
-fn apology_exists(apology_id: &str) -> bool {
-    personal_records("apologies.jsonl")
+fn apology_exists(apology_id: &str) -> Result<bool, ContractError> {
+    Ok(personal_records_complete("apologies.jsonl")?
         .iter()
-        .any(|apology| crate::json::get_str(apology, "apology_id") == Some(apology_id))
+        .any(|apology| crate::json::get_str(apology, "apology_id") == Some(apology_id)))
 }
 
 /// The latest state of every apology (append-only records; last wins).
 fn current_apologies() -> Vec<Value> {
+    latest_apologies(personal_records("apologies.jsonl"))
+}
+
+/// `current_apologies` for a decision about whether an apology exists or is
+/// due: an unreadable line refuses, and what was found is on disk first.
+fn current_apologies_complete() -> Result<Vec<Value>, ContractError> {
+    let records = personal_records_complete("apologies.jsonl")?;
+    sync_personal("apologies.jsonl")?;
+    Ok(latest_apologies(records))
+}
+
+fn sync_personal(name: &str) -> Result<(), ContractError> {
+    let repo = std::env::current_dir().map_err(io_error)?;
+    crate::store::sync_record(crate::StoreKind::Personal, &repo, name)
+}
+
+fn latest_apologies(records: Vec<Value>) -> Vec<Value> {
     let mut latest: BTreeMap<String, Value> = BTreeMap::new();
-    for record in personal_records("apologies.jsonl") {
+    for record in records {
         let Some(id) = crate::json::get_str(&record, "apology_id") else {
             continue;
         };
@@ -2524,7 +3357,7 @@ fn write_apology(
     committed: &Value,
     apology_id: &str,
 ) -> Result<String, ContractError> {
-    if let Some(existing) = current_apologies()
+    if let Some(existing) = current_apologies_complete()?
         .into_iter()
         .find(|apology| crate::json::get_str(apology, "apology_id") == Some(apology_id))
     {
@@ -2548,13 +3381,16 @@ fn write_apology(
     let closing_name = closing_identity
         .clone()
         .unwrap_or_else(|| closing_role.clone());
-    let now = crate::time::now_utc();
+    // The same proof clock that later decides the apology is overdue.
+    let now = crate::time::proof_clock_instant();
     let response_due_at =
         format_rfc3339_millis(now + Duration::hours(APOLOGY_RESPONSE_WINDOW_HOURS));
     let store = destination_store(&committed_destination)?;
     let question = format!(
         "Apology Unknown for divergent fan-out: destination {failed_destination} failed ({}) after {committed_destination} committed receipt {}. Admitting principal {principal} is responsible; closing authority {closing_name} ({closing_role}) must reconcile or abandon by {response_due_at}. The orphaned claim is withheld from trusted use until then.",
-        crate::json::get_str(attempt, "error_code").unwrap_or("refused"),
+        crate::json::get_str(attempt, "error_code")
+            .or_else(|| crate::json::get_str(attempt, "company_admission"))
+            .unwrap_or("refused"),
         crate::json::get_str(committed, "receipt_id").unwrap_or_default()
     );
     let scope = "architecture:escalation";
@@ -2625,9 +3461,10 @@ fn write_apology(
         "unknown_id": unknown_id,
         "response_due_at": response_due_at,
         "created_at": format_rfc3339_millis(now),
-        "state": "awaiting_reconcile_or_abandon"
+        "state": "awaiting_reconcile_or_abandon",
+        "unknown_delivered": false
     });
-    append_personal("apologies.jsonl", &apology)?;
+    append_personal_durable("apologies.jsonl", &apology)?;
     // The pending saga is also visible to the Company cache so `status`
     // counts it among the orphans awaiting reconcile/abandon.
     if let Ok(Some((cache, _))) = launcher.company_cache() {
@@ -2640,11 +3477,18 @@ fn write_apology(
     Ok(unknown_id)
 }
 
+/// How many Company sagas one recovery pass retries, so an admission inside a
+/// host hook's budget is not spent draining a backlog.
+const COMPANY_RETRIES_PER_PASS: usize = 8;
+
 /// Replay every unfinished fan-out saga of this repository under the lock:
 /// a transaction whose event bytes are durable completes forward; one that
-/// never bound its bytes is rolled back. The candidate being decided now is
-/// replayed by its own idempotent transitions.
+/// never bound its bytes is rolled back. A Company saga left pending by any
+/// earlier session (Company did not answer) is posted again while Company
+/// answers. The candidate being decided now is replayed by its own
+/// idempotent transitions.
 fn recover_fanout_journal(
+    launcher: &crate::launcher::Launcher,
     repository: &crate::codebase::Repository,
     repository_uuid: &str,
     current_candidate: Option<&str>,
@@ -2654,6 +3498,8 @@ fn recover_fanout_journal(
         return Ok(Vec::new());
     }
     let mut replayed = Vec::new();
+    let mut company_retries = 0usize;
+    let mut company_answering = true;
     let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(&root)
         .map_err(|error| ContractError::io("read fan-out journal", error))?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -2685,7 +3531,55 @@ fn recover_fanout_journal(
             candidate_id: candidate_id.clone(),
             destination: destination.clone(),
         };
-        if journal.is_done() || !destination.starts_with("codebase:") {
+        if journal.is_done() {
+            continue;
+        }
+        if destination.starts_with("company") {
+            if !company_answering || company_retries >= COMPANY_RETRIES_PER_PASS {
+                continue;
+            }
+            let Some(reservation) = journal.read("nonce_reservation") else {
+                continue;
+            };
+            if crate::json::get_str(&reservation, "event_canonical").is_none() {
+                continue;
+            }
+            company_retries += 1;
+            let payload_digest = crate::json::get_str(&reservation, "payload_digest")
+                .unwrap_or_default()
+                .to_owned();
+            let receipt_id = crate::json::get_str(&reservation, "receipt_id")
+                .unwrap_or_default()
+                .to_owned();
+            let base_receipt = json!({
+                "candidate_id": candidate_id,
+                "destination": destination,
+                "decision": "admit",
+                "digest": payload_digest,
+                "decided_at": now_rfc3339_millis(),
+                "receipt_id": receipt_id,
+                "state": "pending",
+                "recovered": true
+            });
+            let summary = commit_company(
+                launcher,
+                repository,
+                repository_uuid,
+                &journal,
+                &record,
+                &payload_digest,
+                &receipt_id,
+                &base_receipt,
+            )?;
+            let state = crate::json::get_str(&summary, "state").unwrap_or("pending");
+            if state == "pending" {
+                company_answering = false;
+            }
+            replayed
+                .push(json!({"candidate_id": candidate_id, "action": format!("company-{state}")}));
+            continue;
+        }
+        if !destination.starts_with("codebase:") {
             continue;
         }
         let Some(reservation) = journal.read("nonce_reservation") else {
@@ -2722,6 +3616,7 @@ fn recover_fanout_journal(
                         "recovered": true
         });
         commit_codebase(
+            launcher,
             repository,
             repository_uuid,
             &journal,
@@ -2733,7 +3628,63 @@ fn recover_fanout_journal(
         replayed
             .push(json!({"candidate_id": candidate_id, "digest": digest, "action": "completed"}));
     }
+    if company_answering {
+        deliver_apology_unknowns(launcher, repository_uuid)?;
+    }
     Ok(replayed)
+}
+
+/// Send this repository's undelivered apology Unknowns to Company, where
+/// the closing authority reads them; they were kept only in the admitting
+/// principal's store, so no authority ever saw one before its deadline.
+fn deliver_apology_unknowns(
+    launcher: &crate::launcher::Launcher,
+    repository_uuid: &str,
+) -> Result<(), ContractError> {
+    let destination = format!("codebase:{repository_uuid}");
+    let undelivered: Vec<Value> = current_apologies()
+        .into_iter()
+        .filter(|apology| {
+            crate::json::get_str(apology, "state") == Some("awaiting_reconcile_or_abandon")
+                && crate::json::get_str(apology, "committed_destination")
+                    == Some(destination.as_str())
+                && apology.get("unknown_delivered") != Some(&Value::Bool(true))
+        })
+        .take(COMPANY_RETRIES_PER_PASS)
+        .collect();
+    if undelivered.is_empty() {
+        return Ok(());
+    }
+    let Ok(Some(access)) = launcher.company() else {
+        return Ok(());
+    };
+    let unknowns = personal_records("unknowns.jsonl");
+    for apology in undelivered {
+        let unknown_id = crate::json::get_str(&apology, "unknown_id").unwrap_or_default();
+        let Some(document) = unknowns
+            .iter()
+            .find(|unknown| crate::json::get_str(unknown, "fact_id") == Some(unknown_id))
+        else {
+            continue;
+        };
+        match access.client.post_unknown(document) {
+            Ok(_) => append_personal(
+                "apologies.jsonl",
+                &json!({
+                    "apology_id": apology.get("apology_id").cloned().unwrap_or(Value::Null),
+                    "unknown_delivered": true,
+                    "delivered_at": now_rfc3339_millis()
+                }),
+            )?,
+            Err(error) if error.code == "COMPANY_UNREACHABLE" => break,
+            // Refused: it stays undelivered and is offered again next pass.
+            Err(error) => crate::output::diagnostic(
+                "apology-unknown-undelivered",
+                json!({"unknown_id": unknown_id, "code": error.code, "message": error.message}),
+            ),
+        }
+    }
+    Ok(())
 }
 
 /// In-flight fan-out journal markers (for `status`/`fsck`): every marker of
@@ -2790,27 +3741,34 @@ pub fn inflight_journal_state(repo_root: &Path) -> Value {
     json!(markers)
 }
 
-/// Apologies still awaiting reconcile/abandon (the orphans that are not yet
-/// terminally closed).
-pub fn pending_orphan_count(_repo_root: &Path) -> usize {
+/// This repository's apologies still awaiting reconcile/abandon (the orphans
+/// that are not yet terminally closed). The Personal store holds every
+/// repository's.
+pub fn pending_orphan_count(repo_root: &Path) -> usize {
+    let Ok(repository_uuid) = crate::repository::repository_id(repo_root) else {
+        return 0;
+    };
+    let destination = format!("codebase:{repository_uuid}");
     current_apologies()
         .iter()
         .filter(|apology| {
             crate::json::get_str(apology, "state") == Some("awaiting_reconcile_or_abandon")
+                && crate::json::get_str(apology, "committed_destination")
+                    == Some(destination.as_str())
         })
         .count()
 }
 
 /// Saga-authoritative fields for a terminal `orphan_abandoned` event that the
-/// destination service emitted: the orphaned claim's saga state (withdrawn)
-/// and the unresponsive closing authority. `None` for every other event.
+/// destination service emitted: the saga state and the unresponsive closing
+/// authority. The fact's state is the reducer's, never the saga ledger's.
+/// `None` for every other event.
 pub fn saga_terminal_event_fields(event_id: &str) -> Option<Value> {
     personal_records("orphan-abandonments.jsonl")
         .into_iter()
         .find(|record| crate::json::get_str(record, "event_id") == Some(event_id))
         .map(|record| {
             json!({
-                "fact_state": "withdrawn",
                 "saga_state": "abandoned",
                 "unresponsive_closing_authority": record.get("unresponsive_closing_authority").cloned().unwrap_or(Value::Null),
                 "apology_id": record.get("apology_id").cloned().unwrap_or(Value::Null)
@@ -2841,7 +3799,7 @@ pub fn write_fact_event(
     repo: &Path,
     record: &Value,
 ) -> Result<(String, String), ContractError> {
-    let event = build_destination_event(store, "", record)?;
+    let event = build_destination_event(None, store, "", record)?;
     let fact_id = crate::json::get_str(&event, "fact_id")
         .unwrap_or_default()
         .to_owned();
@@ -2861,9 +3819,38 @@ pub fn write_fact_event(
 /// the candidate id as evidence and binds the certified repository identity
 /// for Codebase.
 fn build_destination_event(
+    launcher: Option<&crate::launcher::Launcher>,
     store: crate::StoreKind,
     repository_uuid: &str,
     record: &Value,
+) -> Result<Value, ContractError> {
+    let repo = repo()?;
+    let key = destination_signing_key(launcher, store, &repo)?;
+    let company_authority = match (store, launcher) {
+        (crate::StoreKind::Company, Some(launcher)) => {
+            registered_authority_id(launcher, &key.public().to_hex())
+        }
+        _ => None,
+    };
+    signed_destination_event(
+        store,
+        repository_uuid,
+        record,
+        &key,
+        company_authority,
+        &now_rfc3339_millis(),
+    )
+}
+
+/// The destination event for a candidate, signed by `key` at `now`.
+/// `company_authority` is the registered identity of `key`, if any.
+fn signed_destination_event(
+    store: crate::StoreKind,
+    repository_uuid: &str,
+    record: &Value,
+    key: &crate::crypto::PrivateKey,
+    company_authority: Option<String>,
+    now: &str,
 ) -> Result<Value, ContractError> {
     let canonical = record
         .get("canonical")
@@ -2900,35 +3887,45 @@ fn build_destination_event(
         .unwrap_or("observation");
     let repository_id = (store == crate::StoreKind::Codebase && !repository_uuid.is_empty())
         .then(|| repository_uuid.to_owned());
-    let fact_id = format!(
-        "fact_{:x}",
-        Sha256::digest(format!("{scope}\0{statement}").as_bytes())
-    );
-    let event_id = format!(
-        "event_{:x}",
-        Sha256::digest(
-            record
-                .get("payload_digest")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .as_bytes()
-        )
-    );
-    let authority_id = if store == crate::StoreKind::Company {
-        "company-steward"
+    let signer = key.public().to_hex();
+    let store_kind = store_name(store);
+    // A Company-bound candidate is a proposal to the Company scope its
+    // destination names, attributed to the principal whose key signs it:
+    // the atom's own scope (`host-session`) is no Company authority scope,
+    // and naming the steward while a maintainer key signed misattributed it.
+    let (authority_id, authority_scope) = if store == crate::StoreKind::Company {
+        let authority_id = company_authority.unwrap_or_else(|| {
+            crate::json::get_str(record, "principal")
+                .map(str::to_owned)
+                .unwrap_or_else(principal_id)
+        });
+        (authority_id, "company:root".to_owned())
     } else {
-        "repository-maintainer"
+        ("repository-maintainer".to_owned(), scope.to_owned())
     };
-    let now = now_rfc3339_millis();
+    // The canonical identities: one fact per statement in its scope, one
+    // logical key per fact (a scope-wide key made every session statement a
+    // competing head of one claim), and one event per signed assertion. The
+    // event id used to be the payload digest alone, so the same statement in
+    // a second session reused the id with different bytes and was refused.
+    // The journal binds the bytes built here, so a retry reuses them.
+    let fact_id = crate::model::fact_id(store_kind, scope, statement);
+    let logical_key = crate::model::logical_key(store_kind, &authority_scope, &fact_id);
+    let event_id = crate::model::event_id(
+        &fact_id,
+        &crate::model::semantic_digest(statement),
+        now,
+        &signer,
+    );
     let event = FactEvent {
         schema: crate::model::EVENT_SCHEMA.to_owned(),
         event_id,
-        store_kind: store_name(store).to_owned(),
-        authority_id: authority_id.to_owned(),
-        authority_scope: scope.to_owned(),
+        store_kind: store_kind.to_owned(),
+        authority_id,
+        authority_scope,
         repository_id,
         fact_id,
-        logical_key: format!("logical_{:x}", Sha256::digest(scope.as_bytes())),
+        logical_key,
         atom_kind: atom_kind.to_owned(),
         scope: scope.to_owned(),
         statement: statement.to_owned(),
@@ -2939,8 +3936,8 @@ fn build_destination_event(
                 .unwrap_or_default()
                 .to_owned(),
         ],
-        asserted_at: now.clone(),
-        effective_from: now,
+        asserted_at: now.to_owned(),
+        effective_from: now.to_owned(),
         effective_until: None,
         disposition: "current".to_owned(),
         distortion: Distortion {
@@ -2994,9 +3991,27 @@ fn build_destination_event(
             .and_then(|value| serde_json::from_value(value.clone()).ok())
             .unwrap_or_default(),
     };
-    let repo = repo()?;
-    let key = destination_signing_key(store, &repo)?;
     key.sign_document("fact-event", &event.to_value())
+}
+
+/// The registered authority identity of a signing key, from the cached
+/// Company registry, when exactly one active entry names it.
+fn registered_authority_id(
+    launcher: &crate::launcher::Launcher,
+    public_key: &str,
+) -> Option<String> {
+    let snapshot = launcher
+        .company_cache()
+        .ok()
+        .flatten()
+        .and_then(|(cache, _)| cache.snapshot().ok().flatten())?;
+    let ids: BTreeSet<String> = crate::json::get_array(&snapshot, "registry")?
+        .iter()
+        .filter(|entry| crate::json::get_str(entry, "public_key") == Some(public_key))
+        .filter(|entry| crate::json::get_str(entry, "status").unwrap_or("active") == "active")
+        .filter_map(|entry| crate::json::get_str(entry, "authority_id").map(str::to_owned))
+        .collect();
+    (ids.len() == 1).then(|| ids.into_iter().next().unwrap_or_default())
 }
 
 /// One signer per shared store. A repository trusts its configured maintainer
@@ -3005,16 +4020,16 @@ fn build_destination_event(
 /// perfect and entirely untrusted: the same defect bulk admission had, on the
 /// other path. Shared stores sign as the maintainer whenever Company access is
 /// configured; Personal, and a machine with no Company access, keep the local
-/// key.
+/// key. The caller's launcher decides: loading another one here failed
+/// whenever a lock was held (the descriptor attestation refuses the lock's
+/// descriptors), and the failure silently fell back to the local key.
 pub(crate) fn destination_signing_key(
+    launcher: Option<&crate::launcher::Launcher>,
     store: crate::StoreKind,
     repo: &Path,
 ) -> Result<crate::crypto::PrivateKey, ContractError> {
     if store != crate::StoreKind::Personal {
-        if let Some(access) = crate::launcher::Launcher::load()
-            .ok()
-            .and_then(|launcher| launcher.shared.company.clone())
-        {
+        if let Some(access) = launcher.and_then(|launcher| launcher.shared.company.as_ref()) {
             return access.maintainer_key();
         }
     }
@@ -3028,16 +4043,32 @@ pub(crate) fn destination_signing_key(
 pub(crate) fn emit_due_orphan_abandonments(
     launcher: &crate::launcher::Launcher,
     repository_root: &Path,
+    clock: &crate::time::AsOf,
 ) -> Result<usize, ContractError> {
-    let existing: BTreeSet<String> = personal_records("orphan-abandonments.jsonl")
+    let existing: BTreeSet<String> = personal_records_complete("orphan-abandonments.jsonl")?
         .into_iter()
         .filter_map(|record| crate::json::get_str(&record, "apology_id").map(str::to_owned))
         .collect();
-    let now = crate::time::now_utc();
-    let due: Vec<Value> = current_apologies()
+    // An abandonment found here is trusted to be on disk; make it so.
+    sync_personal("orphan-abandonments.jsonl")?;
+    // The Personal store holds every repository's apologies; this repository
+    // closes only those its own Codebase committed, and an uncertified
+    // repository closes none (it has no destination to write to).
+    let Ok(repository_uuid) = crate::repository::repository_id(repository_root) else {
+        return Ok(existing.len());
+    };
+    let this_destination = format!("codebase:{repository_uuid}");
+    // The caller's clock: the proof clock, so a pinned acceptance run closes
+    // exactly what it expects and a report can say which clock it read.
+    let now = parse_rfc3339_millis(&clock.as_of).map_err(ContractError::internal)?;
+    let due: Vec<Value> = current_apologies_complete()?
         .into_iter()
         .filter(|apology| {
             crate::json::get_str(apology, "state") == Some("awaiting_reconcile_or_abandon")
+        })
+        .filter(|apology| {
+            crate::json::get_str(apology, "committed_destination")
+                == Some(this_destination.as_str())
         })
         .filter(|apology| {
             crate::json::get_str(apology, "response_due_at")
@@ -3051,21 +4082,18 @@ pub(crate) fn emit_due_orphan_abandonments(
     if due.is_empty() {
         return Ok(existing.len());
     }
+    // Written through the discovered repository root: `status` may run in a
+    // subdirectory, where `<cwd>/.kin` is a stray tree nothing reads.
     let repository = crate::codebase::Repository::discover(repository_root)?;
-    let repository_uuid = crate::repository::repository_id(repository_root).ok();
-    let _lock = match &repository_uuid {
-        Some(uuid) => Some(repository.admission_lock(uuid)?),
-        None => None,
-    };
+    repository.ensure_local()?;
+    let _lock = repository.admission_lock(&repository_uuid)?;
     let now_text = format_rfc3339_millis(now);
     for apology in due {
         let apology_id = crate::json::get_str(&apology, "apology_id")
             .unwrap_or_default()
             .to_owned();
-        let committed_destination = crate::json::get_str(&apology, "committed_destination")
-            .unwrap_or("codebase")
-            .to_owned();
-        let store = destination_store(&committed_destination).unwrap_or(crate::StoreKind::Codebase);
+        let committed_destination = this_destination.clone();
+        let store = crate::StoreKind::Codebase;
         let closing_authority = crate::json::get_str(&apology, "closing_authority")
             .or_else(|| crate::json::get_str(&apology, "closing_authority_role"))
             .unwrap_or("repository-maintainer")
@@ -3125,10 +4153,8 @@ pub(crate) fn emit_due_orphan_abandonments(
             "response_due_at": due_at,
             "fact_state": "withdrawn"
         });
-        if let (crate::StoreKind::Codebase, Some(uuid)) = (store, &repository_uuid) {
-            document["repository_id"] = Value::String(uuid.clone());
-        }
-        let key = destination_signing_key(store, repository_root)?;
+        document["repository_id"] = Value::String(repository_uuid.clone());
+        let key = destination_signing_key(Some(launcher), store, &repository.root)?;
         let signed = key.sign_document("fact-event", &document)?;
         let parsed = FactEvent::from_value(&signed).map_err(|error| {
             ContractError::integrity(
@@ -3137,12 +4163,10 @@ pub(crate) fn emit_due_orphan_abandonments(
                 "Preserve the saga record; the terminal event is malformed.",
             )
         })?;
-        let root = crate::store::ensure_store_root(store, repository_root)?;
+        let root = crate::store::ensure_store_root(store, &repository.root)?;
         let (_, digest) = crate::store::write_content_addressed_event(&root, &parsed)?;
-        if store == crate::StoreKind::Codebase {
-            repository.update_index_cache()?;
-        }
-        append_personal(
+        repository.update_index_cache()?;
+        append_personal_durable(
             "orphan-abandonments.jsonl",
             &json!({
                 "orphan_id": format!("orphan_{}", &crate::hash::sha256_text(&apology_id)[..40]),
@@ -3225,18 +4249,26 @@ fn admit_candidate(
             "Preserve the candidate and inspect its source.",
         ));
     }
-    if let Some(previous) = personal_records("proposal-decisions.jsonl")
-        .into_iter()
-        .rev()
-        .find(|receipt| {
-            crate::json::get_str(receipt, "candidate_id") == Some(candidate)
-                && crate::json::get_str(receipt, "destination") == Some(destination)
-                && crate::json::get_str(receipt, "digest") == Some(digest.as_str())
-        })
+    // The Stop path admits every automatic candidate; each reads only its
+    // own receipts rather than the whole decision ledger.
+    if let Some(previous) =
+        personal_records_complete_marked("proposal-decisions.jsonl", &value_marker(candidate))?
+            .into_iter()
+            .rev()
+            .find(|receipt| {
+                crate::json::get_str(receipt, "candidate_id") == Some(candidate)
+                    && crate::json::get_str(receipt, "destination") == Some(destination)
+                    && crate::json::get_str(receipt, "digest") == Some(digest.as_str())
+            })
+        && matches!(decision_state(&previous), "committed" | "refused")
     {
-        if matches!(decision_state(&previous), "committed" | "refused") {
-            return Ok(previous);
-        }
+        // Acting on a found receipt: make sure it is on disk first.
+        crate::store::sync_record(
+            crate::StoreKind::Personal,
+            &std::env::current_dir().map_err(io_error)?,
+            "proposal-decisions.jsonl",
+        )?;
+        return Ok(previous);
     }
     let receipt_id = receipt_id(candidate, destination, &digest);
     let receipt = json!({
@@ -3349,4 +4381,166 @@ fn question_for_unresolved_atom(
     };
     let alternatives: Vec<String> = uncertainty.into_iter().map(str::to_owned).collect();
     crate::questions::ensure_question(repo, &unknown, &decision, &evidence, &alternatives)
+}
+
+#[cfg(test)]
+mod processor_scope_tests {
+    use super::select_provider;
+    use crate::config::SharedClassifier;
+
+    fn classifier(model: &str, processor_scope: &str) -> SharedClassifier {
+        SharedClassifier {
+            model: model.to_owned(),
+            executable: "/nonexistent/classifier".into(),
+            executable_sha256: "0".repeat(64),
+            args: Vec::new(),
+            timeout_seconds: 5,
+            processor_scope: processor_scope.to_owned(),
+        }
+    }
+
+    #[test]
+    fn an_unauthorized_processor_falls_back_before_any_request() {
+        for scope in ["local", "ollama-cloud"] {
+            let selected = select_provider(Some(&classifier("agy:default", scope)));
+            assert_eq!(selected.live_model, None);
+            assert_eq!(selected.name(), "deterministic");
+            assert_eq!(selected.processor, "local");
+            assert_eq!(selected.processor_scope, scope);
+            assert_eq!(selected.fallback_from.as_deref(), Some("agy:default"));
+            let reason = selected.fallback_reason.unwrap_or_default();
+            assert!(reason.starts_with("PROCESSOR_UNAUTHORIZED"), "{reason}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod saga_identity_tests {
+    use super::*;
+    use crate::crypto::{PrivateKey, PublicKey};
+
+    fn record(scope: &str, statement: &str) -> Value {
+        let canonical = crate::json::canonical_text(&json!({
+            "destination": "codebase:repo-uuid",
+            "atom_kind": "constraint",
+            "scope": scope,
+            "statement": statement
+        }));
+        json!({
+            "candidate_id": "cand_1",
+            "destination": "codebase:repo-uuid",
+            "principal": "principal-a",
+            "payload_digest": sha256_text(&canonical),
+            "canonical": canonical,
+            "confidence": 8000
+        })
+    }
+
+    fn event(
+        store: crate::StoreKind,
+        record: &Value,
+        key: &PrivateKey,
+        authority: Option<&str>,
+        now: &str,
+    ) -> FactEvent {
+        let signed = signed_destination_event(
+            store,
+            "repo-uuid",
+            record,
+            key,
+            authority.map(str::to_owned),
+            now,
+        )
+        .expect("event");
+        let parsed = FactEvent::from_value(&signed).expect("parse");
+        assert!(parsed.verify_signature().is_some(), "the event verifies");
+        parsed
+    }
+
+    #[test]
+    fn a_statement_asserted_twice_gets_two_events_of_one_fact() {
+        let key = PrivateKey::generate();
+        let statement = "Backoff is capped at 30 seconds.";
+        let first = event(
+            crate::StoreKind::Codebase,
+            &record("host-session", statement),
+            &key,
+            None,
+            "2026-09-17T10:00:00.000Z",
+        );
+        let second = event(
+            crate::StoreKind::Codebase,
+            &record("host-session", statement),
+            &key,
+            None,
+            "2026-09-17T11:00:00.000Z",
+        );
+        assert_ne!(first.event_id, second.event_id);
+        assert_eq!(first.fact_id, second.fact_id);
+        assert_eq!(
+            first.fact_id,
+            crate::model::fact_id("codebase", "host-session", statement)
+        );
+        assert_eq!(
+            first.logical_key,
+            crate::model::logical_key("codebase", "host-session", &first.fact_id)
+        );
+        assert_eq!(first.repository_id.as_deref(), Some("repo-uuid"));
+
+        let other = event(
+            crate::StoreKind::Codebase,
+            &record("host-session", "Retries use jitter."),
+            &key,
+            None,
+            "2026-09-17T10:00:00.000Z",
+        );
+        assert_ne!(
+            other.logical_key, first.logical_key,
+            "one logical key per statement, not per scope"
+        );
+    }
+
+    #[test]
+    fn a_company_proposal_names_its_company_scope_and_its_signer() {
+        let key = PrivateKey::generate();
+        let proposal = record("host-session", "Refunds settle in two days.");
+        let registered = event(
+            crate::StoreKind::Company,
+            &proposal,
+            &key,
+            Some("payments-architect"),
+            "2026-09-17T10:00:00.000Z",
+        );
+        assert_eq!(registered.authority_scope, "company:root");
+        assert_eq!(registered.authority_id, "payments-architect");
+        assert_eq!(registered.scope, "host-session");
+        assert_eq!(registered.repository_id, None);
+        let unregistered = event(
+            crate::StoreKind::Company,
+            &proposal,
+            &key,
+            None,
+            "2026-09-17T10:00:00.000Z",
+        );
+        assert_eq!(unregistered.authority_id, "principal-a");
+
+        let envelope = approval_envelope(
+            &key,
+            &proposal,
+            &registered.to_value(),
+            "2026-09-17T10:00:01.000Z",
+        )
+        .expect("envelope");
+        assert_eq!(envelope["event"], registered.to_value());
+        let token = &envelope["approval_token"];
+        assert_eq!(
+            PublicKey::verify_document("approval-token", token).map(|key| key.to_hex()),
+            Some(key.public().to_hex())
+        );
+        assert_eq!(
+            token["event_digest"],
+            json!(crate::json::digest(&registered.to_value()))
+        );
+        assert_eq!(token["candidate_id"], "cand_1");
+    }
 }

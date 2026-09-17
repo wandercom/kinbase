@@ -13,7 +13,12 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct TrustState {
     pub root: PublicKey,
     pub steward_keys: BTreeSet<String>,
+    /// Revocations of keys everywhere; what `is_revoked` reads.
     pub revocations: Vec<Revocation>,
+    /// Revocations of one exact scope of a key that stays registered under
+    /// others. Kept apart so nothing that asks "is this key revoked" reads
+    /// them as a revocation of the key.
+    pub scope_revocations: Vec<Revocation>,
     pub registry: Vec<Value>,
     /// Steward-published opaque registry cursor. This is deliberately not the
     /// service's internal event row counter.
@@ -21,36 +26,60 @@ pub struct TrustState {
     pub cursor: i64,
 }
 
+/// Registry entries with each public key in its canonical spelling.
+pub fn canonical_registry(mut entries: Vec<Value>) -> Vec<Value> {
+    for entry in &mut entries {
+        if let Some(key) =
+            crate::json::get_str(entry, "public_key").map(PublicKey::canonical_spelling)
+        {
+            entry["public_key"] = Value::String(key);
+        }
+    }
+    entries
+}
+
 pub fn load(db: &CompanyDb, root: &PublicKey) -> Result<TrustState, ContractError> {
     let mut steward_keys: BTreeSet<String> = BTreeSet::new();
     steward_keys.insert(root.to_hex());
     let mut revocations = Vec::new();
+    let mut scope_revocations = Vec::new();
     // Rotations: signed by an already authorized steward, name old and new.
     for (cursor, payload, verification) in db.events_of_kind("rotation")? {
         if verification != "verified" {
             continue;
         }
-        let signer = crate::json::get_str(&payload, "signer").unwrap_or_default();
-        if !steward_keys.contains(signer) {
+        let signer = PublicKey::canonical_spelling(
+            crate::json::get_str(&payload, "signer").unwrap_or_default(),
+        );
+        if !steward_keys.contains(&signer) {
             continue;
         }
         if let Some(new_key) = crate::json::get_str(&payload, "new_key") {
-            steward_keys.insert(new_key.to_owned());
+            steward_keys.insert(PublicKey::canonical_spelling(new_key));
         }
         let _ = cursor;
     }
-    let registry = db.registry_entries()?;
+    let registry = canonical_registry(db.registry_entries()?);
     for (cursor, payload, verification) in db.events_of_kind("revocation")? {
         if verification != "verified" {
             continue;
         }
         if let Some(key) = crate::json::get_str(&payload, "revoked_key") {
+            let key = PublicKey::canonical_spelling(key);
+            let key = key.as_str();
+            let revoked_scope = crate::json::get_str(&payload, "revoked_scope")
+                .filter(|scope| !scope.is_empty())
+                .map(str::to_owned);
             // A key the steward later republished under an active entry is
             // authorized again from that newer publication; the earlier
             // revocation stays in history but no longer governs.
+            // A scope revocation is lifted only by that scope coming back.
             let re_registered = registry.iter().any(|entry| {
                 crate::json::get_str(entry, "public_key") == Some(key)
                     && crate::json::get_str(entry, "status") == Some("active")
+                    && revoked_scope
+                        .as_deref()
+                        .is_none_or(|scope| crate::json::get_str(entry, "scope") == Some(scope))
                     && crate::json::get_str(entry, "cursor")
                         .and_then(|value| value.parse::<i64>().ok())
                         .is_some_and(|published| published > cursor)
@@ -65,43 +94,85 @@ pub fn load(db: &CompanyDb, root: &PublicKey) -> Result<TrustState, ContractErro
                 .filter(|value| !value.is_empty())
                 .map(str::to_owned)
                 .unwrap_or_else(|| cursor.to_string());
-            revocations.push(Revocation {
-                revoked_key: key.to_owned(),
-                cursor: revocation_cursor,
-                effective_at: crate::json::get_str(&payload, "effective_at")
+            let mut revocation = Revocation::of_key(
+                key.to_owned(),
+                revocation_cursor,
+                crate::json::get_str(&payload, "effective_at")
                     .unwrap_or_default()
                     .to_owned(),
-            });
+            );
+            if revoked_scope.is_some() {
+                revocation.scope = revoked_scope;
+                scope_revocations.push(revocation);
+                continue;
+            }
+            revocations.push(revocation);
             steward_keys.remove(key);
         }
     }
-    let mut authority_cursor = String::new();
-    let mut latest_registry_row = None;
-    for (row_cursor, payload, verification) in db.events_of_kind("registry")? {
-        if verification != "verified"
-            || latest_registry_row.is_some_and(|latest| row_cursor <= latest)
-        {
-            continue;
-        }
-        latest_registry_row = Some(row_cursor);
-        let published = crate::json::get_str(&payload, "authority_cursor").unwrap_or_default();
-        if !published.is_empty() {
-            authority_cursor = published.to_owned();
-        }
-    }
+    let authority_cursor = published_authority_cursor(db)?;
     Ok(TrustState {
         root: root.clone(),
         steward_keys,
         revocations,
+        scope_revocations,
         registry,
         authority_cursor,
         cursor: db.cursor()?,
     })
 }
 
+/// The newest verified registry publication: its service row cursor and the
+/// authority cursor it declared. The newest row wins whatever order the rows
+/// are read in.
+pub fn published_registry(db: &CompanyDb) -> Result<Option<(i64, String)>, ContractError> {
+    let mut latest: Option<(i64, String)> = None;
+    for (row_cursor, payload, verification) in db.events_of_kind("registry")? {
+        if verification != "verified" || latest.as_ref().is_some_and(|(row, _)| row_cursor <= *row)
+        {
+            continue;
+        }
+        let published = crate::json::get_str(&payload, "authority_cursor").unwrap_or_default();
+        latest = Some((row_cursor, published.to_owned()));
+    }
+    Ok(latest)
+}
+
+/// The authority cursor of the newest verified registry publication, or ""
+/// when none has been published.
+pub fn published_authority_cursor(db: &CompanyDb) -> Result<String, ContractError> {
+    Ok(published_registry(db)?
+        .map(|(_, cursor)| cursor)
+        .unwrap_or_default())
+}
+
 impl TrustState {
     pub fn is_steward(&self, key_hex: &str) -> bool {
         self.steward_keys.contains(key_hex)
+    }
+
+    /// Is what `key_hex` warranted in `authority_scope` withdrawn: the key is
+    /// revoked, or that one scope of it is?
+    pub fn is_revoked_in(&self, key_hex: &str, authority_scope: &str) -> bool {
+        self.is_revoked(key_hex)
+            || self
+                .scope_revocations
+                .iter()
+                .any(|revocation| revocation.covers(key_hex, authority_scope))
+    }
+
+    /// Every revocation this service holds, for its own reduction: it has
+    /// observed each one, whatever cursor space the revocation is numbered in.
+    pub fn observed_revocations(&self) -> Vec<Revocation> {
+        self.revocations
+            .iter()
+            .chain(self.scope_revocations.iter())
+            .cloned()
+            .map(|mut revocation| {
+                revocation.observed = true;
+                revocation
+            })
+            .collect()
     }
 
     /// Currently revoked: the newest revocation of the key is not followed

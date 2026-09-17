@@ -10,6 +10,9 @@ use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
 pub const MAX_HEADER_BYTES: usize = 16 * 1024;
+/// The longest request line accepted: a 2048-byte path plus method and
+/// version.
+pub const MAX_REQUEST_LINE_BYTES: usize = 2048 + 64;
 pub const MAX_BODY_BYTES: usize = 256 * 1024;
 pub const MAX_ERROR_BODY_BYTES: usize = 4096;
 pub const CONNECT_BUDGET: Duration = Duration::from_millis(250);
@@ -43,17 +46,56 @@ pub enum ReadError {
     Bad(u16, ContractError),
 }
 
+/// One line of at most `limit` bytes. The bound applies while reading: an
+/// unbounded `read_line` buffered whatever a client sent before any limit
+/// was checked. `Ok(None)` is end of stream; a line over the bound, or one
+/// that is not UTF-8, is `Err(true)` and `Err(false)` respectively.
+fn read_bounded_line(
+    reader: &mut BufReader<&TcpStream>,
+    limit: usize,
+) -> Result<Option<String>, bool> {
+    let mut bytes = Vec::new();
+    let read = reader
+        .by_ref()
+        .take(limit as u64 + 1)
+        .read_until(b'\n', &mut bytes)
+        .map_err(|_| false)?;
+    if read == 0 {
+        return Ok(None);
+    }
+    if bytes.len() > limit {
+        return Err(true);
+    }
+    String::from_utf8(bytes).map(Some).map_err(|_| false)
+}
+
+fn headers_too_large() -> ReadError {
+    ReadError::Bad(
+        431,
+        ContractError::limit(
+            "request headers exceed the 16 KiB bound",
+            serde_json::json!({"refused_count": 1, "omitted_count": 1}),
+        ),
+    )
+}
+
 /// Parse one request from a stream with bounded headers and body.
 pub fn read_request(stream: &TcpStream, body_limit: usize) -> Result<Request, ReadError> {
     let peer = stream.peer_addr().ok();
     let mut reader = BufReader::new(stream);
-    let mut request_line = String::new();
     let mut total = 0usize;
-    match reader.read_line(&mut request_line) {
-        Ok(0) => return Err(ReadError::Empty),
-        Ok(n) => total += n,
-        Err(_) => return Err(ReadError::Empty),
-    }
+    let request_line = match read_bounded_line(&mut reader, MAX_REQUEST_LINE_BYTES) {
+        Ok(Some(line)) => line,
+        Ok(None) => return Err(ReadError::Empty),
+        Err(true) => {
+            return Err(ReadError::Bad(
+                414,
+                ContractError::invariant("request line exceeds the 2 KiB bound"),
+            ));
+        }
+        Err(false) => return Err(ReadError::Empty),
+    };
+    total += request_line.len();
     let mut parts = request_line.split_whitespace();
     let method = parts.next().unwrap_or_default().to_owned();
     let path = parts.next().unwrap_or_default().to_owned();
@@ -72,25 +114,20 @@ pub fn read_request(stream: &TcpStream, body_limit: usize) -> Result<Request, Re
     }
     let mut headers = Vec::new();
     loop {
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => break,
-            Ok(n) => total += n,
-            Err(_) => {
+        let line = match read_bounded_line(&mut reader, MAX_HEADER_BYTES.saturating_sub(total)) {
+            Ok(Some(line)) => line,
+            Ok(None) => break,
+            Err(true) => return Err(headers_too_large()),
+            Err(false) => {
                 return Err(ReadError::Bad(
                     400,
                     ContractError::invariant("unreadable request headers"),
                 ));
             }
-        }
+        };
+        total += line.len();
         if total > MAX_HEADER_BYTES {
-            return Err(ReadError::Bad(
-                431,
-                ContractError::limit(
-                    "request headers exceed the 16 KiB bound",
-                    serde_json::json!({"refused_count": 1, "omitted_count": 1}),
-                ),
-            ));
+            return Err(headers_too_large());
         }
         let trimmed = line.trim_end_matches(['\r', '\n']);
         if trimmed.is_empty() {
@@ -228,14 +265,22 @@ pub fn respond(stream: &mut TcpStream, status: u16, body: &Value) -> std::io::Re
     stream.flush()
 }
 
+/// Cut `text` to at most `limit` bytes without splitting a character;
+/// `String::truncate` panics inside one, and messages carry client text.
+fn truncate_on_char_boundary(text: &mut String, limit: usize) {
+    if text.len() > limit {
+        let cut = (0..=limit)
+            .rev()
+            .find(|index| text.is_char_boundary(*index))
+            .unwrap_or(0);
+        text.truncate(cut);
+    }
+}
+
 pub fn error_body(error: &ContractError) -> Value {
     let mut compact = error.clone();
-    if compact.message.len() > 1024 {
-        compact.message.truncate(1024);
-    }
-    if compact.remediation.len() > 1024 {
-        compact.remediation.truncate(1024);
-    }
+    truncate_on_char_boundary(&mut compact.message, 1024);
+    truncate_on_char_boundary(&mut compact.remediation, 1024);
     // Structured detail is privacy-minimized by construction (counts, ids,
     // dispositions, digests); it stays in the body only while it is small,
     // so refusals such as a ceiling stop or a CLOCK_SKEW quarantine remain
@@ -432,4 +477,79 @@ pub fn request(
             .unwrap_or_else(|_| serde_json::from_slice(&raw).unwrap_or(Value::Null))
     };
     Ok(Response { status, body, raw })
+}
+
+#[cfg(test)]
+mod error_body_tests {
+    use super::*;
+
+    #[test]
+    fn a_long_multibyte_message_is_cut_on_a_character_boundary() {
+        let message = format!("digest algorithm {}", "\u{e9}".repeat(550));
+        assert!(!message.is_char_boundary(1024));
+        let error = ContractError::refused("CONFIG_INVARIANT", message, "\u{e9}".repeat(600));
+        let body = error_body(&error);
+        let text = body["error"]["message"].as_str().expect("message");
+        assert!(text.len() <= 1024);
+        assert!(text.starts_with("digest algorithm "));
+        assert!(
+            body["error"]["remediation"]
+                .as_str()
+                .expect("remediation")
+                .len()
+                <= 1024
+        );
+    }
+}
+
+#[cfg(test)]
+mod request_bound_tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    fn read_sent(bytes: Vec<u8>) -> Result<Request, ReadError> {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("address");
+        let writer = std::thread::spawn(move || {
+            let mut stream = TcpStream::connect(address).expect("connect");
+            // The server stops reading at the bound; a refused write is fine.
+            let _ = stream.write_all(&bytes);
+        });
+        let (stream, _) = listener.accept().expect("accept");
+        let result = read_request(&stream, MAX_BODY_BYTES);
+        drop(stream);
+        let _ = writer.join();
+        result
+    }
+
+    #[test]
+    fn an_overlong_request_line_is_refused_at_the_bound() {
+        let mut bytes = b"GET /".to_vec();
+        bytes.extend(std::iter::repeat_n(b'a', 4 * 1024 * 1024));
+        match read_sent(bytes) {
+            Err(ReadError::Bad(status, _)) => assert_eq!(status, 414),
+            other => panic!("expected 414, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_overlong_header_line_is_refused_at_the_bound() {
+        let mut bytes = b"GET / HTTP/1.1\r\nX-Long: ".to_vec();
+        bytes.extend(std::iter::repeat_n(b'b', 4 * 1024 * 1024));
+        match read_sent(bytes) {
+            Err(ReadError::Bad(status, _)) => assert_eq!(status, 431),
+            other => panic!("expected 431, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_ordinary_request_still_parses() {
+        let request = read_sent(
+            b"POST /facts?x=1 HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 2\r\n\r\n{}".to_vec(),
+        )
+        .expect("request");
+        assert_eq!(request.method, "POST");
+        assert_eq!(request.body, b"{}");
+        assert_eq!(request.header("host"), Some("127.0.0.1"));
+    }
 }

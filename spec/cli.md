@@ -268,6 +268,13 @@ may grow only through a new schema version.
 | 6 | declared dependency unavailable | retry only when `retryable=true` and within bound |
 | 70 | internal or acceptance-instrument failure | preserve evidence; no product pass |
 
+`hooks dispatch` answers a host, not a script, and hosts read exit 2 as an instruction
+to block: Claude Code refuses the tool call, or refuses to stop and runs the Stop hook
+again, so a user-action refusal inside a hook would stall or loop the session. When a
+host invokes it, `hooks dispatch` therefore reports every exit-2 refusal as exit 3,
+with the same `code`, `message` and `remediation` on stderr; no other exit changes, and
+the same refusal from an ordinary command still exits 2.
+
 | code | trigger | exit | retryable | example remediation |
 |---|---|---:|:---:|---|
 | `COMPANY_UNREACHABLE` | Company endpoint cannot answer within timeout | 6 or 3 on safe cached read | yes | Restore endpoint or continue with named facts withheld. |
@@ -282,7 +289,7 @@ may grow only through a new schema version.
 | `MANIFEST_HEAD_REGRESSION` | published reachable lineage lowers event count without rewrite event | 4 | no | Supply a maintainer-signed rollback/rewrite event or correct the publication. |
 | `LIMIT_EXCEEDED` | size/rate/cost ceiling would be crossed | 4 | conditional | Reduce one bounded input or obtain a new ratified run budget; never truncate silently. |
 | `APPROVAL_EXPIRED` | candidate/token expired before commit | 2 | no | Reissue the candidate and review its new exact bytes/digest. |
-| `APPROVAL_REPLAY` | consumed nonce is reused with nonmatching bytes/destination | 4 | no | Use the original receipt or create/review a new candidate. |
+| `APPROVAL_REPLAY` | consumed nonce is reused with nonmatching bytes/destination, or a registry document does not advance the published authority cursor | 4 | no | Use the original receipt or create/review a new candidate; publish a newly signed registry at a newer cursor. |
 | `AUTHORITY_WRONG_SCOPE` | signer does not own exact scope | 4 | no | Resolve the registered authority; role prestige cannot widen scope. |
 | `AUTHORITY_SCOPE_DENIED` | token lacks exact canonical authority scope | 4 | no | Issue a least-privilege exact-scope token; empty and wildcard-like sets grant nothing. |
 | `UNKNOWN_OWNER_UNRESOLVED` | no exact person/closing authority can be resolved | 3 | yes | Company steward repairs the registry entry before guidance is trusted. |
@@ -306,7 +313,7 @@ Common first-run failures are fixed, not guessed:
 | unreadable token or key file | exit 4 with exact path role, never file contents |
 | token/key mode broader than 0600 | exit 4; chmod remediation |
 | Company unreachable during repo init | exit 6; no certificate/root is cached from worktree bytes |
-| command outside a Git worktree | exit 2; ordinary non-repo Personal session may continue |
+| command outside a Git worktree | exit 2 (exit 3 from host `hooks dispatch`); ordinary non-repo Personal session may continue |
 | requested store uninitialized | exit 2 with exact `company init` or `repo init` command |
 | unwritable data root | exit 4 before partial schema creation |
 | malformed certificate/config | exit 5 and quarantine; no trust-on-first-use fallback |

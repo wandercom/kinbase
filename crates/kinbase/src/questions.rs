@@ -597,7 +597,7 @@ fn write_signed_outbox(
         .and_then(Value::as_str)
         .unwrap_or("question");
     let path = directory.join(format!("{question_id}.json"));
-    std::fs::write(&path, canonical_text(&document).as_bytes()).map_err(io_error)?;
+    std::fs::write(&path, crate::json::record_text(&document)?.as_bytes()).map_err(io_error)?;
     Ok(path)
 }
 
@@ -676,6 +676,31 @@ fn http_post(url: &str, body: &[u8]) -> Result<HttpReply, ContractError> {
     Ok(HttpReply {
         status,
         body: response[header_end + 4..].to_vec(),
+    })
+}
+
+/// Whether `answer` carries a valid signature by `public_key`. Signed answer
+/// documents are produced by both conventions: some legacy lifecycle writers
+/// keep `signer` outside the signed body, while the live helper includes it.
+/// Only a signature valid under one of those two exact canonical forms counts.
+pub(crate) fn answer_signature_valid(
+    answer: &Map<String, Value>,
+    public_key: &crate::crypto::PublicKey,
+) -> bool {
+    let Some(signature) = answer.get("signature").and_then(Value::as_str) else {
+        return false;
+    };
+    [false, true].into_iter().any(|remove_signer| {
+        let mut unsigned = answer.clone();
+        unsigned.remove("signature");
+        if remove_signer {
+            unsigned.remove("signer");
+        }
+        public_key.verify(
+            "answer",
+            canonical_bytes(&Value::Object(unsigned)).as_slice(),
+            signature,
+        )
     })
 }
 
@@ -781,22 +806,7 @@ fn answer(
         .and_then(Value::as_str)
         .unwrap_or_default();
     let public_key = crate::crypto::PublicKey::from_hex(public_key_text)?;
-    // Signed answer documents are produced by both conventions: some legacy
-    // lifecycle writers keep `signer` outside the signed body, while the live
-    // helper includes it. Accept only a signature valid under one of those two
-    // exact canonical forms.
-    let verify_form = |remove_signer: bool| -> bool {
-        let mut unsigned = Value::Object(map.clone());
-        if let Value::Object(unsigned_map) = &mut unsigned {
-            unsigned_map.remove("signature");
-            if remove_signer {
-                unsigned_map.remove("signer");
-            }
-        }
-        let unsigned_bytes = canonical_bytes(&unsigned);
-        public_key.verify("answer", unsigned_bytes.as_slice(), signature)
-    };
-    if !verify_form(false) && !verify_form(true) {
+    if !answer_signature_valid(&map, &public_key) {
         return Err(ContractError::new(
             "SIGNATURE_INVALID",
             "authority answer signature failed",
@@ -886,12 +896,27 @@ fn answer(
         "parents": parents,
         "answered_at": answered_at,
         "signer": signer,
-        "signature": signature
+        "signature": signature,
+        // The authority's own signed document, so a reader can re-check the
+        // answer the local fact event cites.
+        "signed_answer": Value::Object(map.clone())
     });
     append_company(&repo, "answers.jsonl", &answer_record)?;
+    // A later answer joins the group of the question's first answer, so it
+    // supersedes (or conflicts with) the earlier ones; an answer written
+    // before offline answers took the service's logical key sits under
+    // another key, where a correction under the new key never reached it.
+    let mut fact_question = question.clone();
+    if !prior_answers.is_empty() {
+        let company_root = crate::store::store_root(crate::StoreKind::Company, &repo);
+        let local_events = crate::store::read_events(&company_root).unwrap_or_default();
+        if let Some(key) = answer_chain_key(&prior_answers, &local_events) {
+            fact_question["logical_key"] = Value::String(key);
+        }
+    }
     let (fact_id, fact_event_id) = write_authority_fact(
         &repo,
-        &question,
+        &fact_question,
         answer_text,
         &answer_id,
         authority_id,
@@ -950,10 +975,64 @@ fn write_authority_fact(
     parents: &[String],
     superseded_events: &[String],
 ) -> Result<(String, String), ContractError> {
-    let fact_id = format!(
-        "fact_{:x}",
-        Sha256::digest(format!("{scope}\0{}", crate::scanner::squeeze(answer_text)).as_bytes())
-    );
+    let (private_path, _) = crate::crypto::ensure_keypair(crate::StoreKind::Company, repo)?;
+    let private_key =
+        crate::crypto::PrivateKey::load_or_generate(&private_path, "local Company answer key")?;
+    let event = authority_fact_event(
+        &private_key,
+        question,
+        answer_text,
+        answer_id,
+        authority_id,
+        scope,
+        answered_at,
+        parents,
+        superseded_events,
+    )?;
+    let root = crate::store::ensure_store_root(crate::StoreKind::Company, repo)?;
+    crate::store::write_content_addressed_event(&root, &event)?;
+    Ok((event.fact_id, event.event_id))
+}
+
+/// The logical key of a question's first recorded answer event, which every
+/// later answer to the question shares.
+pub(crate) fn answer_chain_key(prior_answers: &[Value], events: &[FactEvent]) -> Option<String> {
+    let first = prior_answers
+        .iter()
+        .find_map(|record| record.get("event_id").and_then(Value::as_str))?;
+    events
+        .iter()
+        .find(|event| event.event_id == first)
+        .map(|event| event.logical_key.clone())
+}
+
+/// The local Company fact event for an authority answer, signed by the local
+/// answer key and naming it, so the signature verifies; the authority's own
+/// signature is on the answer the event cites.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn authority_fact_event(
+    private_key: &crate::crypto::PrivateKey,
+    question: &Value,
+    answer_text: &str,
+    answer_id: &str,
+    authority_id: &str,
+    scope: &str,
+    answered_at: &str,
+    parents: &[String],
+    superseded_events: &[String],
+) -> Result<FactEvent, ContractError> {
+    // The same identities the Company service gives an admitted answer, so
+    // the offline answer groups with the Unknown it closes.
+    let fact_id = crate::model::fact_id("company", scope, answer_text);
+    let question_id = question
+        .get("question_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let logical_key = question
+        .get("logical_key")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .unwrap_or_else(|| crate::model::logical_key("company", scope, question_id));
     let event_id = format!(
         "event_{:x}",
         Sha256::digest(format!("{scope}\0{answer_text}\0{answer_id}").as_bytes())
@@ -961,13 +1040,13 @@ fn write_authority_fact(
     let asserted_at = answered_at.to_owned();
     let mut event = FactEvent {
         schema: crate::model::EVENT_SCHEMA.to_owned(),
-        event_id: event_id.clone(),
+        event_id,
         store_kind: "company".to_owned(),
         authority_id: authority_id.to_owned(),
         authority_scope: scope.to_owned(),
         repository_id: None,
-        fact_id: fact_id.clone(),
-        logical_key: format!("logical_{:x}", Sha256::digest(scope.as_bytes())),
+        fact_id,
+        logical_key,
         atom_kind: "decision".to_owned(),
         scope: scope.to_owned(),
         statement: answer_text.to_owned(),
@@ -1000,7 +1079,7 @@ fn write_authority_fact(
         authority_snapshot_cursor: "0".to_owned(),
         confidence: crate::model::Bp(9_800),
         unresolved_uncertainty: None,
-        signer: authority_id.to_owned(),
+        signer: String::new(),
         signature: String::new(),
         raw: None,
         standing: "authoritative".to_owned(),
@@ -1008,14 +1087,8 @@ fn write_authority_fact(
         governs_paths: Vec::new(),
         anchors: Vec::new(),
     };
-    let (private_path, _) = crate::crypto::ensure_keypair(crate::StoreKind::Company, repo)?;
-    let private_key =
-        crate::crypto::PrivateKey::load_or_generate(&private_path, "local Company answer key")?;
-    let unsigned = crate::store::event_canonical_text(&event);
-    event.signature = private_key.sign("fact-event", unsigned.as_bytes())?;
-    let root = crate::store::ensure_store_root(crate::StoreKind::Company, repo)?;
-    crate::store::write_content_addressed_event(&root, &event)?;
-    Ok((fact_id, event_id))
+    event.sign(private_key)?;
+    Ok(event)
 }
 
 fn close_unknown(repo: &Path, question: &Value, answer_id: &str) -> Result<String, ContractError> {

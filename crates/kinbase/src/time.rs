@@ -119,7 +119,7 @@ fn clock_offset_seconds() -> i64 {
         .unwrap_or(0)
 }
 
-fn proof_clock_instant() -> DateTime<Utc> {
+pub(crate) fn proof_clock_instant() -> DateTime<Utc> {
     let base = if let Some(pinned) = std::env::var_os("KINBASE_PROOF_CLOCK") {
         parse_rfc3339_millis(pinned.to_string_lossy().trim()).unwrap_or_else(|_| Utc::now())
     } else {
