@@ -2174,13 +2174,12 @@ fn personal_records_complete(name: &str) -> Result<Vec<Value>, ContractError> {
     crate::store::read_records_complete(crate::StoreKind::Personal, &repo, name)
 }
 
-/// The raw text a canonical record line carries for `field` = `value`, for a
-/// marker filter: only lines holding it are parsed.
-fn field_marker(field: &str, value: &str) -> String {
-    format!(
-        "\"{field}\":{}",
-        crate::json::jcs_text(&Value::String(value.to_owned()))
-    )
+/// The text a record line holding `value` carries, for a marker filter:
+/// only lines holding it are parsed, and the exact filter runs on the record.
+/// The value alone, not `"key":value`, so a record written with other
+/// spacing still matches.
+fn value_marker(value: &str) -> String {
+    crate::json::jcs_text(&Value::String(value.to_owned()))
 }
 
 /// `personal_records_complete` for the lines holding `marker`, read by
@@ -2471,10 +2470,7 @@ fn finalize_principal_receipt(base: &Value, saga: &Value) -> Result<Value, Contr
     let repo_root = repo()?;
     let already = personal_records_complete_marked(
         "proposal-decisions.jsonl",
-        &field_marker(
-            "candidate_id",
-            crate::json::get_str(&receipt, "candidate_id").unwrap_or_default(),
-        ),
+        &value_marker(crate::json::get_str(&receipt, "candidate_id").unwrap_or_default()),
     )?
     .into_iter()
     .any(|record| {
@@ -3115,7 +3111,7 @@ fn committed_siblings(record: &Value) -> Result<Vec<Value>, ContractError> {
     let message_id = crate::json::get_str(record, "message_id").unwrap_or_default();
     let session_id = crate::json::get_str(record, "session_id").unwrap_or_default();
     let candidate_id = crate::json::get_str(record, "candidate_id").unwrap_or_default();
-    let message_marker = field_marker("message_id", message_id);
+    let message_marker = value_marker(message_id);
     let siblings: Vec<Value> = personal_records_where("candidates.jsonl", |line| {
         crate::store::bytes_contain(line, message_marker.as_bytes())
     })
@@ -3131,7 +3127,7 @@ fn committed_siblings(record: &Value) -> Result<Vec<Value>, ContractError> {
     let sibling_markers: Vec<String> = siblings
         .iter()
         .filter_map(|sibling| crate::json::get_str(sibling, "candidate_id"))
-        .map(|id| field_marker("candidate_id", id))
+        .map(value_marker)
         .collect();
     let decisions = if sibling_markers.is_empty() {
         Vec::new()
@@ -4201,17 +4197,16 @@ fn admit_candidate(
     }
     // The Stop path admits every automatic candidate; each reads only its
     // own receipts rather than the whole decision ledger.
-    if let Some(previous) = personal_records_complete_marked(
-        "proposal-decisions.jsonl",
-        &field_marker("candidate_id", candidate),
-    )?
-    .into_iter()
-    .rev()
-    .find(|receipt| {
-        crate::json::get_str(receipt, "candidate_id") == Some(candidate)
-            && crate::json::get_str(receipt, "destination") == Some(destination)
-            && crate::json::get_str(receipt, "digest") == Some(digest.as_str())
-    }) && matches!(decision_state(&previous), "committed" | "refused")
+    if let Some(previous) =
+        personal_records_complete_marked("proposal-decisions.jsonl", &value_marker(candidate))?
+            .into_iter()
+            .rev()
+            .find(|receipt| {
+                crate::json::get_str(receipt, "candidate_id") == Some(candidate)
+                    && crate::json::get_str(receipt, "destination") == Some(destination)
+                    && crate::json::get_str(receipt, "digest") == Some(digest.as_str())
+            })
+        && matches!(decision_state(&previous), "committed" | "refused")
     {
         // Acting on a found receipt: make sure it is on disk first.
         crate::store::sync_record(

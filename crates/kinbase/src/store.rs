@@ -89,9 +89,11 @@ pub fn read_records_complete(
 
 /// `read_records_complete` for the lines `keep` accepts, read by stream: one
 /// candidate's receipts out of every candidate's. A line `keep` passes over
-/// is not parsed, but it must still be a whole record (UTF-8, one object from
-/// brace to brace); a torn or foreign line may be the very record the caller
-/// is looking for, and refuses the decision as an unreadable kept line does.
+/// is still parsed (and dropped, so nothing is materialised): one that is
+/// not a JSON object may be the very record the caller is looking for, and
+/// refuses the decision as an unreadable kept line does. Callers keep lines
+/// by the value they look for, not a `"key":value` spelling, so a record
+/// written with other spacing is still found.
 pub fn read_records_complete_where(
     store: crate::StoreKind,
     repo: &Path,
@@ -191,10 +193,9 @@ fn read_jsonl_counted(
     read_jsonl_counted_checked(path, keep, false)
 }
 
-/// Whether a line is shaped like one whole canonical record, without
-/// parsing it.
-fn looks_whole(line: &[u8]) -> bool {
-    std::str::from_utf8(line).is_ok() && line.first() == Some(&b'{') && line.last() == Some(&b'}')
+/// Whether a line is one JSON object, parsed without keeping it.
+fn is_json_object(line: &[u8]) -> bool {
+    line.first() == Some(&b'{') && serde_json::from_slice::<serde::de::IgnoredAny>(line).is_ok()
 }
 
 fn read_jsonl_counted_checked(
@@ -236,7 +237,7 @@ fn read_jsonl_counted_checked(
             continue;
         }
         if !keep(line) {
-            if check_unkept && !looks_whole(line) {
+            if check_unkept && !is_json_object(line) {
                 skipped.push(position, line.len(), "not a whole record");
             }
             continue;
@@ -267,7 +268,24 @@ struct LineIndex {
     device: u64,
     inode: u64,
     length: u64,
+    /// Change time when `length` was last read up to, and the bytes just
+    /// before it: a rewrite in place keeps the inode (and may keep the
+    /// length), and only these tell it from another writer's append.
+    changed: (i64, i64),
+    tail: Vec<u8>,
     lines: HashSet<[u8; 32]>,
+}
+
+/// The bytes a line index remembers from the end of what it has read.
+const INDEX_TAIL_BYTES: u64 = 64;
+
+fn read_tail(file: &fs::File, length: u64) -> Vec<u8> {
+    let start = length.saturating_sub(INDEX_TAIL_BYTES);
+    let mut tail = vec![0u8; (length - start) as usize];
+    if file.read_exact_at(&mut tail, start).is_err() {
+        tail.clear();
+    }
+    tail
 }
 
 fn line_indexes() -> &'static Mutex<HashMap<std::path::PathBuf, LineIndex>> {
@@ -276,33 +294,33 @@ fn line_indexes() -> &'static Mutex<HashMap<std::path::PathBuf, LineIndex>> {
 }
 
 /// Whether `canonical` already appears as a whole line of the ledger open
-/// (and exclusively locked) as `file`. A ledger replaced or truncated since
-/// the index was built is read again from the start.
+/// (and exclusively locked) as `file`. Anything but an append since the
+/// index was built (a replacement, a truncation, a rewrite in place) reads
+/// the ledger again from the start.
 fn line_present(file: &fs::File, path: &Path, canonical: &[u8]) -> Result<bool, ContractError> {
     let metadata = file
         .metadata()
         .map_err(|error| ContractError::io("inspect JSONL", error))?;
+    let changed = (metadata.ctime(), metadata.ctime_nsec());
+    let fresh = || LineIndex {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        length: 0,
+        changed: (0, 0),
+        tail: Vec::new(),
+        lines: HashSet::new(),
+    };
     let mut indexes = line_indexes()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let index = indexes
-        .entry(path.to_path_buf())
-        .or_insert_with(|| LineIndex {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            length: 0,
-            lines: HashSet::new(),
-        });
-    if index.device != metadata.dev()
+    let index = indexes.entry(path.to_path_buf()).or_insert_with(fresh);
+    let rewritten = index.device != metadata.dev()
         || index.inode != metadata.ino()
         || index.length > metadata.len()
-    {
-        *index = LineIndex {
-            device: metadata.dev(),
-            inode: metadata.ino(),
-            length: 0,
-            lines: HashSet::new(),
-        };
+        || (index.length == metadata.len() && index.changed != changed)
+        || (index.length < metadata.len() && read_tail(file, index.length) != index.tail);
+    if rewritten {
+        *index = fresh();
     }
     if index.length < metadata.len() {
         let mut reader = std::io::BufReader::new(file);
@@ -324,19 +342,26 @@ fn line_present(file: &fs::File, path: &Path, canonical: &[u8]) -> Result<bool, 
                 .insert(crate::hash::sha256_raw(trim_line(&buffer)));
         }
         index.length = metadata.len();
+        index.tail = read_tail(file, index.length);
     }
+    index.changed = changed;
     Ok(index.lines.contains(&crate::hash::sha256_raw(canonical)))
 }
 
-/// Record a line this process just appended, so the next append need not
-/// read it back.
-fn line_appended(path: &Path, canonical: &[u8], length: u64) {
+/// Record a line this process just appended (still holding the ledger's
+/// lock), so the next append need not read it back.
+fn line_appended(file: &fs::File, path: &Path, canonical: &[u8]) {
+    let Ok(metadata) = file.metadata() else {
+        return;
+    };
     let mut indexes = line_indexes()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(index) = indexes.get_mut(path) {
         index.lines.insert(crate::hash::sha256_raw(canonical));
-        index.length = length;
+        index.length = metadata.len();
+        index.changed = (metadata.ctime(), metadata.ctime_nsec());
+        index.tail = read_tail(file, index.length);
     }
 }
 
@@ -416,7 +441,7 @@ fn append_jsonl_with(path: &Path, value: &Value, durable: bool) -> Result<(), Co
     line.push(b'\n');
     file.write_all(&line)
         .map_err(|error| ContractError::io("write JSONL", error))?;
-    line_appended(path, canonical.as_bytes(), length + line.len() as u64);
+    line_appended(&file, path, canonical.as_bytes());
     if durable {
         sync_ledger(&file, path)?;
     }
@@ -696,6 +721,66 @@ mod append_tests {
             complete,
             vec![json!({"candidate_id": "a", "state": "committed"})]
         );
+    }
+
+    #[test]
+    fn a_complete_read_finds_a_spaced_record_and_refuses_braced_garbage() {
+        let repo = tempfile::tempdir().expect("repo");
+        let root = ensure_store_root(crate::StoreKind::Codebase, repo.path()).expect("root");
+        let value = b"\"a\"";
+        let keep = |line: &[u8]| bytes_contain(line, value);
+        fs::write(
+            root.join("decisions.jsonl"),
+            b"{\"candidate_id\": \"a\", \"state\": \"committed\"}\n{\"candidate_id\":\"b\"}\n",
+        )
+        .expect("ledger");
+        let found = read_records_complete_where(
+            crate::StoreKind::Codebase,
+            repo.path(),
+            "decisions.jsonl",
+            keep,
+        )
+        .expect("read");
+        assert_eq!(
+            found,
+            vec![json!({"candidate_id": "a", "state": "committed"})]
+        );
+
+        fs::write(
+            root.join("decisions.jsonl"),
+            b"{\"candidate_id\":\"b\"}\n{garbage that is braced}\n",
+        )
+        .expect("ledger");
+        let error = read_records_complete_where(
+            crate::StoreKind::Codebase,
+            repo.path(),
+            "decisions.jsonl",
+            keep,
+        )
+        .expect_err("a malformed row refuses");
+        assert_eq!(error.code, "DIGEST_MISMATCH");
+    }
+
+    #[test]
+    fn a_rewrite_in_place_is_indexed_again() {
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("records.jsonl");
+        append_jsonl(&path, &json!({"n": 1})).expect("append");
+        append_jsonl(&path, &json!({"n": 2})).expect("append");
+        // Same inode, same length: {"n":2} becomes {"n":3}.
+        let file = fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("open");
+        file.write_all_at(b"{\"n\":3}\n", 8).expect("rewrite");
+        drop(file);
+        append_jsonl(&path, &json!({"n": 2})).expect("restored");
+        assert_eq!(lines(&path), ["{\"n\":1}", "{\"n\":3}", "{\"n\":2}"]);
+
+        // A rewrite that also grows the file is not taken for an append.
+        fs::write(&path, b"{\"n\":9}\n{\"n\":8}\n{\"n\":7}\n{\"n\":6}\n").expect("grow");
+        append_jsonl(&path, &json!({"n": 1})).expect("restored");
+        assert_eq!(lines(&path).last().map(String::as_str), Some("{\"n\":1}"));
     }
 
     #[test]

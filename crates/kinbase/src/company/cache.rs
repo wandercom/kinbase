@@ -25,6 +25,10 @@ pub struct Cache {
     pub state: CacheState,
 }
 
+/// Meta key prefix for a certificate a Company snapshot published for a UUID
+/// already pinned to another.
+const SNAPSHOT_CLAIM_PREFIX: &str = "certificate_snapshot_claim:";
+
 fn sqlite_error(context: &str) -> impl Fn(rusqlite::Error) -> ContractError + '_ {
     move |error| ContractError::internal(format!("{context}: {error}"))
 }
@@ -247,9 +251,11 @@ impl Cache {
             if let Some(uuid) = crate::json::get_str(&certificate, "repository_uuid") {
                 let document = super::db::signed_certificate(&certificate);
                 let digest = crate::json::digest(&document);
-                // The index never repins: a snapshot naming a different
-                // certificate for a pinned UUID is recorded as the same
-                // identity conflict an install records, and the pin stays.
+                // The index never repins. A snapshot naming a different
+                // certificate for a pinned UUID is the Company publishing a
+                // second binding: it is kept as a claim of its own, so the
+                // binding reads as ambiguous and nothing is trusted until the
+                // steward retires one (architecture §2).
                 let pinned: Option<String> = self
                     .connection()?
                     .query_row(
@@ -261,7 +267,7 @@ impl Cache {
                     .map_err(sqlite_error("certificate lookup"))?;
                 match pinned {
                     Some(pinned) if pinned != digest => {
-                        self.set_meta(&format!("certificate_identity_conflict:{uuid}"), &digest)?;
+                        self.set_meta(&format!("{SNAPSHOT_CLAIM_PREFIX}{uuid}"), &digest)?;
                         crate::output::diagnostic(
                             "certificate-pin-conflict",
                             json!({"repository_uuid": uuid, "pinned_digest": pinned, "offered_digest": digest}),
@@ -517,6 +523,14 @@ impl Cache {
                     }));
                 }
             }
+        }
+        if let Some(digest) = self.meta(&format!("{SNAPSHOT_CLAIM_PREFIX}{repository_uuid}")) {
+            claims.push(json!({
+                "source": "snapshot",
+                "path": CACHE_FILE,
+                "digest": digest,
+                "issued_at": Value::Null
+            }));
         }
         if let Some(connection) = self.connection.as_ref() {
             let indexed: Option<(String, String)> = connection
@@ -1082,6 +1096,13 @@ mod snapshot_guard_tests {
             )
             .expect("second");
         assert_eq!(indexed_digest(&cache), pinned);
-        assert!(cache.meta("certificate_identity_conflict:repo-1").is_some());
+        // The second binding is a claim of its own: the binding is ambiguous.
+        let claims = cache.certificate_claims("repo-1").expect("claims");
+        let digests: std::collections::BTreeSet<&str> = claims
+            .iter()
+            .filter_map(|claim| crate::json::get_str(claim, "digest"))
+            .collect();
+        assert_eq!(digests.len(), 2, "{claims:?}");
+        assert!(claims.iter().any(|claim| claim["source"] == "snapshot"));
     }
 }
