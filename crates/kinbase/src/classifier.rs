@@ -1180,7 +1180,8 @@ fn atom_from_observation_base(map: &Map<String, Value>, text: &str, confidence: 
         .and_then(Value::as_str)
         .unwrap_or("unscoped");
     let scan: ScanResult = scanner(text);
-    let hard_block = scan.taints.iter().any(|taint| taint.hard_block());
+    // `hard_block`, not the taints: a scanner error sets it with no taints.
+    let hard_block = scan.hard_block;
     let mut taints: Vec<String> = scan
         .taints
         .iter()

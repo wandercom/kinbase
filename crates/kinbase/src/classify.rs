@@ -1,5 +1,5 @@
 use crate::model::Atom;
-use crate::scanner::{ScanResult, Taint, scanner};
+use crate::scanner::{Registry, ScanResult, Taint, scanner_with};
 use sha2::{Digest, Sha256};
 
 pub const EXTRACTION_VERSION: &str = "kinbase-extract/1";
@@ -34,9 +34,13 @@ pub fn atomize(
     observation_id: &str,
     source_digest: &str,
     repository_id: Option<&str>,
+    registry: &Registry,
 ) -> Atom {
-    let scan: ScanResult = scanner(statement);
-    let hard_block = scan.taints.iter().any(|taint| taint.hard_block());
+    // The user's registered canaries and identifiers (a guest's name, say)
+    // are part of the scan; the format detectors alone do not know them.
+    let scan: ScanResult = scanner_with(statement, registry);
+    // `hard_block`, not the taints: a scanner error sets it with no taints.
+    let hard_block = scan.hard_block;
     let mut taints: Vec<String> = scan
         .taints
         .iter()

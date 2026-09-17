@@ -520,7 +520,11 @@ fn credential_formats(view: &str, family: &str, findings: &mut Vec<Finding>) {
     if view.contains("-----BEGIN") && view.contains("PRIVATE KEY-----") {
         add(findings, "private-key-block", family, Taint::Secret);
     }
-    let lower = view.to_lowercase();
+    // ASCII lowering keeps every byte offset, so an index found in `lower` is
+    // a char boundary in `view`. Unicode lowering can change a character's
+    // length ("İ" gains a byte), and slicing `view` there panicked, which the
+    // scanner turned into an error that a caller then read as clean.
+    let lower = view.to_ascii_lowercase();
     if let Some(index) = lower.find("bearer ") {
         let rest = &view[index + 7..];
         let token: String = rest.chars().take_while(|c| !c.is_whitespace()).collect();
@@ -692,7 +696,14 @@ pub fn hard_blocked(text: &str) -> bool {
 }
 
 pub fn scanner(text: &str) -> ScanResult {
-    scan(text, &Registry::default()).unwrap_or_else(|_| ScanResult {
+    scanner_with(text, &Registry::default())
+}
+
+/// Scan against a registry, failing closed: a detector error is a result
+/// whose `hard_block` is true. Callers decide on `hard_block`, never on
+/// `taints`, which an error leaves empty.
+pub fn scanner_with(text: &str, registry: &Registry) -> ScanResult {
+    scan(text, registry).unwrap_or_else(|_| ScanResult {
         scanner_version: SCANNER_VERSION.to_owned(),
         hard_block: true,
         taints: Vec::new(),

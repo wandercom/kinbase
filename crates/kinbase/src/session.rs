@@ -113,6 +113,11 @@ pub fn observe(
     json: bool,
 ) -> Result<(), ContractError> {
     ensure_session_record(session)?;
+    // Loaded before anything is scanned: the scan needs the user's registered
+    // canaries and identifiers, and a registry that cannot be read stops the
+    // observation before any record is written.
+    let launcher = crate::launcher::Launcher::load()?;
+    let registry = launcher.scanner_registry()?;
     let bytes = std::fs::read(event).map_err(io_error)?;
     let parsed_records = parse_session_corpus(&bytes)?;
     if parsed_records.len() > SESSION_OBSERVATION_LIMIT {
@@ -236,6 +241,7 @@ pub fn observe(
                     &observation.observation_id,
                     &observation.content_digest,
                     repository_id.as_deref(),
+                    &registry,
                 )?);
             }
         }
@@ -256,6 +262,7 @@ pub fn observe(
                     &observation.observation_id,
                     &observation.content_digest,
                     repository_id.as_deref(),
+                    &registry,
                 );
                 atom.proposed_destinations = vec!["none".to_owned()];
                 atom.eligible_destinations = Vec::new();
@@ -274,6 +281,7 @@ pub fn observe(
                     &observation.observation_id,
                     &observation.content_digest,
                     repository_id.as_deref(),
+                    &registry,
                 ));
             }
         }
@@ -299,15 +307,18 @@ pub fn observe(
                 } else {
                     destination
                 };
-                let candidate = build_candidate(
+                // Nothing is left to share once de-identification removed
+                // every word.
+                if let Some(candidate) = build_candidate(
                     session,
                     &destination,
                     &atom,
                     native_id,
                     principal_id,
                     host_instance_id,
-                )?;
-                candidate_records.push(candidate);
+                )? {
+                    candidate_records.push(candidate);
+                }
             }
             atom_records.push(
                 serde_json::to_value(&atom)
@@ -331,7 +342,6 @@ pub fn observe(
         append_personal("candidates.jsonl", candidate)?;
     }
 
-    let launcher = crate::launcher::Launcher::load()?;
     let mut admissions = Vec::new();
     let mut questions = BTreeSet::new();
     for atom in &atom_records {
@@ -1093,6 +1103,7 @@ pub(crate) fn atom_from_classifier(
     observation_id: &str,
     content_digest: &str,
     repository_id: Option<&str>,
+    registry: &crate::scanner::Registry,
 ) -> Result<crate::model::Atom, ContractError> {
     let text = external
         .get("text")
@@ -1122,6 +1133,7 @@ pub(crate) fn atom_from_classifier(
         observation_id,
         content_digest,
         repository_id,
+        registry,
     );
     if let Some(value) = external.get("atom_id").and_then(Value::as_str) {
         atom.atom_id = value.to_owned();
@@ -1305,7 +1317,7 @@ fn build_candidate(
     message_id: &str,
     principal_id: &str,
     host_instance_id: &str,
-) -> Result<Value, ContractError> {
+) -> Result<Option<Value>, ContractError> {
     let store = destination_store(destination)?;
     // Shared admissions are minimized and de-identified. Opaque private
     // codes and the bookkeeping notes that carry them stay in the private
@@ -1315,6 +1327,9 @@ fn build_candidate(
     } else {
         deidentify_statement(&atom.statement)
     };
+    if statement.is_empty() {
+        return Ok(None);
+    }
     let payload = json!({
         "destination": destination,
         "atom_kind": atom.atom_kind,
@@ -1349,7 +1364,7 @@ fn build_candidate(
         "hard_block_respected": true,
         "deidentified_tokens": removed
     });
-    Ok(record)
+    Ok(Some(record))
 }
 
 /// Remove opaque identifiers (long hex, base64-like, or digit-dense tokens)
@@ -1414,12 +1429,10 @@ pub(crate) fn deidentify_statement(statement: &str) -> (String, usize) {
         }
         sentences.push(text);
     }
-    let minimized = sentences.join(" ").trim().to_owned();
-    if minimized.is_empty() {
-        (statement.to_owned(), 0)
-    } else {
-        (minimized, removed)
-    }
+    // A statement made only of opaque codes minimizes to nothing. Returning
+    // the original there, as this once did, shared exactly the code the pass
+    // exists to remove; callers treat an empty result as nothing to share.
+    (sentences.join(" ").trim().to_owned(), removed)
 }
 
 /// Sentence split that keeps terminators and never breaks inside a token.
@@ -1716,6 +1729,15 @@ mod tests {
         assert_eq!(deidentify_statement(statement), (statement.to_owned(), 0));
         let version = "We pinned requests to 2.31 because 2.32 broke the proxy handling.";
         assert_eq!(deidentify_statement(version), (version.to_owned(), 0));
+    }
+
+    #[test]
+    fn a_statement_of_only_codes_minimizes_to_nothing() {
+        assert_eq!(
+            deidentify_statement("kx0a1b2c3d4e5f6a7b8c9d0e1f"),
+            (String::new(), 1)
+        );
+        assert_eq!(deidentify_statement(""), (String::new(), 0));
     }
 }
 
