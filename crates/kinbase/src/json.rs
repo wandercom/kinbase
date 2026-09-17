@@ -376,6 +376,21 @@ pub fn parse_strict_object(bytes: &[u8]) -> Result<Map<String, Value>, String> {
     }
 }
 
+/// A user's own JSON document (a host settings file): one value with no
+/// duplicate keys, kept exactly as written. Durable-record rules (no floats,
+/// no control characters) do not apply to it.
+pub fn parse_user_document(bytes: &[u8]) -> Result<Value, String> {
+    let text = std::str::from_utf8(bytes).map_err(|error| format!("invalid UTF-8: {error}"))?;
+    reject_duplicate_keys(text)?;
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    let value =
+        Value::deserialize(&mut deserializer).map_err(|error| format!("invalid JSON: {error}"))?;
+    deserializer
+        .end()
+        .map_err(|error| format!("trailing JSON input: {error}"))?;
+    Ok(value)
+}
+
 pub fn parse_strict_value(bytes: &[u8]) -> Result<Value, String> {
     let text = std::str::from_utf8(bytes).map_err(|error| format!("invalid UTF-8: {error}"))?;
     reject_duplicate_keys(text)?;

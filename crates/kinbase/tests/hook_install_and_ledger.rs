@@ -344,6 +344,27 @@ fn host_world(temp: &TempDir) -> HostWorld {
     }
 }
 
+/// The first observation row with `identity`, once a detached worker has
+/// written it.
+fn wait_for_observation(personal: &Path, identity: &str) -> Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        if let Ok(text) = fs::read_to_string(personal.join("observations.jsonl"))
+            && let Some(row) = text
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .find(|row| row["source_identity"] == identity)
+        {
+            return row;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no observation with {identity} was written"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 fn dispatch(world: &HostWorld, event: &str, stdin: &[u8], json: bool) -> std::process::Output {
     use std::io::Write as _;
     let mut args = vec!["hooks", "dispatch", "claude", event];
@@ -417,9 +438,10 @@ fn dispatch_accepts_host_envelopes_with_control_characters_and_floats() {
         );
     }
 
-    // UserPromptSubmit in the host's non-JSON mode, with the event id that
-    // lets the observation path run: the stored prompt is the folded text and
-    // its digest names that text.
+    // UserPromptSubmit in the host's non-JSON mode: the prompt goes to the
+    // session's classification worker, whose observation carries the
+    // session's identity; the stored prompt is the folded text and its digest
+    // names that text. With nothing to add, the host gets no output.
     let raw_prompt = "first line\nsecond \u{202e}line";
     let mut prompt = base.clone();
     prompt["hook_event_name"] = json!("UserPromptSubmit");
@@ -431,12 +453,8 @@ fn dispatch_accepts_host_envelopes_with_control_characters_and_floats() {
         "UserPromptSubmit refused: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(!output.stdout.is_empty(), "host mode still emits the stream");
-    let observations = fs::read_to_string(world.personal.join("observations.jsonl"))
-        .expect("hook observation written");
-    let observation: Value =
-        serde_json::from_str(observations.lines().next().expect("one row")).expect("row JSON");
-    assert_eq!(observation["source_identity"], "hook:UserPromptSubmit");
+    assert!(output.stdout.is_empty(), "no evidence, no context noise: {:?}", output.stdout);
+    let observation = wait_for_observation(&world.personal, "session:host-session-1");
     let folded = kinbase::json::fold_to_canonical_text(raw_prompt);
     assert_eq!(
         observation["content_digest"],

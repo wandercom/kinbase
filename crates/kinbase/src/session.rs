@@ -35,12 +35,150 @@ pub fn start(repo: &Path, host: crate::HostKind, json: bool) -> Result<(), Contr
     Ok(())
 }
 
+/// Directory under the Personal root where a host prompt waits for its
+/// detached `session observe` worker; the worker removes the file.
+pub const PENDING_OBSERVATIONS: &str = "pending-observations";
+
+pub fn pending_observations_dir(repo: &Path) -> std::path::PathBuf {
+    crate::store::store_root(crate::StoreKind::Personal, repo).join(PENDING_OBSERVATIONS)
+}
+
+/// Hand a host prompt to the session it belongs to, classified off the host's
+/// response path (architecture §9). The prompt goes to a private file that a
+/// detached `session observe` worker reads, classifies and removes, so the
+/// observation and its atoms carry `session:<id>` and the session's Stop
+/// finds them; a prompt recorded only as `hook:UserPromptSubmit` was never
+/// counted or classified. Without a session id, or if the worker cannot be
+/// started, the prompt's minimized observation is recorded here instead.
+pub fn queue_hook_observation(
+    host: &str,
+    map: &Map<String, Value>,
+) -> Result<Option<String>, ContractError> {
+    let session = map
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty());
+    let prompt = map
+        .get("prompt")
+        .or_else(|| map.get("text"))
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty());
+    let (Some(session), Some(prompt)) = (session, prompt) else {
+        return record_hook_observation(host, map);
+    };
+    // The host sends no event id with a prompt; one is derived from the
+    // session and the text, so a repeated delivery names the same event.
+    let event_id = map
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "prompt_{}",
+                &sha256_text(&format!("{session}\0{prompt}"))[..24]
+            )
+        });
+    let observed_at = map
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(|value| parse_rfc3339_millis(value).ok())
+        .map(format_rfc3339_millis)
+        .unwrap_or_else(now_rfc3339_millis);
+    let record = json!({
+        "id": event_id,
+        "role": "user",
+        "text": prompt,
+        "observed_at": observed_at,
+        "source_kind": if host == "claude" { "claude_jsonl" } else { "codex_jsonl" }
+    });
+    let repo = std::env::current_dir().map_err(io_error)?;
+    let directory = pending_observations_dir(&repo);
+    crate::paths::ensure_private_dir(&directory, "pending observations")?;
+    let file = directory.join(format!("{}.jsonl", &crate::crypto::random_token()[..24]));
+    let mut line = crate::json::jcs_text(&record);
+    line.push('\n');
+    write_new_private_file(&file, line.as_bytes())?;
+    if spawn_observe_worker(session, &file, &repo) {
+        return Ok(Some(event_id));
+    }
+    let _ = std::fs::remove_file(&file);
+    let mut fallback = map.clone();
+    fallback.insert("id".to_owned(), Value::String(event_id));
+    record_hook_observation_as(host, &fallback, Some(session))
+}
+
+fn write_new_private_file(path: &Path, bytes: &[u8]) -> Result<(), ContractError> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(io_error)?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(io_error)
+}
+
+fn spawn_observe_worker(session: &str, event: &Path, repo: &Path) -> bool {
+    use std::os::unix::process::CommandExt;
+    let Ok(program) = std::env::current_exe() else {
+        return false;
+    };
+    std::process::Command::new(program)
+        .args([
+            "session",
+            "observe",
+            session,
+            "--consume",
+            "--json",
+            "--event",
+        ])
+        .arg(event)
+        .current_dir(repo)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .is_ok()
+}
+
+/// Remove an event file a hook queued, once its worker has read it. Only a
+/// file inside the pending directory is ever removed.
+pub fn consume_pending_event(event: &Path) {
+    let Ok(repo) = std::env::current_dir() else {
+        return;
+    };
+    let directory = pending_observations_dir(&repo);
+    let inside = match (
+        event.parent().map(std::fs::canonicalize),
+        std::fs::canonicalize(&directory),
+    ) {
+        (Some(Ok(parent)), Ok(directory)) => parent == directory,
+        _ => false,
+    };
+    if inside {
+        let _ = std::fs::remove_file(event);
+    }
+}
+
 /// Record the privacy-minimized observation identity of a host prompt. The
 /// body itself is not copied into the observation record; only its digest is
 /// retained for reset authorization.
 pub fn record_hook_observation(
     host: &str,
     map: &Map<String, Value>,
+) -> Result<Option<String>, ContractError> {
+    record_hook_observation_as(host, map, None)
+}
+
+fn record_hook_observation_as(
+    host: &str,
+    map: &Map<String, Value>,
+    session: Option<&str>,
 ) -> Result<Option<String>, ContractError> {
     let Some(event_id) = map
         .get("id")
@@ -71,7 +209,9 @@ pub fn record_hook_observation(
     let observation = Observation {
         observation_id: format!(
             "obs_{:x}",
-            Sha256::digest(format!("hook\0{event_id}\0{digest}").as_bytes())
+            Sha256::digest(
+                format!("{}\0{event_id}\0{digest}", session.unwrap_or("hook")).as_bytes()
+            )
         ),
         source_kind: if host == "claude" {
             "claude_jsonl"
@@ -79,7 +219,9 @@ pub fn record_hook_observation(
             "codex_jsonl"
         }
         .to_owned(),
-        source_identity: "hook:UserPromptSubmit".to_owned(),
+        source_identity: session
+            .map(|session| format!("session:{session}"))
+            .unwrap_or_else(|| "hook:UserPromptSubmit".to_owned()),
         native_id: event_id.to_owned(),
         content_digest: digest.clone(),
         repository_id: crate::repository::repository_id(&repo).ok(),
