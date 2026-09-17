@@ -3999,7 +3999,10 @@ pub fn doctor(
     } else {
         crate::private::PrivateStore::open_memory("core")?
     };
-    let sweep = core.sweep(&now)?;
+    // A diagnostic changes nothing: it reports what is due, and the session
+    // write path (Stop's checkpoint) applies it. Doctor used to expire
+    // candidates, mark delivery loss and delete bodies on its own clock.
+    let sweep = core.sweep_due(&now)?;
     // C9: doctor reports HOOK_APPROVAL_REQUIRED for every host whose
     // user-level config lacks the planned entries. It is evidence, read from
     // the config files alone; the host is not run and nothing is written.

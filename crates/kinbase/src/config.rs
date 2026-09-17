@@ -113,7 +113,11 @@ pub struct SharedConfig {
     pub classifier: Option<SharedClassifier>,
     pub hosts: SharedHosts,
     pub canary_digests: Vec<String>,
-    pub forbidden_identifiers: Vec<String>,
+    /// Digests, like the canaries': a shared process holds no raw registered
+    /// value.
+    pub forbidden_identifier_digests: Vec<String>,
+    /// The word counts registered values span (see `scanner::Registry`).
+    pub registry_digest_word_counts: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -649,17 +653,26 @@ impl UserConfig {
                 })
             }
         };
-        let canary_digests = match &self.scanner.canary_file {
+        let canaries = match &self.scanner.canary_file {
             None => Vec::new(),
-            Some(path) => load_registry_lines(path, "canary registry")?
-                .into_iter()
-                .map(|value| crate::scanner::canary_digest(&value))
-                .collect(),
+            Some(path) => load_registry_lines(path, "canary registry")?,
         };
         let forbidden_identifiers = match &self.scanner.forbidden_identifier_file {
             None => Vec::new(),
             Some(path) => load_registry_lines(path, "forbidden identifier registry")?,
         };
+        let registry_digest_word_counts =
+            crate::scanner::registered_word_counts(canaries.iter().chain(&forbidden_identifiers))
+                .into_iter()
+                .collect();
+        let canary_digests = canaries
+            .iter()
+            .map(|value| crate::scanner::canary_digest(value))
+            .collect();
+        let forbidden_identifier_digests = forbidden_identifiers
+            .iter()
+            .map(|value| crate::scanner::identifier_digest(value))
+            .collect();
         Ok(SharedConfig {
             mode: Mode::Full,
             principal_id: self.principal_id.clone(),
@@ -678,7 +691,8 @@ impl UserConfig {
                 claude_version: self.hosts.claude_version.clone(),
             },
             canary_digests,
-            forbidden_identifiers,
+            forbidden_identifier_digests,
+            registry_digest_word_counts,
         })
     }
 }
@@ -717,7 +731,8 @@ pub fn codebase_only_shared() -> SharedConfig {
             claude_version: ">=0.0.0".to_owned(),
         },
         canary_digests: Vec::new(),
-        forbidden_identifiers: Vec::new(),
+        forbidden_identifier_digests: Vec::new(),
+        registry_digest_word_counts: Vec::new(),
     }
 }
 
