@@ -1250,6 +1250,13 @@ pub fn admit(
         if crate::json::get_str(&receipt, "repository_id") != repository_id.as_deref() {
             continue;
         }
+        if receipt.get("hard_blocked").and_then(Value::as_bool) == Some(true) {
+            // The whole document was blocked before it reached the
+            // classifier, so it has no atoms to count; it is withheld all
+            // the same.
+            withheld_for_privacy += 1;
+            continue;
+        }
         let Some(atoms) = receipt.get("atoms").and_then(Value::as_array) else {
             continue;
         };
