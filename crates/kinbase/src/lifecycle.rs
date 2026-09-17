@@ -3756,6 +3756,33 @@ fn derive_github(builder: &mut FactBuilder<'_>, _key: &str, rows: &[&Observation
     }
 }
 
+/// A row whose warranting repository authority was revoked: quarantined, its
+/// fact withdrawn, and, when it was trusted before the revocation, the
+/// steward-owned question reopened (as the ordered derivation does).
+fn withdraw_revoked(builder: &mut FactBuilder<'_>, row: &Observation) {
+    builder.set_state(row, "quarantined", "revoked_observation");
+    builder.push_fact(row, &[], "withdrawn", "repository authority revoked");
+    if admitted_before_revocation(
+        builder.trust,
+        row,
+        warranting_key(builder.trust, row).as_deref(),
+    ) {
+        let owner = builder
+            .trust
+            .steward_authority_id
+            .clone()
+            .map(|id| ("company-steward".to_owned(), id));
+        builder.push_unknown(
+            row,
+            "revoked",
+            "reopened",
+            format!("The authority warranting {} was revoked.", row.native_id),
+            vec![row.observation_id.clone()],
+            owner,
+        );
+    }
+}
+
 /// Exported declarations sharing one key: each definition site is its own
 /// reading, not a version of the others. Sites that agree on the shape support
 /// one current fact; sites that disagree are a conflict with an open Unknown.
@@ -3781,15 +3808,13 @@ fn derive_symbols(builder: &mut FactBuilder<'_>, _key: &str, rows: &[&Observatio
         }
     }
     let heads: Vec<&Observation> = sites.into_values().collect();
-    if let Some(revoked) = heads
+    if heads
         .iter()
-        .copied()
-        .find(|row| revocation_of(builder.trust, row).is_some())
+        .any(|row| revocation_of(builder.trust, row).is_some())
     {
         for row in &heads {
-            builder.set_state(row, "quarantined", "revoked_observation");
+            withdraw_revoked(builder, row);
         }
-        builder.push_fact(revoked, &[], "withdrawn", "repository authority revoked");
         return;
     }
     let shapes: BTreeSet<&str> = heads
@@ -3866,6 +3891,10 @@ fn derive_export(builder: &mut FactBuilder<'_>, _key: &str, rows: &[&Observation
             "superseded",
             "an earlier version of the exported record",
         );
+    }
+    if revocation_of(builder.trust, head).is_some() {
+        withdraw_revoked(builder, head);
+        return;
     }
     if expired(head, as_of) {
         builder.set_state(head, "stale", "expired_raw_withheld");
@@ -4286,6 +4315,50 @@ mod tests {
         assert_eq!(states["pull_request:1"], "proposed");
         assert_eq!(states["issue_tracker:ENG-2"], "rejected");
         assert_eq!(states["chat_thread:t-1"], "proposed");
+    }
+
+    #[test]
+    fn a_revoked_export_or_symbol_is_withdrawn_and_reopened() {
+        let trust = TrustFacts {
+            revocations: vec![(
+                "key-a".to_owned(),
+                "rev-1".to_owned(),
+                "2026-09-05T00:00:00.000Z".to_owned(),
+            )],
+            ..TrustFacts::default()
+        };
+        let mut accepted = observation(
+            "issue_tracker",
+            "ENG-5",
+            "issue_tracker:ENG-5",
+            "ENG-5: cap retries at three",
+            "accepted",
+        );
+        let mut declared = observation(
+            "repo_symbols",
+            "a.ts:1",
+            "symbol:function:retry",
+            "function retry has shape (n)",
+            "current",
+        );
+        declared.attributes = Some(json!({"symbol": "retry", "shape": "(n)"}));
+        for row in [&mut accepted, &mut declared] {
+            row.signer = Some("key-a".to_owned());
+            row.asserted_at = Some("2026-09-01T00:00:00.000Z".to_owned());
+        }
+        let view = derive(&[accepted, declared], &trust, "2026-09-08T00:00:03.000Z");
+        assert!(
+            view.facts.iter().all(|fact| fact.state == "withdrawn"),
+            "{:?}",
+            view.facts
+        );
+        assert_eq!(view.facts.len(), 2);
+        let reopened = view
+            .unknowns
+            .iter()
+            .filter(|u| u.kind == "revoked" && u.status == "reopened")
+            .count();
+        assert_eq!(reopened, 2);
     }
 
     #[test]

@@ -1887,7 +1887,13 @@ fn split_sentences_keep(text: &str) -> Vec<String> {
 pub fn checkpoint(session: &str, json: bool) -> Result<(), ContractError> {
     let (record, failure) = checkpoint_internal(session)?;
     if let Some(error) = failure {
-        // The checkpoint is written; the command still reports the refusal.
+        // The checkpoint is written; the command still reports the refusal,
+        // and a text reader sees every candidate's outcome with it.
+        if !json {
+            for line in admission_lines(&record) {
+                println!("{line}");
+            }
+        }
         return Err(error.with_output_document(record));
     }
     print_value(&record, json);
@@ -2051,19 +2057,52 @@ pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError
 
 /// One candidate's failed admission, as its checkpoint row: the candidate,
 /// its destination and the typed refusal, with no receipt (nothing was
-/// decided).
+/// decided). The prose is folded to canonical text: a refusal carrying a
+/// newline (git's stderr) made the checkpoint record unwritable.
 fn admission_failure(candidate: &Value, error: &ContractError) -> Value {
+    let text = crate::json::fold_to_canonical_text;
     json!({
-        "candidate_id": crate::json::get_str(candidate, "candidate_id").unwrap_or_default(),
-        "destination": crate::json::get_str(candidate, "destination").unwrap_or_default(),
+        "candidate_id": text(crate::json::get_str(candidate, "candidate_id").unwrap_or_default()),
+        "destination": text(crate::json::get_str(candidate, "destination").unwrap_or_default()),
         "state": "failed",
         "error": {
             "code": error.code,
-            "message": error.message,
-            "remediation": error.remediation,
+            "message": text(&error.message),
+            "remediation": text(&error.remediation),
             "retryable": error.retryable
         }
     })
+}
+
+/// The admissions a checkpoint decided, one line each, for a reader who sees
+/// only text (a host shows a failed hook's stderr and nothing else).
+pub fn admission_lines(record: &Value) -> Vec<String> {
+    record
+        .get("admissions")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|row| {
+            let field = |name: &str| crate::json::get_str(row, name).unwrap_or("-");
+            match row.get("error") {
+                Some(error) => format!(
+                    "admission {} -> {}: failed ({})",
+                    field("candidate_id"),
+                    field("destination"),
+                    crate::json::get_str(error, "code").unwrap_or("-")
+                ),
+                None => format!(
+                    "admission {} -> {}: {} ({})",
+                    field("candidate_id"),
+                    field("destination"),
+                    crate::json::get_str(row, "state")
+                        .or_else(|| crate::json::get_str(row, "decision"))
+                        .unwrap_or("-"),
+                    field("receipt_id")
+                ),
+            }
+        })
+        .collect()
 }
 
 pub fn end(session: &str, json: bool) -> Result<(), ContractError> {
@@ -2204,6 +2243,32 @@ mod tests {
         assert_eq!(deidentify_statement(statement), (statement.to_owned(), 0));
         let version = "We pinned requests to 2.31 because 2.32 broke the proxy handling.";
         assert_eq!(deidentify_statement(version), (version.to_owned(), 0));
+    }
+}
+
+#[cfg(test)]
+mod admission_failure_tests {
+    use super::{admission_failure, admission_lines};
+    use crate::error::ContractError;
+    use serde_json::json;
+
+    #[test]
+    fn a_multi_line_refusal_is_still_a_writable_record() {
+        let error = ContractError::user_action(
+            "REPO_UNCERTIFIED",
+            "git rev-parse failed: fatal: not a git repository\nStopping at filesystem boundary",
+            "Run the command inside a Git worktree;\tthen retry.",
+        );
+        let row = admission_failure(
+            &json!({"candidate_id": "cand_1", "destination": "company:root"}),
+            &error,
+        );
+        crate::json::validate_json(&row).expect("canonical record");
+        assert!(!crate::json::canonical_text(&row).is_empty());
+        assert_eq!(
+            admission_lines(&json!({"admissions": [row]})),
+            ["admission cand_1 -> company:root: failed (REPO_UNCERTIFIED)"]
+        );
     }
 }
 

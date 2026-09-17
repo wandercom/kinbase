@@ -732,6 +732,13 @@ fn dispatch_event(
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             let (checkpoint, failure) = crate::session::checkpoint_internal(session_id)?;
+            if failure.is_some() && !json {
+                // The host shows only stderr for a failed hook: every
+                // candidate's outcome goes there, not just the refusal.
+                for line in crate::session::admission_lines(&checkpoint) {
+                    eprintln!("{line}");
+                }
+            }
             merge(&mut response, checkpoint);
             admission_failure = failure;
         }
