@@ -98,6 +98,67 @@ impl Evaluation {
     }
 }
 
+/// Bytes of a JSON array holding facts of these canonical sizes: their sizes
+/// plus k-1 commas and two brackets.
+fn array_bytes(sizes: impl Iterator<Item = usize>) -> usize {
+    let (count, total) = sizes.fold((0usize, 0usize), |(count, total), size| {
+        (count + 1, total + size)
+    });
+    total + count.saturating_sub(1) + 2
+}
+
+/// The working-set residents a projection carries, in order, within its
+/// 32-fact / 128-KiB ceiling. Returns the kept residents, how many were
+/// omitted, and whether the byte ceiling (rather than the item ceiling)
+/// omitted any.
+fn bounded_residents(
+    residents: Vec<CurrentFact>,
+    bytes_of: impl Fn(&CurrentFact) -> usize,
+) -> (Vec<CurrentFact>, usize, bool) {
+    let mut kept: Vec<CurrentFact> = Vec::new();
+    let mut omitted = 0usize;
+    let mut byte_ceiling_hit = false;
+    for fact in residents {
+        if kept.len() >= PROJECTION_LIMIT {
+            omitted += 1;
+            continue;
+        }
+        let bytes = array_bytes(kept.iter().chain([&fact]).map(&bytes_of));
+        if bytes > PROJECTION_BYTE_LIMIT {
+            omitted += 1;
+            byte_ceiling_hit = true;
+            continue;
+        }
+        kept.push(fact);
+    }
+    (kept, omitted, byte_ceiling_hit)
+}
+
+/// Why the selection loop stopped. A ceiling that ended it is named: the
+/// loop used to report `nonpositive_net_marginal_value` for a projection the
+/// working set had already filled, without ever evaluating a candidate.
+fn stopping_reason(
+    question_raised: bool,
+    sufficiency: bool,
+    residents_filled: bool,
+    item_ceiling_hit: bool,
+    ended_at_byte_ceiling: bool,
+) -> &'static str {
+    if question_raised {
+        "authority_question_raised"
+    } else if sufficiency {
+        "sufficiency_predicate_met"
+    } else if residents_filled {
+        "working_set_ceiling_reached"
+    } else if item_ceiling_hit {
+        "item_ceiling_reached"
+    } else if ended_at_byte_ceiling {
+        "byte_ceiling_reached"
+    } else {
+        "nonpositive_net_marginal_value"
+    }
+}
+
 fn trace_step(
     fact: &CurrentFact,
     evaluation: &Evaluation,
@@ -117,6 +178,26 @@ fn trace_step(
         "complementarity_basis": evaluation.complementarity_basis,
         "marginal_terms": evaluation.terms()
     })
+}
+
+fn refuse_unrecordable_paths(
+    working_set: &[String],
+    evidence_repos: &[std::path::PathBuf],
+) -> Result<(), ContractError> {
+    let working = working_set
+        .iter()
+        .map(|entry| ("--working-set", entry.clone()));
+    let repos = evidence_repos
+        .iter()
+        .map(|path| ("--evidence-repo", path.to_string_lossy().into_owned()));
+    for (flag, value) in working.chain(repos) {
+        if let Err(reason) = crate::json::validate_text(&value) {
+            return Err(ContractError::invariant(format!(
+                "a {flag} value cannot be recorded: {reason}"
+            )));
+        }
+    }
+    Ok(())
 }
 
 pub fn run(
@@ -139,6 +220,10 @@ pub fn run(
     // to spaces here, once, for every consumer downstream.
     let task_text = fold_control_characters(task);
     let decision_text = fold_control_characters(decision);
+    // Paths are not folded (a folded path names nothing); one the text rule
+    // refuses is refused here, before a question or unknown is written, not
+    // by the query log afterwards as an internal failure.
+    refuse_unrecordable_paths(working_set, evidence_repos)?;
     let task = task_text.as_str();
     let decision = decision_text.as_str();
     // Ask as this repository: the service sends company-wide direction plus
@@ -339,18 +424,24 @@ pub fn run(
                     || anchor.path.starts_with(&format!("{}/", entry.trim_end_matches('/')))
             })
     };
-    let residents: Vec<CurrentFact> = candidates
+    let resolved: Vec<CurrentFact> = candidates
         .iter()
         .filter(|fact| working.iter().any(|entry| resolves(fact, entry)))
         .map(|fact| (*fact).clone())
         .collect();
-    let resident_ids: BTreeSet<String> =
-        residents.iter().map(|fact| fact.fact_id.clone()).collect();
     let working_set_unresolved: Vec<&str> = working_set
         .iter()
         .map(String::as_str)
-        .filter(|entry| !residents.iter().any(|fact| resolves(fact, entry)))
+        .filter(|entry| !resolved.iter().any(|fact| resolves(fact, entry)))
         .collect();
+    // Residents occupy the projection like selected facts do, so a working
+    // set that resolves past the ceiling is cut to it and the rest counted.
+    let (residents, resident_omitted_count, resident_byte_ceiling_hit) =
+        bounded_residents(resolved, |fact| {
+            value_bytes.get(fact.fact_id.as_str()).copied().unwrap_or(0)
+        });
+    let resident_ids: BTreeSet<String> =
+        residents.iter().map(|fact| fact.fact_id.clone()).collect();
     let mut context: Vec<CurrentFact> = residents.clone();
     let mut selected: Vec<CurrentFact> = Vec::new();
     let mut selection_trace = Vec::new();
@@ -365,22 +456,24 @@ pub fn run(
         ));
     }
     let context_bytes = |set: &[CurrentFact], extra: Option<&CurrentFact>| -> usize {
-        let count = set.len() + usize::from(extra.is_some());
-        let total: usize = set
-            .iter()
-            .chain(extra)
-            .map(|fact| value_bytes.get(fact.fact_id.as_str()).copied().unwrap_or(0))
-            .sum();
-        total + count.saturating_sub(1) + 2
+        array_bytes(
+            set.iter()
+                .chain(extra)
+                .map(|fact| value_bytes.get(fact.fact_id.as_str()).copied().unwrap_or(0)),
+        )
     };
     let mut sufficiency = false;
-    let mut byte_ceiling_hit = false;
+    let mut ended_at_byte_ceiling = false;
     let mut stop_round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
     let mut direction_slots_used = 0usize;
     let mut direction_slots_withheld = 0usize;
     let cache = EvalCache::new(&candidates, task, decision);
     while context.len() < PROJECTION_LIMIT {
         let mut round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
+        // Whether a candidate of positive value did not fit in this round.
+        // Only the round that ends selection counts: a candidate refused for
+        // bytes earlier can have become redundant since.
+        let mut round_byte_blocked = false;
         for fact in &candidates {
             if context
                 .iter()
@@ -395,7 +488,7 @@ pub fn run(
             let evaluation = evaluate_cached(fact, &context, &cache);
             if context_bytes(&context, Some(fact)) > PROJECTION_BYTE_LIMIT {
                 if evaluation.marginal_value > 0 {
-                    byte_ceiling_hit = true;
+                    round_byte_blocked = true;
                 }
                 continue;
             }
@@ -412,9 +505,15 @@ pub fn run(
                 .then_with(|| left.fact_id.cmp(&right.fact_id))
         });
         let Some((fact, evaluation)) = round.first().cloned() else {
+            // Nothing left fits; if something of value did not, the byte
+            // ceiling is what stopped the loop.
+            ended_at_byte_ceiling = round_byte_blocked;
             break;
         };
         if evaluation.marginal_value <= 0 {
+            // What fits adds nothing; a candidate that would have is the
+            // byte ceiling's doing.
+            ended_at_byte_ceiling = round_byte_blocked;
             // The loop stops on net marginal value: record why every
             // remaining candidate was left out, best first.
             stop_round = round;
@@ -507,21 +606,27 @@ pub fn run(
         raised
     };
 
-    let stopping_reason = if question_id.is_some() {
-        "authority_question_raised"
-    } else if sufficiency {
-        "sufficiency_predicate_met"
-    } else {
-        "nonpositive_net_marginal_value"
-    };
-    let item_ceiling_hit = context.len() == PROJECTION_LIMIT
-        && candidates.iter().any(|fact| {
-            !context
-                .iter()
-                .any(|existing| existing.fact_id == fact.fact_id)
-                && evaluate_cached(fact, &context, &cache).marginal_value > 0
-        });
-    let omitted_count = if byte_ceiling_hit || item_ceiling_hit {
+    // The working set alone filled the projection: no candidate was ever
+    // selected because the residents left no room.
+    let byte_ceiling_hit = resident_byte_ceiling_hit || ended_at_byte_ceiling;
+    let residents_filled = residents.len() >= PROJECTION_LIMIT
+        || (resident_byte_ceiling_hit && selected.is_empty() && ended_at_byte_ceiling);
+    let item_ceiling_hit = context.len() >= PROJECTION_LIMIT
+        && (resident_omitted_count > 0
+            || candidates.iter().any(|fact| {
+                !context
+                    .iter()
+                    .any(|existing| existing.fact_id == fact.fact_id)
+                    && evaluate_cached(fact, &context, &cache).marginal_value > 0
+            }));
+    let stopping_reason = stopping_reason(
+        question_id.is_some(),
+        sufficiency,
+        residents_filled,
+        item_ceiling_hit,
+        ended_at_byte_ceiling,
+    );
+    let omitted_count = if byte_ceiling_hit || item_ceiling_hit || resident_omitted_count > 0 {
         candidates.len().saturating_sub(context.len())
     } else {
         0
@@ -693,7 +798,8 @@ pub fn run(
         "direction_slots_used": direction_slots_used,
         "direction_slots_cap": PROJECTION_DIRECTION_SLOTS,
         "direction_withheld_evaluations": direction_slots_withheld,
-        "omitted_count": omitted_count
+        "omitted_count": omitted_count,
+        "resident_omitted_count": resident_omitted_count
     });
 
     let query_record = json!({
@@ -2167,5 +2273,78 @@ mod brief_tests {
         );
         assert_eq!(brief["target_state_owner"]["status"], "no_ownership_fact");
         assert!(brief["questions"].as_array().unwrap().is_empty());
+    }
+
+    fn residents(count: usize) -> Vec<CurrentFact> {
+        (0..count)
+            .map(|n| company_fact(&format!("resident/{n:02}"), "A resident fact.", &[], &[]))
+            .collect()
+    }
+
+    #[test]
+    fn a_working_set_past_the_item_ceiling_is_cut_and_counted() {
+        let (kept, omitted, byte_hit) = bounded_residents(residents(40), |_| 100);
+        assert_eq!(kept.len(), PROJECTION_LIMIT);
+        assert_eq!(omitted, 8);
+        assert!(!byte_hit);
+        assert_eq!(kept[0].logical_key, "resident/00");
+
+        let (kept, omitted, _) = bounded_residents(residents(5), |_| 100);
+        assert_eq!((kept.len(), omitted), (5, 0));
+    }
+
+    #[test]
+    fn a_working_set_past_the_byte_ceiling_is_cut_and_counted() {
+        // Three 50 KiB facts: two fit in 128 KiB, the third does not.
+        let (kept, omitted, byte_hit) = bounded_residents(residents(3), |_| 50 * 1024);
+        assert_eq!((kept.len(), omitted, byte_hit), (2, 1, true));
+        assert!(array_bytes(kept.iter().map(|_| 50 * 1024)) <= PROJECTION_BYTE_LIMIT);
+    }
+
+    #[test]
+    fn a_ceiling_that_ended_selection_is_the_stopping_reason() {
+        assert_eq!(
+            stopping_reason(false, false, true, true, false),
+            "working_set_ceiling_reached"
+        );
+        assert_eq!(
+            stopping_reason(false, false, false, true, false),
+            "item_ceiling_reached"
+        );
+        assert_eq!(
+            stopping_reason(false, false, false, false, true),
+            "byte_ceiling_reached"
+        );
+        assert_eq!(
+            stopping_reason(false, false, false, false, false),
+            "nonpositive_net_marginal_value"
+        );
+        // An authority question or a met sufficiency predicate still ends the
+        // loop first.
+        assert_eq!(
+            stopping_reason(true, true, true, true, true),
+            "authority_question_raised"
+        );
+        assert_eq!(
+            stopping_reason(false, true, true, true, true),
+            "sufficiency_predicate_met"
+        );
+        assert_eq!(array_bytes(std::iter::empty()), 2);
+        assert_eq!(array_bytes([3, 4].into_iter()), 3 + 4 + 1 + 2);
+    }
+
+    #[test]
+    fn a_path_the_query_log_cannot_record_is_refused_first() {
+        assert!(refuse_unrecordable_paths(&["src/pay".to_owned()], &[]).is_ok());
+        let error =
+            refuse_unrecordable_paths(&["src/pay\nsrc/api".to_owned()], &[]).expect_err("newline");
+        assert_eq!((error.code.as_str(), error.exit()), ("CONFIG_INVARIANT", 4));
+        let error = refuse_unrecordable_paths(&[], &[std::path::PathBuf::from("/repos/a\u{85}b")])
+            .expect_err("C1 control");
+        assert!(
+            error.message.contains("--evidence-repo"),
+            "{}",
+            error.message
+        );
     }
 }

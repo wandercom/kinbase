@@ -1,3 +1,5 @@
+mod support;
+
 use kinbase::crypto::PrivateKey;
 use serde_json::{Value, json};
 use std::fs::{self, OpenOptions};
@@ -8,6 +10,7 @@ use std::path::Path;
 use std::process::Command;
 use std::thread;
 use std::time::SystemTime;
+use support::SpawnAlone;
 use tempfile::TempDir;
 
 fn private_write(path: &Path, bytes: &[u8]) {
@@ -59,7 +62,7 @@ fn run_init(
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", config_home)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run kinbase repo init")
 }
 
@@ -70,7 +73,7 @@ fn run_status(home: &Path, config_home: &Path, repo: &Path) -> std::process::Out
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", config_home)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run kinbase status")
 }
 
@@ -159,7 +162,7 @@ fn repo_init_caches_certificate_outside_worktree() {
         .arg("init")
         .arg("--initial-branch=main")
         .arg(&repo)
-        .output()
+        .output_alone()
         .expect("run git init");
     assert!(
         git.status.success(),
@@ -326,8 +329,10 @@ fn repo_init_caches_certificate_outside_worktree() {
     assert_eq!(foreign_error["error"]["code"], "FOREIGN_REPO_EVENTS");
     assert_eq!(fs::read(&cached_certificate).unwrap(), certificate_bytes);
 
-    let config_text = fs::read_to_string(repo.join(".kin/kinbase.toml")).expect("read .kin/kinbase.toml");
-    let config = kinbase::codebase::RepoConfig::parse(&config_text).expect("parse .kin/kinbase.toml");
+    let config_text =
+        fs::read_to_string(repo.join(".kin/kinbase.toml")).expect("read .kin/kinbase.toml");
+    let config =
+        kinbase::codebase::RepoConfig::parse(&config_text).expect("parse .kin/kinbase.toml");
     assert_eq!(config.repository_uuid_hint, repository_uuid);
     assert_eq!(config.schema_version, "kinbase-repo/1");
 }
@@ -369,7 +374,7 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
         .arg("init")
         .arg("--initial-branch=main")
         .arg(&repo)
-        .output()
+        .output_alone()
         .expect("run git init");
     assert!(
         git.status.success(),
@@ -443,7 +448,7 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
             ".kin/kinbase.toml",
             &format!(".kin/events/{relative}"),
         ])
-        .output()
+        .output_alone()
         .expect("stage packet 11 corpus");
     assert!(
         git.status.success(),
@@ -457,7 +462,7 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
         .env("GIT_COMMITTER_NAME", "packet11")
         .env("GIT_COMMITTER_EMAIL", "packet11@example.invalid")
         .args(["commit", "-m", "packet11 certified corpus"])
-        .output()
+        .output_alone()
         .expect("commit packet 11 corpus");
     assert!(
         git.status.success(),
@@ -481,7 +486,7 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
-            .spawn()
+            .spawn_alone()
             .expect("spawn hooks dispatch");
         child
             .stdin
@@ -609,7 +614,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
 
     let git = Command::new("git")
         .args(["init", "--initial-branch=main", &repo.display().to_string()])
-        .output()
+        .output_alone()
         .expect("run git init");
     assert!(
         git.status.success(),
@@ -808,7 +813,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         .arg(".gitattributes")
         .arg(".kin/kinbase.toml")
         .args(&relative_paths)
-        .output()
+        .output_alone()
         .expect("stage packet 11 projector corpus");
     assert!(
         git.status.success(),
@@ -822,7 +827,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         .env("GIT_COMMITTER_NAME", "packet11")
         .env("GIT_COMMITTER_EMAIL", "packet11@example.invalid")
         .args(["commit", "-m", "packet 11 projector corpus"])
-        .output()
+        .output_alone()
         .expect("commit packet 11 projector corpus");
     assert!(
         git.status.success(),
@@ -847,7 +852,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run kinbase project");
     assert!(
         project.status.success(),
@@ -864,7 +869,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run kinbase questions list");
     assert!(
         questions_output.status.success(),
@@ -942,7 +947,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run kinbase questions answer");
     assert!(
         answered.status.success(),
@@ -969,7 +974,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run resolved kinbase project");
     assert!(
         resolved.status.success(),
@@ -1078,7 +1083,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
 
     let git = Command::new("git")
         .args(["init", "--initial-branch=main", &repo.display().to_string()])
-        .output()
+        .output_alone()
         .expect("run git init");
     assert!(git.status.success(), "git init failed");
 
@@ -1184,7 +1189,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
             ".kin/kinbase.toml",
             event_git_path.as_str(),
         ])
-        .output()
+        .output_alone()
         .expect("stage packet 19 corpus");
     assert!(git.status.success(), "git add failed");
     let git = Command::new("git")
@@ -1194,7 +1199,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .env("GIT_COMMITTER_NAME", "packet19")
         .env("GIT_COMMITTER_EMAIL", "packet19@example.invalid")
         .args(["commit", "-m", "packet 19 company reference"])
-        .output()
+        .output_alone()
         .expect("commit packet 19 corpus");
     assert!(git.status.success(), "git commit failed");
 
@@ -1214,7 +1219,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run packet 19 corpus rebuild");
     assert!(
         rebuild.status.success(),
@@ -1241,7 +1246,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run packet 19 manifest publication");
     assert!(
         publish.status.success(),
@@ -1262,7 +1267,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run packet 19 fsck");
     assert!(
         fsck.status.success(),
@@ -1283,6 +1288,65 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         "complete"
     );
 
+    // An event file at its own content address that cannot be admitted is
+    // named by fsck, an oversized one included (it used to be counted and
+    // dropped from the list).
+    let events_root = repo.join(".kin").join("events");
+    let mut planted = Vec::new();
+    for bytes in [
+        b"{\"not\":\"an event\"}".to_vec(),
+        vec![b' '; kinbase::model::MAX_EVENT_BYTES + 1],
+    ] {
+        let digest = kinbase::hash::sha256_bytes(&bytes);
+        let relative = kinbase::paths::sharded_relative(&digest).expect("sharded");
+        let path = events_root.join(&relative);
+        fs::create_dir_all(path.parent().unwrap()).expect("shard directory");
+        fs::write(&path, &bytes).expect("plant event");
+        planted.push((path, format!(".kin/events/{}", relative.display())));
+    }
+    let named = Command::new(env!("CARGO_BIN_EXE_kinbase"))
+        .current_dir(&repo)
+        .args([
+            "fsck",
+            "--repo",
+            &repo.display().to_string(),
+            "--full",
+            "--json",
+        ])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", &config_home)
+        .env_remove("KINBASE_COMPANY_URL")
+        .output_alone()
+        .expect("run fsck with planted events");
+    let named: Value = serde_json::from_slice(&named.stdout).expect("fsck receipt is JSON");
+    let malformed: Vec<(String, String)> = named["malformed_paths"]
+        .as_array()
+        .expect("malformed paths")
+        .iter()
+        .map(|row| {
+            (
+                row["path"].as_str().unwrap_or_default().to_owned(),
+                row["reason"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(malformed.len(), 2, "{named}");
+    assert!(
+        malformed.contains(&(
+            planted[1].1.clone(),
+            "event exceeds the size bound".to_owned()
+        )),
+        "{named}"
+    );
+    assert!(
+        malformed.iter().any(|(path, _)| path == &planted[0].1),
+        "{named}"
+    );
+    assert_eq!(named["counts"]["oversized"], 1, "{named}");
+    for (path, _) in &planted {
+        fs::remove_file(path).expect("remove planted event");
+    }
+
     let first_unpinned = Command::new(env!("CARGO_BIN_EXE_kinbase"))
         .current_dir(&repo)
         .args([
@@ -1297,7 +1361,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run first recorded-clock rebuild");
     assert!(
         first_unpinned.status.success(),
@@ -1322,7 +1386,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run second recorded-clock rebuild");
     assert!(
         second_unpinned.status.success(),
@@ -1348,7 +1412,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
             &repo.display().to_string(),
             &clone.display().to_string(),
         ])
-        .output()
+        .output_alone()
         .expect("clone packet 19 repository");
     assert!(git.status.success(), "git clone failed");
 
@@ -1367,7 +1431,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .env("HOME", &home)
         .env("XDG_CONFIG_HOME", &config_home)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run cloned kinbase project");
     assert!(
         project.status.success(),
@@ -1378,4 +1442,101 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
     assert_eq!(result["as_of_source"], "recorded-proof-clock");
     assert_eq!(result["company_reference_resolved"], true);
     assert_eq!(result["company_statement"], company_statement);
+}
+
+#[test]
+fn a_hint_pinned_to_another_repository_blocks_certification() {
+    let root = TempDir::new().expect("temporary root");
+    let home = root.path().join("home");
+    let config_home = root.path().join("config-home");
+    let kinbase_config = config_home.join("kinbase");
+    let cache_root = root.path().join("company-cache");
+    let personal_root = root.path().join("personal");
+    fs::create_dir_all(&home).expect("create home");
+    fs::create_dir_all(&kinbase_config).expect("create config directory");
+    fs::create_dir_all(&personal_root).expect("create personal root");
+    let root_key = PrivateKey::generate();
+    let root_public_key_file = kinbase_config.join("root-public.key");
+    let facts_token_file = kinbase_config.join("facts.token");
+    private_write(
+        &root_public_key_file,
+        format!("{}\n", root_key.public().to_hex()).as_bytes(),
+    );
+    private_write(&facts_token_file, b"facts-token\n");
+    private_write(
+        &kinbase_config.join("config.toml"),
+        format!(
+            "schema_version = \"1\"\n\n[personal]\ndata_root = {}\n\n[company]\nurl = \"http://127.0.0.1:1\"\nfacts_token_file = {}\nroot_public_key_file = {}\ncache_root = {}\n",
+            quoted(&personal_root),
+            quoted(&facts_token_file),
+            quoted(&root_public_key_file),
+            quoted(&cache_root)
+        )
+        .as_bytes(),
+    );
+
+    // Two worktrees name one upstream (a fork re-certified, a moved clone)
+    // under different repository UUIDs.
+    let certify = |name: &str, uuid: &str| {
+        let repo = root.path().join(name);
+        for args in [
+            vec!["init", "--initial-branch=main", repo.to_str().unwrap()],
+            vec![
+                "-C",
+                repo.to_str().unwrap(),
+                "remote",
+                "add",
+                "origin",
+                "https://git.example.com/acme/service.git",
+            ],
+        ] {
+            let git = Command::new("git").args(&args).output_alone().expect("git");
+            assert!(
+                git.status.success(),
+                "{}",
+                String::from_utf8_lossy(&git.stderr)
+            );
+        }
+        let certificate = root.path().join(format!("{name}-certificate.json"));
+        private_write(
+            &certificate,
+            &signed_certificate(&root_key, uuid, "2026-09-07T12:00:00.000Z"),
+        );
+        let init = run_init(&home, &config_home, &repo, &certificate);
+        assert!(
+            init.status.success(),
+            "{}",
+            String::from_utf8_lossy(&init.stderr)
+        );
+        repo
+    };
+    let status_certificate = |repo: &Path| -> Value {
+        let output = run_status(&home, &config_home, repo);
+        let document: Value = serde_json::from_slice(&output.stdout).unwrap_or_else(|_| {
+            panic!(
+                "status JSON: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+        });
+        document["certificate"].clone()
+    };
+
+    let first = certify("first", "11111111-1111-4111-8111-111111111111");
+    let pinned = status_certificate(&first);
+    assert_eq!(pinned["valid"], true, "{pinned}");
+    assert_eq!(pinned["pin_state"], "pinned", "{pinned}");
+
+    let second = certify("second", "22222222-2222-4222-8222-222222222222");
+    let blocked = status_certificate(&second);
+    assert_eq!(blocked["valid"], false, "{blocked}");
+    assert_eq!(blocked["pin_state"], "conflict", "{blocked}");
+    let reason = blocked["reason"].as_str().expect("reason");
+    assert!(
+        reason.contains("pinned to repository UUID 11111111-1111-4111-8111-111111111111"),
+        "{reason}"
+    );
+
+    // The pin is not rewritten by the conflicting read.
+    assert_eq!(status_certificate(&first)["pin_state"], "stable");
 }

@@ -1,6 +1,8 @@
 //! Boundary tests for packet 12: config round-tripping, idempotent
 //! destination records, receipt identity binding, and journal recovery.
 
+mod support;
+
 use kinbase::codebase::{RepoConfig, Repository};
 use kinbase::company::db::CompanyDb;
 use kinbase::hash::sha256_bytes;
@@ -11,6 +13,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use support::SpawnAlone;
 use tempfile::TempDir;
 
 fn init_git_repository(path: &Path) -> Repository {
@@ -18,7 +21,7 @@ fn init_git_repository(path: &Path) -> Repository {
         .arg("init")
         .arg("--initial-branch=main")
         .arg(path)
-        .output()
+        .output_alone()
         .expect("run git init");
     assert!(
         output.status.success(),

@@ -39,7 +39,7 @@ from pathlib import Path
 
 import pytest
 
-from ._harness import calibration, metrics
+from ._harness import metrics
 from ._harness import obligations as O
 from ._harness import prereq, stats, trust
 from ._harness.cli import Kinbase
@@ -53,9 +53,7 @@ from ._harness.evidence_model import (
     rows,
 )
 from ._harness.requirements import (
-    ARCH,
     RULING,
-    PRODUCT,
     SRC,
     VERIFY,
     ProductFailure,
@@ -316,7 +314,8 @@ def test_five_pinned_runs_lower_bound_meets_macro_f1_and_shared_precision(
             "macro_f1_interval_method": "message_stratified_bootstrap",
             "shared_precision_lower_bound": metrics.pooled_shared_precision(joins),
             "shared_precision_interval_method": "wilson",
-            "computed_by_harness_from_raw_predictions": True,
+            # One harness join of raw predictions against held gold per run.
+            "computed_by_harness_from_raw_predictions": len(joins) == len(reported) >= 1,
         },
         label="five pinned runs, harness-computed bounds",
     )

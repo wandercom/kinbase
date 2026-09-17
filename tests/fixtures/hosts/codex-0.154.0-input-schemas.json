@@ -1,0 +1,362 @@
+{
+  "host": "codex-cli 0.154.0",
+  "schemas": {
+    "PreCompact": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "NullableString": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "properties": {
+        "agent_id": {
+          "type": "string"
+        },
+        "agent_type": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "hook_event_name": {
+          "const": "PreCompact",
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "transcript_path": {
+          "$ref": "#/definitions/NullableString"
+        },
+        "trigger": {
+          "enum": [
+            "manual",
+            "auto"
+          ],
+          "type": "string"
+        },
+        "turn_id": {
+          "description": "Codex extension: expose the active turn id to internal turn-scoped hooks.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cwd",
+        "hook_event_name",
+        "model",
+        "session_id",
+        "transcript_path",
+        "trigger",
+        "turn_id"
+      ],
+      "title": "pre-compact.command.input",
+      "type": "object"
+    },
+    "PreToolUse": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "NullableString": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "properties": {
+        "agent_id": {
+          "type": "string"
+        },
+        "agent_type": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "hook_event_name": {
+          "const": "PreToolUse",
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "permission_mode": {
+          "enum": [
+            "default",
+            "acceptEdits",
+            "plan",
+            "dontAsk",
+            "bypassPermissions"
+          ],
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "tool_input": true,
+        "tool_name": {
+          "type": "string"
+        },
+        "tool_use_id": {
+          "type": "string"
+        },
+        "transcript_path": {
+          "$ref": "#/definitions/NullableString"
+        },
+        "turn_id": {
+          "description": "Codex extension: expose the active turn id to internal turn-scoped hooks.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cwd",
+        "hook_event_name",
+        "model",
+        "permission_mode",
+        "session_id",
+        "tool_input",
+        "tool_name",
+        "tool_use_id",
+        "transcript_path",
+        "turn_id"
+      ],
+      "title": "pre-tool-use.command.input",
+      "type": "object"
+    },
+    "SessionEnd": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "NullableString": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "hook_event_name": {
+          "const": "SessionEnd",
+          "type": "string"
+        },
+        "reason": {
+          "const": "other",
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "transcript_path": {
+          "$ref": "#/definitions/NullableString"
+        }
+      },
+      "required": [
+        "cwd",
+        "hook_event_name",
+        "reason",
+        "session_id",
+        "transcript_path"
+      ],
+      "title": "session-end.command.input",
+      "type": "object"
+    },
+    "SessionStart": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "NullableString": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "hook_event_name": {
+          "const": "SessionStart",
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "permission_mode": {
+          "enum": [
+            "default",
+            "acceptEdits",
+            "plan",
+            "dontAsk",
+            "bypassPermissions"
+          ],
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "source": {
+          "enum": [
+            "startup",
+            "resume",
+            "clear",
+            "compact"
+          ],
+          "type": "string"
+        },
+        "transcript_path": {
+          "$ref": "#/definitions/NullableString"
+        }
+      },
+      "required": [
+        "cwd",
+        "hook_event_name",
+        "model",
+        "permission_mode",
+        "session_id",
+        "source",
+        "transcript_path"
+      ],
+      "title": "session-start.command.input",
+      "type": "object"
+    },
+    "Stop": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "NullableString": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "properties": {
+        "cwd": {
+          "type": "string"
+        },
+        "hook_event_name": {
+          "const": "Stop",
+          "type": "string"
+        },
+        "last_assistant_message": {
+          "$ref": "#/definitions/NullableString"
+        },
+        "model": {
+          "type": "string"
+        },
+        "permission_mode": {
+          "enum": [
+            "default",
+            "acceptEdits",
+            "plan",
+            "dontAsk",
+            "bypassPermissions"
+          ],
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "stop_hook_active": {
+          "type": "boolean"
+        },
+        "transcript_path": {
+          "$ref": "#/definitions/NullableString"
+        },
+        "turn_id": {
+          "description": "Codex extension: expose the active turn id to internal turn-scoped hooks.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cwd",
+        "hook_event_name",
+        "last_assistant_message",
+        "model",
+        "permission_mode",
+        "session_id",
+        "stop_hook_active",
+        "transcript_path",
+        "turn_id"
+      ],
+      "title": "stop.command.input",
+      "type": "object"
+    },
+    "UserPromptSubmit": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "additionalProperties": false,
+      "definitions": {
+        "NullableString": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "properties": {
+        "agent_id": {
+          "type": "string"
+        },
+        "agent_type": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "hook_event_name": {
+          "const": "UserPromptSubmit",
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "permission_mode": {
+          "enum": [
+            "default",
+            "acceptEdits",
+            "plan",
+            "dontAsk",
+            "bypassPermissions"
+          ],
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "transcript_path": {
+          "$ref": "#/definitions/NullableString"
+        },
+        "turn_id": {
+          "description": "Codex extension: expose the active turn id to internal turn-scoped hooks.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cwd",
+        "hook_event_name",
+        "model",
+        "permission_mode",
+        "prompt",
+        "session_id",
+        "transcript_path",
+        "turn_id"
+      ],
+      "title": "user-prompt-submit.command.input",
+      "type": "object"
+    }
+  }
+}

@@ -10,6 +10,22 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
+/// Process creation is serialized in this binary: a pipe opened by one
+/// test is not close-on-exec until just after it exists, and a kinbase child
+/// started in that instant inherits it and refuses to run.
+static SPAWN: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn spawn(command: &mut Command) -> std::process::Child {
+    let _guard = SPAWN
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn")
+}
+
 fn private_write(path: &Path, bytes: &[u8]) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).expect("create parent");
@@ -109,11 +125,14 @@ impl Machine {
 
     fn repository(&self, name: &str, uuid: &str) -> PathBuf {
         let repo = self.root.path().join(name);
-        let git = Command::new("git")
-            .args(["init", "--initial-branch=main"])
-            .arg(&repo)
-            .output()
-            .expect("git init");
+        let git = spawn(
+            Command::new("git")
+                .args(["init", "--initial-branch=main"])
+                .arg(&repo)
+                .stdin(std::process::Stdio::null()),
+        )
+        .wait_with_output()
+        .expect("git init");
         assert!(git.status.success());
         let certificate = self.root.path().join(format!("{name}-certificate.json"));
         let unsigned = json!({
@@ -153,15 +172,18 @@ impl Machine {
     }
 
     fn kinbase(&self, cwd: &Path, args: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_kinbase"))
-            .current_dir(cwd)
-            .args(args)
-            .env("HOME", &self.home)
-            .env("XDG_CONFIG_HOME", &self.config_home)
-            .env("XDG_STATE_HOME", &self.state_home)
-            .env_remove("KINBASE_COMPANY_URL")
-            .output()
-            .expect("run kinbase")
+        spawn(
+            Command::new(env!("CARGO_BIN_EXE_kinbase"))
+                .current_dir(cwd)
+                .args(args)
+                .env("HOME", &self.home)
+                .env("XDG_CONFIG_HOME", &self.config_home)
+                .env("XDG_STATE_HOME", &self.state_home)
+                .env_remove("KINBASE_COMPANY_URL")
+                .stdin(std::process::Stdio::null()),
+        )
+        .wait_with_output()
+        .expect("run kinbase")
     }
 
     fn ingest(&self, repo: &Path, kind: &str, source: &str) -> Value {
@@ -479,5 +501,439 @@ fn only_standing_shareable_kindex_nodes_reach_the_codebase_ledger() {
     assert_eq!(
         receipt["skipped_source_records"],
         json!({"kindex: node is not active": 1, "kindex: audience is not team or public": 1})
+    );
+}
+
+fn git(repo: &Path, args: &[&str]) -> String {
+    let output = spawn(
+        Command::new("git")
+            .current_dir(repo)
+            .args([
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+            ])
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .stdin(std::process::Stdio::null()),
+    )
+    .wait_with_output()
+    .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_owned()
+}
+
+fn commit_file(repo: &Path, path: &str, text: &str, message: &str) -> String {
+    let file = repo.join(path);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, text).unwrap();
+    git(repo, &["add", "--", path]);
+    git(repo, &["commit", "-q", "-m", message]);
+    git(repo, &["rev-parse", "HEAD"])
+}
+
+fn dispositions(machine: &Machine) -> std::collections::BTreeMap<String, String> {
+    let ledger = machine.ledger();
+    let mut statement = ledger
+        .prepare(
+            "SELECT native_id, json_extract(record, '$.disposition'), lifecycle FROM observations WHERE source_kind='git_history'",
+        )
+        .expect("prepare");
+    statement
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                format!("{}/{}", row.get::<_, String>(1)?, row.get::<_, String>(2)?),
+            ))
+        })
+        .expect("query")
+        .map(|row| row.expect("row"))
+        .collect()
+}
+
+fn merge_feature(repo: &Path, file: &str) -> String {
+    commit_file(repo, "base.txt", "base\n", "base");
+    git(repo, &["checkout", "-q", "-b", "feat"]);
+    commit_file(repo, file, "feature\n", "feature");
+    git(repo, &["checkout", "-q", "main"]);
+    git(
+        repo,
+        &[
+            "merge",
+            "-q",
+            "--no-ff",
+            "feat",
+            "-m",
+            "Merge pull request #1 from feat",
+        ],
+    );
+    git(repo, &["rev-parse", "HEAD"])
+}
+
+#[test]
+fn an_unmerged_revert_branch_withdraws_nothing_on_main() {
+    let machine = Machine::new();
+    let repo = machine.repository("repo-a", REPO_A);
+    let merge = merge_feature(&repo, "feature.txt");
+    git(&repo, &["checkout", "-q", "-b", "revert-1-feat"]);
+    git(&repo, &["revert", "--no-edit", "-m", "1", "HEAD"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    // A stash and a notes commit are not branch history either.
+    fs::write(repo.join("base.txt"), "stashed\n").unwrap();
+    git(&repo, &["stash", "-q"]);
+    git(&repo, &["notes", "add", "-m", "a note", "HEAD"]);
+    machine.ingest(&repo, "git_history", ".");
+    let rows = dispositions(&machine);
+    assert_eq!(
+        rows.get(&format!("commit:{merge}")).map(String::as_str),
+        Some("merged/observed"),
+        "{rows:?}"
+    );
+    let stash = git(&repo, &["rev-parse", "refs/stash"]);
+    assert!(
+        !rows.contains_key(&format!("commit:{stash}")),
+        "stash walked: {rows:?}"
+    );
+}
+
+#[test]
+fn a_merge_of_a_non_ascii_path_is_not_reverted_by_the_next_commit() {
+    let machine = Machine::new();
+    let repo = machine.repository("repo-a", REPO_A);
+    let merge = merge_feature(&repo, "café.txt");
+    commit_file(&repo, "a.txt", "fix typo\n", "fix typo in a");
+    machine.ingest(&repo, "git_history", ".");
+    let rows = dispositions(&machine);
+    assert_eq!(
+        rows.get(&format!("commit:{merge}")).map(String::as_str),
+        Some("merged/observed"),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn a_real_revert_on_main_is_still_detected() {
+    let machine = Machine::new();
+    let repo = machine.repository("repo-a", REPO_A);
+    let merge = merge_feature(&repo, "café.txt");
+    git(&repo, &["revert", "--no-edit", "-m", "1", "HEAD"]);
+    machine.ingest(&repo, "git_history", ".");
+    let rows = dispositions(&machine);
+    assert_eq!(
+        rows.get(&format!("commit:{merge}")).map(String::as_str),
+        Some("reverted/observed"),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn commits_outside_the_history_window_are_not_retired() {
+    let machine = Machine::new();
+    let repo = machine.repository("repo-a", REPO_A);
+    import_history(&machine, &repo, 6010);
+    let first = machine.ingest(&repo, "git_history", ".");
+    assert_eq!(
+        first["next_checkpoint"], "skip:6000",
+        "{}",
+        first["next_checkpoint"]
+    );
+    let second = machine.kinbase(
+        &repo,
+        &[
+            "ingest",
+            "git_history",
+            ".",
+            "--repo",
+            &repo.display().to_string(),
+            "--checkpoint",
+            "skip:6000",
+            "--json",
+        ],
+    );
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let second: Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert!(second["next_checkpoint"].is_null());
+    let absent = second["changed_dispositions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|change| change["to_disposition"] == "absent_source_recorded")
+        .count();
+    assert_eq!(absent, 0, "page 1 was retired by page 2");
+    let rows = dispositions(&machine);
+    assert!(rows.values().all(|row| row.ends_with("/observed")));
+}
+
+fn github(repo: &Path, name: &str, document: &Value) {
+    let directory = repo.join("sources").join("github");
+    fs::create_dir_all(&directory).unwrap();
+    fs::write(directory.join(name), document.to_string()).unwrap();
+}
+
+fn issue(number: i64, updated: &str) -> Value {
+    json!({"number": number, "title": format!("Issue {number}"), "body": "Body.", "state": "open", "updatedAt": updated})
+}
+
+fn set_mtime(path: &Path, seconds: i64) {
+    let output = spawn(
+        Command::new("touch")
+            .args(["-t", &chrono_stamp(seconds)])
+            .arg(path)
+            .stdin(std::process::Stdio::null()),
+    )
+    .wait_with_output()
+    .unwrap();
+    assert!(output.status.success());
+}
+
+fn chrono_stamp(seconds: i64) -> String {
+    // touch -t [[CC]YY]MMDDhhmm[.SS], UTC-agnostic enough for ordering.
+    let base = 202601010000i64; // 2026-01-01 00:00
+    format!("{}", base + seconds)
+}
+
+#[test]
+fn a_partial_newest_github_export_is_refused_and_retires_nothing() {
+    let machine = Machine::new();
+    let repo = machine.repository("repo-a", REPO_A);
+    github(
+        &repo,
+        "a.json",
+        &json!({"issues": [issue(1, "2026-09-01T00:00:00Z"), issue(2, "2026-09-01T00:00:00Z")]}),
+    );
+    let first = machine.ingest(&repo, "github_export", "sources/github");
+    let identity = first["source_identity"].as_str().unwrap().to_owned();
+    let partial = repo.join("sources").join("github").join("b.json");
+    fs::write(&partial, "{\"issues\": [").unwrap();
+    set_mtime(&repo.join("sources/github/a.json"), 1);
+    set_mtime(&partial, 2);
+    let refused = machine.kinbase(
+        &repo,
+        &[
+            "ingest",
+            "github_export",
+            "sources/github",
+            "--repo",
+            &repo.display().to_string(),
+            "--json",
+        ],
+    );
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stdout).contains("partial export"));
+    assert!(
+        lifecycles(&machine, &identity)
+            .iter()
+            .all(|(_, lifecycle)| lifecycle == "observed")
+    );
+
+    // An unrelated JSON document beside the export is not a snapshot.
+    fs::write(&partial, json!({"generated_by": "tool"}).to_string()).unwrap();
+    set_mtime(&partial, 3);
+    let again = machine.ingest(&repo, "github_export", "sources/github");
+    assert_eq!(
+        again["skipped_source_records"]["github_export: JSON document is not an export"],
+        1
+    );
+    assert!(
+        lifecycles(&machine, &identity)
+            .iter()
+            .all(|(_, lifecycle)| lifecycle == "observed")
+    );
+}
+
+#[test]
+fn the_newest_github_export_is_chosen_by_its_own_time() {
+    let machine = Machine::new();
+    let repo = machine.repository("repo-a", REPO_A);
+    // snapshot-10 is newer by content but sorts before snapshot-9 by name, and
+    // a checkout gives both the same modification time.
+    github(
+        &repo,
+        "snapshot-9.json",
+        &json!({"issues": [issue(1, "2026-09-01T00:00:00Z"), issue(2, "2026-09-01T00:00:00Z")]}),
+    );
+    github(
+        &repo,
+        "snapshot-10.json",
+        &json!({"exported_at": "2026-09-10T00:00:00Z", "issues": [issue(1, "2026-09-09T00:00:00Z")]}),
+    );
+    for name in ["snapshot-9.json", "snapshot-10.json"] {
+        set_mtime(&repo.join("sources/github").join(name), 5);
+    }
+    let receipt = machine.ingest(&repo, "github_export", "sources/github");
+    let identity = receipt["source_identity"].as_str().unwrap().to_owned();
+    let unit_of = |native: &str| {
+        receipt["observations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|observation| observation["native_id"] == native)
+            .map(|observation| observation["unit"].clone())
+    };
+    assert_eq!(
+        unit_of("issue:1"),
+        Some(json!("sources/github/snapshot-10.json"))
+    );
+    // issue:2 exists only in the older snapshot: the newest export says it is gone.
+    let rows = lifecycles(&machine, &identity);
+    assert!(
+        rows.contains(&("issue:1".to_owned(), "observed".to_owned())),
+        "{rows:?}"
+    );
+    assert!(
+        rows.contains(&("issue:2".to_owned(), "absent".to_owned())),
+        "{rows:?}"
+    );
+}
+
+/// `count` commits on main through fast-import: more than one window.
+fn import_history(machine: &Machine, repo: &Path, count: usize) {
+    let mut stream = String::new();
+    for n in 1..=count {
+        let body = format!("{n}\n");
+        stream.push_str(&format!(
+            "commit refs/heads/main\ncommitter Test <test@example.invalid> {} +0000\ndata {}\nc{n}\n",
+            1_700_000_000 + n,
+            format!("c{n}\n").len()
+        ));
+        stream.push_str(&format!(
+            "M 100644 inline counter.txt\ndata {}\n{body}\n",
+            body.len()
+        ));
+    }
+    let stream_path = machine.root.path().join("history.fast-import");
+    fs::write(&stream_path, stream).unwrap();
+    let import = spawn(
+        Command::new("git")
+            .current_dir(repo)
+            .args(["fast-import", "--quiet", "--force"])
+            .stdin(fs::File::open(&stream_path).unwrap()),
+    )
+    .wait_with_output()
+    .unwrap();
+    assert!(
+        import.status.success(),
+        "{}",
+        String::from_utf8_lossy(&import.stderr)
+    );
+    git(repo, &["checkout", "-q", "-f", "main"]);
+}
+
+#[test]
+fn a_commit_main_no_longer_reaches_loses_its_main_record() {
+    let machine = Machine::new();
+    let repo = machine.repository("repo-a", REPO_A);
+    import_history(&machine, &repo, 6010);
+    let oldest = git(&repo, &["rev-list", "--max-parents=0", "main"]);
+    let paged = machine.kinbase(
+        &repo,
+        &[
+            "ingest",
+            "git_history",
+            ".",
+            "--repo",
+            &repo.display().to_string(),
+            "--checkpoint",
+            "skip:6000",
+            "--json",
+        ],
+    );
+    assert!(paged.status.success());
+    // main is rewritten; only an archive branch keeps the old history.
+    git(&repo, &["branch", "archive", "main"]);
+    git(&repo, &["checkout", "-q", "--orphan", "fresh"]);
+    git(
+        &repo,
+        &["commit", "-q", "--allow-empty", "-m", "fresh start"],
+    );
+    git(&repo, &["branch", "-f", "main", "fresh"]);
+    git(&repo, &["checkout", "-q", "main"]);
+    git(&repo, &["branch", "-D", "fresh"]);
+    let receipt = machine.ingest(&repo, "git_history", ".");
+    let retired: Vec<_> = receipt["changed_dispositions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|change| change["to_disposition"] == "absent_source_recorded")
+        .collect();
+    assert!(!retired.is_empty(), "{receipt}");
+    let rows = dispositions(&machine);
+    assert!(
+        rows.get(&format!("commit:{oldest}"))
+            .is_some_and(|row| row.ends_with("/absent")),
+        "{:?}",
+        rows.get(&format!("commit:{oldest}"))
+    );
+}
+
+#[test]
+fn an_empty_headerless_newest_export_is_the_newest() {
+    let machine = Machine::new();
+    let repo = machine.repository("repo-a", REPO_A);
+    github(
+        &repo,
+        "a.json",
+        &json!({"exported_at": "2026-09-01T00:00:00Z", "issues": [issue(1, "2026-09-01T00:00:00Z")]}),
+    );
+    set_mtime(&repo.join("sources/github/a.json"), 1);
+    let first = machine.ingest(&repo, "github_export", "sources/github");
+    let identity = first["source_identity"].as_str().unwrap().to_owned();
+    github(&repo, "b.json", &json!({"issues": []}));
+    machine.ingest(&repo, "github_export", "sources/github");
+    let rows = lifecycles(&machine, &identity);
+    assert!(
+        rows.contains(&("issue:1".to_owned(), "absent".to_owned())),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn an_item_without_a_number_does_not_date_its_export() {
+    let machine = Machine::new();
+    let repo = machine.repository("repo-a", REPO_A);
+    github(
+        &repo,
+        "a.json",
+        &json!({"issues": [issue(1, "2026-09-01T00:00:00Z"),
+                            {"title": "no number", "updatedAt": "2030-01-01T00:00:00Z"}]}),
+    );
+    github(
+        &repo,
+        "b.json",
+        &json!({"issues": [issue(1, "2026-09-10T00:00:00Z"), issue(2, "2026-09-10T00:00:00Z")]}),
+    );
+    let receipt = machine.ingest(&repo, "github_export", "sources/github");
+    let identity = receipt["source_identity"].as_str().unwrap().to_owned();
+    let rows = lifecycles(&machine, &identity);
+    assert!(
+        rows.contains(&("issue:2".to_owned(), "observed".to_owned())),
+        "{rows:?}"
+    );
+}
+
+#[test]
+fn a_newest_json_array_is_skipped_not_refused() {
+    let machine = Machine::new();
+    let repo = machine.repository("repo-a", REPO_A);
+    github(
+        &repo,
+        "a.json",
+        &json!({"issues": [issue(1, "2026-09-01T00:00:00Z")]}),
+    );
+    set_mtime(&repo.join("sources/github/a.json"), 1);
+    github(&repo, "b.json", &json!([]));
+    let receipt = machine.ingest(&repo, "github_export", "sources/github");
+    assert_eq!(
+        receipt["skipped_source_records"]["github_export: JSON document is not an export"],
+        1
     );
 }

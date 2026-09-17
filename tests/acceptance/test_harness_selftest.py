@@ -1167,3 +1167,41 @@ def test_planted_events_are_witnessed_at_their_content_path_before_any_product_c
     with pytest.raises(HarnessInvalid) as moved:
         world.verify_planted()
     assert "instrument sequencing fault" in str(moved.value)
+
+
+@spec_ref(
+    VERIFY("V-9", "native-envelopes",
+           "Pin and report exact Codex/Claude versions and native envelope fixtures."),
+)
+def test_frozen_host_envelopes_are_the_hosts_own_shapes() -> None:
+    from ._harness import hosts
+
+    schemas = json.loads(
+        (hosts.ENVELOPE_FIXTURES.parent / "codex-0.154.0-input-schemas.json").read_text())
+    codex = hosts.envelope_fixture("codex")
+    assert codex["version"] == schemas["host"]
+    for event in hosts.HOST_EVENTS:
+        schema = schemas["schemas"][event]
+        envelope = codex["events"][event]
+        # Every field the schema requires, and no field it does not declare.
+        assert set(schema["required"]) <= set(envelope) <= set(schema["properties"]), event
+        for name, rule in schema["properties"].items():
+            if name not in envelope or not isinstance(rule, dict):
+                continue  # `true` admits any value (tool_input)
+            if "const" in rule:
+                assert envelope[name] == rule["const"], (event, name)
+            if "enum" in rule:
+                assert envelope[name] in rule["enum"], (event, name)
+    claude = hosts.envelope_fixture("claude")
+    assert claude["provenance"] == "recorded"
+    for host in hosts.HOSTS:
+        for event in hosts.HOST_EVENTS:
+            built = hosts.envelope_for(host, event, session_id="s-1", cwd="/repo")
+            assert built["hook_event_name"] == event
+            assert built["session_id"] == "s-1" and built["cwd"] == "/repo"
+            rendered = json.dumps(built)
+            assert not any(mark in rendered for mark in hosts._PLACEHOLDERS), (host, event)
+    # A test cannot hand the product a field no host sends.
+    with pytest.raises(HarnessInvalid, match="does not send"):
+        hosts.envelope_for("claude", "UserPromptSubmit", session_id="s-1", cwd="/repo",
+                           id="m-1")

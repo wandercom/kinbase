@@ -36,6 +36,13 @@ pub struct CompanyConfig {
     pub maintainer_key_file: PathBuf,
 }
 
+/// The processors a `[classifier]` may send session text to: `local` (the
+/// deterministic provider, or a model the loopback Ollama runs on this
+/// machine), `agy` (the Antigravity CLI's service) and `ollama-cloud` (a model
+/// the local Ollama forwards to ollama.com). A provider that sends text off
+/// the machine runs only when its processor is named here.
+pub const PROCESSOR_SCOPES: [&str; 3] = ["local", "agy", "ollama-cloud"];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassifierConfig {
     pub model: String,
@@ -113,7 +120,11 @@ pub struct SharedConfig {
     pub classifier: Option<SharedClassifier>,
     pub hosts: SharedHosts,
     pub canary_digests: Vec<String>,
-    pub forbidden_identifiers: Vec<String>,
+    /// Digests, like the canaries': a shared process holds no raw registered
+    /// value.
+    pub forbidden_identifier_digests: Vec<String>,
+    /// The word counts registered values span (see `scanner::Registry`).
+    pub registry_digest_word_counts: Vec<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,8 +136,12 @@ pub struct SharedCompanyAccess {
     pub authority_token: Option<TokenRecord>,
     pub root_public_key: String,
     pub cache_root: PathBuf,
-    pub client_private_seed: String,
-    pub maintainer_private_seed: String,
+    /// Present when the key already existed (or arrived by descriptor);
+    /// otherwise the key is minted by the first command that signs with it.
+    pub client_private_seed: Option<String>,
+    pub maintainer_private_seed: Option<String>,
+    pub client_key_file: PathBuf,
+    pub maintainer_key_file: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,16 +164,86 @@ impl SharedCompanyAccess {
     pub fn root_key(&self) -> Result<PublicKey, ContractError> {
         PublicKey::from_hex(&self.root_public_key)
     }
+    /// The request-signing key, minted on first Company contact.
     pub fn client_key(&self) -> Result<PrivateKey, ContractError> {
-        PrivateKey::from_seed_text(&self.client_private_seed)
+        match &self.client_private_seed {
+            Some(seed) => PrivateKey::from_seed_text(seed),
+            None => PrivateKey::load_or_generate(&self.client_key_file, "client key"),
+        }
     }
+    /// The repository maintainer's signing key, for the commands that sign
+    /// as the maintainer; minted by the first of them, never by a read.
     pub fn maintainer_key(&self) -> Result<PrivateKey, ContractError> {
-        PrivateKey::from_seed_text(&self.maintainer_private_seed)
+        match &self.maintainer_private_seed {
+            Some(seed) => PrivateKey::from_seed_text(seed),
+            None => PrivateKey::load_or_generate(&self.maintainer_key_file, "maintainer key"),
+        }
+    }
+    /// The maintainer's public key if one exists; a read never mints one.
+    pub fn existing_maintainer_public_key(&self) -> Option<String> {
+        match &self.maintainer_private_seed {
+            Some(seed) => PrivateKey::from_seed_text(seed).ok(),
+            None => self
+                .maintainer_key_file
+                .exists()
+                .then(|| PrivateKey::load(&self.maintainer_key_file, "maintainer key").ok())
+                .flatten(),
+        }
+        .map(|key| key.public().to_hex())
     }
 }
 
 pub fn user_config_path() -> PathBuf {
     paths::config_dir().join("config.toml")
+}
+
+/// A host version range: `>=X.Y.Z` or an exact `X.Y.Z` (one to four numeric
+/// parts). A malformed or wrong-typed value used to become `>=0.0.0`
+/// silently.
+fn host_version_range(section: &toml::Table, key: &str) -> Result<String, ContractError> {
+    let Some(value) = section.get(key) else {
+        return Ok(">=0.0.0".to_owned());
+    };
+    let text = value
+        .as_str()
+        .ok_or_else(|| config_error(format!("hosts.{key} must be a string")))?
+        .trim();
+    let version = text.strip_prefix(">=").unwrap_or(text).trim();
+    let parts: Vec<&str> = version.split('.').collect();
+    // Each part must be a number the comparator can hold; a part past u64
+    // compared as zero and let every host through.
+    if parts.len() > 4
+        || parts.iter().any(|part| {
+            part.is_empty()
+                || !part.bytes().all(|byte| byte.is_ascii_digit())
+                || part.parse::<u64>().is_err()
+        })
+    {
+        return Err(config_error(format!(
+            "hosts.{key} must be `>=X.Y.Z` or an exact `X.Y.Z` version"
+        )));
+    }
+    Ok(text.to_owned())
+}
+
+/// A TOML parse failure as its position and rule, never the source line:
+/// the toml crate's own text quotes the offending line, which may hold a
+/// secret the user put in their config.
+pub fn toml_error_text(text: &str, error: &toml::de::Error) -> String {
+    match error.span() {
+        Some(span) => {
+            let before = &text.as_bytes()[..span.start.min(text.len())];
+            let line = before.iter().filter(|byte| **byte == b'\n').count() + 1;
+            let column = before
+                .iter()
+                .rev()
+                .take_while(|byte| **byte != b'\n')
+                .count()
+                + 1;
+            format!("line {line}, column {column}: {}", error.message())
+        }
+        None => error.message().to_owned(),
+    }
 }
 
 fn config_error(message: impl Into<String>) -> ContractError {
@@ -248,7 +333,10 @@ pub fn load_user_config() -> Result<Option<UserConfig>, ContractError> {
 
 pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, ContractError> {
     let table: toml::Table = text.parse().map_err(|error: toml::de::Error| {
-        config_error(format!("user config is not valid TOML: {error}"))
+        config_error(format!(
+            "user config is not valid TOML ({})",
+            toml_error_text(text, &error)
+        ))
     })?;
     closed_keys(
         &table,
@@ -346,11 +434,13 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                 ],
                 "[classifier]",
             )?;
-            let model = section
-                .get("model")
-                .and_then(toml::Value::as_str)
-                .unwrap_or("deterministic")
-                .to_owned();
+            let model = match section.get("model") {
+                None => "deterministic".to_owned(),
+                Some(value) => value
+                    .as_str()
+                    .ok_or_else(|| config_error("classifier.model must be a string"))?
+                    .to_owned(),
+            };
             if !model.starts_with("deterministic")
                 && !model.starts_with("ollama:")
                 && !model.starts_with("agy:")
@@ -394,11 +484,23 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                     "classifier.timeout_seconds must be within 1..=600",
                 ));
             }
-            let processor_scope = section
-                .get("processor_scope")
-                .and_then(toml::Value::as_str)
-                .unwrap_or("local")
-                .to_owned();
+            let processor_scope = match section.get("processor_scope") {
+                None => "local".to_owned(),
+                Some(value) => value
+                    .as_str()
+                    .filter(|scope| PROCESSOR_SCOPES.contains(scope))
+                    .ok_or_else(|| {
+                        config_error(format!(
+                            "classifier.processor_scope must be one of {}",
+                            PROCESSOR_SCOPES
+                                .iter()
+                                .map(|scope| format!("\"{scope}\""))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))
+                    })?
+                    .to_owned(),
+            };
             Some(ClassifierConfig {
                 model,
                 executable,
@@ -421,16 +523,8 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                 .ok_or_else(|| config_error("[hosts] must be a table"))?;
             closed_keys(section, &["codex_version", "claude_version"], "[hosts]")?;
             HostsConfig {
-                codex_version: section
-                    .get("codex_version")
-                    .and_then(toml::Value::as_str)
-                    .unwrap_or(">=0.0.0")
-                    .to_owned(),
-                claude_version: section
-                    .get("claude_version")
-                    .and_then(toml::Value::as_str)
-                    .unwrap_or(">=0.0.0")
-                    .to_owned(),
+                codex_version: host_version_range(section, "codex_version")?,
+                claude_version: host_version_range(section, "claude_version")?,
             }
         }
     };
@@ -571,18 +665,23 @@ impl UserConfig {
                     .transpose()?;
                 let root_public_key =
                     PublicKey::load(&company.root_public_key_file, "Company root public key")?;
-                paths::ensure_private_dir(&company.cache_root, "Company cache root")?;
+                // Loading the configuration creates nothing: the cache
+                // directory is made by its first write, and a key by the
+                // first command that signs with it. `hooks plan`, `doctor`
+                // and an offline `status` minted both keys before.
+                if company.cache_root.exists() {
+                    paths::ensure_private_dir(&company.cache_root, "Company cache root")?;
+                }
                 let client_key = match std::env::var("KINBASE_CLIENT_KEY_FD") {
                     Ok(fd) => {
                         let fd: i32 = fd.parse().map_err(|_| {
                             config_error("KINBASE_CLIENT_KEY_FD must be an integer")
                         })?;
-                        PrivateKey::load_fd(fd, "client key")?
+                        Some(PrivateKey::load_fd(fd, "client key")?)
                     }
-                    Err(_) => PrivateKey::load_or_generate(&company.client_key_file, "client key")?,
+                    Err(_) => existing_key(&company.client_key_file, "client key")?,
                 };
-                let maintainer_key =
-                    PrivateKey::load_or_generate(&company.maintainer_key_file, "maintainer key")?;
+                let maintainer_key = existing_key(&company.maintainer_key_file, "maintainer key")?;
                 Some(SharedCompanyAccess {
                     url: company.url.clone(),
                     facts_token,
@@ -591,22 +690,33 @@ impl UserConfig {
                     authority_token,
                     root_public_key: root_public_key.to_hex(),
                     cache_root: company.cache_root.clone(),
-                    client_private_seed: client_key.to_seed_text(),
-                    maintainer_private_seed: maintainer_key.to_seed_text(),
+                    client_private_seed: client_key.map(|key| key.to_seed_text()),
+                    maintainer_private_seed: maintainer_key.map(|key| key.to_seed_text()),
+                    client_key_file: company.client_key_file.clone(),
+                    maintainer_key_file: company.maintainer_key_file.clone(),
                 })
             }
         };
-        let canary_digests = match &self.scanner.canary_file {
+        let canaries = match &self.scanner.canary_file {
             None => Vec::new(),
-            Some(path) => load_registry_lines(path, "canary registry")?
-                .into_iter()
-                .map(|value| crate::scanner::canary_digest(&value))
-                .collect(),
+            Some(path) => load_registry_lines(path, "canary registry")?,
         };
         let forbidden_identifiers = match &self.scanner.forbidden_identifier_file {
             None => Vec::new(),
             Some(path) => load_registry_lines(path, "forbidden identifier registry")?,
         };
+        let registry_digest_word_counts =
+            crate::scanner::registered_word_counts(canaries.iter().chain(&forbidden_identifiers))
+                .into_iter()
+                .collect();
+        let canary_digests = canaries
+            .iter()
+            .map(|value| crate::scanner::canary_digest(value))
+            .collect();
+        let forbidden_identifier_digests = forbidden_identifiers
+            .iter()
+            .map(|value| crate::scanner::identifier_digest(value))
+            .collect();
         Ok(SharedConfig {
             mode: Mode::Full,
             principal_id: self.principal_id.clone(),
@@ -625,8 +735,17 @@ impl UserConfig {
                 claude_version: self.hosts.claude_version.clone(),
             },
             canary_digests,
-            forbidden_identifiers,
+            forbidden_identifier_digests,
+            registry_digest_word_counts,
         })
+    }
+}
+
+fn existing_key(path: &Path, role: &str) -> Result<Option<PrivateKey>, ContractError> {
+    if path.exists() {
+        PrivateKey::load(path, role).map(Some)
+    } else {
+        Ok(None)
     }
 }
 
@@ -656,7 +775,8 @@ pub fn codebase_only_shared() -> SharedConfig {
             claude_version: ">=0.0.0".to_owned(),
         },
         canary_digests: Vec::new(),
-        forbidden_identifiers: Vec::new(),
+        forbidden_identifier_digests: Vec::new(),
+        registry_digest_word_counts: Vec::new(),
     }
 }
 
@@ -692,7 +812,10 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
     let text = std::fs::read_to_string(path)
         .map_err(|error| ContractError::unreadable("service config", &error))?;
     let table: toml::Table = text.parse().map_err(|error: toml::de::Error| {
-        config_error(format!("service config is not valid TOML: {error}"))
+        config_error(format!(
+            "service config is not valid TOML ({})",
+            toml_error_text(&text, &error)
+        ))
     })?;
     closed_keys(
         &table,
@@ -798,4 +921,89 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
             .transpose()?
             .unwrap_or_default(),
     })
+}
+
+#[cfg(test)]
+mod processor_scope_tests {
+    use super::*;
+
+    fn classifier_config(extra: &str) -> Result<UserConfig, ContractError> {
+        let text = format!(
+            "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n\n\
+             [classifier]\nexecutable = \"/opt/example/bin/classifier\"\n\
+             executable_sha256 = \"{}\"\ntimeout_seconds = 20\n{extra}\n",
+            "0".repeat(64)
+        );
+        parse_user_config(Path::new("/private/example/config.toml"), &text)
+    }
+
+    fn scope_of(extra: &str) -> String {
+        classifier_config(extra)
+            .expect("config parses")
+            .classifier
+            .expect("classifier section")
+            .processor_scope
+    }
+
+    #[test]
+    fn processor_scope_is_a_closed_vocabulary() {
+        assert_eq!(scope_of("model = \"agy:default\""), "local");
+        assert_eq!(
+            scope_of("model = \"agy:default\"\nprocessor_scope = \"agy\""),
+            "agy"
+        );
+        assert_eq!(
+            scope_of("processor_scope = \"ollama-cloud\""),
+            "ollama-cloud"
+        );
+        for bad in [
+            "processor_scope = \"cloud\"",
+            "processor_scope = \"\"",
+            "processor_scope = 1",
+            "processor_scope = [\"agy\"]",
+            "model = 7",
+        ] {
+            let error = classifier_config(bad).expect_err(bad);
+            assert_eq!(error.code, "CONFIG_INVARIANT", "{bad}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod host_range_tests {
+    use super::*;
+
+    fn hosts(extra: &str) -> Result<UserConfig, ContractError> {
+        let text = format!(
+            "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n\n[hosts]\n{extra}\n"
+        );
+        parse_user_config(Path::new("/private/example/config.toml"), &text)
+    }
+
+    #[test]
+    fn a_toml_error_names_its_place_not_its_line() {
+        let text = "schema_version = \"1\"\ntoken = \"sk-live-SECRET\" oops\n";
+        let error = parse_user_config(Path::new("/private/example/config.toml"), text)
+            .expect_err("invalid TOML");
+        assert!(error.message.contains("line 2"), "{}", error.message);
+        assert!(!error.message.contains("SECRET"), "{}", error.message);
+    }
+
+    #[test]
+    fn a_host_range_is_a_version_or_a_minimum() {
+        let config =
+            hosts("claude_version = \">=2.1.0\"\ncodex_version = \"0.40.1\"").expect("parses");
+        assert_eq!(config.hosts.claude_version, ">=2.1.0");
+        assert_eq!(config.hosts.codex_version, "0.40.1");
+        assert_eq!(hosts("").expect("parses").hosts.codex_version, ">=0.0.0");
+        for bad in [
+            "claude_version = \"latest\"",
+            "claude_version = \">=2.x\"",
+            "claude_version = \"~2.1\"",
+            "claude_version = 2",
+            "codex_version = \">=1.2.3.4.5\"",
+        ] {
+            assert_eq!(hosts(bad).expect_err(bad).code, "CONFIG_INVARIANT", "{bad}");
+        }
+    }
 }

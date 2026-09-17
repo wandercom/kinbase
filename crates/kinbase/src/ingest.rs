@@ -256,9 +256,16 @@ pub fn ingest(
         .transpose()?;
     let default_revision = discovered_repository.revision().ok();
     let default_branch = discovered_repository.branch().ok();
-    let trust = crate::repository::RepoContext::load(launcher.clone(), repo, false, Some(&now))
-        .ok()
-        .map(|context| context.trust);
+    // Revocation is observed only through the trust context; when it cannot
+    // be loaded the receipt says the check did not run, and why.
+    let (trust, trust_unavailable) =
+        match crate::repository::RepoContext::load(launcher.clone(), repo, false, Some(&now)) {
+            Ok(context) => (Some(context.trust), None),
+            Err(error) => (
+                None,
+                Some(json!({"code": error.code, "message": error.message})),
+            ),
+        };
 
     // -- ceiling stops and parser quarantines -------------------------------
     let mut quarantined_count = 0usize;
@@ -479,6 +486,11 @@ pub fn ingest(
             merged.effective_until = fresh.effective_until.clone();
             merged.disposition = fresh.disposition.clone();
             merged.parents = fresh.parents.clone();
+            // The key and statement are the adapter's conclusions too: a symbol
+            // whose name crossed the convention threshold is re-keyed per file
+            // (and back) instead of staying on the key it was first read under.
+            merged.logical_key = fresh.logical_key.clone();
+            merged.statement = fresh.statement.clone();
             if !record.present && merged.lifecycle == "observed" {
                 merged.lifecycle = "absent".to_owned();
             } else if record.present
@@ -581,6 +593,16 @@ pub fn ingest(
         if present_native_ids.contains(native_id) {
             continue;
         }
+        // Outside a windowed scan but still in the source, and still of the
+        // origin it was recorded with: nothing to retire. A commit that is
+        // now reached only from another branch no longer carries the trust
+        // its main-branch record did, so that record is retired.
+        if scan.present_elsewhere.get(native_id).is_some_and(|origin| {
+            rows.iter()
+                .all(|old| old.origin_trust.as_deref() == Some(origin.as_str()))
+        }) {
+            continue;
+        }
         for old in rows {
             if old.lifecycle != "observed" {
                 continue;
@@ -621,6 +643,15 @@ pub fn ingest(
         private.audit(
             "narrowed-view",
             &json!({"source_identity": source_identity, "source_kind": source_kind, "reason": reason, "observed_at": now}),
+        )?;
+    }
+    // A windowed source names where its next page starts; the cursor is kept
+    // for the source and returned, not only echoed back.
+    if let Some(next) = &scan.next_checkpoint {
+        private.set_checkpoint(
+            &source_identity,
+            &json!({"source_kind": source_kind, "next_checkpoint": next, "recorded_at": now}),
+            &now,
         )?;
     }
 
@@ -704,6 +735,8 @@ pub fn ingest(
         "receipt_scope_restricted": !historical_receipts.is_empty(),
         "revocation_observed": revocation_observed_count > 0,
         "revocation_observed_count": revocation_observed_count,
+        "revocation_checked": trust_unavailable.is_none(),
+        "trust_context_unavailable": trust_unavailable,
         "manifest_publication": manifest_publication,
         "manifest_lineages": manifest_lineages,
         "source_identity": source_identity,
@@ -730,6 +763,7 @@ pub fn ingest(
             })))
         },
         "checkpoint": checkpoint,
+        "next_checkpoint": scan.next_checkpoint,
         "source_digest": scan.source_digest,
         "store": store_name(store),
         "omitted_count": omitted_count,
