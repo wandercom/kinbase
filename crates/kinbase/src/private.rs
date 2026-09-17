@@ -421,6 +421,32 @@ impl PrivateStore {
         Ok(updated == 1)
     }
 
+    /// Move an observation recorded under an older identity of its source to
+    /// the source's current identity. The observation id is kept, so every
+    /// receipt and atom that names it still resolves.
+    pub fn rekey_observation(&self, observation: &Observation) -> Result<(), ContractError> {
+        let value = serde_json::to_value(observation).map_err(|error| {
+            ContractError::internal(format!("observation is not serialisable: {error}"))
+        })?;
+        let record = crate::json::try_canonical_text(&value).map_err(|error| {
+            ContractError::internal(format!(
+                "observation violates the canonical data model: {error}"
+            ))
+        })?;
+        self.connection
+            .execute(
+                "UPDATE observations SET source_identity=?2, record=?3, lifecycle=?4 WHERE observation_id=?1",
+                params![
+                    observation.observation_id,
+                    observation.source_identity,
+                    record,
+                    observation.lifecycle
+                ],
+            )
+            .map(|_| ())
+            .map_err(sqlite_error("rekey observation"))
+    }
+
     /// Every observation in the ledger in admission order (the ledger's own
     /// opaque cursor), with the lifecycle column and cursor attached.
     pub fn all_observations(&self) -> Result<Vec<Observation>, ContractError> {

@@ -176,6 +176,12 @@ fn text_rule(character: char) -> Option<&'static str> {
     None
 }
 
+/// Whether the canonical text rule (architecture §3) rejects `character`.
+/// Every cleaner defers to this one rule rather than keeping its own list.
+pub fn breaks_text_rule(character: char) -> bool {
+    text_rule(character).is_some()
+}
+
 /// `text` with every character the text rule rejects replaced by one space.
 /// Structure a host put in a message (newlines, tabs) becomes word
 /// separation; the length in characters is unchanged.
