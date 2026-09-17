@@ -103,9 +103,11 @@ def host_binary(host: str, roots: ProofRoots, kinbase: Kinbase) -> hosts.HostBin
     recorder = hosts.install_invocation_recorder(bin_dir, host, resolved)
     kinbase.path_prefix.insert(0, bin_dir)
     # Literal, so the control-policy check can see exactly which environment names
-    # reach the probe. A version probe needs PATH and nothing else.
+    # reach the probe. A version probe needs PATH (recorder first) and the
+    # isolated HOME, so the host never reads the operator's own configuration.
+    driver_env = kinbase.base_env()
     available = hosts.host_availability(
-        host, env={"PATH": kinbase.base_env().get("PATH", "")}
+        host, env={"PATH": driver_env.get("PATH", ""), "HOME": driver_env["HOME"]}
     )
     if available is None or available.version == "unknown":
         raise HarnessInvalid("cannot record the exact version of " + host)
