@@ -55,7 +55,14 @@ fn parse_rows<T: serde::de::DeserializeOwned>(
         let text = row.map_err(sqlite_error("row"))?;
         match serde_json::from_str::<T>(&text) {
             Ok(value) => output.push(value),
-            Err(error) => skipped.push(position, text.len(), &error.to_string()),
+            Err(_) => skipped.push(
+                position,
+                text.len(),
+                match crate::output::unreadable_reason(text.as_bytes()) {
+                    "outside the canonical data model" => "not a record of this ledger",
+                    reason => reason,
+                },
+            ),
         }
     }
     skipped.report(context);
@@ -491,8 +498,8 @@ impl PrivateStore {
             // Same disposition as `all_observations`: skip, and say so.
             let mut observation: Observation = match serde_json::from_str(&text) {
                 Ok(observation) => observation,
-                Err(error) => {
-                    skipped.push(position, text.len(), &error.to_string());
+                Err(_) => {
+                    skipped.push(position, text.len(), "not a readable observation");
                     continue;
                 }
             };

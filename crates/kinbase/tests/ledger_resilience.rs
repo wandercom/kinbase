@@ -227,3 +227,35 @@ fn a_torn_sessions_ledger_still_lets_a_session_end() {
     );
     assert!(String::from_utf8_lossy(&started.stderr).contains("torn-ledger-tail"));
 }
+
+#[test]
+fn a_skipped_line_is_reported_without_its_contents() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path().join("home");
+    let state = temp.path().join("state");
+    let repo = temp.path().join("repo");
+    for directory in [&home, &state, &repo] {
+        fs::create_dir_all(directory).expect("dir");
+    }
+    let personal = state.join("kinbase").join("codebase-personal");
+    fs::create_dir_all(&personal).expect("personal root");
+    // The canonical text rule refuses a control character and its message
+    // names the field that holds it.
+    fs::write(
+        personal.join("sessions.jsonl"),
+        "{\"guest_Wilhelmina\":\"x\\u0085y\"}\n",
+    )
+    .expect("ledger");
+    let output = Command::new(env!("CARGO_BIN_EXE_kinbase"))
+        .current_dir(&repo)
+        .args(["session", "end", "session_absent", "--json"])
+        .env("HOME", &home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
+        .env("XDG_STATE_HOME", &state)
+        .env_remove("KINBASE_COMPANY_URL")
+        .output()
+        .expect("run kinbase");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unreadable-ledger-rows"), "{stderr}");
+    assert!(!stderr.contains("Wilhelmina"), "{stderr}");
+}

@@ -1834,7 +1834,14 @@ fn finalize_principal_receipt(base: &Value, saga: &Value) -> Result<Value, Contr
                     == crate::json::get_str(&receipt, "receipt_id")
                 && crate::json::get_str(&record, "state") == crate::json::get_str(&receipt, "state")
         });
-    if !already {
+    if already {
+        // Found, possibly from an attempt whose sync failed.
+        crate::store::sync_record(
+            crate::StoreKind::Personal,
+            &repo_root,
+            "proposal-decisions.jsonl",
+        )?;
+    } else {
         crate::store::append_record_durable(
             crate::StoreKind::Personal,
             &repo_root,
@@ -3217,6 +3224,12 @@ fn admit_candidate(
         })
     {
         if matches!(decision_state(&previous), "committed" | "refused") {
+            // Acting on a found receipt: make sure it is on disk first.
+            crate::store::sync_record(
+                crate::StoreKind::Personal,
+                &std::env::current_dir().map_err(io_error)?,
+                "proposal-decisions.jsonl",
+            )?;
             return Ok(previous);
         }
     }

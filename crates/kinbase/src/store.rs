@@ -211,7 +211,11 @@ fn read_jsonl_counted(
         };
         match parse_strict_object(text.as_bytes()) {
             Ok(map) => output.push(Value::Object(map)),
-            Err(error) => skipped.push(position, text.len(), &error),
+            Err(_) => skipped.push(
+                position,
+                text.len(),
+                crate::output::unreadable_reason(text.as_bytes()),
+            ),
         }
     }
     skipped.report(&ledger);
@@ -275,6 +279,11 @@ fn append_jsonl_with(path: &Path, value: &Value, durable: bool) -> Result<(), Co
         ));
     }
     if line_present(path, &canonical)? {
+        // An earlier attempt may have written the line and failed to sync it;
+        // a durable append returns only once the line is on disk.
+        if durable {
+            sync_ledger(&file, path)?;
+        }
         return Ok(());
     }
     // A write cut short (a full disk, a crash before the page cache reached
@@ -303,15 +312,35 @@ fn append_jsonl_with(path: &Path, value: &Value, durable: bool) -> Result<(), Co
     file.write_all(&line)
         .map_err(|error| ContractError::io("write JSONL", error))?;
     if durable {
-        file.sync_all()
-            .map_err(|error| ContractError::io("sync JSONL", error))?;
-        if let Some(parent) = path.parent() {
-            fs::File::open(parent)
-                .and_then(|directory| directory.sync_all())
-                .map_err(|error| ContractError::io("sync JSONL directory", error))?;
-        }
+        sync_ledger(&file, path)?;
     }
     Ok(())
+}
+
+fn sync_ledger(file: &fs::File, path: &Path) -> Result<(), ContractError> {
+    file.sync_all()
+        .map_err(|error| ContractError::io("sync JSONL", error))?;
+    if let Some(parent) = path.parent() {
+        fs::File::open(parent)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|error| ContractError::io("sync JSONL directory", error))?;
+    }
+    Ok(())
+}
+
+/// Sync a ledger whose record a caller found already present, so a decision
+/// read back from it is on disk before the caller acts on it.
+pub fn sync_record(
+    store: crate::StoreKind,
+    repo: &Path,
+    filename: &str,
+) -> Result<(), ContractError> {
+    let path = store_root(store, repo).join(filename);
+    match fs::File::open(&path) {
+        Ok(file) => sync_ledger(&file, &path),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(ContractError::io("open JSONL", error)),
+    }
 }
 
 pub fn write_private_body(root: &Path, bytes: &[u8]) -> Result<String, ContractError> {
@@ -364,8 +393,8 @@ pub fn read_events(root: &Path) -> Result<Vec<FactEvent>, ContractError> {
             .into_owned();
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
-            Err(error) => {
-                skipped.push_file(&name, 0, &error.to_string());
+            Err(_) => {
+                skipped.push_file(&name, 0, "unreadable file");
                 continue;
             }
         };
@@ -382,7 +411,14 @@ pub fn read_events(root: &Path) -> Result<Vec<FactEvent>, ContractError> {
     for (text, name) in texts {
         match FactEvent::parse(text.as_bytes()) {
             Ok(event) => events.push(event),
-            Err(error) => skipped.push_file(&name, text.len(), &error),
+            Err(_) => skipped.push_file(
+                &name,
+                text.len(),
+                match crate::output::unreadable_reason(text.as_bytes()) {
+                    "outside the canonical data model" => "not a fact event",
+                    reason => reason,
+                },
+            ),
         }
     }
     skipped.report("events");
