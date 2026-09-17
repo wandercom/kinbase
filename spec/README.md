@@ -33,7 +33,9 @@ Read in this order:
 12. [`leak-runbook.md`](leak-runbook.md) — required containment and apology process.
 13. `amendment-*.md` — candidate amendments in the append-only overlay format;
     each is `candidate` until the founder and a distinct Validator ratify its exact
-    digest, and no Coder lane may read candidate bytes.
+    digest, and no Coder lane may read candidate bytes. Amendment 003 is the
+    exception: it is ratified and bound whole in the manifest as the seventh
+    authority artifact.
 
 Status vocabulary:
 

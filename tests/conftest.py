@@ -74,7 +74,7 @@ GATE_MARKERS: dict[str, str] = {
 def pytest_configure(config: pytest.Config) -> None:
     """Verify the ratified manifest and initialise the census as NOT_RUN.
 
-    ``KINBASE_REVIEWER_MODE=1`` restricts verification to the six ratified
+    ``KINBASE_REVIEWER_MODE=1`` restricts verification to the ratified
     authority artifacts, omitting the receipt and review-evidence paths that lie
     outside an implementation-blind Detector Reviewer's permitted surface.
     """

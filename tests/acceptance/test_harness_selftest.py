@@ -72,7 +72,7 @@ def test_manifest_and_every_artifact_digest_verify(manifest) -> None:
     assert set(manifest.artifact_digests) == set(AUTHORITY_PRECEDENCE)
     # Receipt verification is the Validator's step. An implementation-blind
     # Detector Reviewer has no access to spec/receipts/** or evidence/**, so
-    # reviewer mode verifies the six ratified authority artifacts and stops.
+    # reviewer mode verifies the ratified authority artifacts and stops.
     if os.environ.get("KINBASE_REVIEWER_MODE") == "1":
         assert manifest.receipt_digests == {}, (
             "reviewer mode must not read receipts"

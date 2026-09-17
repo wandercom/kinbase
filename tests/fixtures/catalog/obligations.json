@@ -1695,7 +1695,7 @@
     },
     {
       "anchor": "apology",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-2",
       "nodes": [
@@ -1811,7 +1811,7 @@
     },
     {
       "anchor": "retry",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-2",
       "nodes": [
@@ -2040,7 +2040,7 @@
     },
     {
       "anchor": "independence",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-2",
       "nodes": [
@@ -2776,14 +2776,14 @@
     },
     {
       "anchor": "close-five-taint",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-3",
       "nodes": [
         "test_v3_privacy.py::test_hard_blocking_taint_is_never_cleared_by_deidentification"
       ],
       "oid": "V-3.taint",
-      "requirement": "The close-five brief requires a canary-bearing message with a durable architectural fact to yield Codebase and Personal admissions, with the canary in neither, while the private record retains its taint.",
+      "requirement": "A canary-bearing message with a durable architectural fact yields Codebase and Personal admissions, with the canary in neither, while the private record retains its taint.",
       "surfaces": [
         "private admission audit ledgers"
       ],
@@ -8288,7 +8288,7 @@
     },
     {
       "anchor": "diagnostics",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "NONFUNCTIONAL",
       "nodes": [
@@ -8989,7 +8989,7 @@
     },
     {
       "anchor": "direct-admission",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-6",
       "nodes": [
@@ -9096,7 +9096,7 @@
     },
     {
       "anchor": "unknown",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-6",
       "nodes": [
@@ -9178,7 +9178,7 @@
     },
     {
       "anchor": "unknown",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-6",
       "nodes": [
@@ -9236,7 +9236,7 @@
     },
     {
       "anchor": "standing",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-6",
       "nodes": [
@@ -9294,7 +9294,7 @@
     },
     {
       "anchor": "provenance",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-6",
       "nodes": [
@@ -9339,7 +9339,7 @@
     },
     {
       "anchor": "unlabelled",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-6",
       "nodes": [
@@ -9397,7 +9397,7 @@
     },
     {
       "anchor": "shrug",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-6",
       "nodes": [
@@ -9444,7 +9444,7 @@
     },
     {
       "anchor": "direct-admission",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-6",
       "nodes": [
@@ -9502,7 +9502,7 @@
     },
     {
       "anchor": "commands",
-      "artifact": "tests/RULING-CONTRACT.md",
+      "artifact": "spec/amendment-003-ruling-contract.md",
       "fail_closed": "PRODUCT_FAILURE",
       "gate": "V-6",
       "nodes": [

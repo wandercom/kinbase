@@ -190,7 +190,7 @@ P = "spec/product.md"
 A = "spec/architecture.md"
 T = "spec/threat-model.md"
 L = "spec/cli.md"
-R = "tests/RULING-CONTRACT.md"
+R = "spec/amendment-003-ruling-contract.md"
 
 ADAPTERS = (
     "codex_jsonl", "claude_jsonl", "repo_code", "repo_tests", "git_history",
@@ -868,7 +868,7 @@ _o(
 _o(
     "V-3.taint", "V-3", "private taint survives de-identified admission",
     R, "close-five-taint",
-    "The close-five brief requires a canary-bearing message with a durable architectural fact to yield Codebase and Personal admissions, with the canary in neither, while the private record retains its taint.",
+    "A canary-bearing message with a durable architectural fact yields Codebase and Personal admissions, with the canary in neither, while the private record retains its taint.",
     clauses(
         equals("admission_count", 2, "both destinations admit the minimized fact without a queue"),
         equals("destinations", ["codebase", "personal"], "both intended stores have a receipt"),
