@@ -225,10 +225,11 @@ impl TrustContext {
         if unknown.store_kind != "codebase" {
             return Verification::Foreign;
         }
-        if let (Some(uuid), Some(bound)) = (&self.repository_uuid, unknown.repository_id.as_deref())
-            && uuid != bound
-        {
-            return Verification::Foreign;
+        // Bound to exactly this repository, as a fact event must be: an
+        // unbound Unknown could be replayed into any repository.
+        match (&self.repository_uuid, unknown.repository_id.as_deref()) {
+            (Some(uuid), Some(bound)) if uuid == bound => {}
+            _ => return Verification::Foreign,
         }
         if !self.certificate_valid {
             return Verification::Unverified;
@@ -4777,6 +4778,10 @@ mod unknown_verification_tests {
         foreign.repository_id = Some("00000000-0000-4000-8000-000000000002".to_owned());
         foreign.sign(&owner).expect("sign");
         assert_eq!(trust.verify_unknown(&foreign), Verification::Foreign);
+        let mut unbound = signed("area:db", &owner);
+        unbound.repository_id = None;
+        unbound.sign(&owner).expect("sign");
+        assert_eq!(trust.verify_unknown(&unbound), Verification::Foreign);
 
         trust.certificate_valid = false;
         assert_eq!(

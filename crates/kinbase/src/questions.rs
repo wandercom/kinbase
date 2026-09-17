@@ -902,9 +902,21 @@ fn answer(
         "signed_answer": Value::Object(map.clone())
     });
     append_company(&repo, "answers.jsonl", &answer_record)?;
+    // A later answer joins the group of the question's first answer, so it
+    // supersedes (or conflicts with) the earlier ones; an answer written
+    // before offline answers took the service's logical key sits under
+    // another key, where a correction under the new key never reached it.
+    let mut fact_question = question.clone();
+    if !prior_answers.is_empty() {
+        let company_root = crate::store::store_root(crate::StoreKind::Company, &repo);
+        let local_events = crate::store::read_events(&company_root).unwrap_or_default();
+        if let Some(key) = answer_chain_key(&prior_answers, &local_events) {
+            fact_question["logical_key"] = Value::String(key);
+        }
+    }
     let (fact_id, fact_event_id) = write_authority_fact(
         &repo,
-        &question,
+        &fact_question,
         answer_text,
         &answer_id,
         authority_id,
@@ -980,6 +992,18 @@ fn write_authority_fact(
     let root = crate::store::ensure_store_root(crate::StoreKind::Company, repo)?;
     crate::store::write_content_addressed_event(&root, &event)?;
     Ok((event.fact_id, event.event_id))
+}
+
+/// The logical key of a question's first recorded answer event, which every
+/// later answer to the question shares.
+pub(crate) fn answer_chain_key(prior_answers: &[Value], events: &[FactEvent]) -> Option<String> {
+    let first = prior_answers
+        .iter()
+        .find_map(|record| record.get("event_id").and_then(Value::as_str))?;
+    events
+        .iter()
+        .find(|event| event.event_id == first)
+        .map(|event| event.logical_key.clone())
 }
 
 /// The local Company fact event for an authority answer, signed by the local

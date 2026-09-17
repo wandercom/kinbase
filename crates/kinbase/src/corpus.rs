@@ -1771,6 +1771,35 @@ mod local_answer_tests {
     }
 
     #[test]
+    fn a_later_answer_joins_the_first_answers_group() {
+        let local = PrivateKey::generate();
+        let mut legacy = event(&local, TEXT, "answer_1");
+        legacy.logical_key = "logical_legacy_scope_key".to_owned();
+        let newer = event(&local, "Refunds settle at once.", "answer_2");
+        let prior = vec![
+            json!({"answer_id": "answer_1", "event_id": legacy.event_id}),
+            json!({"answer_id": "answer_2", "event_id": newer.event_id}),
+        ];
+        let events = vec![newer.clone(), legacy.clone()];
+        assert_eq!(
+            crate::questions::answer_chain_key(&prior, &events).as_deref(),
+            Some("logical_legacy_scope_key")
+        );
+        assert_eq!(crate::questions::answer_chain_key(&prior, &[newer]), None);
+        assert_eq!(crate::questions::answer_chain_key(&[], &events), None);
+
+        // The correction carries that key, so the reducer can retire the
+        // answer it supersedes.
+        let correction = answer_event(
+            &local,
+            json!({"question_id": "question_1", "logical_key": "logical_legacy_scope_key"}),
+            "Refunds settle in one business day.",
+            "answer_3",
+        );
+        assert_eq!(correction.logical_key, legacy.logical_key);
+    }
+
+    #[test]
     fn a_local_answer_is_trusted_only_through_its_signed_answer() {
         let authority = PrivateKey::generate();
         let local = PrivateKey::generate();
