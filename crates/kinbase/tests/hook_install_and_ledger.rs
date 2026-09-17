@@ -61,11 +61,14 @@ fn commands(document: &Value, event: &str) -> Vec<String> {
         .collect()
 }
 
+/// The exact standalone dispatcher this build installs for `event`.
+fn own_command(host: &str, event: &str) -> String {
+    format!("'{}' hooks dispatch {host} {event}", env!("CARGO_BIN_EXE_kinbase"))
+}
+
 fn own(commands: &[String], host: &str, event: &str) -> usize {
-    commands
-        .iter()
-        .filter(|command| command.ends_with(&format!(" hooks dispatch {host} {event}")))
-        .count()
+    let expected = own_command(host, event);
+    commands.iter().filter(|command| **command == expected).count()
 }
 
 #[test]
@@ -85,7 +88,9 @@ fn claude_plan_keeps_foreign_handlers_and_replaces_only_its_own() {
                 {"type": "command", "command": "python3 ~/archive.py --hook", "timeout": 30000}
             ]}],
             "Stop": [{"matcher": "", "hooks": [
-                {"type": "command", "command": "/usr/local/bin/stop.sh"}
+                {"type": "command", "command": "/usr/local/bin/stop.sh"},
+                // A custom action that merely ends with a dispatcher is not ours.
+                {"type": "command", "command": "audit-hook; '/old/build/kinbase' hooks dispatch claude Stop"}
             ]}],
             "SessionStart": [{"hooks": [
                 {"type": "command", "command": "'/old/build/kinbase' hooks dispatch claude SessionStart"}
@@ -107,7 +112,13 @@ fn claude_plan_keeps_foreign_handlers_and_replaces_only_its_own() {
         document["hooks"]["SessionEnd"][0]["hooks"][0]["timeout"], 30000,
         "foreign handler must be preserved byte for byte"
     );
-    assert!(commands(&document, "Stop").contains(&"/usr/local/bin/stop.sh".to_owned()));
+    let stop = commands(&document, "Stop");
+    assert!(stop.contains(&"/usr/local/bin/stop.sh".to_owned()), "{stop:?}");
+    assert!(
+        stop.contains(&"audit-hook; '/old/build/kinbase' hooks dispatch claude Stop".to_owned()),
+        "a compound command ending in a dispatcher is someone's action: {stop:?}"
+    );
+    assert_eq!(own(&stop, "claude", "Stop"), 1, "{stop:?}");
     let session_start = commands(&document, "SessionStart");
     assert_eq!(
         session_start.len(),
@@ -148,7 +159,7 @@ fn codex_plan_keeps_foreign_handlers_and_replaces_only_its_own() {
     fs::create_dir_all(config.parent().expect("parent")).expect("codex dir");
     fs::write(
         &config,
-        "model = \"gpt\"\n\n[hooks]\nStop = [\n  { type = \"command\", command = \"/usr/local/bin/stop.sh\" },\n  { type = \"command\", command = \"'/old/build/kinbase' hooks dispatch codex Stop\" },\n]\n",
+        "model = \"gpt\"\n\n[hooks]\nStop = [\n  { type = \"command\", command = \"/usr/local/bin/stop.sh\" },\n  { type = \"command\", command = \"'/old/build/kinbase' hooks dispatch codex Stop\" },\n  { type = \"command\", command = \"audit; '/old/build/kinbase' hooks dispatch codex Stop\" },\n]\n",
     )
     .expect("write config");
 
@@ -166,7 +177,15 @@ fn codex_plan_keeps_foreign_handlers_and_replaces_only_its_own() {
         "foreign Stop handler dropped: {stop:?}"
     );
     assert_eq!(own(&stop, "codex", "Stop"), 1, "{stop:?}");
-    assert!(!stop.iter().any(|command| command.contains("/old/build/")));
+    assert!(
+        stop.contains(&"audit; '/old/build/kinbase' hooks dispatch codex Stop".to_owned()),
+        "a compound command ending in a dispatcher is someone's action: {stop:?}"
+    );
+    assert_eq!(
+        stop.iter().filter(|command| command.contains("/old/build/")).count(),
+        1,
+        "only the stale standalone dispatcher is replaced: {stop:?}"
+    );
 
     fs::write(&config, planned_content(&first)).expect("apply plan");
     let second = plan(&home, &bin, "codex", &repo);
@@ -558,14 +577,23 @@ fn checkpoint_streams_only_this_sessions_records_from_shared_ledgers() {
         .expect("open ledger");
     raw.write_all(b"{\"observation_id\":\"obs_bin\",\"source_identity\":\"session:other\",\"statement\":\"\xff\"}\n")
         .expect("binary line");
-    raw.write_all(
-        format!(
-            "{{\"observation_id\":\"obs_bad\",\"source_identity\":\"session:{}\",\n",
-            session.replace('"', "\\\"")
+    // A large foreign line that is not UTF-8 must cost nothing to skip.
+    let mut large = Vec::with_capacity(4 << 20);
+    large.extend_from_slice(b"{\"observation_id\":\"obs_big\",\"source_identity\":\"session:other\",\"statement\":\"");
+    large.resize(4 << 20, 0xff);
+    large.extend_from_slice(b"\"}\n");
+    raw.write_all(&large).expect("large binary line");
+    // Twenty truncated lines of this session's: skipped, counted, sampled.
+    for index in 0..20 {
+        raw.write_all(
+            format!(
+                "{{\"observation_id\":\"obs_bad{index}\",\"source_identity\":\"session:{}\",\n",
+                session.replace('"', "\\\"")
+            )
+            .as_bytes(),
         )
-        .as_bytes(),
-    )
-    .expect("truncated line");
+        .expect("truncated line");
+    }
     drop(raw);
 
     let stop = json!({
@@ -581,7 +609,16 @@ fn checkpoint_streams_only_this_sessions_records_from_shared_ledgers() {
     assert_eq!(receipt["atom_count"], 0, "{receipt}");
     assert!(
         stderr.contains("unreadable-ledger-rows") && stderr.contains("observations.jsonl"),
-        "this session's truncated line is skipped with a signal: {stderr:?}"
+        "this session's truncated lines are skipped with a signal: {stderr:?}"
+    );
+    assert!(
+        stderr.contains("\"skipped\":20"),
+        "every skipped row is counted: {stderr:?}"
+    );
+    assert_eq!(
+        stderr.matches("\"position\":").count(),
+        8,
+        "only the first samples are retained: {stderr:?}"
     );
     assert!(
         !stderr.contains("obs_") && !stderr.contains("personal"),

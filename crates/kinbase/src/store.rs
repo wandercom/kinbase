@@ -70,15 +70,51 @@ pub fn read_records_where(
     store: crate::StoreKind,
     repo: &Path,
     filename: &str,
-    keep: impl Fn(&str) -> bool,
+    keep: impl Fn(&[u8]) -> bool,
 ) -> Result<Vec<Value>, ContractError> {
     let root = store_root(store, repo);
     read_jsonl_where(&root.join(filename), keep)
 }
 
+/// Where `needle` first occurs in `haystack`, for marker checks on raw
+/// ledger bytes. A line is small and a marker starts with a quote, so a
+/// first-byte scan with an early-exit compare is enough, and nothing is
+/// decoded to find out whether a line is the caller's.
+pub fn bytes_find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    let last_start = haystack.len() - needle.len();
+    let mut start = 0;
+    while let Some(offset) = haystack[start..=last_start]
+        .iter()
+        .position(|&byte| byte == needle[0])
+    {
+        let at = start + offset;
+        if &haystack[at..at + needle.len()] == needle {
+            return Some(at);
+        }
+        start = at + 1;
+    }
+    None
+}
+
+pub fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
+    bytes_find(haystack, needle).is_some()
+}
+
+/// A line without its terminator.
+fn trim_line(buffer: &[u8]) -> &[u8] {
+    let line = buffer.strip_suffix(b"\n").unwrap_or(buffer);
+    line.strip_suffix(b"\r").unwrap_or(line)
+}
+
 pub fn read_jsonl_where(
     path: &Path,
-    keep: impl Fn(&str) -> bool,
+    keep: impl Fn(&[u8]) -> bool,
 ) -> Result<Vec<Value>, ContractError> {
     let file = match fs::File::open(path) {
         Ok(file) => file,
@@ -93,7 +129,7 @@ pub fn read_jsonl_where(
     let mut reader = std::io::BufReader::new(file);
     let mut buffer = Vec::new();
     let mut output = Vec::new();
-    let mut skipped = Vec::new();
+    let mut skipped = crate::output::Skipped::default();
     let mut position = 0usize;
     loop {
         buffer.clear();
@@ -104,30 +140,23 @@ pub fn read_jsonl_where(
             break;
         }
         position += 1;
-        // The predicate sees the line even when it is not UTF-8: a foreign
-        // line's bytes are nobody's business, and a kept one is reported.
-        let (text, valid) = match std::str::from_utf8(&buffer) {
-            Ok(text) => (std::borrow::Cow::Borrowed(text), true),
-            Err(_) => (String::from_utf8_lossy(&buffer), false),
+        // The predicate sees raw bytes: a foreign line is neither decoded nor
+        // copied, however large or broken it is, and a kept one that is not
+        // UTF-8 is reported rather than decoded.
+        let line = trim_line(&buffer);
+        if line.iter().all(u8::is_ascii_whitespace) || !keep(line) {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(line) else {
+            skipped.push(position, line.len(), "invalid UTF-8");
+            continue;
         };
-        let text = text.trim_end_matches(['\n', '\r']);
-        if text.trim().is_empty() || !keep(text) {
-            continue;
-        }
-        if !valid {
-            skipped.push(crate::output::unreadable_row(
-                position,
-                buffer.len(),
-                "invalid UTF-8",
-            ));
-            continue;
-        }
         match parse_strict_object(text.as_bytes()) {
             Ok(map) => output.push(Value::Object(map)),
-            Err(error) => skipped.push(crate::output::unreadable_row(position, text.len(), &error)),
+            Err(error) => skipped.push(position, text.len(), &error),
         }
     }
-    crate::output::report_unreadable_rows(&ledger, &skipped);
+    skipped.report(&ledger);
     Ok(output)
 }
 
@@ -150,9 +179,7 @@ fn line_present(path: &Path, canonical: &str) -> Result<bool, ContractError> {
         if read == 0 {
             return Ok(false);
         }
-        let line = buffer.strip_suffix(b"\n").unwrap_or(&buffer);
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
-        if line == canonical.as_bytes() {
+        if trim_line(&buffer) == canonical.as_bytes() {
             return Ok(true);
         }
     }

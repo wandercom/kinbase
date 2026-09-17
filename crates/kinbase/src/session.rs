@@ -1479,9 +1479,9 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
     })?;
     let session_marker = format!("\"session_id\":{canonical_session}");
     let mut candidates = BTreeMap::new();
-    for candidate in
-        personal_records_where("candidates.jsonl", |line| line.contains(&session_marker))
-    {
+    for candidate in personal_records_where("candidates.jsonl", |line| {
+        crate::store::bytes_contain(line, session_marker.as_bytes())
+    }) {
         if crate::json::get_str(&candidate, "session_id") == Some(session_text.as_str())
             && crate::json::get_str(&candidate, "admission_mode") == Some("automatic")
         {
@@ -1504,13 +1504,14 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
         "\"source_identity\":{}",
         crate::json::jcs_text(&Value::String(source_identity.clone()))
     );
-    let observations =
-        personal_records_where("observations.jsonl", |line| line.contains(&source_marker))
-            .into_iter()
-            .filter(|record| {
-                record.get("source_identity").and_then(Value::as_str) == Some(&source_identity)
-            })
-            .collect::<Vec<_>>();
+    let observations = personal_records_where("observations.jsonl", |line| {
+        crate::store::bytes_contain(line, source_marker.as_bytes())
+    })
+    .into_iter()
+    .filter(|record| {
+        record.get("source_identity").and_then(Value::as_str) == Some(&source_identity)
+    })
+    .collect::<Vec<_>>();
     let observation_ids = observations
         .iter()
         .filter_map(|record| record.get("observation_id").and_then(Value::as_str))
@@ -1521,12 +1522,16 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
     let atoms = if observation_ids.is_empty() {
         Vec::new()
     } else {
-        const ATOM_KEY: &str = "\"observation_id\":\"";
+        const ATOM_KEY: &[u8] = b"\"observation_id\":\"";
         personal_records_where("atoms.jsonl", |line| {
-            line.find(ATOM_KEY).is_some_and(|start| {
+            crate::store::bytes_find(line, ATOM_KEY).is_some_and(|start| {
                 let rest = &line[start + ATOM_KEY.len()..];
-                rest.find('"')
-                    .is_some_and(|end| observation_ids.contains(&rest[..end]))
+                rest.iter()
+                    .position(|&byte| byte == b'"')
+                    .is_some_and(|end| {
+                        std::str::from_utf8(&rest[..end])
+                            .is_ok_and(|id| observation_ids.contains(id))
+                    })
             })
         })
         .into_iter()
@@ -1628,7 +1633,7 @@ fn personal_records(name: &str) -> Vec<Value> {
 /// `personal_records` restricted to the lines `keep` accepts, read by stream.
 /// A ledger that cannot be read is Degraded, not empty: the failure is
 /// signalled so a zero count is never mistaken for no records.
-fn personal_records_where(name: &str, keep: impl Fn(&str) -> bool) -> Vec<Value> {
+fn personal_records_where(name: &str, keep: impl Fn(&[u8]) -> bool) -> Vec<Value> {
     let Ok(repo) = std::env::current_dir() else {
         return Vec::new();
     };

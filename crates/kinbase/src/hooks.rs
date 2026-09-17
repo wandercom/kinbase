@@ -162,10 +162,35 @@ fn shell_quote(value: &str) -> String {
 }
 
 /// True for this program's own `hooks dispatch <host> <event>` handler at any
-/// build path: the one entry an install may replace. Every other handler in
-/// the host's hook lists belongs to someone else and is never touched.
+/// build path: the one entry an install may replace. The command must be
+/// exactly one program word followed by the dispatch arguments; a compound
+/// command that merely ends with a dispatcher (`audit; kinbase hooks dispatch
+/// …`) is someone's custom action and is never touched.
 fn is_own_dispatch_command(command: &str, host: &str, event: &str) -> bool {
-    command.ends_with(&format!(" hooks dispatch {host} {event}"))
+    command
+        .strip_suffix(&format!(" hooks dispatch {host} {event}"))
+        .is_some_and(is_one_program_word)
+}
+
+/// One shell word naming a program: `shell_quote`'s own output (a
+/// single-quoted string whose embedded quotes use its `'"'"'` encoding), or
+/// a bare word with no whitespace and no shell metacharacter.
+fn is_one_program_word(program: &str) -> bool {
+    if let Some(inner) = program
+        .strip_prefix('\'')
+        .and_then(|rest| rest.strip_suffix('\''))
+    {
+        return !inner.is_empty() && inner.split("'\"'\"'").all(|piece| !piece.contains('\''));
+    }
+    !program.is_empty()
+        && !program.chars().any(|c| {
+            c.is_whitespace()
+                || matches!(
+                    c,
+                    ';' | '&' | '|' | '(' | ')' | '<' | '>' | '`' | '$' | '"' | '\'' | '\\' | '#'
+                        | '*' | '?' | '[' | ']' | '{' | '}' | '~' | '!'
+                )
+        })
 }
 
 /// A disposable home for host probes. The host's own scratch files (session

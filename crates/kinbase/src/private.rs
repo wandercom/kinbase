@@ -50,19 +50,15 @@ fn parse_rows<T: serde::de::DeserializeOwned>(
     rows: impl Iterator<Item = rusqlite::Result<String>>,
 ) -> Result<Vec<T>, ContractError> {
     let mut output = Vec::new();
-    let mut skipped = Vec::new();
+    let mut skipped = crate::output::Skipped::default();
     for (position, row) in rows.enumerate() {
         let text = row.map_err(sqlite_error("row"))?;
         match serde_json::from_str::<T>(&text) {
             Ok(value) => output.push(value),
-            Err(error) => skipped.push(crate::output::unreadable_row(
-                position,
-                text.len(),
-                &error.to_string(),
-            )),
+            Err(error) => skipped.push(position, text.len(), &error.to_string()),
         }
     }
-    crate::output::report_unreadable_rows(context, &skipped);
+    skipped.report(context);
     Ok(output)
 }
 
@@ -487,25 +483,21 @@ impl PrivateStore {
             })
             .map_err(sqlite_error("query"))?;
         let mut output = Vec::new();
-        let mut skipped = Vec::new();
+        let mut skipped = crate::output::Skipped::default();
         for (position, row) in rows.enumerate() {
             let (text, lifecycle) = row.map_err(sqlite_error("row"))?;
             // Same disposition as `all_observations`: skip, and say so.
             let mut observation: Observation = match serde_json::from_str(&text) {
                 Ok(observation) => observation,
                 Err(error) => {
-                    skipped.push(crate::output::unreadable_row(
-                        position,
-                        text.len(),
-                        &error.to_string(),
-                    ));
+                    skipped.push(position, text.len(), &error.to_string());
                     continue;
                 }
             };
             observation.lifecycle = lifecycle;
             output.push(observation);
         }
-        crate::output::report_unreadable_rows("observations_for_source", &skipped);
+        skipped.report("observations_for_source");
         Ok(output)
     }
 
