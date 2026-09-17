@@ -113,7 +113,7 @@ def test_every_reference_resolves_against_the_ratified_bytes() -> None:
     )
 )
 def test_no_reference_cites_an_unratified_artifact() -> None:
-    permitted = set(AUTHORITY_PRECEDENCE) | set(TRACE_ONLY_ARTIFACTS) | {"tests/RULING-CONTRACT.md"}
+    permitted = set(AUTHORITY_PRECEDENCE) | set(TRACE_ONLY_ARTIFACTS)
     offenders: list[str] = []
     for module_name in _test_modules():
         for node, function in _test_functions(module_name):

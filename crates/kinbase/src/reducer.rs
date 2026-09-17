@@ -135,6 +135,11 @@ pub struct DerivedUnknown {
     pub discriminating_evidence: Vec<String>,
     pub status: String,
     pub kind: String,
+    /// The authority scopes of the evidence the Unknown was derived from,
+    /// which decide who may read it: `scope` is that evidence's subject
+    /// scope and need not be an authority scope. Not part of the wire form.
+    #[serde(default, skip_serializing)]
+    pub authority_scopes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1248,7 +1253,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
             let owner_role = owner_role_for_scope(input, &scope);
             let owner_identity =
                 authority_owner_for_scope(input, &scope, repository_scope(&group).as_deref());
-            let unknown = derive_unknown(
+            let mut unknown = derive_unknown(
                 &logical_key,
                 &input.store_kind,
                 "conflict",
@@ -1265,6 +1270,12 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 conflict_ids.clone(),
                 input.as_of.as_str(),
             );
+            unknown.authority_scopes = heads
+                .iter()
+                .map(|head| head.representative.event.authority_scope.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
             trace.state = "conflict".to_owned();
             trace.unknown_id = Some(unknown.unknown_id.clone());
             trace.counterfactual.push("a parent-bound supersession or retraction from the owning authority resolves the conflict".to_owned());
@@ -1565,7 +1576,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                         "Every proposal for logical key {logical_key} was rejected or reverted. What is the intended rule?"
                     ),
                 };
-                let unknown = derive_unknown(
+                let mut unknown = derive_unknown(
                     &logical_key,
                     &input.store_kind,
                     kind,
@@ -1588,6 +1599,17 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                         .collect(),
                     input.as_of.as_str(),
                 );
+                unknown.authority_scopes = eligible
+                    .iter()
+                    .map(|admitted| admitted.event.authority_scope.clone())
+                    .chain(
+                        negative
+                            .iter()
+                            .map(|admitted| admitted.event.authority_scope.clone()),
+                    )
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect();
                 if kind == "revoked" {
                     trace.counterfactual.push(
                         "an independently admissible support signed by an active registered key, or a steward republication that re-registers the key at a newer authority cursor, would restore the statement".to_owned(),
@@ -1665,6 +1687,7 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
                 discriminating_evidence: unknown.evidence_refs.clone(),
                 status: unknown.status.clone(),
                 kind: "explicit".to_owned(),
+                authority_scopes: vec![unknown.authority_scope.clone()],
             });
         }
     }
@@ -1760,6 +1783,7 @@ fn derive_unknown(
         discriminating_evidence: evidence,
         status: "open".to_owned(),
         kind: kind.to_owned(),
+        authority_scopes: vec![scope.to_owned()],
     }
 }
 

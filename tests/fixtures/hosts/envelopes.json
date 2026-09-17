@@ -1,0 +1,140 @@
+{
+  "hosts": {
+    "claude": {
+      "events": {
+        "PreCompact": {
+          "custom_instructions": null,
+          "cwd": "{cwd}",
+          "hook_event_name": "PreCompact",
+          "prompt_id": "cac00520-783c-419e-a05d-c132adaa74ac",
+          "session_id": "{session_id}",
+          "transcript_path": "{transcript_path}",
+          "trigger": "manual"
+        },
+        "PreToolUse": {
+          "cwd": "{cwd}",
+          "hook_event_name": "PreToolUse",
+          "permission_mode": "default",
+          "prompt_id": "c3edae5d-4bf4-4489-a84e-41c3b1760b43",
+          "session_id": "{session_id}",
+          "tool_input": {
+            "file_path": "{cwd}/note.txt"
+          },
+          "tool_name": "Read",
+          "tool_use_id": "toolu_01UXpByjHgj4ykL7AvYrnH9i",
+          "transcript_path": "{transcript_path}"
+        },
+        "SessionEnd": {
+          "cwd": "{cwd}",
+          "hook_event_name": "SessionEnd",
+          "prompt_id": "c3edae5d-4bf4-4489-a84e-41c3b1760b43",
+          "reason": "other",
+          "session_id": "{session_id}",
+          "transcript_path": "{transcript_path}"
+        },
+        "SessionStart": {
+          "cwd": "{cwd}",
+          "hook_event_name": "SessionStart",
+          "session_id": "{session_id}",
+          "source": "startup",
+          "transcript_path": "{transcript_path}"
+        },
+        "Stop": {
+          "background_tasks": [],
+          "cwd": "{cwd}",
+          "hook_event_name": "Stop",
+          "last_assistant_message": "Retry budget: three attempts.",
+          "permission_mode": "default",
+          "prompt_id": "c3edae5d-4bf4-4489-a84e-41c3b1760b43",
+          "session_crons": [],
+          "session_id": "{session_id}",
+          "stop_hook_active": false,
+          "transcript_path": "{transcript_path}"
+        },
+        "UserPromptSubmit": {
+          "cwd": "{cwd}",
+          "hook_event_name": "UserPromptSubmit",
+          "permission_mode": "default",
+          "prompt": "{prompt}",
+          "prompt_id": "c3edae5d-4bf4-4489-a84e-41c3b1760b43",
+          "session_id": "{session_id}",
+          "transcript_path": "{transcript_path}"
+        }
+      },
+      "executable_sha256": "3509913f9d1576316c8845b88837f8fd3bbbcf26625833ac82cfb6b8985da94a",
+      "method": "claude -p --restricted --strict-mcp-config --settings <recorder hooks> --model haiku in a scratch Git repository: one turn that read a file, then a resumed `/compact` for PreCompact. Each envelope is the first the host sent for its event, with the session id, paths and prompt replaced by placeholders.",
+      "provenance": "recorded",
+      "version": "2.1.274 (Claude Code)"
+    },
+    "codex": {
+      "events": {
+        "PreCompact": {
+          "cwd": "{cwd}",
+          "hook_event_name": "PreCompact",
+          "model": "gpt-5.5",
+          "session_id": "{session_id}",
+          "transcript_path": "{transcript_path}",
+          "trigger": "manual",
+          "turn_id": "019a5f00-0000-7000-8000-00000000c0de"
+        },
+        "PreToolUse": {
+          "cwd": "{cwd}",
+          "hook_event_name": "PreToolUse",
+          "model": "gpt-5.5",
+          "permission_mode": "default",
+          "session_id": "{session_id}",
+          "tool_input": {
+            "command": "cat note.txt"
+          },
+          "tool_name": "Bash",
+          "tool_use_id": "call_0001",
+          "transcript_path": "{transcript_path}",
+          "turn_id": "019a5f00-0000-7000-8000-00000000c0de"
+        },
+        "SessionEnd": {
+          "cwd": "{cwd}",
+          "hook_event_name": "SessionEnd",
+          "reason": "other",
+          "session_id": "{session_id}",
+          "transcript_path": "{transcript_path}"
+        },
+        "SessionStart": {
+          "cwd": "{cwd}",
+          "hook_event_name": "SessionStart",
+          "model": "gpt-5.5",
+          "permission_mode": "default",
+          "session_id": "{session_id}",
+          "source": "startup",
+          "transcript_path": "{transcript_path}"
+        },
+        "Stop": {
+          "cwd": "{cwd}",
+          "hook_event_name": "Stop",
+          "last_assistant_message": "Retry budget: three attempts.",
+          "model": "gpt-5.5",
+          "permission_mode": "default",
+          "session_id": "{session_id}",
+          "stop_hook_active": false,
+          "transcript_path": "{transcript_path}",
+          "turn_id": "019a5f00-0000-7000-8000-00000000c0de"
+        },
+        "UserPromptSubmit": {
+          "cwd": "{cwd}",
+          "hook_event_name": "UserPromptSubmit",
+          "model": "gpt-5.5",
+          "permission_mode": "default",
+          "prompt": "{prompt}",
+          "session_id": "{session_id}",
+          "transcript_path": "{transcript_path}",
+          "turn_id": "019a5f00-0000-7000-8000-00000000c0de"
+        }
+      },
+      "executable_sha256": "4f85982624b3898c8991cb80c0981b2aa71070e3537046c9a95950318a95afcc",
+      "method": "Not recorded: running Codex needs its credentials in the isolated CODEX_HOME and a trusted hook entry. Each envelope carries exactly the required fields of the pinned executable's own `<event>.command.input` schema (extracted to codex-0.154.0-input-schemas.json; every schema sets additionalProperties false). The values of model, turn_id, tool_name, tool_input and tool_use_id are illustrative: the schemas fix only their types.",
+      "provenance": "schema",
+      "version": "codex-cli 0.154.0"
+    }
+  },
+  "note": "Native hook envelopes as the pinned hosts send them. spec/verification.md V-9: \"Pin and report exact Codex/Claude versions and native envelope fixtures.\" `{session_id}`, `{cwd}`, `{transcript_path}` and `{prompt}` are filled per call; a test may set only a field its host sends.",
+  "schema": "kinbase-acceptance-host-envelopes/1"
+}

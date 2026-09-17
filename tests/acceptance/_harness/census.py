@@ -213,6 +213,8 @@ class Census:
     consumption: dict = field(default_factory=dict)
     #: Independently witnessed pre-execution planter applications (finding 7).
     planter_applications: list = field(default_factory=list)
+    #: The product under test: KINBASE_BIN's path, SHA-256 and version.
+    product: dict = field(default_factory=dict)
     _folded: dict = field(default_factory=dict)
 
     @classmethod
@@ -334,6 +336,7 @@ class Census:
         self_json = {
             "schema": "kinbase-acceptance-census/1",
             "catalog_digest": self.catalog_digest,
+            "product": dict(self.product),
             "instrument_debt_digest": self.debt_digest,
             "open_instrument_debt": self.open_debt,
             "kill_ledger_digest": self.kill_ledger_digest,

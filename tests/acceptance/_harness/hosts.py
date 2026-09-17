@@ -106,14 +106,20 @@ def host_availability(name: str, *, env: dict[str, str] | None = None) -> HostBi
     if resolved is None or not resolved.exists():
         return None
     try:
-        # A version probe needs PATH and nothing else. Forwarding the caller's whole
-        # environment made the name set opaque to the control-policy check, which
-        # exists so a product cannot branch on an unlisted environment variable
-        # instead of doing the work. Naming the one variable literally keeps that
-        # check able to see what reaches the system under test.
+        # A version probe needs PATH and an isolated HOME. Forwarding the caller's
+        # whole environment made the name set opaque to the control-policy check,
+        # which exists so a product cannot branch on an unlisted environment
+        # variable instead of doing the work. Naming the variables literally keeps
+        # that check able to see what reaches the system under test. HOME is
+        # always set: a host that finds none falls back to the account's real
+        # home directory and reads the operator's own configuration.
+        probe = env if env is not None else {}
         proc = subprocess.run(
             [str(resolved), "--version"], capture_output=True, text=True, timeout=120,
-            env={"PATH": (env or {}).get("PATH", os.environ.get("PATH", ""))},
+            env={
+                "PATH": probe.get("PATH", os.environ.get("PATH", "")),
+                "HOME": probe.get("HOME", os.devnull),
+            },
         )
         proc.check_returncode()
         version = (proc.stdout or proc.stderr).strip().splitlines()[0][:200]
@@ -127,48 +133,69 @@ def host_availability(name: str, *, env: dict[str, str] | None = None) -> HostBi
 # --------------------------------------------------------------------------
 
 
-def codex_envelope(event: str, *, session_id: str, cwd: str, **extra: Any) -> dict[str, Any]:
-    """A Codex-shaped native hook envelope."""
-    payload: dict[str, Any] = {
-        "hook_event_name": event,
-        "session_id": session_id,
-        "cwd": cwd,
-        "transcript_path": f"{cwd}/.codex/sessions/{session_id}.jsonl",
-        "host": "codex",
-    }
-    payload.update(extra)
-    return payload
+#: The frozen native envelopes: recorded from the pinned Claude build, and the
+#: pinned Codex build's own input schemas (see the file's provenance fields).
+ENVELOPE_FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "hosts" / "envelopes.json"
+
+#: Placeholders a frozen envelope carries; everything else is as the host sent it.
+_PLACEHOLDERS = ("{session_id}", "{cwd}", "{transcript_path}", "{prompt}")
 
 
-def claude_envelope(event: str, *, session_id: str, cwd: str, **extra: Any) -> dict[str, Any]:
-    """A Claude-shaped native hook envelope.
-
-    The two shapes differ deliberately: ``spec/product.md`` P-9 allows "Host
-    framing may differ; canonical facts, decisions, and receipts may not", and
-    ``spec/verification.md`` V-9 requires "For matched conversations, canonical
-    facts/projections/receipts match across hosts."
-    """
-    payload: dict[str, Any] = {
-        "hook_event_name": event,
-        "session_id": session_id,
-        "cwd": cwd,
-        "transcript_path": f"{cwd}/.claude/projects/{session_id}.jsonl",
-        "permission_mode": "default",
-        "host": "claude",
-    }
-    payload.update(extra)
-    return payload
-
-
-ENVELOPE_BUILDERS = {"codex": codex_envelope, "claude": claude_envelope}
-
-
-def envelope_for(host: str, event: str, *, session_id: str, cwd: str, **extra: Any) -> dict[str, Any]:
-    if host not in ENVELOPE_BUILDERS:
+def envelope_fixture(host: str) -> dict[str, Any]:
+    """The frozen envelopes and provenance for one host."""
+    if host not in HOSTS:
         raise HarnessInvalid(f"unknown host {host!r}")
+    try:
+        document = json.loads(ENVELOPE_FIXTURES.read_text(encoding="utf-8"))
+        return document["hosts"][host]
+    except (OSError, ValueError, KeyError) as exc:
+        raise HarnessInvalid(f"frozen host envelopes unreadable: {exc}") from exc
+
+
+def _transcript_path(host: str, session_id: str, home: str, cwd: str) -> str:
+    if host == "claude":
+        slug = "".join(ch if ch.isalnum() else "-" for ch in cwd)
+        return f"{home}/.claude/projects/{slug}/{session_id}.jsonl"
+    return f"{home}/.codex/sessions/2026/09/17/rollout-2026-09-17T00-00-00-{session_id}.jsonl"
+
+
+def _fill(value: Any, filled: Mapping[str, str]) -> Any:
+    if isinstance(value, dict):
+        return {key: _fill(item, filled) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_fill(item, filled) for item in value]
+    if isinstance(value, str):
+        for placeholder, replacement in filled.items():
+            value = value.replace(placeholder, replacement)
+    return value
+
+
+def envelope_for(
+    host: str, event: str, *, session_id: str, cwd: str, home: str | None = None,
+    **fields: Any,
+) -> dict[str, Any]:
+    """The host's own envelope for ``event``, filled for this call.
+
+    ``fields`` may replace only a field the host sends with that event: a
+    field the host never sends (an event ``id``, a ``timestamp``) would let the
+    product pass on input no real host produces.
+    """
     if event not in HOST_EVENTS:
         raise HarnessInvalid(f"unknown host event {event!r}")
-    envelope = ENVELOPE_BUILDERS[host](event, session_id=session_id, cwd=cwd, **extra)
+    frozen = envelope_fixture(host)["events"].get(event)
+    if frozen is None:
+        raise HarnessInvalid(f"no frozen {host} envelope for {event}")
+    foreign = sorted(set(fields) - set(frozen))
+    if foreign:
+        raise HarnessInvalid(f"{host} does not send {foreign} with {event}")
+    filled = {
+        "{session_id}": session_id,
+        "{cwd}": cwd,
+        "{transcript_path}": _transcript_path(host, session_id, home or cwd, cwd),
+        "{prompt}": "Keep the retry budget at three attempts.",
+    }
+    envelope = _fill(frozen, filled)
+    envelope.update(fields)
     return planters.mutate("host.envelope", envelope, host=host, event=event)
 
 
@@ -187,6 +214,13 @@ class InvocationWitness:
     argv_records: tuple[str, ...]
     config_files: tuple[Path, ...]
 
+    def session_records(self) -> tuple[str, ...]:
+        """Invocations that ran the host, not merely asked its version."""
+        return tuple(
+            record for record in self.argv_records
+            if record.strip() not in VERSION_PROBE_ARGV
+        )
+
     def assert_not_mocked(self) -> None:
         if not self.executable.exists():
             raise ProductFailure(
@@ -199,6 +233,20 @@ class InvocationWitness:
                 "requires inspecting 'actual host config and executable "
                 "invocation records; a mocked host branch is not accepted evidence'"
             )
+        # A version probe proves the binary exists, not that the host ran a
+        # session and delivered its hooks. The harness dispatching envelopes
+        # itself is the mocked host branch V-9 refuses, so this is the
+        # instrument's missing evidence, not a product result.
+        if not self.session_records():
+            raise HarnessInvalid(
+                f"only a version probe of {self.host} was recorded "
+                f"({len(self.argv_records)} record(s)); V-9 needs the host to run "
+                "a session and deliver its own hook invocations (debt finding 18)"
+            )
+
+
+#: The argv of a version probe, which records a binary without running it.
+VERSION_PROBE_ARGV = frozenset({"--version", "-V", "version"})
 
 
 def install_invocation_recorder(bin_dir: Path, name: str, real: Path) -> Path:
