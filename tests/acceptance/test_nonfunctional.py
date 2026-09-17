@@ -23,7 +23,6 @@ from ._harness import synth, scale
 from ._harness import canonical
 from ._harness.cli import ERROR_CODES, ERROR_FIELDS, EXIT_MEANING, Kinbase
 from ._harness.hosts import (
-    CANDIDATE_LIFETIME_SECONDS,
     OBSERVATION_BATCH_ITEMS,
     PRIVATE_RAW_RETENTION_SECONDS,
     SHARED_EVENT_CEILING,
@@ -323,8 +322,10 @@ def test_diagnostics_are_executable_and_useful_after_restart(
         payload = result.json
         diagnostics.append({
             "command": command[0],
-            "executable": result.returncode is not None,
-            "useful": isinstance(payload, dict) and len(payload) > 0,
+            # A diagnostic that exits non-zero, or answers with only an
+            # error object, did not diagnose anything.
+            "executable": result.returncode == 0,
+            "useful": isinstance(payload, dict) and bool(payload) and set(payload) != {"error"},
             "argv": list(command),
             "returncode": result.returncode,
             "stdout": result.stdout,
@@ -333,7 +334,11 @@ def test_diagnostics_are_executable_and_useful_after_restart(
         })
     O.check(
         "NF.diagnostics",
-        {"diagnostics": diagnostics, "survives_restart": True},
+        {"diagnostics": diagnostics,
+         # Every diagnostic ran in a fresh process after the ingest process
+         # exited; the claim is only as good as that count.
+         "survives_restart": len(diagnostics) >= 4
+         and all(entry["executable"] for entry in diagnostics)},
         label=("diagnostics are executable and useful after restart; observations="
                + json.dumps(diagnostics, ensure_ascii=False)),
     )
