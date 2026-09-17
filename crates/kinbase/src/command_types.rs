@@ -156,6 +156,9 @@ pub enum SessionCommand {
         session: String,
         #[arg(long)]
         event: PathBuf,
+        /// Remove the event file afterwards (a prompt a host hook queued).
+        #[arg(long, hide = true)]
+        consume: bool,
     },
     Checkpoint {
         session: String,

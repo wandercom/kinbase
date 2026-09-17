@@ -35,12 +35,381 @@ pub fn start(repo: &Path, host: crate::HostKind, json: bool) -> Result<(), Contr
     Ok(())
 }
 
+/// Directory under the Personal root where a host prompt waits for its
+/// detached `session observe` worker.
+pub const PENDING_OBSERVATIONS: &str = "pending-observations";
+/// A worker gets this many attempts at a prompt before it is dropped (and
+/// the drop audited).
+const PENDING_MAX_ATTEMPTS: u32 = 3;
+/// A raw prompt is kept no longer than the private raw-session default
+/// retention (verification.md, operational limits).
+const PENDING_RETENTION_SECONDS: i64 = 24 * 3600;
+/// A queued prompt whose worker has not held its lock for this long is
+/// presumed stranded (the worker crashed or was never scheduled) and is
+/// started again.
+const PENDING_STALE_SECONDS: i64 = 120;
+/// How long a Stop waits for its session's queued prompts: a rule-based
+/// classification finishes well inside it; a slower one is reported as
+/// pending and counted by the next Stop instead of holding the host.
+const STOP_PENDING_WAIT: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// What a queued prompt needs to be classified again: the session, the
+/// repository the host named, how often a worker has tried, and which
+/// worker holds it now.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PendingMeta {
+    session: String,
+    repo: String,
+    queued_at: String,
+    spawned_at: String,
+    attempts: u32,
+    #[serde(default)]
+    worker_pid: Option<u32>,
+}
+
+pub fn pending_observations_dir() -> std::path::PathBuf {
+    let repo = std::env::current_dir().unwrap_or_default();
+    crate::store::store_root(crate::StoreKind::Personal, &repo).join(PENDING_OBSERVATIONS)
+}
+
+// A queued prompt is `<token>.jsonl`; a worker claims it by renaming it to
+// `<token>.working.jsonl` (atomic, and no descriptor stays open under the
+// Personal root while it classifies); `<token>.meta.json` describes it.
+fn queued_path(directory: &Path, token: &str) -> std::path::PathBuf {
+    directory.join(format!("{token}.jsonl"))
+}
+
+fn working_path(directory: &Path, token: &str) -> std::path::PathBuf {
+    directory.join(format!("{token}.working.jsonl"))
+}
+
+fn meta_path(directory: &Path, token: &str) -> std::path::PathBuf {
+    directory.join(format!("{token}.meta.json"))
+}
+
+fn token_of(path: &Path) -> Option<String> {
+    let name = path.file_name()?.to_str()?;
+    let token = name.split('.').next()?;
+    (!token.is_empty() && token.chars().all(|c| c.is_ascii_alphanumeric()))
+        .then(|| token.to_owned())
+}
+
+fn read_meta(directory: &Path, token: &str) -> Option<PendingMeta> {
+    serde_json::from_slice(&std::fs::read(meta_path(directory, token)).ok()?).ok()
+}
+
+fn write_meta(directory: &Path, token: &str, meta: &PendingMeta) -> Result<(), ContractError> {
+    let bytes =
+        serde_json::to_vec(meta).map_err(|error| ContractError::internal(error.to_string()))?;
+    let path = meta_path(directory, token);
+    let staged = directory.join(format!("{token}.meta.tmp"));
+    let _ = std::fs::remove_file(&staged);
+    write_new_private_file(&staged, &bytes)?;
+    std::fs::rename(&staged, &path).map_err(io_error)
+}
+
+fn remove_pending(directory: &Path, token: &str) {
+    let _ = std::fs::remove_file(queued_path(directory, token));
+    let _ = std::fs::remove_file(working_path(directory, token));
+    let _ = std::fs::remove_file(meta_path(directory, token));
+}
+
+fn process_alive(pid: u32) -> bool {
+    // SAFETY: signal 0 only checks that the process exists.
+    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Hand a host prompt to the session it belongs to, classified off the host's
+/// response path (architecture §9). The prompt goes to a private file that a
+/// detached `session observe` worker reads and classifies, so the
+/// observation and its atoms carry `session:<id>` and the session's Stop
+/// finds them; a prompt recorded only as `hook:UserPromptSubmit` was never
+/// counted or classified. The worker runs in `repo`, the repository the host
+/// named. Without a session id, or if no worker can be started, the prompt's
+/// minimized observation is recorded here instead.
+pub fn queue_hook_observation(
+    host: &str,
+    map: &Map<String, Value>,
+    repo: &Path,
+) -> Result<Option<String>, ContractError> {
+    let session = map
+        .get("session_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty());
+    let prompt = map
+        .get("prompt")
+        .or_else(|| map.get("text"))
+        .and_then(Value::as_str)
+        .filter(|text| !text.trim().is_empty());
+    let (Some(session), Some(prompt)) = (session, prompt) else {
+        return record_hook_observation_as(host, map, None, repo);
+    };
+    // The host sends no event id with a prompt; one is derived from the
+    // session and the text, so a repeated delivery names the same event.
+    let event_id = map
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            format!(
+                "prompt_{}",
+                &sha256_text(&format!("{session}\0{prompt}"))[..24]
+            )
+        });
+    let observed_at = map
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(|value| parse_rfc3339_millis(value).ok())
+        .map(format_rfc3339_millis)
+        .unwrap_or_else(now_rfc3339_millis);
+    let record = json!({
+        "id": event_id,
+        "role": "user",
+        "text": prompt,
+        "observed_at": observed_at,
+        "source_kind": if host == "claude" { "claude_jsonl" } else { "codex_jsonl" }
+    });
+    let directory = pending_observations_dir();
+    crate::paths::ensure_private_dir(&directory, "pending observations")?;
+    sweep_pending(&directory);
+    let token: String = crate::crypto::random_token()
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .take(24)
+        .collect();
+    let event = queued_path(&directory, &token);
+    let mut line = crate::json::jcs_text(&record);
+    line.push('\n');
+    let now = now_rfc3339_millis();
+    // Metadata first: a queued prompt is never without it.
+    write_meta(
+        &directory,
+        &token,
+        &PendingMeta {
+            session: session.to_owned(),
+            repo: repo.to_string_lossy().into_owned(),
+            queued_at: now.clone(),
+            spawned_at: now,
+            attempts: 0,
+            worker_pid: None,
+        },
+    )?;
+    write_new_private_file(&event, line.as_bytes())?;
+    if spawn_observe_worker(session, &event, repo) {
+        return Ok(Some(event_id));
+    }
+    remove_pending(&directory, &token);
+    let mut fallback = map.clone();
+    fallback.insert("id".to_owned(), Value::String(event_id));
+    record_hook_observation_as(host, &fallback, Some(session), repo)
+}
+
+fn write_new_private_file(path: &Path, bytes: &[u8]) -> Result<(), ContractError> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .map_err(io_error)?;
+    file.write_all(bytes)
+        .and_then(|_| file.sync_all())
+        .map_err(io_error)
+}
+
+fn spawn_observe_worker(session: &str, event: &Path, repo: &Path) -> bool {
+    use std::os::unix::process::CommandExt;
+    let Ok(program) = std::env::current_exe() else {
+        return false;
+    };
+    std::process::Command::new(program)
+        .args([
+            "session",
+            "observe",
+            session,
+            "--consume",
+            "--json",
+            "--event",
+        ])
+        .arg(event)
+        .current_dir(repo)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn()
+        .is_ok()
+}
+
+/// A worker's hold on one queued prompt, which it has renamed to its
+/// working name.
+pub struct PendingClaim {
+    directory: std::path::PathBuf,
+    token: String,
+}
+
+impl PendingClaim {
+    /// The claimed prompt, for the worker to read.
+    pub fn path(&self) -> std::path::PathBuf {
+        working_path(&self.directory, &self.token)
+    }
+}
+
+/// Claim a queued prompt for this worker; None when it is not a queued
+/// prompt, is gone, or another worker took it first.
+pub fn claim_pending(event: &Path) -> Option<PendingClaim> {
+    let directory = pending_observations_dir();
+    let inside = match (
+        event.parent().map(std::fs::canonicalize),
+        std::fs::canonicalize(&directory),
+    ) {
+        (Some(Ok(parent)), Ok(expected)) => parent == expected,
+        _ => false,
+    };
+    let token = token_of(event)?;
+    if !inside || event != queued_path(event.parent()?, &token) {
+        return None;
+    }
+    let directory = event.parent()?.to_path_buf();
+    std::fs::rename(event, working_path(&directory, &token)).ok()?;
+    if let Some(mut meta) = read_meta(&directory, &token) {
+        meta.worker_pid = Some(std::process::id());
+        let _ = write_meta(&directory, &token, &meta);
+    }
+    Some(PendingClaim { directory, token })
+}
+
+/// Settle a claimed prompt: removed once its observation is recorded; after
+/// a failure it is queued again for a later attempt, up to the bound, then
+/// dropped with an audit record (which never carries the prompt).
+pub fn finish_pending(claim: PendingClaim, failure: Option<&ContractError>) {
+    let PendingClaim { directory, token } = claim;
+    match failure {
+        None => remove_pending(&directory, &token),
+        Some(error) => record_failed_attempt(&directory, &token, &error.code),
+    }
+}
+
+fn record_failed_attempt(directory: &Path, token: &str, code: &str) {
+    let Some(mut meta) = read_meta(directory, token) else {
+        remove_pending(directory, token);
+        return;
+    };
+    meta.attempts += 1;
+    meta.worker_pid = None;
+    if meta.attempts >= PENDING_MAX_ATTEMPTS {
+        remove_pending(directory, token);
+        if let Ok(private) = crate::private::PrivateStore::open_core() {
+            let _ = private.audit(
+                "pending-observation-dropped",
+                &json!({
+                    "session_id": meta.session,
+                    "attempts": meta.attempts,
+                    "code": code,
+                    "observed_at": now_rfc3339_millis()
+                }),
+            );
+        }
+        return;
+    }
+    // Retried by a later sweep, not at once.
+    meta.spawned_at = now_rfc3339_millis();
+    if write_meta(directory, token, &meta).is_ok() {
+        let _ = std::fs::rename(
+            working_path(directory, token),
+            queued_path(directory, token),
+        );
+    }
+}
+
+fn seconds_since(stamp: &str) -> i64 {
+    parse_rfc3339_millis(stamp)
+        .map(|then| (chrono::Utc::now() - then).num_seconds())
+        .unwrap_or(i64::MAX)
+}
+
+/// Every prompt still queued or being worked, by token.
+fn pending_entries(directory: &Path) -> Vec<(String, PendingMeta)> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let tokens: BTreeSet<String> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with(".jsonl"))
+        })
+        .filter_map(|path| token_of(&path))
+        .collect();
+    tokens
+        .into_iter()
+        .filter_map(|token| read_meta(directory, &token).map(|meta| (token, meta)))
+        .collect()
+}
+
+/// Drop prompts past retention, requeue ones whose worker died, and restart
+/// ones no worker has taken.
+fn sweep_pending(directory: &Path) {
+    for (token, mut meta) in pending_entries(directory) {
+        let working = working_path(directory, &token).exists();
+        if working && meta.worker_pid.is_some_and(process_alive) {
+            continue;
+        }
+        if seconds_since(&meta.queued_at) > PENDING_RETENTION_SECONDS {
+            remove_pending(directory, &token);
+            continue;
+        }
+        if working {
+            // Its worker died mid-classification: that was an attempt.
+            record_failed_attempt(directory, &token, "WORKER_LOST");
+            continue;
+        }
+        if seconds_since(&meta.spawned_at) > PENDING_STALE_SECONDS {
+            meta.spawned_at = now_rfc3339_millis();
+            if write_meta(directory, &token, &meta).is_ok() {
+                spawn_observe_worker(
+                    &meta.session,
+                    &queued_path(directory, &token),
+                    Path::new(&meta.repo),
+                );
+            }
+        }
+    }
+}
+
+/// Before a Stop reads its session: sweep, then wait briefly for this
+/// session's queued prompts. Returns how many are still queued or being
+/// classified; the receipt reports them, and a later Stop or SessionEnd
+/// counts them.
+fn settle_pending(session: &str) -> usize {
+    let directory = pending_observations_dir();
+    sweep_pending(&directory);
+    let deadline = std::time::Instant::now() + STOP_PENDING_WAIT;
+    loop {
+        let waiting = pending_entries(&directory)
+            .into_iter()
+            .filter(|(_, meta)| meta.session == session)
+            .count();
+        if waiting == 0 || std::time::Instant::now() >= deadline {
+            return waiting;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 /// Record the privacy-minimized observation identity of a host prompt. The
 /// body itself is not copied into the observation record; only its digest is
 /// retained for reset authorization.
-pub fn record_hook_observation(
+fn record_hook_observation_as(
     host: &str,
     map: &Map<String, Value>,
+    session: Option<&str>,
+    repo: &Path,
 ) -> Result<Option<String>, ContractError> {
     let Some(event_id) = map
         .get("id")
@@ -57,7 +426,6 @@ pub fn record_hook_observation(
     else {
         return Ok(None);
     };
-    let repo = std::env::current_dir().map_err(io_error)?;
     // The prompt arrived through the host envelope, so it is already folded
     // to canonical text: this digest names the stored text, not the host's
     // raw bytes, and a transcript that kept those bytes will not reproduce it.
@@ -71,7 +439,9 @@ pub fn record_hook_observation(
     let observation = Observation {
         observation_id: format!(
             "obs_{:x}",
-            Sha256::digest(format!("hook\0{event_id}\0{digest}").as_bytes())
+            Sha256::digest(
+                format!("{}\0{event_id}\0{digest}", session.unwrap_or("hook")).as_bytes()
+            )
         ),
         source_kind: if host == "claude" {
             "claude_jsonl"
@@ -79,10 +449,12 @@ pub fn record_hook_observation(
             "codex_jsonl"
         }
         .to_owned(),
-        source_identity: "hook:UserPromptSubmit".to_owned(),
+        source_identity: session
+            .map(|session| format!("session:{session}"))
+            .unwrap_or_else(|| "hook:UserPromptSubmit".to_owned()),
         native_id: event_id.to_owned(),
         content_digest: digest.clone(),
-        repository_id: crate::repository::repository_id(&repo).ok(),
+        repository_id: crate::repository::repository_id(repo).ok(),
         revision: None,
         branch: None,
         disposition: "current".to_owned(),
@@ -100,7 +472,12 @@ pub fn record_hook_observation(
     };
     let value = serde_json::to_value(&observation)
         .map_err(|error| ContractError::internal(error.to_string()))?;
-    append_personal("observations.jsonl", &value)?;
+    crate::store::append_record(
+        crate::StoreKind::Personal,
+        repo,
+        "observations.jsonl",
+        &value,
+    )?;
     Ok(Some(event_id.to_owned()))
 }
 
@@ -1491,6 +1868,7 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
             candidates.insert(id, candidate);
         }
     }
+    let pending_observation_count = settle_pending(&session_text);
     let mut admissions = Vec::new();
     if !candidates.is_empty() {
         let launcher = crate::launcher::Launcher::load()?;
@@ -1583,6 +1961,7 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
         "checkpointed": true,
         "checkpointed_at": now,
         "observation_count": observations.len(),
+        "pending_observation_count": pending_observation_count,
         "atom_count": atoms.len(),
         "personal_fact_count": personal_fact_count,
         "admissions": admissions

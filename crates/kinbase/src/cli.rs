@@ -233,16 +233,34 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
             crate::session::start(&repo, host_kind(host), json).map_err(internal)?;
         }
-        Command::Session(SessionCommand::Observe { session, event }) => {
-            crate::session::observe(
+        Command::Session(SessionCommand::Observe {
+            session,
+            event,
+            consume,
+        }) => {
+            // A queued host prompt is claimed first (one worker at a time)
+            // and removed only once its observation is recorded.
+            let claim = if consume {
+                match crate::session::claim_pending(&event) {
+                    Some(claim) => Some(claim),
+                    None => return Ok(()),
+                }
+            } else {
+                None
+            };
+            let event = claim.as_ref().map(|claim| claim.path()).unwrap_or(event);
+            let observed = crate::session::observe(
                 launcher.shared.classifier.as_ref(),
                 launcher.shared.principal_id.as_str(),
                 launcher.shared.host_instance_id.as_str(),
                 &session,
                 &event,
                 json,
-            )
-            .map_err(internal)?;
+            );
+            if let Some(claim) = claim {
+                crate::session::finish_pending(claim, observed.as_ref().err());
+            }
+            observed.map_err(internal)?;
         }
         Command::Session(SessionCommand::Checkpoint { session }) => {
             crate::session::checkpoint(&session, json).map_err(internal)?;
