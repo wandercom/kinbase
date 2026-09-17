@@ -578,7 +578,7 @@ pub fn ingest(
     // Native identities that vanished: retracted while their unit remains,
     // absent when the unit itself is gone. History stays addressable.
     for (native_id, rows) in &prior_by_native {
-        if present_native_ids.contains(native_id) {
+        if present_native_ids.contains(native_id) || scan.present_elsewhere.contains(native_id) {
             continue;
         }
         for old in rows {
@@ -621,6 +621,15 @@ pub fn ingest(
         private.audit(
             "narrowed-view",
             &json!({"source_identity": source_identity, "source_kind": source_kind, "reason": reason, "observed_at": now}),
+        )?;
+    }
+    // A windowed source names where its next page starts; the cursor is kept
+    // for the source and returned, not only echoed back.
+    if let Some(next) = &scan.next_checkpoint {
+        private.set_checkpoint(
+            &source_identity,
+            &json!({"source_kind": source_kind, "next_checkpoint": next, "recorded_at": now}),
+            &now,
         )?;
     }
 
@@ -730,6 +739,7 @@ pub fn ingest(
             })))
         },
         "checkpoint": checkpoint,
+        "next_checkpoint": scan.next_checkpoint,
         "source_digest": scan.source_digest,
         "store": store_name(store),
         "omitted_count": omitted_count,

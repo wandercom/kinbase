@@ -123,6 +123,12 @@ pub struct SourceScan {
     pub skipped: BTreeMap<String, usize>,
     /// Non-blank lines an export adapter examined.
     pub export_lines: usize,
+    /// Identities the source still holds that this (windowed) scan did not
+    /// emit. They are not retired: leaving the window is not leaving the
+    /// source.
+    pub present_elsewhere: BTreeSet<String>,
+    /// Where the next page of a windowed source starts, when there is one.
+    pub next_checkpoint: Option<String>,
 }
 
 impl SourceScan {
@@ -1914,7 +1920,11 @@ fn scan_git_history(
         &repo.root,
         &[
             "log",
-            "--all",
+            // Branches and remote branches only: `--all` also walked stashes,
+            // notes, filter-branch backups and prefetch refs, whose commits
+            // are nobody's history.
+            "--branches",
+            "--remotes",
             &max_flag,
             &skip_flag,
             // The changed paths ride along in the same walk rather than costing
@@ -1976,12 +1986,33 @@ fn scan_git_history(
     let reachable: BTreeSet<String> = git(&repo.root, &["rev-list", &default])
         .map(|text| text.lines().map(|l| l.trim().to_owned()).collect())
         .unwrap_or_default();
+    // The window is a partial view of the history. A commit outside it that
+    // a branch still reaches is present; only one no branch reaches any more
+    // (a rewrite) may be retired. Retiring everything outside the window
+    // withdrew every trusted merge once it aged past 6,000 commits.
+    let windowed: BTreeSet<&str> = commits.iter().map(|commit| commit.sha.as_str()).collect();
+    if let Ok(all) = git(&repo.root, &["rev-list", "--branches", "--remotes"]) {
+        scan.present_elsewhere = all
+            .lines()
+            .map(str::trim)
+            .filter(|sha| !sha.is_empty() && !windowed.contains(sha))
+            .map(|sha| format!("commit:{sha}"))
+            .collect();
+    }
+    if commits.len() == max {
+        scan.next_checkpoint = Some(format!("skip:{}", skip + max));
+    }
     // Git-evidenced revert detection: a commit undid its parent when every
     // path the parent changed (against the parent's first parent) is back at
     // the grandparent's blob. Tree identity is the exact case; the path rule
     // also covers reverts that carry unrelated worktree additions.
     let mut reverted_by: BTreeMap<String, String> = BTreeMap::new();
     for commit in &commits {
+        // A revert that never reached the default branch undid nothing
+        // there: an unmerged `revert-…` branch must not withdraw a merge.
+        if !reachable.contains(&commit.sha) {
+            continue;
+        }
         let Some(parent_sha) = commit.parents.first() else {
             continue;
         };
@@ -2002,10 +2033,13 @@ fn scan_git_history(
         if !message_revert && parent.parents.len() < 2 {
             continue;
         }
+        // NUL-separated, so a path git would quote (non-ASCII, controls) is
+        // the path itself rather than a quoted spelling no lookup resolves.
         let Ok(changed) = git(
             &repo.root,
             &[
                 "diff-tree",
+                "-z",
                 "--no-commit-id",
                 "--name-only",
                 "-r",
@@ -2015,26 +2049,25 @@ fn scan_git_history(
         ) else {
             continue;
         };
-        let paths: Vec<&str> = changed
-            .lines()
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .collect();
+        let paths: Vec<&str> = changed.split('\0').filter(|p| !p.is_empty()).collect();
         if paths.is_empty() {
             continue;
         }
+        // A path is restored when both commits hold the same entry for it,
+        // or both hold none. A lookup that fails says nothing either way, and
+        // a revert is never inferred from two failures.
+        let entry = |sha: &str, path: &str| {
+            git(
+                &repo.root,
+                &["--literal-pathspecs", "ls-tree", "-z", sha, "--", path],
+            )
+            .ok()
+        };
         let restored = paths.iter().all(|path| {
-            let before = git(
-                &repo.root,
-                &["rev-parse", &format!("{}:{path}", grandparent.sha)],
-            )
-            .ok();
-            let after = git(
-                &repo.root,
-                &["rev-parse", &format!("{}:{path}", commit.sha)],
-            )
-            .ok();
-            before == after
+            match (entry(&grandparent.sha, path), entry(&commit.sha, path)) {
+                (Some(before), Some(after)) => before == after,
+                _ => false,
+            }
         });
         if restored {
             reverted_by.insert(parent.sha.clone(), commit.sha.clone());
@@ -2199,20 +2232,50 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
         .map(|path| (file_mtime(&path).unwrap_or(0), path))
         .collect();
     files.sort();
-    let mut latest: BTreeMap<String, SourceRecord> = BTreeMap::new();
-    let mut newest_ids: BTreeSet<String> = BTreeSet::new();
-    let mut document_count = 0usize;
-    let total = files.len();
-    for (index, (_, path)) in files.into_iter().enumerate() {
+    // Only a parsed export can say what exists now. The most recently
+    // written file failing to parse is most likely a download still in
+    // progress: the scan is refused rather than read as "everything was
+    // removed". Any other unreadable or unrelated JSON is skipped and counted.
+    let last_written = files.last().map(|(_, path)| path.clone());
+    let mut exports: Vec<(String, i64, PathBuf, Map<String, Value>)> = Vec::new();
+    for (mtime, path) in files {
         let bytes = read_bounded(&path)?;
         check_budget(&mut scan, bytes.len())?;
-        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        let parsed = serde_json::from_slice::<Value>(&bytes).ok();
+        let Some(Value::Object(map)) = parsed else {
+            if Some(&path) == last_written.as_ref() {
+                return Err(ContractError::new(
+                    "CONFIG_INVARIANT",
+                    format!(
+                        "the most recent GitHub export ({}) is not a JSON object",
+                        relative_to(&repo.root, &path)
+                    ),
+                    "Finish or remove the partial export, then ingest again.",
+                    false,
+                    crate::error::ExitCode::Refused,
+                ));
+            }
+            scan.skip("github_export: file is not a JSON object");
             continue;
         };
-        let Some(map) = value.as_object() else {
+        let is_export = ["issues", "pullRequests"]
+            .iter()
+            .any(|key| map.get(*key).is_some_and(Value::is_array));
+        if !is_export {
+            scan.skip("github_export: JSON document is not an export");
             continue;
-        };
-        document_count += 1;
+        }
+        exports.push((export_time(&map), mtime, path, map));
+    }
+    // The export's own time orders snapshots (its header, else its latest
+    // item update); a checkout gives files near-identical modification times,
+    // which made "newest" a lexical accident.
+    exports.sort_by(|a, b| (&a.0, a.1, &a.2).cmp(&(&b.0, b.1, &b.2)));
+    let mut latest: BTreeMap<String, SourceRecord> = BTreeMap::new();
+    let mut newest_ids: BTreeSet<String> = BTreeSet::new();
+    let document_count = exports.len();
+    let total = exports.len();
+    for (index, (_, _, path, map)) in exports.into_iter().enumerate() {
         let relpath = relative_to(&repo.root, &path);
         scan.unit_ids.insert(relpath.clone());
         let is_newest = index + 1 == total;
@@ -2222,9 +2285,14 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
             };
             for item in items {
                 let Some(object) = item.as_object() else {
+                    scan.skip("github_export: item is not an object");
                     continue;
                 };
-                let number = object.get("number").and_then(Value::as_i64).unwrap_or(0);
+                // Items without a number used to collapse into one `…:0`.
+                let Some(number) = object.get("number").and_then(Value::as_i64) else {
+                    scan.skip("github_export: item has no number");
+                    continue;
+                };
                 let native_id = format!("{prefix}:{number}");
                 let title = object
                     .get("title")
@@ -2310,7 +2378,7 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
     if document_count == 0 {
         return Err(ContractError::new(
             "CONFIG_INVARIANT",
-            "GitHub export contains no JSON object",
+            "GitHub export contains no export document",
             "Use a valid native source envelope.",
             false,
             crate::error::ExitCode::Refused,
@@ -2321,6 +2389,27 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
         scan.records.push(record);
     }
     Ok(scan)
+}
+
+/// An export's own time: an `exported_at`/`generated_at` header, else the
+/// latest `updatedAt` among its items (RFC 3339, normalized); empty when it
+/// carries none, which orders it before any export that does.
+fn export_time(map: &Map<String, Value>) -> String {
+    let header = ["exported_at", "exportedAt", "generated_at", "generatedAt"]
+        .iter()
+        .filter_map(|key| map.get(*key).and_then(Value::as_str))
+        .find_map(crate::time::normalize_foreign_time);
+    if let Some(header) = header {
+        return header;
+    }
+    ["issues", "pullRequests"]
+        .iter()
+        .filter_map(|key| map.get(*key).and_then(Value::as_array))
+        .flatten()
+        .filter_map(|item| item.get("updatedAt").and_then(Value::as_str))
+        .filter_map(crate::time::normalize_foreign_time)
+        .max()
+        .unwrap_or_default()
 }
 
 // --------------------------------------------------------------------------
