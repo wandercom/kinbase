@@ -118,6 +118,24 @@ pub struct SourceScan {
     /// Shallow or sparse view of the repository, when the scan could tell.
     pub narrowed_view: Option<String>,
     pub bytes_read: usize,
+    /// Native input the adapter could not read, by reason. Reported with the
+    /// ingest receipt; never silently dropped.
+    pub skipped: BTreeMap<String, usize>,
+    /// Non-blank lines an export adapter examined.
+    pub export_lines: usize,
+    /// Identities the source still holds that this (windowed) scan did not
+    /// emit, with the origin class they would carry now. One whose recorded
+    /// origin still matches is not retired: leaving the window is not
+    /// leaving the source.
+    pub present_elsewhere: BTreeMap<String, String>,
+    /// Where the next page of a windowed source starts, when there is one.
+    pub next_checkpoint: Option<String>,
+}
+
+impl SourceScan {
+    pub fn skip(&mut self, reason: impl Into<String>) {
+        *self.skipped.entry(reason.into()).or_insert(0) += 1;
+    }
 }
 
 fn io_error(error: std::io::Error) -> ContractError {
@@ -219,16 +237,17 @@ pub fn clean_text(value: &str) -> String {
     let mut last_space = false;
     for character in value.chars() {
         let code = character as u32;
-        let control = code <= 0x1f || (0x80..=0x9f).contains(&code);
-        let bidi = matches!(code, 0x200e | 0x200f | 0x202a..=0x202e | 0x2066..=0x2069);
-        if control || bidi || character.is_whitespace() {
+        // Noncharacters carry nothing and are dropped; every other character
+        // the canonical rule rejects separates words. A private list here
+        // drifted from the rule once (U+061C) and aborted ingest mid-batch.
+        if (0xfdd0..=0xfdef).contains(&code) || (code & 0xfffe) == 0xfffe {
+            continue;
+        }
+        if crate::json::breaks_text_rule(character) || character.is_whitespace() {
             if !last_space {
                 out.push(' ');
                 last_space = true;
             }
-            continue;
-        }
-        if (0xfdd0..=0xfdef).contains(&code) || (code & 0xfffe) == 0xfffe {
             continue;
         }
         out.push(character);
@@ -354,6 +373,12 @@ fn content_text(map: &Map<String, Value>) -> Option<String> {
     if let Some(Value::String(text)) = map.get("text") {
         return Some(text.clone());
     }
+    // Claude Code writes a typed prompt as a plain string.
+    if let Some(Value::String(text)) = map.get("content") {
+        if !text.trim().is_empty() {
+            return Some(text.clone());
+        }
+    }
     if let Some(Value::Array(parts)) = map.get("content") {
         let text = parts
             .iter()
@@ -397,6 +422,13 @@ fn scan_transcripts(
             continue;
         }
         let stem = name.trim_end_matches(".jsonl").to_owned();
+        // One long session is not a reason to read none of the others.
+        if std::fs::metadata(&path).map_err(io_error)?.len() as usize > MAX_FILE_BYTES {
+            scan.skip(format!(
+                "{source_kind}: transcript exceeds the {MAX_FILE_BYTES}-byte bound"
+            ));
+            continue;
+        }
         let bytes = read_bounded(&path)?;
         check_budget(&mut scan, bytes.len())?;
         scan.unit_ids.insert(stem.clone());
@@ -421,9 +453,11 @@ fn scan_transcripts(
             if line.trim().is_empty() {
                 continue;
             }
-            let value: Value = serde_json::from_str(line).map_err(|error| {
-                ContractError::invariant(format!("native JSONL line {}: {error}", index + 1))
-            })?;
+            // A live session's last line may still be being written.
+            let Ok(value) = serde_json::from_str::<Value>(line) else {
+                scan.skip(format!("{source_kind}: line is not JSON"));
+                continue;
+            };
             let Some(map) = value.as_object() else {
                 continue;
             };
@@ -488,10 +522,14 @@ fn scan_transcripts(
             if map.get("edited") == Some(&Value::Bool(true)) {
                 record.attributes.insert("edited".to_owned(), json!(true));
             }
-            record.attributes.insert(
-                "role".to_owned(),
-                map.get("role").cloned().unwrap_or(Value::Null),
-            );
+            // Neither host puts the role at the top level.
+            let role = map
+                .get("role")
+                .or_else(|| map.get("message").and_then(|message| message.get("role")))
+                .or_else(|| map.get("payload").and_then(|payload| payload.get("role")))
+                .cloned()
+                .unwrap_or(Value::Null);
+            record.attributes.insert("role".to_owned(), role);
             scan.records.push(record);
         }
     }
@@ -1168,11 +1206,6 @@ fn scan_envelopes(
         }
         envelope_count += 1;
         let relpath = relative_to(&repo.root, &path);
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("envelope")
-            .to_owned();
         let command = map
             .get("command")
             .and_then(Value::as_array)
@@ -1199,7 +1232,9 @@ fn scan_envelopes(
             .and_then(Value::as_str)
             .map(str::to_owned);
         let observed_at = time_string(map.get("observed_at").and_then(Value::as_str));
-        let mut record = SourceRecord::new(&stem, &relpath);
+        // Keyed on the repository path: two `result.json` files in different
+        // directories are two runs, not one amended twice.
+        let mut record = SourceRecord::new(&relpath, &relpath);
         record.logical_key = match &environment {
             Some(environment) => format!("{source_kind}:{environment}:{command}"),
             None => format!("{source_kind}:{command}"),
@@ -1250,6 +1285,58 @@ fn scan_envelopes(
         ));
     }
     Ok(scan)
+}
+
+/// The objects of one JSONL export file that carry a string `id`, with their
+/// line text. A byte-order mark is not part of the first line. A line that does
+/// not parse, is not an object, or has no id is skipped and counted: a
+/// malformed record is never guessed at, and never dropped unseen.
+fn export_documents(
+    scan: &mut SourceScan,
+    kind: &str,
+    bytes: &[u8],
+) -> Vec<(String, Value, String)> {
+    let text = String::from_utf8_lossy(bytes);
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
+    let mut documents = Vec::new();
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        scan.export_lines += 1;
+        let Ok(document) = serde_json::from_str::<Value>(line) else {
+            scan.skip(format!("{kind}: line is not JSON"));
+            continue;
+        };
+        let id = match document.get("id") {
+            Some(Value::String(id)) if !id.is_empty() && document.is_object() => id.clone(),
+            _ => {
+                scan.skip(format!("{kind}: line has no string id"));
+                continue;
+            }
+        };
+        documents.push((line.to_owned(), document, id));
+    }
+    documents
+}
+
+/// An export with lines and no readable record is the wrong format, not an
+/// empty source: treating it as empty retired every record it held before.
+fn refuse_unreadable_export(scan: &SourceScan, kind: &str) -> Result<(), ContractError> {
+    if scan.export_lines == 0 || !scan.records.is_empty() {
+        return Ok(());
+    }
+    Err(ContractError::new(
+        "CONFIG_INVARIANT",
+        format!(
+            "{kind} source has {} line(s) and none is a record with a string id",
+            scan.export_lines
+        ),
+        "Export one JSON object per line, each with a string `id`; nothing was retired.",
+        false,
+        crate::error::ExitCode::Refused,
+    )
+    .with_detail(json!({"omitted_count": scan.export_lines})))
 }
 
 // --------------------------------------------------------------------------
@@ -1362,30 +1449,16 @@ fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, C
         check_budget(&mut scan, bytes.len())?;
         scan.unit_ids
             .insert(name.trim_end_matches(".jsonl").to_owned());
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
+        let unit = name.trim_end_matches(".jsonl").to_owned();
+        for (line, document, id) in export_documents(&mut scan, "issue_tracker", &bytes) {
+            let line = line.as_str();
             // A malformed ticket is skipped, never guessed at: half-parsed evidence
             // about why a change happened is worse than none.
-            let Ok(document) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            let id = crate::json::get_str(&document, "id")
-                .unwrap_or_default()
-                .to_owned();
-            if id.is_empty() {
-                continue;
-            }
             let title = crate::json::get_str(&document, "title").unwrap_or_default();
             let body = crate::json::get_str(&document, "body").unwrap_or_default();
             let state = crate::json::get_str(&document, "state").unwrap_or("unknown");
 
-            let mut record = SourceRecord::new(
-                &format!("issue_tracker:{id}"),
-                &format!("issue_tracker:{id}"),
-            );
+            let mut record = SourceRecord::new(&format!("issue_tracker:{id}"), &unit);
             record.logical_key = format!("issue_tracker:{id}");
             record.statement = bounded_statement(&format!("{id}: {title}\n{body}"));
             // A ticket states a problem and its resolution; it is not itself a ruling.
@@ -1444,6 +1517,7 @@ fn scan_issue_tracker(source: &Path, _repo: &Repository) -> Result<SourceScan, C
             scan.records.push(record);
         }
     }
+    refuse_unreadable_export(&scan, "issue_tracker")?;
     Ok(scan)
 }
 
@@ -1487,20 +1561,9 @@ fn scan_pull_request(source: &Path, _repo: &Repository) -> Result<SourceScan, Co
         check_budget(&mut scan, bytes.len())?;
         scan.unit_ids
             .insert(name.trim_end_matches(".jsonl").to_owned());
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let Ok(document) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            let id = crate::json::get_str(&document, "id")
-                .unwrap_or_default()
-                .to_owned();
-            if id.is_empty() {
-                continue;
-            }
+        let unit = name.trim_end_matches(".jsonl").to_owned();
+        for (line, document, id) in export_documents(&mut scan, "pull_request", &bytes) {
+            let line = line.as_str();
             let title = crate::json::get_str(&document, "title").unwrap_or_default();
             let merged = document
                 .get("merged")
@@ -1508,8 +1571,7 @@ fn scan_pull_request(source: &Path, _repo: &Repository) -> Result<SourceScan, Co
                 .unwrap_or(false);
             let revision = crate::json::get_str(&document, "merge_commit").map(str::to_owned);
 
-            let mut record =
-                SourceRecord::new(&format!("pull_request:{id}"), &format!("pull_request:{id}"));
+            let mut record = SourceRecord::new(&format!("pull_request:{id}"), &unit);
             record.logical_key = format!("pull_request:{id}");
             record.statement = bounded_statement(&format!(
                 "{id}: {title}\n{}",
@@ -1597,6 +1659,7 @@ fn scan_pull_request(source: &Path, _repo: &Repository) -> Result<SourceScan, Co
             scan.records.push(record);
         }
     }
+    refuse_unreadable_export(&scan, "pull_request")?;
     Ok(scan)
 }
 
@@ -1625,20 +1688,9 @@ fn scan_chat_thread(source: &Path, _repo: &Repository) -> Result<SourceScan, Con
         check_budget(&mut scan, bytes.len())?;
         scan.unit_ids
             .insert(name.trim_end_matches(".jsonl").to_owned());
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let Ok(document) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            let id = crate::json::get_str(&document, "id")
-                .unwrap_or_default()
-                .to_owned();
-            if id.is_empty() {
-                continue;
-            }
+        let unit = name.trim_end_matches(".jsonl").to_owned();
+        for (line, document, id) in export_documents(&mut scan, "chat_thread", &bytes) {
+            let line = line.as_str();
             let channel = crate::json::get_str(&document, "channel").unwrap_or_default();
             let messages = document
                 .get("messages")
@@ -1662,8 +1714,7 @@ fn scan_chat_thread(source: &Path, _repo: &Repository) -> Result<SourceScan, Con
                 body.push_str(&format!("{author}: {line_text}\n"));
             }
 
-            let mut record =
-                SourceRecord::new(&format!("chat_thread:{id}"), &format!("chat_thread:{id}"));
+            let mut record = SourceRecord::new(&format!("chat_thread:{id}"), &unit);
             record.logical_key = format!("chat_thread:{id}");
             record.statement = bounded_statement(&format!("#{channel}\n{body}"));
             // A thread records that something was discussed. Whether it settled
@@ -1711,6 +1762,7 @@ fn scan_chat_thread(source: &Path, _repo: &Repository) -> Result<SourceScan, Con
             scan.records.push(record);
         }
     }
+    refuse_unreadable_export(&scan, "chat_thread")?;
     Ok(scan)
 }
 
@@ -1740,23 +1792,11 @@ fn scan_document(source: &Path, _repo: &Repository) -> Result<SourceScan, Contra
         check_budget(&mut scan, bytes.len())?;
         scan.unit_ids
             .insert(name.trim_end_matches(".jsonl").to_owned());
-        let text = String::from_utf8_lossy(&bytes).into_owned();
-        for line in text.lines() {
-            if line.trim().is_empty() {
-                continue;
-            }
-            let Ok(document) = serde_json::from_str::<Value>(line) else {
-                continue;
-            };
-            let id = crate::json::get_str(&document, "id")
-                .unwrap_or_default()
-                .to_owned();
-            if id.is_empty() {
-                continue;
-            }
+        let unit = name.trim_end_matches(".jsonl").to_owned();
+        for (line, document, id) in export_documents(&mut scan, "document", &bytes) {
+            let line = line.as_str();
             let title = crate::json::get_str(&document, "title").unwrap_or_default();
-            let mut record =
-                SourceRecord::new(&format!("document:{id}"), &format!("document:{id}"));
+            let mut record = SourceRecord::new(&format!("document:{id}"), &unit);
             record.logical_key = format!("document:{id}");
             record.statement = bounded_statement(&format!(
                 "{title}\n{}",
@@ -1809,6 +1849,7 @@ fn scan_document(source: &Path, _repo: &Repository) -> Result<SourceScan, Contra
             scan.records.push(record);
         }
     }
+    refuse_unreadable_export(&scan, "document")?;
     Ok(scan)
 }
 
@@ -1914,7 +1955,11 @@ fn scan_git_history(
         &repo.root,
         &[
             "log",
-            "--all",
+            // Branches and remote branches only: `--all` also walked stashes,
+            // notes, filter-branch backups and prefetch refs, whose commits
+            // are nobody's history.
+            "--branches",
+            "--remotes",
             &max_flag,
             &skip_flag,
             // The changed paths ride along in the same walk rather than costing
@@ -1976,12 +2021,40 @@ fn scan_git_history(
     let reachable: BTreeSet<String> = git(&repo.root, &["rev-list", &default])
         .map(|text| text.lines().map(|l| l.trim().to_owned()).collect())
         .unwrap_or_default();
+    // The window is a partial view of the history. A commit outside it that
+    // a branch still reaches is present; only one no branch reaches any more
+    // (a rewrite) may be retired. Retiring everything outside the window
+    // withdrew every trusted merge once it aged past 6,000 commits.
+    let windowed: BTreeSet<&str> = commits.iter().map(|commit| commit.sha.as_str()).collect();
+    if let Ok(all) = git(&repo.root, &["rev-list", "--branches", "--remotes"]) {
+        scan.present_elsewhere = all
+            .lines()
+            .map(str::trim)
+            .filter(|sha| !sha.is_empty() && !windowed.contains(sha))
+            .map(|sha| {
+                let origin = if reachable.contains(sha) {
+                    "merged-default"
+                } else {
+                    "unreviewed-branch"
+                };
+                (format!("commit:{sha}"), origin.to_owned())
+            })
+            .collect();
+    }
+    if commits.len() == max {
+        scan.next_checkpoint = Some(format!("skip:{}", skip + max));
+    }
     // Git-evidenced revert detection: a commit undid its parent when every
     // path the parent changed (against the parent's first parent) is back at
     // the grandparent's blob. Tree identity is the exact case; the path rule
     // also covers reverts that carry unrelated worktree additions.
     let mut reverted_by: BTreeMap<String, String> = BTreeMap::new();
     for commit in &commits {
+        // A revert that never reached the default branch undid nothing
+        // there: an unmerged `revert-…` branch must not withdraw a merge.
+        if !reachable.contains(&commit.sha) {
+            continue;
+        }
         let Some(parent_sha) = commit.parents.first() else {
             continue;
         };
@@ -2002,10 +2075,13 @@ fn scan_git_history(
         if !message_revert && parent.parents.len() < 2 {
             continue;
         }
+        // NUL-separated, so a path git would quote (non-ASCII, controls) is
+        // the path itself rather than a quoted spelling no lookup resolves.
         let Ok(changed) = git(
             &repo.root,
             &[
                 "diff-tree",
+                "-z",
                 "--no-commit-id",
                 "--name-only",
                 "-r",
@@ -2015,26 +2091,25 @@ fn scan_git_history(
         ) else {
             continue;
         };
-        let paths: Vec<&str> = changed
-            .lines()
-            .map(str::trim)
-            .filter(|p| !p.is_empty())
-            .collect();
+        let paths: Vec<&str> = changed.split('\0').filter(|p| !p.is_empty()).collect();
         if paths.is_empty() {
             continue;
         }
+        // A path is restored when both commits hold the same entry for it,
+        // or both hold none. A lookup that fails says nothing either way, and
+        // a revert is never inferred from two failures.
+        let entry = |sha: &str, path: &str| {
+            git(
+                &repo.root,
+                &["--literal-pathspecs", "ls-tree", "-z", sha, "--", path],
+            )
+            .ok()
+        };
         let restored = paths.iter().all(|path| {
-            let before = git(
-                &repo.root,
-                &["rev-parse", &format!("{}:{path}", grandparent.sha)],
-            )
-            .ok();
-            let after = git(
-                &repo.root,
-                &["rev-parse", &format!("{}:{path}", commit.sha)],
-            )
-            .ok();
-            before == after
+            match (entry(&grandparent.sha, path), entry(&commit.sha, path)) {
+                (Some(before), Some(after)) => before == after,
+                _ => false,
+            }
         });
         if restored {
             reverted_by.insert(parent.sha.clone(), commit.sha.clone());
@@ -2199,20 +2274,56 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
         .map(|path| (file_mtime(&path).unwrap_or(0), path))
         .collect();
     files.sort();
-    let mut latest: BTreeMap<String, SourceRecord> = BTreeMap::new();
-    let mut newest_ids: BTreeSet<String> = BTreeSet::new();
-    let mut document_count = 0usize;
-    let total = files.len();
-    for (index, (_, path)) in files.into_iter().enumerate() {
+    // Only a parsed export can say what exists now. The most recently
+    // written file failing to parse is most likely a download still in
+    // progress: the scan is refused rather than read as "everything was
+    // removed". Any other unreadable or unrelated JSON is skipped and counted.
+    let last_written = files.last().map(|(_, path)| path.clone());
+    let mut exports: Vec<(String, i64, PathBuf, Map<String, Value>)> = Vec::new();
+    for (mtime, path) in files {
         let bytes = read_bounded(&path)?;
         check_budget(&mut scan, bytes.len())?;
-        let Ok(value) = serde_json::from_slice::<Value>(&bytes) else {
+        let Ok(parsed) = serde_json::from_slice::<Value>(&bytes) else {
+            if Some(&path) == last_written.as_ref() {
+                return Err(ContractError::new(
+                    "CONFIG_INVARIANT",
+                    format!(
+                        "the most recent GitHub export ({}) is not valid JSON",
+                        relative_to(&repo.root, &path)
+                    ),
+                    "Finish or remove the partial export, then ingest again.",
+                    false,
+                    crate::error::ExitCode::Refused,
+                ));
+            }
+            scan.skip("github_export: file is not valid JSON");
             continue;
         };
-        let Some(map) = value.as_object() else {
+        // Valid JSON of another shape is some other document, not a
+        // half-written export.
+        let Value::Object(map) = parsed else {
+            scan.skip("github_export: JSON document is not an export");
             continue;
         };
-        document_count += 1;
+        let is_export = ["issues", "pullRequests"]
+            .iter()
+            .any(|key| map.get(*key).is_some_and(Value::is_array));
+        if !is_export {
+            scan.skip("github_export: JSON document is not an export");
+            continue;
+        }
+        let time = export_time(&map).unwrap_or_else(|| mtime_rfc3339(mtime));
+        exports.push((time, mtime, path, map));
+    }
+    // The export's own time orders snapshots (its header, else its latest
+    // item update); a checkout gives files near-identical modification times,
+    // which made "newest" a lexical accident.
+    exports.sort_by(|a, b| (&a.0, a.1, &a.2).cmp(&(&b.0, b.1, &b.2)));
+    let mut latest: BTreeMap<String, SourceRecord> = BTreeMap::new();
+    let mut newest_ids: BTreeSet<String> = BTreeSet::new();
+    let document_count = exports.len();
+    let total = exports.len();
+    for (index, (_, _, path, map)) in exports.into_iter().enumerate() {
         let relpath = relative_to(&repo.root, &path);
         scan.unit_ids.insert(relpath.clone());
         let is_newest = index + 1 == total;
@@ -2222,9 +2333,14 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
             };
             for item in items {
                 let Some(object) = item.as_object() else {
+                    scan.skip("github_export: item is not an object");
                     continue;
                 };
-                let number = object.get("number").and_then(Value::as_i64).unwrap_or(0);
+                // Items without a number used to collapse into one `…:0`.
+                let Some(number) = object.get("number").and_then(Value::as_i64) else {
+                    scan.skip("github_export: item has no number");
+                    continue;
+                };
                 let native_id = format!("{prefix}:{number}");
                 let title = object
                     .get("title")
@@ -2310,7 +2426,7 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
     if document_count == 0 {
         return Err(ContractError::new(
             "CONFIG_INVARIANT",
-            "GitHub export contains no JSON object",
+            "GitHub export contains no export document",
             "Use a valid native source envelope.",
             false,
             crate::error::ExitCode::Refused,
@@ -2321,6 +2437,33 @@ fn scan_github_export(source: &Path, repo: &Repository) -> Result<SourceScan, Co
         scan.records.push(record);
     }
     Ok(scan)
+}
+
+/// An export's own time: an `exported_at`/`generated_at` header, else the
+/// latest `updatedAt` among the items that are records (objects with a
+/// number). None when it carries neither; the caller then uses file time.
+fn export_time(map: &Map<String, Value>) -> Option<String> {
+    let header = ["exported_at", "exportedAt", "generated_at", "generatedAt"]
+        .iter()
+        .filter_map(|key| map.get(*key).and_then(Value::as_str))
+        .find_map(crate::time::normalize_foreign_time);
+    if header.is_some() {
+        return header;
+    }
+    ["issues", "pullRequests"]
+        .iter()
+        .filter_map(|key| map.get(*key).and_then(Value::as_array))
+        .flatten()
+        .filter(|item| item.get("number").and_then(Value::as_i64).is_some())
+        .filter_map(|item| item.get("updatedAt").and_then(Value::as_str))
+        .filter_map(crate::time::normalize_foreign_time)
+        .max()
+}
+
+fn mtime_rfc3339(seconds: i64) -> String {
+    chrono::DateTime::from_timestamp(seconds, 0)
+        .map(crate::time::format_rfc3339_millis)
+        .unwrap_or_default()
 }
 
 // --------------------------------------------------------------------------
@@ -2446,6 +2589,22 @@ fn scan_kindex(source: &Path, repo: &Repository) -> Result<SourceScan, ContractE
             let kindex_provenance: Option<String> = row.get(6).ok();
             let kindex_status: Option<String> = row.get(7).ok();
             let kindex_audience: Option<String> = row.get(8).ok();
+            // Kindex says who a node is for and whether it stands. This adapter
+            // feeds the Codebase store, which ships with the repository, so it
+            // takes only standing nodes meant for the team or the public. The
+            // older export shape has neither column and keeps its behaviour.
+            if let Some(status) = kindex_status.as_deref() {
+                if !matches!(status, "active" | "open-question") {
+                    scan.skip("kindex: node is not active");
+                    continue;
+                }
+            }
+            if let Some(audience) = kindex_audience.as_deref() {
+                if !matches!(audience, "team" | "public") {
+                    scan.skip("kindex: audience is not team or public");
+                    continue;
+                }
+            }
             let payload_text = payload
                 .as_ref()
                 .map(|bytes| String::from_utf8_lossy(bytes).trim().to_owned())

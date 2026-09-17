@@ -68,10 +68,8 @@ pub fn ingest(
     let journal_store = crate::StoreKind::Personal;
     let journal_root = crate::store::ensure_store_root(journal_store, repo)?;
     let private = crate::private::PrivateStore::open_personal(&journal_root)?;
-    let source_identity = source_identity(source_kind, source);
     let discovered_repository = crate::codebase::Repository::discover(repo)?;
     let now = crate::repository::recorded_clock(launcher, &discovered_repository)?;
-    let prior_observations = private.observations_for_source(&source_identity)?;
     let source_available = source.exists();
 
     // A lifecycle re-ingest must keep a stable identity even after its native
@@ -126,6 +124,49 @@ pub fn ingest(
         )
         .with_detail(serde_json::json!({"omitted_count": 1})));
     }
+
+    // One source, one identity: its repository and its path inside it, however
+    // the path was typed. The typed spelling was the identity once, so
+    // `docs`, `./docs` and an absolute path were three ledgers, and one
+    // repository's `docs` retired another's. Rows kept under those older
+    // identities move here with their observation ids intact.
+    let relative_source = source_canonical
+        .strip_prefix(&repo_canonical)
+        .map(|relative| relative.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let path_key = repo_canonical.to_string_lossy().into_owned();
+    let repository_key = discovered_repository
+        .uuid_hint()
+        .map(str::to_owned)
+        .unwrap_or_else(|| path_key.clone());
+    let source_identity = source_identity(source_kind, &repository_key, &relative_source);
+    // (identity, whether it can only name this repository's source)
+    let mut legacy_identities = vec![(
+        source_identity_for_path(source_kind, &path_key, &relative_source),
+        true,
+    )];
+    for spelling in [
+        source.to_string_lossy().into_owned(),
+        relative_source.clone(),
+        format!("./{relative_source}"),
+        format!("{relative_source}/"),
+        source_canonical.to_string_lossy().into_owned(),
+        repo.join(&relative_source).to_string_lossy().into_owned(),
+    ] {
+        let absolute = Path::new(&spelling).is_absolute();
+        legacy_identities.push((legacy_source_identity(source_kind, &spelling), absolute));
+    }
+    let owning_repository = (store_for_source(source_kind) == crate::StoreKind::Codebase)
+        .then(|| discovered_repository.uuid_hint().map(str::to_owned))
+        .flatten();
+    let mut adoption = adopt_legacy_identities(
+        &private,
+        &source_identity,
+        &legacy_identities,
+        owning_repository.as_deref(),
+        None,
+    )?;
+    let mut prior_observations = private.observations_for_source(&source_identity)?;
 
     // Scan the native source. A `.kin/` tree is the signed-event intake the
     // reducer owns; every other source is an adapter scan into native units.
@@ -270,6 +311,33 @@ pub fn ingest(
     let mut present_native_ids: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
     let mut renamed_old_ids: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // A row with no repository under a spelling another repository could
+    // share (`docs`) is adopted when this scan holds the same record with the
+    // same bytes: an uncertified repository's relative-path rows otherwise
+    // stayed current under the old identity while the new one recorded them
+    // again.
+    if !scan.records.is_empty() {
+        let scanned: std::collections::BTreeSet<(String, String)> = scan
+            .records
+            .iter()
+            .map(|record| (record.native_id.clone(), record.content_digest()))
+            .collect();
+        let matched = adopt_legacy_identities(
+            &private,
+            &source_identity,
+            &legacy_identities,
+            owning_repository.as_deref(),
+            Some(&scanned),
+        )?;
+        if matched["adopted"].as_u64().unwrap_or(0) > 0 {
+            prior_observations = private.observations_for_source(&source_identity)?;
+        }
+        for field in ["adopted", "merged_duplicates"] {
+            adoption[field] =
+                json!(adoption[field].as_u64().unwrap_or(0) + matched[field].as_u64().unwrap_or(0));
+        }
+        adoption["left_with_another_repository"] = matched["left_with_another_repository"].clone();
+    }
     let prior_by_id: BTreeMap<String, Observation> = prior_observations
         .iter()
         .map(|observation| (observation.observation_id.clone(), observation.clone()))
@@ -281,6 +349,22 @@ pub fn ingest(
             .or_default()
             .push(observation.clone());
     }
+    // The same native record with the same bytes is the same observation even
+    // when its id was minted under an older identity of this source.
+    let mut prior_by_content: BTreeMap<(String, String), Observation> = BTreeMap::new();
+    for observation in &prior_observations {
+        let key = (
+            observation.native_id.clone(),
+            observation.content_digest.clone(),
+        );
+        let replace = prior_by_content
+            .get(&key)
+            .is_none_or(|kept| kept.lifecycle != "observed" && observation.lifecycle == "observed");
+        if replace {
+            prior_by_content.insert(key, observation.clone());
+        }
+    }
+    let mut noncanonical_count = 0usize;
     let mut present_digests: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for record in &scan.records {
         present_native_ids.insert(record.native_id.clone());
@@ -384,7 +468,29 @@ pub fn ingest(
             reducer_owned: record.reducer_owned.then_some(true),
             cursor: None,
         };
-        if let Some(existing) = prior_by_id.get(&observation_id) {
+        // A record outside the canonical data model is set aside before
+        // anything about it is written; one such record used to stop the batch
+        // after earlier records were already inserted.
+        let fresh_value = serde_json::to_value(&fresh)
+            .map_err(|error| ContractError::internal(error.to_string()))?;
+        if let Err(problem) = crate::json::try_canonical_bytes(&fresh_value) {
+            private.quarantine(
+                "NONCANONICAL_RECORD",
+                &json!({
+                    "source_kind": source_kind,
+                    "source_identity": source_identity,
+                    "native_id": crate::json::fold_to_canonical_text(&record.native_id),
+                    "problem": problem,
+                    "proof_clock": now
+                }),
+            )?;
+            noncanonical_count += 1;
+            continue;
+        }
+        let existing = prior_by_id
+            .get(&observation_id)
+            .or_else(|| prior_by_content.get(&(record.native_id.clone(), digest.clone())));
+        if let Some(existing) = existing {
             // Re-observed: identity and content are unchanged; provenance
             // (revision, attributes, retention, lifecycle) may have moved.
             let mut merged = existing.clone();
@@ -515,6 +621,16 @@ pub fn ingest(
         if present_native_ids.contains(native_id) {
             continue;
         }
+        // Outside a windowed scan but still in the source, and still of the
+        // origin it was recorded with: nothing to retire. A commit that is
+        // now reached only from another branch no longer carries the trust
+        // its main-branch record did, so that record is retired.
+        if scan.present_elsewhere.get(native_id).is_some_and(|origin| {
+            rows.iter()
+                .all(|old| old.origin_trust.as_deref() == Some(origin.as_str()))
+        }) {
+            continue;
+        }
         for old in rows {
             if old.lifecycle != "observed" {
                 continue;
@@ -555,6 +671,15 @@ pub fn ingest(
         private.audit(
             "narrowed-view",
             &json!({"source_identity": source_identity, "source_kind": source_kind, "reason": reason, "observed_at": now}),
+        )?;
+    }
+    // A windowed source names where its next page starts; the cursor is kept
+    // for the source and returned, not only echoed back.
+    if let Some(next) = &scan.next_checkpoint {
+        private.set_checkpoint(
+            &source_identity,
+            &json!({"source_kind": source_kind, "next_checkpoint": next, "recorded_at": now}),
+            &now,
         )?;
     }
 
@@ -666,10 +791,20 @@ pub fn ingest(
             })))
         },
         "checkpoint": checkpoint,
+        "next_checkpoint": scan.next_checkpoint,
         "source_digest": scan.source_digest,
         "store": store_name(store),
-        "omitted_count": omitted_count
+        "omitted_count": omitted_count,
+        "skipped_source_records": scan.skipped,
+        "noncanonical_count": noncanonical_count,
+        "source_identity_adopted": adoption
     });
+    if !scan.skipped.is_empty() || noncanonical_count > 0 {
+        crate::output::diagnostic(
+            "skipped-source-records",
+            json!({"adapter": source_kind, "skipped": scan.skipped, "noncanonical": noncanonical_count}),
+        );
+    }
     if omitted_count > 0 {
         // A per-event ceiling stop is reported in the receipt (verification
         // "Operational limits": every ceiling stop reports its omitted count).
@@ -1036,11 +1171,98 @@ pub fn observation_result(
     })
 }
 
-fn source_identity(source_kind: &str, source: &Path) -> String {
+fn source_identity(source_kind: &str, repository_key: &str, relative_source: &str) -> String {
     format!(
         "source:{source_kind}:{:x}",
-        Sha256::digest(source.to_string_lossy().as_bytes())
+        Sha256::digest(format!("{repository_key}\0{relative_source}").as_bytes())
     )
+}
+
+/// The identity a source had before its repository carried a UUID.
+fn source_identity_for_path(
+    source_kind: &str,
+    repository_path: &str,
+    relative_source: &str,
+) -> String {
+    source_identity(source_kind, repository_path, relative_source)
+}
+
+/// The identity a source had when the path was hashed as typed.
+fn legacy_source_identity(source_kind: &str, spelling: &str) -> String {
+    format!(
+        "source:{source_kind}:{:x}",
+        Sha256::digest(spelling.as_bytes())
+    )
+}
+
+/// Move this repository's rows from older identities of a source to its
+/// current one. A row that repeats a native record and digest already held is
+/// kept as history (`superseded`) rather than as a second current copy. Rows
+/// of another repository stay where they are; a row with no repository is
+/// taken when the older identity cannot name another repository's source (an
+/// absolute spelling or a path-keyed identity), or, given `scanned`, when this
+/// scan holds the same record with the same digest. A row whose bytes have
+/// changed since is not provably this repository's and stays where it is.
+fn adopt_legacy_identities(
+    private: &crate::private::PrivateStore,
+    current: &str,
+    candidates: &[(String, bool)],
+    repository_id: Option<&str>,
+    scanned: Option<&std::collections::BTreeSet<(String, String)>>,
+) -> Result<Value, ContractError> {
+    let mut held: std::collections::BTreeSet<(String, String)> = private
+        .observations_for_source(current)?
+        .into_iter()
+        .map(|row| (row.native_id, row.content_digest))
+        .collect();
+    let mut seen = std::collections::BTreeSet::new();
+    let mut adopted = 0usize;
+    let mut merged = 0usize;
+    let mut left_with_another_repository = 0usize;
+    for (candidate, unambiguous) in candidates {
+        if candidate == current || !seen.insert(candidate.clone()) {
+            continue;
+        }
+        for mut row in private.observations_for_source(candidate)? {
+            let belongs = match (row.repository_id.as_deref(), repository_id) {
+                (Some(row_repository), Some(this)) => row_repository == this,
+                (None, _) => {
+                    *unambiguous
+                        || scanned.is_some_and(|keys| {
+                            keys.contains(&(row.native_id.clone(), row.content_digest.clone()))
+                        })
+                }
+                (Some(_), None) => false,
+            };
+            if !belongs {
+                left_with_another_repository += 1;
+                continue;
+            }
+            let key = (row.native_id.clone(), row.content_digest.clone());
+            if held.contains(&key) {
+                if row.lifecycle == "observed" {
+                    row.lifecycle = "superseded".to_owned();
+                }
+                merged += 1;
+            } else {
+                held.insert(key);
+            }
+            row.source_identity = current.to_owned();
+            private.rekey_observation(&row)?;
+            adopted += 1;
+        }
+    }
+    if adopted > 0 {
+        private.audit(
+            "source-identity-adopted",
+            &json!({"source_identity": current, "adopted": adopted, "merged_duplicates": merged}),
+        )?;
+    }
+    Ok(json!({
+        "adopted": adopted,
+        "merged_duplicates": merged,
+        "left_with_another_repository": left_with_another_repository
+    }))
 }
 
 pub fn store_for_source(source_kind: &str) -> crate::StoreKind {
