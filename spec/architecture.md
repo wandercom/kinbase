@@ -295,7 +295,11 @@ The registry only moves forward. Company admits a registry document only at an
 authority cursor greater than the one it has published; posting the current document
 again returns its receipt with no effect, and any older or equal-cursor document
 refuses with `APPROVAL_REPLAY`, because a steward signature on a superseded registry
-stays valid and would otherwise roll every later entry back into revocations.
+stays valid and would otherwise roll every later entry back into revocations. A
+republication that drops an entry revokes exactly what the entry granted: a key no
+entry lists any more is revoked, and a key still listed under other scopes is revoked
+for the dropped scope only, with the recalculation below applied to what it warranted
+there.
 
 Rotation is a Company event signed by an already authorized steward and names old
 key, new key, effective cursor, and scope. Revocation is a signed Company event with
