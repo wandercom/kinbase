@@ -36,6 +36,13 @@ pub struct CompanyConfig {
     pub maintainer_key_file: PathBuf,
 }
 
+/// The processors a `[classifier]` may send session text to: `local` (the
+/// deterministic provider, or a model the loopback Ollama runs on this
+/// machine), `agy` (the Antigravity CLI's service) and `ollama-cloud` (a model
+/// the local Ollama forwards to ollama.com). A provider that sends text off
+/// the machine runs only when its processor is named here.
+pub const PROCESSOR_SCOPES: [&str; 3] = ["local", "agy", "ollama-cloud"];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClassifierConfig {
     pub model: String,
@@ -427,11 +434,13 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                 ],
                 "[classifier]",
             )?;
-            let model = section
-                .get("model")
-                .and_then(toml::Value::as_str)
-                .unwrap_or("deterministic")
-                .to_owned();
+            let model = match section.get("model") {
+                None => "deterministic".to_owned(),
+                Some(value) => value
+                    .as_str()
+                    .ok_or_else(|| config_error("classifier.model must be a string"))?
+                    .to_owned(),
+            };
             if !model.starts_with("deterministic")
                 && !model.starts_with("ollama:")
                 && !model.starts_with("agy:")
@@ -475,11 +484,23 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                     "classifier.timeout_seconds must be within 1..=600",
                 ));
             }
-            let processor_scope = section
-                .get("processor_scope")
-                .and_then(toml::Value::as_str)
-                .unwrap_or("local")
-                .to_owned();
+            let processor_scope = match section.get("processor_scope") {
+                None => "local".to_owned(),
+                Some(value) => value
+                    .as_str()
+                    .filter(|scope| PROCESSOR_SCOPES.contains(scope))
+                    .ok_or_else(|| {
+                        config_error(format!(
+                            "classifier.processor_scope must be one of {}",
+                            PROCESSOR_SCOPES
+                                .iter()
+                                .map(|scope| format!("\"{scope}\""))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))
+                    })?
+                    .to_owned(),
+            };
             Some(ClassifierConfig {
                 model,
                 executable,
@@ -900,6 +921,52 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
             .transpose()?
             .unwrap_or_default(),
     })
+}
+
+#[cfg(test)]
+mod processor_scope_tests {
+    use super::*;
+
+    fn classifier_config(extra: &str) -> Result<UserConfig, ContractError> {
+        let text = format!(
+            "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n\n\
+             [classifier]\nexecutable = \"/opt/example/bin/classifier\"\n\
+             executable_sha256 = \"{}\"\ntimeout_seconds = 20\n{extra}\n",
+            "0".repeat(64)
+        );
+        parse_user_config(Path::new("/private/example/config.toml"), &text)
+    }
+
+    fn scope_of(extra: &str) -> String {
+        classifier_config(extra)
+            .expect("config parses")
+            .classifier
+            .expect("classifier section")
+            .processor_scope
+    }
+
+    #[test]
+    fn processor_scope_is_a_closed_vocabulary() {
+        assert_eq!(scope_of("model = \"agy:default\""), "local");
+        assert_eq!(
+            scope_of("model = \"agy:default\"\nprocessor_scope = \"agy\""),
+            "agy"
+        );
+        assert_eq!(
+            scope_of("processor_scope = \"ollama-cloud\""),
+            "ollama-cloud"
+        );
+        for bad in [
+            "processor_scope = \"cloud\"",
+            "processor_scope = \"\"",
+            "processor_scope = 1",
+            "processor_scope = [\"agy\"]",
+            "model = 7",
+        ] {
+            let error = classifier_config(bad).expect_err(bad);
+            assert_eq!(error.code, "CONFIG_INVARIANT", "{bad}");
+        }
+    }
 }
 
 #[cfg(test)]

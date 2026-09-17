@@ -792,6 +792,8 @@ pub fn observe(
             "configured_model": provider.configured_model.clone(),
             "fallback_from": provider.fallback_from.clone(),
             "fallback_reason": provider.fallback_reason.clone(),
+            "processor": provider.processor,
+            "processor_scope": provider.processor_scope.clone(),
             "abstained_observations": extraction.abstained.len(),
             "requests": extraction.requests,
             "retries": extraction.retries
@@ -918,13 +920,19 @@ fn session_corpus_text(records: &[Map<String, Value>], native_id: &str) -> Strin
 /// Which classifier provider a pinned run actually uses. The configured
 /// `model` selects the live Ollama provider (R-11); when Ollama does not
 /// serve that model the run falls back to the product's own deterministic
-/// rule provider and says so in every receipt, never silently.
+/// rule provider and says so in every receipt, never silently. A provider
+/// whose processor `processor_scope` does not name falls back the same way,
+/// before any session text is sent to it.
 #[derive(Debug, Clone)]
 pub(crate) struct SelectedProvider {
     pub configured_model: Option<String>,
     pub live_model: Option<String>,
     pub fallback_from: Option<String>,
     pub fallback_reason: Option<String>,
+    /// Where the run's session text goes: `local`, `agy` or `ollama-cloud`.
+    pub processor: &'static str,
+    /// The processors the configuration authorizes.
+    pub processor_scope: String,
 }
 
 impl SelectedProvider {
@@ -940,6 +948,9 @@ impl SelectedProvider {
 pub(crate) fn select_provider(
     classifier: Option<&crate::config::SharedClassifier>,
 ) -> SelectedProvider {
+    let processor_scope = classifier
+        .map(|classifier| classifier.processor_scope.clone())
+        .unwrap_or_else(|| "local".to_owned());
     let configured = classifier
         .map(|classifier| classifier.model.clone())
         .filter(|model| model.starts_with("ollama:") || model.starts_with("agy:"));
@@ -949,19 +960,35 @@ pub(crate) fn select_provider(
             live_model: None,
             fallback_from: None,
             fallback_reason: None,
+            processor: "local",
+            processor_scope,
         };
     };
+    // Authorization is settled before the availability probe where the
+    // model name alone decides the processor; an Ollama model's processor is
+    // known only from the daemon's list, which carries no session text.
     let available = if model.starts_with("agy:") {
-        crate::classifier::agy_available()
+        crate::classifier::authorize_processor("agy", &processor_scope, &model)
+            .map_err(|error| format!("{}: {}", error.code, error.message))
+            .and_then(|()| crate::classifier::agy_available())
+            .map(|()| "agy")
     } else {
-        crate::classifier::ollama_model_available(model.trim_start_matches("ollama:"))
+        crate::classifier::ollama_model_available(model.trim_start_matches("ollama:")).and_then(
+            |processor| {
+                crate::classifier::authorize_processor(processor, &processor_scope, &model)
+                    .map(|()| processor)
+                    .map_err(|error| format!("{}: {}", error.code, error.message))
+            },
+        )
     };
     match available {
-        Ok(()) => SelectedProvider {
+        Ok(processor) => SelectedProvider {
             configured_model: Some(model.clone()),
             live_model: Some(model),
             fallback_from: None,
             fallback_reason: None,
+            processor,
+            processor_scope,
         },
         Err(reason) => {
             crate::output::diagnostic(
@@ -977,6 +1004,8 @@ pub(crate) fn select_provider(
                 live_model: None,
                 fallback_from: Some(model),
                 fallback_reason: Some(reason),
+                processor: "local",
+                processor_scope,
             }
         }
     }
@@ -1471,6 +1500,8 @@ fn pinned_classifier_atoms(
             Some(model) => {
                 args.push("--model".to_owned());
                 args.push(model.clone());
+                args.push("--processor-scope".to_owned());
+                args.push(provider.processor_scope.clone());
             }
             None => {
                 args.push("--provider".to_owned());
@@ -4327,6 +4358,37 @@ fn question_for_unresolved_atom(
     };
     let alternatives: Vec<String> = uncertainty.into_iter().map(str::to_owned).collect();
     crate::questions::ensure_question(repo, &unknown, &decision, &evidence, &alternatives)
+}
+
+#[cfg(test)]
+mod processor_scope_tests {
+    use super::select_provider;
+    use crate::config::SharedClassifier;
+
+    fn classifier(model: &str, processor_scope: &str) -> SharedClassifier {
+        SharedClassifier {
+            model: model.to_owned(),
+            executable: "/nonexistent/classifier".into(),
+            executable_sha256: "0".repeat(64),
+            args: Vec::new(),
+            timeout_seconds: 5,
+            processor_scope: processor_scope.to_owned(),
+        }
+    }
+
+    #[test]
+    fn an_unauthorized_processor_falls_back_before_any_request() {
+        for scope in ["local", "ollama-cloud"] {
+            let selected = select_provider(Some(&classifier("agy:default", scope)));
+            assert_eq!(selected.live_model, None);
+            assert_eq!(selected.name(), "deterministic");
+            assert_eq!(selected.processor, "local");
+            assert_eq!(selected.processor_scope, scope);
+            assert_eq!(selected.fallback_from.as_deref(), Some("agy:default"));
+            let reason = selected.fallback_reason.unwrap_or_default();
+            assert!(reason.starts_with("PROCESSOR_UNAUTHORIZED"), "{reason}");
+        }
+    }
 }
 
 #[cfg(test)]

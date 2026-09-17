@@ -60,6 +60,41 @@ pub struct TrustContext {
 }
 
 impl TrustContext {
+    /// Trust for a repository no certificate resolves for: nothing is
+    /// registered, revoked or warranted until a certificate says so.
+    pub fn uncertified() -> Self {
+        TrustContext {
+            repository_uuid: None,
+            certificate: None,
+            certificate_digest: None,
+            certificate_valid: false,
+            certificate_reason: "no out-of-worktree certificate resolves for this repository"
+                .to_owned(),
+            root: None,
+            registry: Vec::new(),
+            revocations: Vec::new(),
+            relaxations: Vec::new(),
+            company_facts: Vec::new(),
+            company_unknowns: Vec::new(),
+            company_lifecycle: Vec::new(),
+            company_fact_parents: BTreeMap::new(),
+            company_traces: Vec::new(),
+            revocation_history: Vec::new(),
+            fact_versions: BTreeMap::new(),
+            authority_cursor: "0".to_owned(),
+            freshness: None,
+            company_reachable: None,
+            company_snapshot_present: false,
+            company_query_attempted: false,
+            company_connect_seconds: None,
+            unknowns: Vec::new(),
+            foreign_certificate_paths: Vec::new(),
+            certificate_conflicts: Vec::new(),
+            pin_state: "none".to_owned(),
+            local_maintainer_keys: BTreeSet::new(),
+        }
+    }
+
     pub fn steward_keys(&self) -> BTreeSet<String> {
         let mut keys = BTreeSet::new();
         if let Some(root) = &self.root {
@@ -185,6 +220,44 @@ impl TrustContext {
             .collect()
     }
 
+    /// An Unknown from the worktree opens or closes a question only when it
+    /// is signed by an authority for its scope (or the steward or a
+    /// maintainer) under a valid certificate, as a fact event must be: an
+    /// unsigned file used to open and close Unknowns in the projection.
+    pub fn verify_unknown(&self, unknown: &crate::model::UnknownEvent) -> Verification {
+        if unknown.store_kind != "codebase" {
+            return Verification::Foreign;
+        }
+        // Bound to exactly this repository, as a fact event must be: an
+        // unbound Unknown could be replayed into any repository.
+        match (&self.repository_uuid, unknown.repository_id.as_deref()) {
+            (Some(uuid), Some(bound)) if uuid == bound => {}
+            _ => return Verification::Foreign,
+        }
+        if !self.certificate_valid {
+            return Verification::Unverified;
+        }
+        if unknown.verify_signature().is_none() {
+            return Verification::SignatureInvalid;
+        }
+        if self.is_revoked(&unknown.signer) {
+            return Verification::Revoked;
+        }
+        if self.steward_keys().contains(&unknown.signer) || self.is_maintainer(&unknown.signer) {
+            return Verification::Verified;
+        }
+        let entries = self.entries_for_key(&unknown.signer);
+        if entries.iter().any(|entry| {
+            crate::json::get_str(entry, "scope") == Some(unknown.authority_scope.as_str())
+        }) {
+            Verification::Verified
+        } else if entries.is_empty() {
+            Verification::Unverified
+        } else {
+            Verification::WrongScope
+        }
+    }
+
     /// Verification of one codebase fact event.
     pub fn verify(&self, event: &FactEvent) -> Verification {
         if event.store_kind != "codebase" {
@@ -248,6 +321,8 @@ pub struct LoadCounts {
     pub total_files: usize,
     pub fact_events: usize,
     pub unknown_events: usize,
+    /// Unknown events that did not verify, and so opened or closed nothing.
+    pub unverified_unknowns: usize,
     pub verified: usize,
     pub unverified: usize,
     pub foreign: usize,
@@ -270,6 +345,7 @@ impl LoadCounts {
             "total_files": self.total_files,
             "fact_events": self.fact_events,
             "unknown_events": self.unknown_events,
+            "unverified_unknowns": self.unverified_unknowns,
             "verified": self.verified,
             "unverified": self.unverified,
             "foreign": self.foreign,
@@ -505,12 +581,11 @@ impl RepoContext {
                 }
                 ParsedEvent::Unknown(unknown) => {
                     counts.unknown_events += 1;
-                    let ok = unknown.verify_signature().is_some() && self.trust.certificate_valid;
-                    Some(if ok {
-                        Verification::Verified
-                    } else {
-                        Verification::Unverified
-                    })
+                    let verification = self.trust.verify_unknown(unknown);
+                    if verification != Verification::Verified {
+                        counts.unverified_unknowns += 1;
+                    }
+                    Some(verification)
                 }
                 ParsedEvent::Tombstone(_) => Some(Verification::Verified),
                 ParsedEvent::Malformed(_) => {
@@ -684,7 +759,13 @@ impl RepoContext {
                         environment_registered,
                     });
                 }
-                ParsedEvent::Unknown(unknown) => unknowns.push(unknown.clone()),
+                // Only a verified Unknown is reducer input; the rest are
+                // counted (`unverified_unknowns`) and change nothing.
+                ParsedEvent::Unknown(unknown)
+                    if item.verification == Some(Verification::Verified) =>
+                {
+                    unknowns.push(unknown.clone())
+                }
                 _ => {}
             }
         }
@@ -1444,8 +1525,21 @@ pub fn trust_facts(
     };
     facts.repository_uuid = trust.repository_uuid.clone();
     facts.certificate_valid = trust.certificate_valid;
+    facts.maintainer_keys = trust.local_maintainer_keys.clone();
     facts.steward_authority_id = trust.steward_authority_id();
+    let repository_scopes: Vec<String> = trust
+        .repository_uuid
+        .iter()
+        .flat_map(|uuid| [format!("codebase:{uuid}"), format!("repository:{uuid}")])
+        .collect();
     for entry in &trust.registry {
+        if let (Some(scope), Some(key)) = (
+            crate::json::get_str(entry, "scope"),
+            crate::json::get_str(entry, "public_key"),
+        ) && repository_scopes.iter().any(|candidate| candidate == scope)
+        {
+            facts.repository_keys.insert(key.to_owned());
+        }
         if crate::json::get_str(entry, "status").unwrap_or("active") != "active" {
             continue;
         }
@@ -1608,36 +1702,7 @@ pub fn build_trust(
     online: bool,
     as_of: Option<&str>,
 ) -> Result<TrustContext, ContractError> {
-    let mut trust = TrustContext {
-        repository_uuid: None,
-        certificate: None,
-        certificate_digest: None,
-        certificate_valid: false,
-        certificate_reason: "no out-of-worktree certificate resolves for this repository"
-            .to_owned(),
-        root: None,
-        registry: Vec::new(),
-        revocations: Vec::new(),
-        relaxations: Vec::new(),
-        company_facts: Vec::new(),
-        company_unknowns: Vec::new(),
-        company_lifecycle: Vec::new(),
-        company_fact_parents: BTreeMap::new(),
-        company_traces: Vec::new(),
-        revocation_history: Vec::new(),
-        fact_versions: BTreeMap::new(),
-        authority_cursor: "0".to_owned(),
-        freshness: None,
-        company_reachable: None,
-        company_snapshot_present: false,
-        company_query_attempted: false,
-        company_connect_seconds: None,
-        unknowns: Vec::new(),
-        foreign_certificate_paths: Vec::new(),
-        certificate_conflicts: Vec::new(),
-        pin_state: "none".to_owned(),
-        local_maintainer_keys: BTreeSet::new(),
-    };
+    let mut trust = TrustContext::uncertified();
     for name in ["certificate.json", "certificate-second.json", "trust.json"] {
         if repo.kin.join(name).exists() {
             trust.foreign_certificate_paths.push(format!(".kin/{name}"));
@@ -4147,7 +4212,13 @@ pub fn doctor(
         .map(|error| json!({"code": error.code, "message": error.message, "remediation": error.remediation}));
     let classifier = match launcher.shared.classifier.as_ref() {
         Some(classifier) => json!({
-            "provider": if classifier.model.starts_with("ollama:") { "ollama" } else { "deterministic" },
+            "provider": if classifier.model.starts_with("ollama:") {
+                "ollama"
+            } else if classifier.model.starts_with("agy:") {
+                "agy"
+            } else {
+                "deterministic"
+            },
             "model": classifier.model,
             "path": classifier.executable.to_string_lossy(),
             "executable_sha256": classifier.executable_sha256,
@@ -4826,6 +4897,88 @@ mod company_reference_tests {
             Some("advisory".to_owned())
         );
         assert_eq!(local_dependence_class("unrelated"), None);
+    }
+}
+
+#[cfg(test)]
+mod unknown_verification_tests {
+    use super::*;
+    use crate::crypto::PrivateKey;
+    use crate::model::UnknownEvent;
+
+    const UUID: &str = "00000000-0000-4000-8000-000000000001";
+
+    fn unknown(scope: &str) -> UnknownEvent {
+        UnknownEvent::new(
+            "codebase",
+            Some(UUID),
+            "db-owner",
+            scope,
+            "logical_migration",
+            "repository",
+            "ship the migration",
+            "db-owner",
+            "db-owner",
+            "Is the migration safe to run online?",
+            8_000,
+            "2026-09-01T00:00:00.000Z",
+            "2026-09-08T00:00:00.000Z",
+            "escalate",
+            "0",
+        )
+    }
+
+    fn signed(scope: &str, key: &PrivateKey) -> UnknownEvent {
+        let mut event = unknown(scope);
+        event.sign(key).expect("sign");
+        event
+    }
+
+    #[test]
+    fn only_an_in_scope_signed_unknown_verifies() {
+        let owner = PrivateKey::generate();
+        let stranger = PrivateKey::generate();
+        let mut trust = TrustContext::uncertified();
+        trust.repository_uuid = Some(UUID.to_owned());
+        trust.certificate_valid = true;
+        trust.registry.push(json!({
+            "scope": "area:db",
+            "public_key": owner.public().to_hex(),
+            "authority_id": "db-owner",
+            "status": "active"
+        }));
+
+        assert_eq!(
+            trust.verify_unknown(&unknown("area:db")),
+            Verification::SignatureInvalid
+        );
+        assert_eq!(
+            trust.verify_unknown(&signed("area:db", &owner)),
+            Verification::Verified
+        );
+        assert_eq!(
+            trust.verify_unknown(&signed("area:api", &owner)),
+            Verification::WrongScope
+        );
+        assert_eq!(
+            trust.verify_unknown(&signed("area:db", &stranger)),
+            Verification::Unverified
+        );
+
+        let mut foreign = signed("area:db", &owner);
+        foreign.repository_id = Some("00000000-0000-4000-8000-000000000002".to_owned());
+        foreign.sign(&owner).expect("sign");
+        assert_eq!(trust.verify_unknown(&foreign), Verification::Foreign);
+        let mut unbound = signed("area:db", &owner);
+        unbound.repository_id = None;
+        unbound.sign(&owner).expect("sign");
+        assert_eq!(trust.verify_unknown(&unbound), Verification::Foreign);
+
+        trust.certificate_valid = false;
+        assert_eq!(
+            trust.verify_unknown(&signed("area:db", &owner)),
+            Verification::Unverified
+        );
     }
 }
 
