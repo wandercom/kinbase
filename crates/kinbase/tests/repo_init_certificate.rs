@@ -90,8 +90,8 @@ fn signed_certificate(root: &PrivateKey, repository_uuid: &str, issued_at: &str)
 fn expected_worktree_paths() -> Vec<String> {
     vec![
         ".gitattributes".to_owned(),
-        ".kin/config".to_owned(),
         ".kin/events/".to_owned(),
+        ".kin/kinbase.toml".to_owned(),
         ".kin/local/".to_owned(),
         ".kin/manifests/".to_owned(),
     ]
@@ -220,8 +220,8 @@ fn repo_init_caches_certificate_outside_worktree() {
         vec![
             ".gitattributes".to_owned(),
             ".kin/".to_owned(),
-            ".kin/config".to_owned(),
             ".kin/events/".to_owned(),
+            ".kin/kinbase.toml".to_owned(),
             ".kin/local/".to_owned(),
             ".kin/manifests/".to_owned()
         ]
@@ -242,7 +242,7 @@ fn repo_init_caches_certificate_outside_worktree() {
     );
 
     let certificate_before = modified(&cached_certificate);
-    let config_before = modified(&repo.join(".kin/config"));
+    let config_before = modified(&repo.join(".kin/kinbase.toml"));
     let attributes_before = modified(&repo.join(".gitattributes"));
     let second = run_init(&home, &config_home, &repo, &certificate_file);
     assert!(
@@ -255,7 +255,7 @@ fn repo_init_caches_certificate_outside_worktree() {
     assert_eq!(second_receipt["worktree_paths_written"], json!([]));
     assert_eq!(second_receipt["gitattributes_lines_added"], json!([]));
     assert_eq!(modified(&cached_certificate), certificate_before);
-    assert_eq!(modified(&repo.join(".kin/config")), config_before);
+    assert_eq!(modified(&repo.join(".kin/kinbase.toml")), config_before);
     assert_eq!(modified(&repo.join(".gitattributes")), attributes_before);
 
     fs::remove_file(&cached_certificate).expect("remove cached certificate");
@@ -326,8 +326,8 @@ fn repo_init_caches_certificate_outside_worktree() {
     assert_eq!(foreign_error["error"]["code"], "FOREIGN_REPO_EVENTS");
     assert_eq!(fs::read(&cached_certificate).unwrap(), certificate_bytes);
 
-    let config_text = fs::read_to_string(repo.join(".kin/config")).expect("read .kin/config");
-    let config = kinbase::codebase::RepoConfig::parse(&config_text).expect("parse .kin/config");
+    let config_text = fs::read_to_string(repo.join(".kin/kinbase.toml")).expect("read .kin/kinbase.toml");
+    let config = kinbase::codebase::RepoConfig::parse(&config_text).expect("parse .kin/kinbase.toml");
     assert_eq!(config.repository_uuid_hint, repository_uuid);
     assert_eq!(config.schema_version, "kinbase-repo/1");
 }
@@ -419,6 +419,10 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
         company_refs: Vec::new(),
         authority_snapshot_cursor: "0".to_owned(),
         confidence: kinbase::model::Bp(9000),
+        standing: kinbase::model::default_standing_pub(),
+        provenance: kinbase::model::default_provenance_pub(),
+        governs_paths: Vec::new(),
+        anchors: Vec::new(),
         unresolved_uncertainty: None,
         signer: String::new(),
         signature: String::new(),
@@ -436,7 +440,7 @@ fn packet11_hooks_dispatch_returns_identical_canonical_facts_for_both_hosts() {
         .args([
             "add",
             ".gitattributes",
-            ".kin/config",
+            ".kin/kinbase.toml",
             &format!(".kin/events/{relative}"),
         ])
         .output()
@@ -560,6 +564,10 @@ fn packet11_project_fact(
         company_refs: Vec::new(),
         authority_snapshot_cursor: "0".to_owned(),
         confidence: kinbase::model::Bp(9000),
+        standing: kinbase::model::default_standing_pub(),
+        provenance: kinbase::model::default_provenance_pub(),
+        governs_paths: Vec::new(),
+        anchors: Vec::new(),
         unresolved_uncertainty: None,
         signer: String::new(),
         signature: String::new(),
@@ -798,7 +806,7 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
         .current_dir(&repo)
         .arg("add")
         .arg(".gitattributes")
-        .arg(".kin/config")
+        .arg(".kin/kinbase.toml")
         .args(&relative_paths)
         .output()
         .expect("stage packet 11 projector corpus");
@@ -865,14 +873,17 @@ fn packet11_project_exposes_candidates_gain_and_query_selected_ids() {
     );
     let questions: Value =
         serde_json::from_slice(&questions_output.stdout).expect("questions list is JSON");
+    // The corpus also yields questions nobody is registered to answer (the
+    // expired stale evidence); this proof is about the architecture one.
     let question = questions["questions"]
         .as_array()
         .expect("questions array")
-        .first()
+        .iter()
+        .find(|question| question["question_kind"] == "architecture")
         .expect("scheduler architect question")
         .clone();
     let question_id = question["question_id"].as_str().expect("question ID");
-    assert_eq!(question["status"], "open");
+    assert_eq!(question["status"], "open", "{question:#}");
     assert_eq!(
         question["decision"],
         "which compatibility invariant constrains the change"
@@ -1170,7 +1181,7 @@ fn packet19_fresh_clone_resolves_cached_company_reference() {
         .args([
             "add",
             ".gitattributes",
-            ".kin/config",
+            ".kin/kinbase.toml",
             event_git_path.as_str(),
         ])
         .output()
