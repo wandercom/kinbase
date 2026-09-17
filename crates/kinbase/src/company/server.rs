@@ -102,24 +102,10 @@ pub fn register_tokens(db: &CompanyDb, config: &ServiceConfig) -> Result<Value, 
     // every other token of that role, and a role whose file is no longer
     // configured keeps none: rotating a file used to leave the previous
     // bearer token valid forever.
-    let mut retired = 0usize;
-    let mut register = |path: Option<&std::path::PathBuf>,
-                        label: &str,
-                        role: &'static str,
-                        scopes: &[&str],
-                        authority_scopes: &[String],
-                        principal: &str|
-     -> Result<bool, ContractError> {
-        let Some(path) = path else {
-            retired += db.retire_tokens_with_role(role)?;
-            return Ok(false);
-        };
-        let record = crate::config::TokenRecord::load(path, label)?;
-        db.register_token(&record.token, role, scopes, authority_scopes, principal)?;
-        retired += db.retire_other_tokens(role, &record.token)?;
-        Ok(true)
-    };
-    let mut roles = Vec::new();
+    // Every file is read before anything changes, and the registrations and
+    // retirements commit together: a later unreadable file used to abort
+    // startup after earlier roles had already lost their tokens.
+    let mut loaded = Vec::new();
     for (path, label, role, scopes, authority_scopes, principal) in [
         (
             Some(&config.facts_token_file),
@@ -154,10 +140,31 @@ pub fn register_tokens(db: &CompanyDb, config: &ServiceConfig) -> Result<Value, 
             "authority-principal",
         ),
     ] {
-        if register(path, label, role, scopes, authority_scopes, principal)? {
-            roles.push(role);
-        }
+        let record = path
+            .map(|path| crate::config::TokenRecord::load(path, label))
+            .transpose()?;
+        loaded.push((record, role, scopes, authority_scopes, principal));
     }
+    let (roles, retired) = with_immediate_transaction(db, || {
+        let mut roles = Vec::new();
+        let mut retired = 0usize;
+        for (record, role, scopes, authority_scopes, principal) in &loaded {
+            let Some(record) = record else {
+                retired += db
+                    .retire_tokens_with_role(role)
+                    .map_err(|error| refuse(500, error))?;
+                continue;
+            };
+            db.register_token(&record.token, role, scopes, authority_scopes, principal)
+                .map_err(|error| refuse(500, error))?;
+            retired += db
+                .retire_other_tokens(role, &record.token)
+                .map_err(|error| refuse(500, error))?;
+            roles.push(*role);
+        }
+        Ok((roles, retired))
+    })
+    .map_err(|(_, error)| error)?;
     Ok(json!({
         "roles": roles,
         "facts_token_scopes_configured": !config.facts_token_scopes.is_empty(),
@@ -325,7 +332,7 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
         ("GET", "/facts") => facts(&db, state, &auth, &trust_state, request, &now),
         ("POST", "/facts") => admit_fact(&db, state, &auth, &trust_state, parsed_body, &now),
         ("GET", "/snapshot") => snapshot(&db, state, &auth, &trust_state, request, &now),
-        ("GET", "/events") => events(&db, &auth, &trust_state, request),
+        ("GET", "/events") => events(&db, state, &auth, &trust_state, request),
         ("POST", "/authority-registry") => {
             publish_registry(&db, &auth, &trust_state, parsed_body, &now)
         }
@@ -667,6 +674,19 @@ fn readable_scopes(auth: &AuthContext, trust_state: &TrustState) -> BTreeSet<Str
             .collect();
     }
     BTreeSet::new()
+}
+
+/// Whether a reader may see a derived Unknown: every authority scope whose
+/// evidence it came from is readable. Its `scope` is the evidence's subject
+/// scope, which is not an authority scope whenever the two differ.
+fn unknown_readable(unknown: &crate::reducer::DerivedUnknown, readable: &BTreeSet<String>) -> bool {
+    if unknown.authority_scopes.is_empty() {
+        return readable.contains(&unknown.scope);
+    }
+    unknown
+        .authority_scopes
+        .iter()
+        .all(|scope| readable.contains(scope))
 }
 
 fn charge_read(
@@ -1184,7 +1204,7 @@ fn facts(
             "next_after": next_after,
             "as_of": as_of,
             "authority_cursor": trust_state.cursor.to_string(),
-            "unknowns": view.unknowns.iter().filter(|u| readable.contains(&u.scope) && (scope.is_empty() || u.scope == scope)).map(crate::model::value_of).collect::<Vec<_>>()
+            "unknowns": view.unknowns.iter().filter(|u| unknown_readable(u, &readable) && (scope.is_empty() || u.scope == scope || u.authority_scopes.contains(&scope))).map(crate::model::value_of).collect::<Vec<_>>()
         }),
     ))
 }
@@ -2026,7 +2046,7 @@ fn snapshot(
     let unknowns: Vec<Value> = view
         .unknowns
         .iter()
-        .filter(|unknown| readable.contains(&unknown.scope))
+        .filter(|unknown| unknown_readable(unknown, &readable))
         .map(crate::model::value_of)
         .collect();
     // The admitted event set behind the view, so a client reducer can reduce
@@ -2066,7 +2086,7 @@ fn snapshot(
         .chain(
             view.unknowns
                 .iter()
-                .filter(|unknown| readable.contains(&unknown.scope))
+                .filter(|unknown| unknown_readable(unknown, &readable))
                 .map(|unknown| unknown.logical_key.as_str()),
         )
         .collect();
@@ -2268,6 +2288,7 @@ fn fact_versions_index(
 /// cannot read fact bodies (architecture §6).
 fn events(
     db: &CompanyDb,
+    state: &ServiceState,
     auth: &AuthContext,
     trust_state: &TrustState,
     request: &Request,
@@ -2286,12 +2307,13 @@ fn events(
         .get("since")
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(0);
+    // SQLite reads a negative LIMIT as no limit at all.
     let limit = request
         .query
         .get("limit")
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(200)
-        .min(1000);
+        .clamp(1, 1000);
     let mut rows = db
         .all_events(since, limit)
         .map_err(|error| refuse(500, error))?;
@@ -2313,6 +2335,16 @@ fn events(
             );
             map.insert("payload_withheld".to_owned(), Value::Bool(true));
         }
+    }
+    // Event bodies are fact reads, under the same per-principal budget as
+    // /facts and /snapshot; a reader refused there was served here.
+    if reads_facts {
+        let bytes: usize = rows
+            .iter()
+            .filter_map(|row| row.get("payload"))
+            .map(|payload| crate::json::canonical_bytes(payload).len())
+            .sum();
+        charge_read(db, state, auth, rows.len().max(1), bytes)?;
     }
     Ok((200, json!({"events": rows})))
 }
@@ -4190,7 +4222,8 @@ nonce_retention_seconds = 1300
         );
         assert!(text.contains("fact_sched"));
 
-        let (_, events) = super::events(&service.db, &reader, &trust, &request).unwrap();
+        let (_, events) =
+            super::events(&service.db, &service.state, &reader, &trust, &request).unwrap();
         let rows = events["events"].as_array().unwrap();
         let payments_row = rows
             .iter()
@@ -4248,8 +4281,186 @@ nonce_retention_seconds = 1300
             body: Vec::new(),
             peer: None,
         };
-        let (_, events) = super::events(&service.db, &admin, &trust, &request).unwrap();
+        let (_, events) =
+            super::events(&service.db, &service.state, &admin, &trust, &request).unwrap();
         assert!(!events.to_string().contains("Secret body."));
         assert_eq!(events["events"][0]["payload_withheld"], true);
+    }
+
+    #[test]
+    fn an_unreadable_token_file_changes_no_registration() {
+        let service = service("");
+        let admin_path = service.temp.path().join("admin.token");
+        crate::crypto::write_0600(&admin_path, b"admin-one", "administrative token").unwrap();
+        let config_path = write_config(
+            service.temp.path(),
+            &format!("admin_token_file = \"{}\"", admin_path.display()),
+        );
+        let with_admin = crate::config::load_service_config(&config_path).unwrap();
+        register_tokens(&service.db, &with_admin).unwrap();
+
+        let token_path = service.temp.path().join("facts.token");
+        std::fs::remove_file(&token_path).unwrap();
+        crate::crypto::write_0600(&token_path, b"facts-two", "facts token").unwrap();
+        std::fs::remove_file(&admin_path).unwrap();
+        assert!(register_tokens(&service.db, &with_admin).is_err());
+        assert!(service.db.token("facts-one").unwrap().is_some());
+        assert!(service.db.token("facts-two").unwrap().is_none());
+        assert!(service.db.token("admin-one").unwrap().is_some());
+    }
+
+    fn append(service: &Service, document: &Value) {
+        let event = FactEvent::parse(&crate::json::canonical_bytes(document)).unwrap();
+        service
+            .db
+            .append_event(
+                &event.event_id,
+                "fact-event",
+                "fact-event",
+                document,
+                &event.signer,
+                "verified",
+                None,
+            )
+            .unwrap();
+    }
+
+    fn get(path: &str, query: &[(&str, &str)]) -> Request {
+        Request {
+            method: "GET".to_owned(),
+            path: path.to_owned(),
+            route: path.to_owned(),
+            query: query
+                .iter()
+                .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+                .collect(),
+            headers: Vec::new(),
+            body: Vec::new(),
+            peer: None,
+        }
+    }
+
+    #[test]
+    fn event_reads_are_bounded_and_charged() {
+        let service =
+            service("facts_token_scopes = [\"architecture:scheduling\"]\nread_volume_per_hour = 3");
+        let key = PrivateKey::generate();
+        for n in 0..3 {
+            append(
+                &service,
+                &fact(
+                    &key,
+                    &format!("n{n}"),
+                    "scheduling-architect",
+                    "architecture:scheduling",
+                    &format!("Queue rule {n}."),
+                ),
+            );
+        }
+        let reader = auth(&service, "facts-one");
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let (_, events) = super::events(
+            &service.db,
+            &service.state,
+            &reader,
+            &trust,
+            &get("/events", &[("limit", "-1")]),
+        )
+        .unwrap();
+        assert_eq!(events["events"].as_array().unwrap().len(), 1);
+        let (_, events) = super::events(
+            &service.db,
+            &service.state,
+            &reader,
+            &trust,
+            &get("/events", &[("limit", "2")]),
+        )
+        .unwrap();
+        assert_eq!(events["events"].as_array().unwrap().len(), 2);
+        let (status, error) = super::events(
+            &service.db,
+            &service.state,
+            &reader,
+            &trust,
+            &get("/events", &[("limit", "2")]),
+        )
+        .unwrap_err();
+        assert_eq!(status, 429);
+        assert_eq!(error.code, "LIMIT_EXCEEDED");
+    }
+
+    #[test]
+    fn a_conflict_unknown_follows_its_authority_scope() {
+        let service = service("facts_token_scopes = [\"architecture:scheduling\"]");
+        let steward = auth(&service, "facts-one");
+        let architect = PrivateKey::generate();
+        let now = crate::time::now_rfc3339_millis();
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let registry = service
+            .root
+            .sign_document(
+                "authority-registry-entry",
+                &json!({
+                    "schema": crate::model::REGISTRY_SCHEMA,
+                    "authority_cursor": "1000",
+                    "entries": [
+                        {"authority_id": "scheduling-architect", "scope": "architecture:scheduling",
+                         "public_key": architect.public().to_hex(), "channel": "process:architecture-answer",
+                         "capabilities": ["answer"]}
+                    ]
+                }),
+            )
+            .unwrap();
+        publish_registry(&service.db, &steward, &trust, Some(registry), &now).unwrap();
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        // Two rulings on one key, about the repository rather than the
+        // authority's own scope.
+        for (id, statement) in [
+            ("left", "Queue wait is bounded at five seconds."),
+            ("right", "Queue wait is bounded at thirty seconds."),
+        ] {
+            let mut document = fact(
+                &architect,
+                id,
+                "scheduling-architect",
+                "architecture:scheduling",
+                statement,
+            );
+            let map = document.as_object_mut().unwrap();
+            map.insert("scope".to_owned(), json!("repository"));
+            map.insert("logical_key".to_owned(), json!("scheduling/queue-wait"));
+            let unsigned = Value::Object(map.clone());
+            append(
+                &service,
+                &architect.sign_document("fact-event", &unsigned).unwrap(),
+            );
+        }
+        let view = current_view(&service.db, &trust, &now).unwrap();
+        let conflict = view
+            .unknowns
+            .iter()
+            .find(|unknown| unknown.kind == "conflict")
+            .expect("the reducer derives a conflict Unknown");
+        assert_eq!(conflict.scope, "repository");
+        assert_eq!(conflict.authority_scopes, ["architecture:scheduling"]);
+
+        let reader = auth(&service, "facts-one");
+        let request = get("/snapshot", &[("nonce", "nonce-conflict-test")]);
+        let (_, snapshot) =
+            super::snapshot(&service.db, &service.state, &reader, &trust, &request, &now).unwrap();
+        let unknowns = snapshot["unknowns"].as_array().unwrap();
+        assert!(
+            unknowns.iter().any(|unknown| unknown["kind"] == "conflict"),
+            "the conflict Unknown was dropped: {unknowns:?}"
+        );
+        assert!(
+            unknowns
+                .iter()
+                .all(|unknown| unknown.get("authority_scopes").is_none())
+        );
+        assert!(
+            snapshot.to_string().contains("scheduling/queue-wait"),
+            "the conflict key's trace was dropped"
+        );
     }
 }

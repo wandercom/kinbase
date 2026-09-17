@@ -1310,6 +1310,7 @@ fn reference_unknown(
         discriminating_evidence: vec![company_fact_id.to_owned()],
         status: "open".to_owned(),
         kind: "reference".to_owned(),
+        authority_scopes: Vec::new(),
     }
 }
 
@@ -1356,6 +1357,7 @@ fn client_unknown(
         discriminating_evidence: vec![company_fact_id.to_owned()],
         status: "open".to_owned(),
         kind: "reference".to_owned(),
+        authority_scopes: Vec::new(),
     }
 }
 
