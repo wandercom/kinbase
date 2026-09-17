@@ -2442,8 +2442,25 @@ fn apology_exists(apology_id: &str) -> Result<bool, ContractError> {
 
 /// The latest state of every apology (append-only records; last wins).
 fn current_apologies() -> Vec<Value> {
+    latest_apologies(personal_records("apologies.jsonl"))
+}
+
+/// `current_apologies` for a decision about whether an apology exists or is
+/// due: an unreadable line refuses, and what was found is on disk first.
+fn current_apologies_complete() -> Result<Vec<Value>, ContractError> {
+    let records = personal_records_complete("apologies.jsonl")?;
+    sync_personal("apologies.jsonl")?;
+    Ok(latest_apologies(records))
+}
+
+fn sync_personal(name: &str) -> Result<(), ContractError> {
+    let repo = std::env::current_dir().map_err(io_error)?;
+    crate::store::sync_record(crate::StoreKind::Personal, &repo, name)
+}
+
+fn latest_apologies(records: Vec<Value>) -> Vec<Value> {
     let mut latest: BTreeMap<String, Value> = BTreeMap::new();
-    for record in personal_records("apologies.jsonl") {
+    for record in records {
         let Some(id) = crate::json::get_str(&record, "apology_id") else {
             continue;
         };
@@ -2513,7 +2530,7 @@ fn write_apology(
     committed: &Value,
     apology_id: &str,
 ) -> Result<String, ContractError> {
-    if let Some(existing) = current_apologies()
+    if let Some(existing) = current_apologies_complete()?
         .into_iter()
         .find(|apology| crate::json::get_str(apology, "apology_id") == Some(apology_id))
     {
@@ -3022,8 +3039,10 @@ pub(crate) fn emit_due_orphan_abandonments(
         .into_iter()
         .filter_map(|record| crate::json::get_str(&record, "apology_id").map(str::to_owned))
         .collect();
+    // An abandonment found here is trusted to be on disk; make it so.
+    sync_personal("orphan-abandonments.jsonl")?;
     let now = crate::time::now_utc();
-    let due: Vec<Value> = current_apologies()
+    let due: Vec<Value> = current_apologies_complete()?
         .into_iter()
         .filter(|apology| {
             crate::json::get_str(apology, "state") == Some("awaiting_reconcile_or_abandon")
