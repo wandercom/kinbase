@@ -707,3 +707,64 @@ fn a_host_hook_never_exits_2_even_for_a_user_action_refusal() {
     assert_eq!(refused.exit(), 2);
     assert_eq!(refused.for_host_hook().exit(), 3);
 }
+
+#[test]
+fn plan_refuses_a_host_outside_the_configured_range() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path().join("home");
+    let bin = temp.path().join("bin");
+    let config = home.join(".config").join("kinbase");
+    fs::create_dir_all(&config).expect("config dir");
+    fs::create_dir_all(temp.path().join("personal")).expect("personal");
+    fake_host(&bin, "claude", "claude 1.2.3");
+    let write_config = |range: &str| {
+        let path = config.join("config.toml");
+        let _ = fs::remove_file(&path);
+        fs::write(
+            &path,
+            format!(
+                "schema_version = \"1\"\n\n[personal]\ndata_root = \"{}\"\n\n[hosts]\nclaude_version = \"{range}\"\n",
+                temp.path().join("personal").display()
+            ),
+        )
+        .expect("config");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("chmod config");
+    };
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_kinbase"))
+            .current_dir(temp.path())
+            .args(["hooks", "plan", "claude", "--json"])
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_STATE_HOME", home.join(".state"))
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    bin.display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .env_remove("KINBASE_COMPANY_URL")
+            .output_alone()
+            .expect("run hooks plan")
+    };
+
+    write_config(">=9.0.0");
+    let refused = run();
+    assert_eq!(refused.status.code(), Some(3));
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(text.contains("UNSUPPORTED_HOST_VERSION"), "{text}");
+
+    write_config(">=1.2.0");
+    let planned = run();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
+}

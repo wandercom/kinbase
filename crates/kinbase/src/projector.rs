@@ -180,6 +180,26 @@ fn trace_step(
     })
 }
 
+fn refuse_unrecordable_paths(
+    working_set: &[String],
+    evidence_repos: &[std::path::PathBuf],
+) -> Result<(), ContractError> {
+    let working = working_set
+        .iter()
+        .map(|entry| ("--working-set", entry.clone()));
+    let repos = evidence_repos
+        .iter()
+        .map(|path| ("--evidence-repo", path.to_string_lossy().into_owned()));
+    for (flag, value) in working.chain(repos) {
+        if let Err(reason) = crate::json::validate_text(&value) {
+            return Err(ContractError::invariant(format!(
+                "a {flag} value cannot be recorded: {reason}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub fn run(
     launcher: &Launcher,
     repo: &Path,
@@ -200,6 +220,10 @@ pub fn run(
     // to spaces here, once, for every consumer downstream.
     let task_text = fold_control_characters(task);
     let decision_text = fold_control_characters(decision);
+    // Paths are not folded (a folded path names nothing); one the text rule
+    // refuses is refused here, before a question or unknown is written, not
+    // by the query log afterwards as an internal failure.
+    refuse_unrecordable_paths(working_set, evidence_repos)?;
     let task = task_text.as_str();
     let decision = decision_text.as_str();
     // Ask as this repository: the service sends company-wide direction plus
@@ -439,10 +463,6 @@ pub fn run(
         )
     };
     let mut sufficiency = false;
-    // Whether a candidate of positive value did not fit in the round that
-    // ended selection. Only that round counts: a candidate refused for
-    // bytes earlier can have become redundant since.
-    let mut terminal_round_byte_blocked = false;
     let mut ended_at_byte_ceiling = false;
     let mut stop_round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
     let mut direction_slots_used = 0usize;
@@ -450,7 +470,10 @@ pub fn run(
     let cache = EvalCache::new(&candidates, task, decision);
     while context.len() < PROJECTION_LIMIT {
         let mut round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
-        terminal_round_byte_blocked = false;
+        // Whether a candidate of positive value did not fit in this round.
+        // Only the round that ends selection counts: a candidate refused for
+        // bytes earlier can have become redundant since.
+        let mut round_byte_blocked = false;
         for fact in &candidates {
             if context
                 .iter()
@@ -465,7 +488,7 @@ pub fn run(
             let evaluation = evaluate_cached(fact, &context, &cache);
             if context_bytes(&context, Some(fact)) > PROJECTION_BYTE_LIMIT {
                 if evaluation.marginal_value > 0 {
-                    terminal_round_byte_blocked = true;
+                    round_byte_blocked = true;
                 }
                 continue;
             }
@@ -484,13 +507,13 @@ pub fn run(
         let Some((fact, evaluation)) = round.first().cloned() else {
             // Nothing left fits; if something of value did not, the byte
             // ceiling is what stopped the loop.
-            ended_at_byte_ceiling = terminal_round_byte_blocked;
+            ended_at_byte_ceiling = round_byte_blocked;
             break;
         };
         if evaluation.marginal_value <= 0 {
             // What fits adds nothing; a candidate that would have is the
             // byte ceiling's doing.
-            ended_at_byte_ceiling = terminal_round_byte_blocked;
+            ended_at_byte_ceiling = round_byte_blocked;
             // The loop stops on net marginal value: record why every
             // remaining candidate was left out, best first.
             stop_round = round;
@@ -2308,5 +2331,20 @@ mod brief_tests {
         );
         assert_eq!(array_bytes(std::iter::empty()), 2);
         assert_eq!(array_bytes([3, 4].into_iter()), 3 + 4 + 1 + 2);
+    }
+
+    #[test]
+    fn a_path_the_query_log_cannot_record_is_refused_first() {
+        assert!(refuse_unrecordable_paths(&["src/pay".to_owned()], &[]).is_ok());
+        let error =
+            refuse_unrecordable_paths(&["src/pay\nsrc/api".to_owned()], &[]).expect_err("newline");
+        assert_eq!((error.code.as_str(), error.exit()), ("CONFIG_INVARIANT", 4));
+        let error = refuse_unrecordable_paths(&[], &[std::path::PathBuf::from("/repos/a\u{85}b")])
+            .expect_err("C1 control");
+        assert!(
+            error.message.contains("--evidence-repo"),
+            "{}",
+            error.message
+        );
     }
 }

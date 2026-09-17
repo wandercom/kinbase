@@ -228,14 +228,22 @@ pub fn respond(stream: &mut TcpStream, status: u16, body: &Value) -> std::io::Re
     stream.flush()
 }
 
+/// Cut `text` to at most `limit` bytes without splitting a character;
+/// `String::truncate` panics inside one, and messages carry client text.
+fn truncate_on_char_boundary(text: &mut String, limit: usize) {
+    if text.len() > limit {
+        let cut = (0..=limit)
+            .rev()
+            .find(|index| text.is_char_boundary(*index))
+            .unwrap_or(0);
+        text.truncate(cut);
+    }
+}
+
 pub fn error_body(error: &ContractError) -> Value {
     let mut compact = error.clone();
-    if compact.message.len() > 1024 {
-        compact.message.truncate(1024);
-    }
-    if compact.remediation.len() > 1024 {
-        compact.remediation.truncate(1024);
-    }
+    truncate_on_char_boundary(&mut compact.message, 1024);
+    truncate_on_char_boundary(&mut compact.remediation, 1024);
     // Structured detail is privacy-minimized by construction (counts, ids,
     // dispositions, digests); it stays in the body only while it is small,
     // so refusals such as a ceiling stop or a CLOCK_SKEW quarantine remain
@@ -432,4 +440,27 @@ pub fn request(
             .unwrap_or_else(|_| serde_json::from_slice(&raw).unwrap_or(Value::Null))
     };
     Ok(Response { status, body, raw })
+}
+
+#[cfg(test)]
+mod error_body_tests {
+    use super::*;
+
+    #[test]
+    fn a_long_multibyte_message_is_cut_on_a_character_boundary() {
+        let message = format!("digest algorithm {}", "\u{e9}".repeat(550));
+        assert!(!message.is_char_boundary(1024));
+        let error = ContractError::refused("CONFIG_INVARIANT", message, "\u{e9}".repeat(600));
+        let body = error_body(&error);
+        let text = body["error"]["message"].as_str().expect("message");
+        assert!(text.len() <= 1024);
+        assert!(text.starts_with("digest algorithm "));
+        assert!(
+            body["error"]["remediation"]
+                .as_str()
+                .expect("remediation")
+                .len()
+                <= 1024
+        );
+    }
 }

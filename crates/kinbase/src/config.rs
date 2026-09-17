@@ -186,6 +186,31 @@ pub fn user_config_path() -> PathBuf {
     paths::config_dir().join("config.toml")
 }
 
+/// A host version range: `>=X.Y.Z` or an exact `X.Y.Z` (one to four numeric
+/// parts). A malformed or wrong-typed value used to become `>=0.0.0`
+/// silently.
+fn host_version_range(section: &toml::Table, key: &str) -> Result<String, ContractError> {
+    let Some(value) = section.get(key) else {
+        return Ok(">=0.0.0".to_owned());
+    };
+    let text = value
+        .as_str()
+        .ok_or_else(|| config_error(format!("hosts.{key} must be a string")))?
+        .trim();
+    let version = text.strip_prefix(">=").unwrap_or(text).trim();
+    let parts: Vec<&str> = version.split('.').collect();
+    if parts.len() > 4
+        || parts
+            .iter()
+            .any(|part| part.is_empty() || !part.bytes().all(|byte| byte.is_ascii_digit()))
+    {
+        return Err(config_error(format!(
+            "hosts.{key} must be `>=X.Y.Z` or an exact `X.Y.Z` version"
+        )));
+    }
+    Ok(text.to_owned())
+}
+
 fn config_error(message: impl Into<String>) -> ContractError {
     ContractError::refused(
         "CONFIG_INVARIANT",
@@ -446,16 +471,8 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                 .ok_or_else(|| config_error("[hosts] must be a table"))?;
             closed_keys(section, &["codex_version", "claude_version"], "[hosts]")?;
             HostsConfig {
-                codex_version: section
-                    .get("codex_version")
-                    .and_then(toml::Value::as_str)
-                    .unwrap_or(">=0.0.0")
-                    .to_owned(),
-                claude_version: section
-                    .get("claude_version")
-                    .and_then(toml::Value::as_str)
-                    .unwrap_or(">=0.0.0")
-                    .to_owned(),
+                codex_version: host_version_range(section, "codex_version")?,
+                claude_version: host_version_range(section, "claude_version")?,
             }
         }
     };
@@ -838,4 +855,34 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
             .transpose()?
             .unwrap_or_default(),
     })
+}
+
+#[cfg(test)]
+mod host_range_tests {
+    use super::*;
+
+    fn hosts(extra: &str) -> Result<UserConfig, ContractError> {
+        let text = format!(
+            "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n\n[hosts]\n{extra}\n"
+        );
+        parse_user_config(Path::new("/private/example/config.toml"), &text)
+    }
+
+    #[test]
+    fn a_host_range_is_a_version_or_a_minimum() {
+        let config =
+            hosts("claude_version = \">=2.1.0\"\ncodex_version = \"0.40.1\"").expect("parses");
+        assert_eq!(config.hosts.claude_version, ">=2.1.0");
+        assert_eq!(config.hosts.codex_version, "0.40.1");
+        assert_eq!(hosts("").expect("parses").hosts.codex_version, ">=0.0.0");
+        for bad in [
+            "claude_version = \"latest\"",
+            "claude_version = \">=2.x\"",
+            "claude_version = \"~2.1\"",
+            "claude_version = 2",
+            "codex_version = \">=1.2.3.4.5\"",
+        ] {
+            assert_eq!(hosts(bad).expect_err(bad).code, "CONFIG_INVARIANT", "{bad}");
+        }
+    }
 }

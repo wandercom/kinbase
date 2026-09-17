@@ -337,6 +337,17 @@ fn plan_payload(
         })
         .collect::<Vec<_>>();
     let host_details = probe_host(host)?;
+    // The configured range is the tested range; a host outside it is not
+    // installed into (install writes only what this plan shows).
+    let range = host_range(host, ranges);
+    let version = crate::json::get_str(&host_details, "version").unwrap_or_default();
+    if !version_in_range(version, &range) {
+        return Err(ContractError::degraded(
+            "UNSUPPORTED_HOST_VERSION",
+            format!("{host} {version} is outside the configured range {range}"),
+            "Install a host version inside the configured [hosts] range, or change the range after testing that version.",
+        ));
+    }
     let content = planned_config_content(host, &destination, &program)?;
     let mut base = json!({
         "host_name": host,

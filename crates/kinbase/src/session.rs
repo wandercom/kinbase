@@ -2394,12 +2394,10 @@ fn fanout_saga_result(
     let repository_uuid = crate::repository::repository_id(repo_root)?;
     if let Some(bound) = destination.strip_prefix("codebase:") {
         if bound != repository_uuid {
-            return Err(ContractError::new(
+            return Err(ContractError::refused(
                 "AUTHORITY_SCOPE_DENIED",
                 "candidate names a different repository identity than the certified one",
                 "Create a candidate for the certified repository identity.",
-                false,
-                ExitCode::UserActionRequired,
             ));
         }
     }
