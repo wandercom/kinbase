@@ -161,6 +161,14 @@ fn version_components(value: &str) -> Vec<u64> {
 fn version_in_range(version: &str, range: &str) -> bool {
     if let Some(minimum) = range.trim().strip_prefix(">=") {
         let actual = version_components(version);
+        // A minimum the comparator cannot hold admits nothing.
+        if minimum
+            .trim()
+            .split('.')
+            .any(|part| part.parse::<u64>().is_err())
+        {
+            return false;
+        }
         let required = version_components(minimum);
         for index in 0..required.len().max(actual.len()) {
             let left = actual.get(index).copied().unwrap_or(0);
@@ -337,6 +345,17 @@ fn plan_payload(
         })
         .collect::<Vec<_>>();
     let host_details = probe_host(host)?;
+    // The configured range is the tested range; a host outside it is not
+    // installed into (install writes only what this plan shows).
+    let range = host_range(host, ranges);
+    let version = crate::json::get_str(&host_details, "version").unwrap_or_default();
+    if !version_in_range(version, &range) {
+        return Err(ContractError::degraded(
+            "UNSUPPORTED_HOST_VERSION",
+            format!("{host} {version} is outside the configured range {range}"),
+            "Install a host version inside the configured [hosts] range, or change the range after testing that version.",
+        ));
+    }
     let content = planned_config_content(host, &destination, &program)?;
     let mut base = json!({
         "host_name": host,
@@ -1263,6 +1282,13 @@ pub fn host_version(host: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_minimum_past_u64_admits_no_host() {
+        assert!(!version_in_range("1.2.3", ">=18446744073709551616.0.0"));
+        assert!(version_in_range("1.2.3", ">=1.2.0"));
+        assert!(!version_in_range("1.1.9", ">=1.2.0"));
+    }
 
     #[test]
     fn context_output_is_empty_without_evidence() {

@@ -244,18 +244,25 @@ fn handle_connection(mut stream: TcpStream, state: Arc<ServiceState>) {
             return;
         }
     };
-    let outcome =
-        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| handle(&state, &request)));
-    let (status, body) = match outcome {
-        Ok(Ok((status, body))) => (status, body),
-        Ok(Err((status, error))) => (status, http::error_body(&error)),
-        Err(_) => (
+    // Rendering the refusal happens inside the guard as well: a panic there
+    // closed the connection with no response at all, which the client
+    // reports as an outage.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        match handle(&state, &request) {
+            Ok(answer) => answer,
+            Err((status, error)) => (status, http::error_body(&error)),
+        }
+    }));
+    // The fallback's message is constant ASCII, so rendering it cannot panic;
+    // it keeps the whole typed envelope (remediation, retryable, evidence).
+    let (status, body) = outcome.unwrap_or_else(|_| {
+        (
             500,
             http::error_body(&ContractError::internal(
                 "request handler failed; evidence preserved in the service audit",
             )),
-        ),
-    };
+        )
+    });
     let _ = http::respond(&mut stream, status, &body);
 }
 
@@ -2416,7 +2423,7 @@ fn publish_registry(
         {
             return Err(refuse(
                 400,
-                ContractError::refused(
+                ContractError::integrity(
                     "PERSONAL_TAINT_BLOCKED",
                     "registry entries may not carry directory/contact data or private keys",
                     "Publish contact data through the directory endpoint and keep private keys out of the registry.",

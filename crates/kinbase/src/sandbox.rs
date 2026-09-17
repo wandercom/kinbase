@@ -282,7 +282,7 @@ pub fn run_shared(
         command.arg("-p").arg(&profile).arg(&exe);
         command
     } else {
-        return Err(ContractError::refused(
+        return Err(ContractError::integrity(
             "PROCESSOR_UNAUTHORIZED",
             "no supported kernel enforcement is available; shared projection/publication is disabled",
             "Run on macOS with sandbox-exec (or a Landlock/bubblewrap backend) to enable shared work.",
