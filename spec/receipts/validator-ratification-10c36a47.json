@@ -1,0 +1,13 @@
+{
+ "schema": "kinbase-ratification-receipt/1",
+ "actor": "Claude (Opus 5), Validator seat",
+ "actor_kind": "ai-validator",
+ "action": "record-amended-specification",
+ "manifest_path": "spec/ratification-manifest.json",
+ "manifest_sha256": "10c36a4790e09b082ac96df5368bfeeef40360658480312e441d523d8e4e31a4",
+ "supersedes_manifest_sha256": "12dd4c18aaca12c29cc816ca4a5161b5e011814f021879897b88b0e6e85168dd",
+ "observed_at": "2026-09-17T16:04:48Z",
+ "statement": "I recomputed the 7 authority-artifact digests against this manifest and they match.",
+ "authority_effect": "Records the Validator's recomputation. Certification independence is not established: the same agent authored the product and harness changes this manifest binds.",
+ "provenance": "Validator computation over the working tree; no external cryptographic signature is claimed."
+}

@@ -16,6 +16,7 @@ oracle and the terminal experiment, never a synonym for implemented).
 |---|---|---|---|
 | [001](../spec/amendment-001-rust-vast.md) | Rust implementation; self-hosted GLM-5.3 Coder against a pinned Vast/vLLM processor; custody, egress, recovery, checkpoint, and cost controls; tightened P-5/P-10 and V-5/V-10 falsifiers. | candidate | see the amendment header |
 | [002](../spec/amendment-002-emission-ledger.md) | Emission ledger, leak stories, withhold, and redaction by reference, so that a shared-data leak is answered by a query rather than an investigation. | candidate, revision 3 | `81eb5b151c41541d230d582c1697399d7f9d99fde75a242683aea0d2306962a3` |
+| [003](../spec/amendment-003-ruling-contract.md) | Rulings, not approvals: direct signed admission, the ruling loop as the only interrupt, standing over volume, and the provenance ceiling. | ratified; bound whole in manifest `10c36a47`, not as an overlay | see `spec/ratification-manifest.json` |
 
 ## Amendment 002 in brief
 

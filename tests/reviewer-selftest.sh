@@ -8,7 +8,7 @@
 #
 # This entrypoint:
 #   * reads only ratified `spec/**` and `tests/**` (KINBASE_REVIEWER_MODE=1
-#     verifies the six authority-artifact digests and stops there);
+#     verifies the authority-artifact digests and stops there);
 #   * installs nothing and touches no network;
 #   * creates no file inside the repository -- pytest's cache is disabled and its
 #     temporary root is redirected outside the tree;

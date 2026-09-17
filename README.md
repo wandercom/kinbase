@@ -28,8 +28,10 @@ quality to within the preregistered fully-informed `oracle-spec` margin—the va
 operational test of the founder's greenfield-quality goal.
 
 Current status: **exact-byte specification ratified; isolated Coder and Tester
-dispatch in progress; the concept remains unproven**. Two candidate amendments are
-in review and are not authority until ratified:
+dispatch in progress; the concept remains unproven**. Amendment 003
+([`spec/amendment-003-ruling-contract.md`](spec/amendment-003-ruling-contract.md),
+rulings rather than per-byte approvals) is ratified and bound in the manifest. Two
+candidate amendments are in review and are not authority until ratified:
 
 - [`spec/amendment-001-rust-vast.md`](spec/amendment-001-rust-vast.md) — Rust
   implementation and the self-hosted GLM-5.3 Coder;

@@ -9,5 +9,7 @@
  "observed_at": "2026-09-10T00:40:05Z",
  "statement": "I recomputed the six authority-artifact digests against this manifest and they match.",
  "authority_effect": "Records the Validator's recomputation. Certification independence is not established: the Validator authored product code from 2026-09-08 by founder direction.",
- "provenance": "Validator computation over the working tree; no external cryptographic signature is claimed."
+ "provenance": "Validator computation over the working tree; no external cryptographic signature is claimed.",
+ "statement_note": "Superseded. The manifest digest cited is the one this receipt ratified.",
+ "superseded_by": "validator-ratification-10c36a47.json"
 }

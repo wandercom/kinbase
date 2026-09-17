@@ -18,7 +18,7 @@ requirement. That is enforced mechanically here rather than by convention:
 Authority precedence, from ``spec/ratification-manifest.json``:
 
     source-request.md > product.md > architecture.md > threat-model.md >
-    verification.md > cli.md
+    verification.md > cli.md > amendment-003-ruling-contract.md
 
 ``spec/behavior-ledger.md``, ``spec/glossary.md``, ``spec/leak-runbook.md``,
 ``spec/review-rubric.md`` and the review disposition may be cited only as
@@ -44,7 +44,7 @@ from typing import Callable, Iterable, Sequence
 # --------------------------------------------------------------------------
 
 RATIFICATION_MANIFEST_SHA256 = (
-    "12dd4c18aaca12c29cc816ca4a5161b5e011814f021879897b88b0e6e85168dd"
+    "10c36a4790e09b082ac96df5368bfeeef40360658480312e441d523d8e4e31a4"
 )
 BASELINE_COMMIT = "e29f3fe03595d594c0546f9b0012b58f7c45bac1"
 
@@ -56,6 +56,7 @@ AUTHORITY_PRECEDENCE: tuple[str, ...] = (
     "spec/threat-model.md",
     "spec/verification.md",
     "spec/cli.md",
+    "spec/amendment-003-ruling-contract.md",
 )
 
 #: Artifacts that may be cited for intent tracing only. Per the Tester dispatch
@@ -67,19 +68,18 @@ TRACE_ONLY_ARTIFACTS: tuple[str, ...] = (
     "spec/review-rubric.md",
     "spec/README.md",
     "spec/reviews/pre-ratification-disposition.md",
-    "spec/receipts/founder-ratification-12dd4c18.json",
-    "spec/receipts/validator-ratification-12dd4c18.json",
-    # A working brief, absent from spec/ratification-manifest.json and never
-    # digested. Until its requirements are ratified into spec/ it only traces
-    # intent: a test citing nothing else fails the authority backreference
-    # check rather than outranking the ratified chain.
+    "spec/receipts/founder-ratification-10c36a47.json",
+    "spec/receipts/validator-ratification-10c36a47.json",
+    # The working brief whose requirements were ratified as
+    # spec/amendment-003-ruling-contract.md. The brief itself is not digested
+    # and only traces intent; tests cite the amendment.
     "tests/RULING-CONTRACT.md",
 )
 
 #: The two ratification receipts the Tester is permitted to read.
 RECEIPTS: tuple[str, ...] = (
-    "spec/receipts/founder-ratification-12dd4c18.json",
-    "spec/receipts/validator-ratification-12dd4c18.json",
+    "spec/receipts/founder-ratification-10c36a47.json",
+    "spec/receipts/validator-ratification-10c36a47.json",
 )
 
 GATES: tuple[str, ...] = (
@@ -171,7 +171,7 @@ def verify_manifest(reviewer_mode: bool = False) -> ManifestVerification:
     A mismatch raises :class:`HarnessInvalid`. The suite must never quietly
     measure against unratified bytes.
 
-    ``reviewer_mode`` restricts verification to the six ratified authority
+    ``reviewer_mode`` restricts verification to the ratified authority
     artifacts. ``spec/verification.md`` "Instrument validity" gives the
     implementation-blind Detector Reviewer only "ratified specs, tests/fixtures,
     detector design, and the eligible licensed-public auxiliary-corpus pool", so
@@ -236,7 +236,7 @@ def verify_manifest(reviewer_mode: bool = False) -> ManifestVerification:
             f"cannot read ratification evidence {b64_path}: {exc}. This is an "
             "instrument environment prerequisite. An implementation-blind "
             "reviewer whose lane excludes evidence/** must set "
-            "KINBASE_REVIEWER_MODE=1, which verifies the six ratified "
+            "KINBASE_REVIEWER_MODE=1, which verifies the ratified "
             "authority artifacts only."
         ) from exc
     decoded = base64.b64decode(b"".join(container.split()))
@@ -461,5 +461,5 @@ def TRACE(gate: str, artifact: str, anchor: str, quote: str) -> SpecRef:
 
 
 def RULING(gate: str, anchor: str, quote: str) -> SpecRef:
-    """A trace reference to the unratified ruling brief; it creates no requirement."""
-    return SpecRef(gate, "tests/RULING-CONTRACT.md", anchor, quote)
+    """A reference to the ratified ruling amendment (amendment 003)."""
+    return SpecRef(gate, "spec/amendment-003-ruling-contract.md", anchor, quote)

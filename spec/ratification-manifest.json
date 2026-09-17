@@ -8,7 +8,8 @@
   "spec/architecture.md",
   "spec/threat-model.md",
   "spec/verification.md",
-  "spec/cli.md"
+  "spec/cli.md",
+  "spec/amendment-003-ruling-contract.md"
  ],
  "artifacts": [
   {
@@ -21,7 +22,7 @@
   },
   {
    "path": "spec/architecture.md",
-   "sha256": "92e75bc8c7ea8b5731b98ee70b9e81c0609e18baeed5abab40f097904caa817d"
+   "sha256": "0d5063ba94f9915e3725e0ddc59054687bf1f1c3ae0c3ec62b03303a4e3a9330"
   },
   {
    "path": "spec/threat-model.md",
@@ -33,7 +34,11 @@
   },
   {
    "path": "spec/cli.md",
-   "sha256": "8fd1218fb80ae5a50b38b3262f701e18d69258c9aa5967ec3e7ede4da562f67f"
+   "sha256": "f859755094aa39f6f843b3d31936ac726359d5169cb372c0439c9361db888349"
+  },
+  {
+   "path": "spec/amendment-003-ruling-contract.md",
+   "sha256": "85bd9b4ced26973b6157006d7564cb7a9f505810878378c6d56a326e542e2130"
   }
  ],
  "review_evidence": {

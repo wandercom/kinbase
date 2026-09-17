@@ -4,6 +4,11 @@ Authored under the Factory **Tester** dispatch against ratification manifest
 `12dd4c18aaca12c29cc816ca4a5161b5e011814f021879897b88b0e6e85168dd` at repository
 baseline `e29f3fe03595d594c0546f9b0012b58f7c45bac1`.
 
+Rebound on 2026-09-17 to manifest
+`10c36a4790e09b082ac96df5368bfeeef40360658480312e441d523d8e4e31a4`, which adds
+`spec/amendment-003-ruling-contract.md` and the revised `architecture.md` and
+`cli.md`.
+
 This suite is an **observation instrument**, not a verdict. `spec/verification.md`
 "Role separation" reserves the verdict to the Validator; the suite reports a gate
 vector and the evidence a verdict is composed from.

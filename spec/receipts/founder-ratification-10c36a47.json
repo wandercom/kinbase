@@ -1,0 +1,14 @@
+{
+ "schema": "kinbase-ratification-receipt/1",
+ "actor": "Jeremy McEntire",
+ "actor_kind": "human-founder",
+ "action": "ratify-amended-specification",
+ "manifest_path": "spec/ratification-manifest.json",
+ "manifest_sha256": "10c36a4790e09b082ac96df5368bfeeef40360658480312e441d523d8e4e31a4",
+ "supersedes_manifest_sha256": "12dd4c18aaca12c29cc816ca4a5161b5e011814f021879897b88b0e6e85168dd",
+ "observed_at": "2026-09-17T16:04:48Z",
+ "statement": "For my PRs, consider the spec ratified, approve all the PRs and merge.",
+ "scope": "The spec changes carried by the founder's own pull requests: the architecture.md and cli.md revisions merged since manifest 12dd4c18, and spec/amendment-003-ruling-contract.md, which ratifies the ruling-loop brief the acceptance suite already tests.",
+ "authority_effect": "Ratifies this manifest for implementation under the Factory roles. Does not establish proof, sign a terminal verdict, or authorize outcome-experiment spending.",
+ "provenance": "Exact user message in the active Claude Code conversation, projected by the Validator; no external cryptographic signature is claimed. This matches the provenance of the receipt it supersedes."
+}
