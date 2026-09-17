@@ -61,8 +61,11 @@ pub fn read_records(
 /// wants one session's: the caller passes a marker only that session's
 /// canonical lines can contain, only those lines are parsed, and the exact
 /// filter still runs on the parsed record. Nothing else is materialised, so
-/// the cost is a scan of the file rather than a parse of it, and a bad line
-/// that is not the caller's cannot hide the caller's.
+/// the cost is a scan of the file rather than a parse of it. A line that is
+/// not the caller's is never parsed and never decoded, so it cannot hide the
+/// caller's; a kept line that cannot be read is skipped and reported, the
+/// disposition every ledger reader here takes. A ledger that was never
+/// written holds no records.
 pub fn read_records_where(
     store: crate::StoreKind,
     repo: &Path,
@@ -77,32 +80,82 @@ pub fn read_jsonl_where(
     path: &Path,
     keep: impl Fn(&str) -> bool,
 ) -> Result<Vec<Value>, ContractError> {
-    let file = fs::File::open(path).map_err(|error| ContractError::io("read JSONL", error))?;
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(ContractError::io("read JSONL", error)),
+    };
+    // The signal names the ledger, never its directory.
+    let ledger = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let mut reader = std::io::BufReader::new(file);
-    let mut line = String::new();
+    let mut buffer = Vec::new();
     let mut output = Vec::new();
+    let mut skipped = Vec::new();
+    let mut position = 0usize;
     loop {
-        line.clear();
+        buffer.clear();
         let read = reader
-            .read_line(&mut line)
+            .read_until(b'\n', &mut buffer)
             .map_err(|error| ContractError::io("read JSONL", error))?;
         if read == 0 {
             break;
         }
-        let text = line.trim_end_matches(['\n', '\r']);
+        position += 1;
+        // The predicate sees the line even when it is not UTF-8: a foreign
+        // line's bytes are nobody's business, and a kept one is reported.
+        let (text, valid) = match std::str::from_utf8(&buffer) {
+            Ok(text) => (std::borrow::Cow::Borrowed(text), true),
+            Err(_) => (String::from_utf8_lossy(&buffer), false),
+        };
+        let text = text.trim_end_matches(['\n', '\r']);
         if text.trim().is_empty() || !keep(text) {
             continue;
         }
-        let map = parse_strict_object(text.as_bytes()).map_err(|error| {
-            ContractError::integrity(
-                "DIGEST_MISMATCH",
-                error,
-                "Quarantine the malformed JSONL record.",
-            )
-        })?;
-        output.push(Value::Object(map));
+        if !valid {
+            skipped.push(crate::output::unreadable_row(
+                position,
+                buffer.len(),
+                "invalid UTF-8",
+            ));
+            continue;
+        }
+        match parse_strict_object(text.as_bytes()) {
+            Ok(map) => output.push(Value::Object(map)),
+            Err(error) => skipped.push(crate::output::unreadable_row(position, text.len(), &error)),
+        }
     }
+    crate::output::report_unreadable_rows(&ledger, &skipped);
     Ok(output)
+}
+
+/// Whether `canonical` already appears as a whole line of `path`, scanned by
+/// stream: materialising the ledger for a line comparison cost 1.6 GB per
+/// append on a 275 MB file.
+fn line_present(path: &Path, canonical: &str) -> Result<bool, ContractError> {
+    let file = match fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(ContractError::io("read JSONL", error)),
+    };
+    let mut reader = std::io::BufReader::new(file);
+    let mut buffer = Vec::new();
+    loop {
+        buffer.clear();
+        let read = reader
+            .read_until(b'\n', &mut buffer)
+            .map_err(|error| ContractError::io("read JSONL", error))?;
+        if read == 0 {
+            return Ok(false);
+        }
+        let line = buffer.strip_suffix(b"\n").unwrap_or(&buffer);
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line == canonical.as_bytes() {
+            return Ok(true);
+        }
+    }
 }
 
 pub fn append_jsonl(path: &Path, value: &Value) -> Result<(), ContractError> {
@@ -117,12 +170,8 @@ pub fn append_jsonl(path: &Path, value: &Value) -> Result<(), ContractError> {
         .and_then(|bytes| {
             String::from_utf8(bytes).map_err(|_| ContractError::internal("record is not UTF-8"))
         })?;
-    if path.exists() {
-        let prior =
-            fs::read_to_string(path).map_err(|error| ContractError::io("read JSONL", error))?;
-        if prior.lines().any(|existing| existing == canonical) {
-            return Ok(());
-        }
+    if line_present(path, &canonical)? {
+        return Ok(());
     }
     let mut file = fs::OpenOptions::new()
         .create(true)

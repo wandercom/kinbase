@@ -40,28 +40,6 @@ fn sqlite_error(context: &str) -> impl Fn(rusqlite::Error) -> ContractError + '_
     move |error| ContractError::internal(format!("{context}: {error}"))
 }
 
-/// One skipped ledger row, described without its bytes.
-fn unreadable_row(position: usize, text: &str, error: &serde_json::Error) -> Value {
-    json!({"position": position, "bytes": text.len(), "error": error.to_string()})
-}
-
-/// The Recovered signal for skipped rows: one diagnostic per read naming the
-/// query and the first skipped positions, so a rising count is visible before
-/// it becomes a lost ledger. Silence here is how the loss stayed hidden.
-fn report_unreadable_rows(context: &str, skipped: &[Value]) {
-    if skipped.is_empty() {
-        return;
-    }
-    crate::output::diagnostic(
-        "unreadable-ledger-rows",
-        json!({
-            "query": context,
-            "skipped": skipped.len(),
-            "rows": skipped.iter().take(8).collect::<Vec<_>>()
-        }),
-    );
-}
-
 /// Parse the `record` column of each row, skipping any row that is not a
 /// readable `T`. One unreadable row must not make the whole ledger unreadable,
 /// the disposition `all_observations` already takes: five empty observation
@@ -77,10 +55,14 @@ fn parse_rows<T: serde::de::DeserializeOwned>(
         let text = row.map_err(sqlite_error("row"))?;
         match serde_json::from_str::<T>(&text) {
             Ok(value) => output.push(value),
-            Err(error) => skipped.push(unreadable_row(position, &text, &error)),
+            Err(error) => skipped.push(crate::output::unreadable_row(
+                position,
+                text.len(),
+                &error.to_string(),
+            )),
         }
     }
-    report_unreadable_rows(context, &skipped);
+    crate::output::report_unreadable_rows(context, &skipped);
     Ok(output)
 }
 
@@ -512,14 +494,18 @@ impl PrivateStore {
             let mut observation: Observation = match serde_json::from_str(&text) {
                 Ok(observation) => observation,
                 Err(error) => {
-                    skipped.push(unreadable_row(position, &text, &error));
+                    skipped.push(crate::output::unreadable_row(
+                        position,
+                        text.len(),
+                        &error.to_string(),
+                    ));
                     continue;
                 }
             };
             observation.lifecycle = lifecycle;
             output.push(observation);
         }
-        report_unreadable_rows("observations_for_source", &skipped);
+        crate::output::report_unreadable_rows("observations_for_source", &skipped);
         Ok(output)
     }
 

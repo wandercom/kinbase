@@ -42,6 +42,28 @@ pub fn diagnostic(kind: &str, detail: Value) {
     eprintln!("{}", single_line(&line));
 }
 
+/// One skipped ledger row, described without its bytes.
+pub(crate) fn unreadable_row(position: usize, bytes: usize, error: &str) -> Value {
+    serde_json::json!({"position": position, "bytes": bytes, "error": error})
+}
+
+/// The Recovered signal for skipped rows: one diagnostic per read naming the
+/// source and the first skipped positions, so a rising count is visible
+/// before it becomes a lost ledger. Silence here is how the loss stayed hidden.
+pub(crate) fn report_unreadable_rows(source: &str, skipped: &[Value]) {
+    if skipped.is_empty() {
+        return;
+    }
+    diagnostic(
+        "unreadable-ledger-rows",
+        serde_json::json!({
+            "source": source,
+            "skipped": skipped.len(),
+            "rows": skipped.iter().take(8).collect::<Vec<_>>()
+        }),
+    );
+}
+
 /// Render a typed error as the nested error document. Extra top-level keys
 /// (counts) travel beside `error`.
 pub fn error_document(error: &crate::error::ContractError) -> Value {

@@ -527,41 +527,64 @@ fn host_envelope_parser_folds_text_keeps_numbers_and_rejects_duplicates() {
 
 #[test]
 fn checkpoint_streams_only_this_sessions_records_from_shared_ledgers() {
+    use std::io::Write as _;
     let temp = TempDir::new().expect("tempdir");
     let world = host_world(&temp);
+    let ledger = world.personal.join("observations.jsonl");
+    // A quote in the id: escaped on disk, and the marker must spell it the same.
+    let session = "host-session-3\"quoted";
     let record = |source: &str, id: &str| {
-        json!({"observation_id": id, "source_identity": source, "statement": "x"}).to_string()
+        json!({"observation_id": id, "source_identity": source, "statement": "x"})
     };
-    let ledger = [
-        record("session:host-session-3", "obs_mine"),
+    // Through the canonical writer, as every real record is.
+    for value in [
+        record(&format!("session:{session}"), "obs_mine"),
         record("session:other", "obs_other"),
         record("source:issue_tracker:abc", "obs_bulk"),
         // The marker quoted inside another field is not this session's record.
         json!({
             "observation_id": "obs_quote",
             "source_identity": "source:x",
-            "statement": "\"source_identity\":\"session:host-session-3\""
-        })
-        .to_string(),
-        // A malformed line that is another session's must not hide this one's;
-        // the whole-ledger read used to fail on it and report nothing.
-        "{\"observation_id\":\"obs_bad\",\"source_identity\":\"session:other\",".to_owned(),
-    ]
-    .join("\n")
-        + "\n";
-    fs::write(world.personal.join("observations.jsonl"), ledger).expect("ledger");
+            "statement": format!("\"source_identity\":\"session:{session}\"")
+        }),
+    ] {
+        kinbase::store::append_jsonl(&ledger, &value).expect("append");
+    }
+    // Then two lines no writer would produce: a foreign line that is not
+    // UTF-8, and a truncated line carrying this session's marker.
+    let mut raw = fs::OpenOptions::new()
+        .append(true)
+        .open(&ledger)
+        .expect("open ledger");
+    raw.write_all(b"{\"observation_id\":\"obs_bin\",\"source_identity\":\"session:other\",\"statement\":\"\xff\"}\n")
+        .expect("binary line");
+    raw.write_all(
+        format!(
+            "{{\"observation_id\":\"obs_bad\",\"source_identity\":\"session:{}\",\n",
+            session.replace('"', "\\\"")
+        )
+        .as_bytes(),
+    )
+    .expect("truncated line");
+    drop(raw);
+
     let stop = json!({
-        "session_id": "host-session-3",
+        "session_id": session,
         "cwd": world.repo.display().to_string(),
         "hook_event_name": "Stop"
     });
     let output = dispatch(&world, "Stop", stop.to_string().as_bytes(), true);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
     let receipt: Value = serde_json::from_slice(&output.stdout).expect("receipt");
     assert_eq!(receipt["observation_count"], 1, "{receipt}");
     assert_eq!(receipt["atom_count"], 0, "{receipt}");
+    assert!(
+        stderr.contains("unreadable-ledger-rows") && stderr.contains("observations.jsonl"),
+        "this session's truncated line is skipped with a signal: {stderr:?}"
+    );
+    assert!(
+        !stderr.contains("obs_") && !stderr.contains("personal"),
+        "the signal carries neither record bytes nor the store's path: {stderr:?}"
+    );
 }
