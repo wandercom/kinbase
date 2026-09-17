@@ -11,7 +11,7 @@ use crate::json::{canonical_bytes, canonical_text, parse_strict_object};
 use crate::model::FactEvent;
 use serde_json::{Map, Value, json};
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead as _, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -54,6 +54,55 @@ pub fn read_records(
 ) -> Result<Vec<Value>, ContractError> {
     let root = store_root(store, repo);
     read_jsonl(&root.join(filename))
+}
+
+/// The records of `filename` whose raw canonical line satisfies `keep`, read
+/// by stream. A ledger holds every session's records and one host event
+/// wants one session's: the caller passes a marker only that session's
+/// canonical lines can contain, only those lines are parsed, and the exact
+/// filter still runs on the parsed record. Nothing else is materialised, so
+/// the cost is a scan of the file rather than a parse of it, and a bad line
+/// that is not the caller's cannot hide the caller's.
+pub fn read_records_where(
+    store: crate::StoreKind,
+    repo: &Path,
+    filename: &str,
+    keep: impl Fn(&str) -> bool,
+) -> Result<Vec<Value>, ContractError> {
+    let root = store_root(store, repo);
+    read_jsonl_where(&root.join(filename), keep)
+}
+
+pub fn read_jsonl_where(
+    path: &Path,
+    keep: impl Fn(&str) -> bool,
+) -> Result<Vec<Value>, ContractError> {
+    let file = fs::File::open(path).map_err(|error| ContractError::io("read JSONL", error))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut line = String::new();
+    let mut output = Vec::new();
+    loop {
+        line.clear();
+        let read = reader
+            .read_line(&mut line)
+            .map_err(|error| ContractError::io("read JSONL", error))?;
+        if read == 0 {
+            break;
+        }
+        let text = line.trim_end_matches(['\n', '\r']);
+        if text.trim().is_empty() || !keep(text) {
+            continue;
+        }
+        let map = parse_strict_object(text.as_bytes()).map_err(|error| {
+            ContractError::integrity(
+                "DIGEST_MISMATCH",
+                error,
+                "Quarantine the malformed JSONL record.",
+            )
+        })?;
+        output.push(Value::Object(map));
+    }
+    Ok(output)
 }
 
 pub fn append_jsonl(path: &Path, value: &Value) -> Result<(), ContractError> {

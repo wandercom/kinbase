@@ -523,3 +523,45 @@ fn host_envelope_parser_folds_text_keeps_numbers_and_rejects_duplicates() {
     );
     assert_eq!(kinbase::json::fold_to_canonical_text("no controls"), "no controls");
 }
+
+
+#[test]
+fn checkpoint_streams_only_this_sessions_records_from_shared_ledgers() {
+    let temp = TempDir::new().expect("tempdir");
+    let world = host_world(&temp);
+    let record = |source: &str, id: &str| {
+        json!({"observation_id": id, "source_identity": source, "statement": "x"}).to_string()
+    };
+    let ledger = [
+        record("session:host-session-3", "obs_mine"),
+        record("session:other", "obs_other"),
+        record("source:issue_tracker:abc", "obs_bulk"),
+        // The marker quoted inside another field is not this session's record.
+        json!({
+            "observation_id": "obs_quote",
+            "source_identity": "source:x",
+            "statement": "\"source_identity\":\"session:host-session-3\""
+        })
+        .to_string(),
+        // A malformed line that is another session's must not hide this one's;
+        // the whole-ledger read used to fail on it and report nothing.
+        "{\"observation_id\":\"obs_bad\",\"source_identity\":\"session:other\",".to_owned(),
+    ]
+    .join("\n")
+        + "\n";
+    fs::write(world.personal.join("observations.jsonl"), ledger).expect("ledger");
+    let stop = json!({
+        "session_id": "host-session-3",
+        "cwd": world.repo.display().to_string(),
+        "hook_event_name": "Stop"
+    });
+    let output = dispatch(&world, "Stop", stop.to_string().as_bytes(), true);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt: Value = serde_json::from_slice(&output.stdout).expect("receipt");
+    assert_eq!(receipt["observation_count"], 1, "{receipt}");
+    assert_eq!(receipt["atom_count"], 0, "{receipt}");
+}

@@ -1466,8 +1466,16 @@ pub fn checkpoint(session: &str, json: bool) -> Result<(), ContractError> {
 pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
     // A failed Company delivery or a crash after journaling is retried by the
     // ordinary session lifecycle; there is no proposal command to drain it.
+    // The ledgers hold every session's records and one Stop wants one
+    // session's. Read them by stream and parse only the lines that carry this
+    // session's canonical marker, never the whole ledger: at 275 MB the
+    // whole-ledger read cost 1.9 s and 1.6 GB at every turn end to find
+    // nothing. The exact filter below still decides.
+    let session_marker = format!("\"session_id\":\"{session}\"");
     let mut candidates = BTreeMap::new();
-    for candidate in personal_records("candidates.jsonl") {
+    for candidate in
+        personal_records_where("candidates.jsonl", |line| line.contains(&session_marker))
+    {
         if crate::json::get_str(&candidate, "session_id") == Some(session)
             && crate::json::get_str(&candidate, "admission_mode") == Some("automatic")
         {
@@ -1485,25 +1493,38 @@ pub fn checkpoint_internal(session: &str) -> Result<Value, ContractError> {
             admissions.push(admit_candidate(&launcher, &repo, candidate)?);
         }
     }
-    let observations = personal_records("observations.jsonl")
-        .into_iter()
-        .filter(|record| {
-            record.get("source_identity").and_then(Value::as_str)
-                == Some(&format!("session:{session}"))
-        })
-        .collect::<Vec<_>>();
+    let source_identity = format!("session:{session}");
+    let source_marker = format!("\"source_identity\":\"{source_identity}\"");
+    let observations =
+        personal_records_where("observations.jsonl", |line| line.contains(&source_marker))
+            .into_iter()
+            .filter(|record| {
+                record.get("source_identity").and_then(Value::as_str) == Some(&source_identity)
+            })
+            .collect::<Vec<_>>();
     let observation_ids = observations
         .iter()
         .filter_map(|record| record.get("observation_id").and_then(Value::as_str))
         .collect::<BTreeSet<_>>();
-    let atoms = personal_records("atoms.jsonl")
+    // A session with no observations has no atoms; do not read the ledger.
+    let atoms = if observation_ids.is_empty() {
+        Vec::new()
+    } else {
+        let atom_markers = observation_ids
+            .iter()
+            .map(|id| format!("\"observation_id\":\"{id}\""))
+            .collect::<Vec<_>>();
+        personal_records_where("atoms.jsonl", |line| {
+            atom_markers.iter().any(|marker| line.contains(marker))
+        })
         .into_iter()
         .filter(|atom| {
             atom.get("observation_id")
                 .and_then(Value::as_str)
                 .is_some_and(|id| observation_ids.contains(id))
         })
-        .collect::<Vec<_>>();
+        .collect::<Vec<_>>()
+    };
     let core = crate::private::PrivateStore::open_core()?;
     let now = now_rfc3339_millis();
     let mut personal_fact_count = 0;
@@ -1589,6 +1610,16 @@ fn personal_records(name: &str) -> Vec<Value> {
     std::env::current_dir()
         .ok()
         .and_then(|repo| crate::store::read_records(crate::StoreKind::Personal, &repo, name).ok())
+        .unwrap_or_default()
+}
+
+/// `personal_records` restricted to the lines `keep` accepts, read by stream.
+fn personal_records_where(name: &str, keep: impl Fn(&str) -> bool) -> Vec<Value> {
+    std::env::current_dir()
+        .ok()
+        .and_then(|repo| {
+            crate::store::read_records_where(crate::StoreKind::Personal, &repo, name, keep).ok()
+        })
         .unwrap_or_default()
 }
 
