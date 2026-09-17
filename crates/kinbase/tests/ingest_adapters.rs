@@ -270,6 +270,56 @@ fn rows_under_the_typed_spelling_move_to_the_source_identity() {
 }
 
 #[test]
+fn unstamped_rows_under_a_relative_spelling_move_only_when_this_scan_holds_them() {
+    let machine = Machine::new();
+    let repo = machine.repository("repo-a", REPO_A);
+    tickets(&repo, &[ticket("ENG-1"), ticket("ENG-2")]);
+    let first = machine.ingest(&repo, "issue_tracker", "exports");
+    let identity = first["source_identity"]
+        .as_str()
+        .expect("identity")
+        .to_owned();
+    // An earlier kinbase hashed the relative spelling, which another
+    // repository could share, and stamped no repository on the rows.
+    let legacy = {
+        use sha2::{Digest, Sha256};
+        format!("source:issue_tracker:{:x}", Sha256::digest(b"exports"))
+    };
+    machine
+        .ledger()
+        .execute(
+            "UPDATE observations SET source_identity=?1, record=json_remove(record, '$.repository_id') WHERE source_identity=?2",
+            [&legacy, &identity],
+        )
+        .expect("rewind to an unstamped legacy identity");
+    // ENG-2 changed since: its old row is not provably this repository's.
+    let mut changed = ticket("ENG-2");
+    changed["body"] = json!("Edited body text.");
+    tickets(&repo, &[ticket("ENG-1"), changed]);
+    let again = machine.ingest(&repo, "issue_tracker", "exports");
+    let adoption = &again["source_identity_adopted"];
+    assert_eq!(adoption["adopted"], 1, "{again}");
+    assert_eq!(adoption["left_with_another_repository"], 1, "{again}");
+    assert_eq!(
+        lifecycles(&machine, &legacy),
+        vec![("issue_tracker:ENG-2".to_owned(), "observed".to_owned())]
+    );
+    let current = lifecycles(&machine, &identity);
+    assert_eq!(
+        current
+            .iter()
+            .filter(|(native, lifecycle)| native == "issue_tracker:ENG-1" && lifecycle == "observed")
+            .count(),
+        1,
+        "one current ENG-1, not a second copy: {current:?}"
+    );
+    assert!(
+        current.contains(&("issue_tracker:ENG-2".to_owned(), "observed".to_owned())),
+        "{current:?}"
+    );
+}
+
+#[test]
 fn one_repository_never_retires_another_repositorys_records() {
     let machine = Machine::new();
     let a = machine.repository("repo-a", REPO_A);

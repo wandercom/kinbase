@@ -159,13 +159,14 @@ pub fn ingest(
     let owning_repository = (store_for_source(source_kind) == crate::StoreKind::Codebase)
         .then(|| discovered_repository.uuid_hint().map(str::to_owned))
         .flatten();
-    let adoption = adopt_legacy_identities(
+    let mut adoption = adopt_legacy_identities(
         &private,
         &source_identity,
         &legacy_identities,
         owning_repository.as_deref(),
+        None,
     )?;
-    let prior_observations = private.observations_for_source(&source_identity)?;
+    let mut prior_observations = private.observations_for_source(&source_identity)?;
 
     // Scan the native source. A `.kin/` tree is the signed-event intake the
     // reducer owns; every other source is an adapter scan into native units.
@@ -303,6 +304,33 @@ pub fn ingest(
     let mut present_native_ids: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
     let mut renamed_old_ids: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    // A row with no repository under a spelling another repository could
+    // share (`docs`) is adopted when this scan holds the same record with the
+    // same bytes: an uncertified repository's relative-path rows otherwise
+    // stayed current under the old identity while the new one recorded them
+    // again.
+    if !scan.records.is_empty() {
+        let scanned: std::collections::BTreeSet<(String, String)> = scan
+            .records
+            .iter()
+            .map(|record| (record.native_id.clone(), record.content_digest()))
+            .collect();
+        let matched = adopt_legacy_identities(
+            &private,
+            &source_identity,
+            &legacy_identities,
+            owning_repository.as_deref(),
+            Some(&scanned),
+        )?;
+        if matched["adopted"].as_u64().unwrap_or(0) > 0 {
+            prior_observations = private.observations_for_source(&source_identity)?;
+        }
+        for field in ["adopted", "merged_duplicates"] {
+            adoption[field] =
+                json!(adoption[field].as_u64().unwrap_or(0) + matched[field].as_u64().unwrap_or(0));
+        }
+        adoption["left_with_another_repository"] = matched["left_with_another_repository"].clone();
+    }
     let prior_by_id: BTreeMap<String, Observation> = prior_observations
         .iter()
         .map(|observation| (observation.observation_id.clone(), observation.clone()))
@@ -1137,13 +1165,16 @@ fn legacy_source_identity(source_kind: &str, spelling: &str) -> String {
 /// current one. A row that repeats a native record and digest already held is
 /// kept as history (`superseded`) rather than as a second current copy. Rows
 /// of another repository stay where they are; a row with no repository is
-/// taken only when the older identity cannot name another repository's source
-/// (an absolute spelling or a path-keyed identity).
+/// taken when the older identity cannot name another repository's source (an
+/// absolute spelling or a path-keyed identity), or, given `scanned`, when this
+/// scan holds the same record with the same digest. A row whose bytes have
+/// changed since is not provably this repository's and stays where it is.
 fn adopt_legacy_identities(
     private: &crate::private::PrivateStore,
     current: &str,
     candidates: &[(String, bool)],
     repository_id: Option<&str>,
+    scanned: Option<&std::collections::BTreeSet<(String, String)>>,
 ) -> Result<Value, ContractError> {
     let mut held: std::collections::BTreeSet<(String, String)> = private
         .observations_for_source(current)?
@@ -1161,7 +1192,12 @@ fn adopt_legacy_identities(
         for mut row in private.observations_for_source(candidate)? {
             let belongs = match (row.repository_id.as_deref(), repository_id) {
                 (Some(row_repository), Some(this)) => row_repository == this,
-                (None, _) => *unambiguous,
+                (None, _) => {
+                    *unambiguous
+                        || scanned.is_some_and(|keys| {
+                            keys.contains(&(row.native_id.clone(), row.content_digest.clone()))
+                        })
+                }
                 (Some(_), None) => false,
             };
             if !belongs {
