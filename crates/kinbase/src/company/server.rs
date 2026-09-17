@@ -1616,42 +1616,63 @@ fn admit_fact(
                 .and_then(|record| crate::json::get_str(record, "client_key"))
                 == Some(auth.client_key.as_str());
             if same_bytes && same_client {
-                // Path-exists fast path: the original scoped client replays
-                // bytes Company already admitted. It receives the historical
-                // receipt for that admission and nothing is re-admitted or
-                // projected; a revocation observed since is reported on it.
-                db.bump("retry_receipt_returned")
-                    .map_err(|error| refuse(500, error))?;
                 let mut receipt = record
                     .and_then(|record| record.get("receipt").cloned())
                     .unwrap_or(Value::Null);
                 if !receipt.is_object() {
                     receipt = json!({"schema": crate::model::RECEIPT_SCHEMA, "destination": "company", "status": "committed"});
                 }
-                let (revocation_observed, support_withdrawn) =
-                    replay_projection(db, trust_state, &event);
-                receipt["retry"] = Value::Bool(true);
-                receipt["historical_receipt"] = Value::Bool(true);
-                receipt["readmitted"] = Value::Bool(false);
-                receipt["projected"] = Value::Bool(false);
-                receipt["receipt_scope_restricted"] = Value::Bool(true);
-                receipt["revocation_observed"] = Value::Bool(revocation_observed);
-                receipt["support_withdrawn"] = Value::Bool(support_withdrawn);
-                receipt["projection_state"] = Value::String(if support_withdrawn {
-                    "support_withdrawn".to_owned()
-                } else {
-                    "historical".to_owned()
-                });
-                return Ok((200, receipt));
+                // A submission that waited for a steward: committed once the
+                // event is in the log; admitted now (below) when its signer
+                // has since become an authority for the scope; otherwise
+                // still waiting, as the stored receipt says.
+                let awaiting_steward =
+                    crate::json::get_str(&receipt, "status") == Some("pending-steward-review");
+                let admitted_since = awaiting_steward
+                    && db
+                        .event_cursor(&event.event_id)
+                        .map_err(|error| refuse(500, error))?
+                        .is_some();
+                let admit_now =
+                    awaiting_steward && !admitted_since && admission_status == "committed";
+                if !admit_now {
+                    // Path-exists fast path: the original scoped client
+                    // replays bytes Company already admitted. It receives the
+                    // historical receipt for that admission and nothing is
+                    // re-admitted or projected; a revocation observed since is
+                    // reported on it.
+                    db.bump("retry_receipt_returned")
+                        .map_err(|error| refuse(500, error))?;
+                    if admitted_since {
+                        receipt["status"] = Value::String("committed".to_owned());
+                        receipt["steward_admitted"] = Value::Bool(true);
+                    }
+                    let (revocation_observed, support_withdrawn) =
+                        replay_projection(db, trust_state, &event);
+                    receipt["retry"] = Value::Bool(true);
+                    receipt["historical_receipt"] = Value::Bool(true);
+                    receipt["readmitted"] = Value::Bool(false);
+                    receipt["projected"] = Value::Bool(false);
+                    receipt["receipt_scope_restricted"] = Value::Bool(true);
+                    receipt["revocation_observed"] = Value::Bool(revocation_observed);
+                    receipt["support_withdrawn"] = Value::Bool(support_withdrawn);
+                    receipt["projection_state"] = Value::String(if support_withdrawn {
+                        "support_withdrawn".to_owned()
+                    } else {
+                        "historical".to_owned()
+                    });
+                    return Ok((200, receipt));
+                }
+            } else {
+                return Err(refuse(
+                    409,
+                    ContractError::refused(
+                        "APPROVAL_REPLAY",
+                        "consumed nonce reused with nonmatching bytes, destination, or client",
+                        "Use the original receipt or create and review a new candidate.",
+                    ),
+                ));
             }
-            return Err(refuse(
-                409,
-                ContractError::refused(
-                    "APPROVAL_REPLAY",
-                    "consumed nonce reused with nonmatching bytes, destination, or client",
-                    "Use the original receipt or create and review a new candidate.",
-                ),
-            ));
         }
 
         if let Some(existing_cursor) = db
@@ -4469,5 +4490,90 @@ nonce_retention_seconds = 1300
             snapshot.to_string().contains("scheduling/queue-wait"),
             "the conflict key's trace was dropped"
         );
+    }
+
+    #[test]
+    fn an_approved_proposal_waits_for_a_steward_and_is_admitted_once_authorized() {
+        let service = service("");
+        let steward = auth(&service, "facts-one");
+        let proposer = PrivateKey::generate();
+        let now = crate::time::now_rfc3339_millis();
+        let document = fact(
+            &proposer,
+            "proposal",
+            "repository-maintainer",
+            "company:root",
+            "Refunds settle within two days.",
+        );
+        let submission =
+            json!({"event": document, "approval_token": {"schema": "kinbase-approval/1"}});
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let (status, receipt) = admit_fact(
+            &service.db,
+            &service.state,
+            &steward,
+            &trust,
+            Some(submission.clone()),
+            &now,
+        )
+        .unwrap();
+        assert_eq!(
+            (status, receipt["status"].as_str()),
+            (202, Some("pending-steward-review"))
+        );
+        let (_, replay) = admit_fact(
+            &service.db,
+            &service.state,
+            &steward,
+            &trust,
+            Some(submission.clone()),
+            &now,
+        )
+        .unwrap();
+        assert_eq!(replay["status"], "pending-steward-review");
+
+        // The steward authorizes the proposer for the scope.
+        let registry = service
+            .root
+            .sign_document(
+                "authority-registry-entry",
+                &json!({
+                    "schema": crate::model::REGISTRY_SCHEMA,
+                    "authority_cursor": "1000",
+                    "entries": [
+                        {"authority_id": "repository-maintainer", "scope": "company:root",
+                         "public_key": proposer.public().to_hex(), "channel": "process:architecture-answer",
+                         "capabilities": ["answer"]}
+                    ]
+                }),
+            )
+            .unwrap();
+        publish_registry(&service.db, &steward, &trust, Some(registry), &now).unwrap();
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let (status, admitted) = admit_fact(
+            &service.db,
+            &service.state,
+            &steward,
+            &trust,
+            Some(submission.clone()),
+            &now,
+        )
+        .unwrap();
+        assert_eq!(
+            (status, admitted["status"].as_str()),
+            (201, Some("committed")),
+            "{admitted}"
+        );
+        let (_, historical) = admit_fact(
+            &service.db,
+            &service.state,
+            &steward,
+            &trust,
+            Some(submission),
+            &now,
+        )
+        .unwrap();
+        assert_eq!(historical["status"], "committed");
+        assert_eq!(historical["historical_receipt"], true);
     }
 }
