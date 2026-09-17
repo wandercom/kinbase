@@ -290,10 +290,12 @@ impl Repository {
         let root = git(&start, &["rev-parse", "--show-toplevel"])?;
         let common = git(&start, &["rev-parse", "--git-common-dir"])?;
         let root = PathBuf::from(root);
+        // Git reports a relative common directory relative to where it ran
+        // (`../.git` from a subdirectory), not to the top level.
         let common_dir = if Path::new(&common).is_absolute() {
             PathBuf::from(common)
         } else {
-            root.join(common)
+            start.join(common)
         };
         let common_dir = common_dir.canonicalize().unwrap_or(common_dir);
         let kin = root.join(".kin");
