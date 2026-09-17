@@ -7,12 +7,13 @@
 
 use crate::error::ContractError;
 use crate::hash::{is_sha256, sha256_bytes, sha256_text};
-use crate::json::{canonical_bytes, canonical_text, parse_strict_object};
+use crate::json::{canonical_text, parse_strict_object};
 use crate::model::FactEvent;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 use std::fs;
 use std::io::{BufRead as _, Write};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::FileExt as _;
+use std::os::unix::io::AsRawFd as _;
 use std::path::{Path, PathBuf};
 
 pub fn store_root(store: crate::StoreKind, repo: &Path) -> PathBuf {
@@ -47,13 +48,61 @@ pub fn append_record(
     append_jsonl(&root.join(filename), value)
 }
 
+/// `append_record` for a ledger no replay can rebuild (decisions, receipts,
+/// apologies, abandonments): the file and its directory are synced before
+/// the call returns.
+pub fn append_record_durable(
+    store: crate::StoreKind,
+    repo: &Path,
+    filename: &str,
+    value: &Value,
+) -> Result<(), ContractError> {
+    let root = ensure_store_root(store, repo)?;
+    append_jsonl_with(&root.join(filename), value, true)
+}
+
+/// Every readable record of `filename`. An unreadable line is skipped and
+/// reported, never allowed to hide the rest of the ledger.
 pub fn read_records(
     store: crate::StoreKind,
     repo: &Path,
     filename: &str,
 ) -> Result<Vec<Value>, ContractError> {
     let root = store_root(store, repo);
-    read_jsonl(&root.join(filename))
+    read_jsonl_where(&root.join(filename), |_| true)
+}
+
+/// Every record of `filename`, for a reader that decides whether something
+/// already happened (a receipt, an apology, an abandonment, a
+/// classification). A line it cannot read may be the very record that says
+/// it did, so an unreadable line refuses the decision instead of reading as
+/// absent and letting the step run twice.
+pub fn read_records_complete(
+    store: crate::StoreKind,
+    repo: &Path,
+    filename: &str,
+) -> Result<Vec<Value>, ContractError> {
+    let root = store_root(store, repo);
+    let (records, skipped) = read_jsonl_counted(&root.join(filename), |_| true)?;
+    if skipped.total() == 0 {
+        return Ok(records);
+    }
+    let lines = skipped
+        .positions()
+        .iter()
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(ContractError::integrity(
+        "DIGEST_MISMATCH",
+        format!(
+            "{filename} has {} unreadable line(s) (line {lines}); whether this step already happened cannot be decided",
+            skipped.total()
+        ),
+        format!(
+            "Move the named line(s) of {filename} aside and rerun; nothing was repeated or admitted."
+        ),
+    ))
 }
 
 /// The records of `filename` whose raw canonical line satisfies `keep`, read
@@ -116,9 +165,19 @@ pub fn read_jsonl_where(
     path: &Path,
     keep: impl Fn(&[u8]) -> bool,
 ) -> Result<Vec<Value>, ContractError> {
+    Ok(read_jsonl_counted(path, keep)?.0)
+}
+
+fn read_jsonl_counted(
+    path: &Path,
+    keep: impl Fn(&[u8]) -> bool,
+) -> Result<(Vec<Value>, crate::output::Skipped), ContractError> {
+    let mut skipped = crate::output::Skipped::default();
     let file = match fs::File::open(path) {
         Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok((Vec::new(), skipped));
+        }
         Err(error) => return Err(ContractError::io("read JSONL", error)),
     };
     // The signal names the ledger, never its directory.
@@ -129,7 +188,6 @@ pub fn read_jsonl_where(
     let mut reader = std::io::BufReader::new(file);
     let mut buffer = Vec::new();
     let mut output = Vec::new();
-    let mut skipped = crate::output::Skipped::default();
     let mut position = 0usize;
     loop {
         buffer.clear();
@@ -157,7 +215,7 @@ pub fn read_jsonl_where(
         }
     }
     skipped.report(&ledger);
-    Ok(output)
+    Ok((output, skipped))
 }
 
 /// Whether `canonical` already appears as a whole line of `path`, scanned by
@@ -186,6 +244,10 @@ fn line_present(path: &Path, canonical: &str) -> Result<bool, ContractError> {
 }
 
 pub fn append_jsonl(path: &Path, value: &Value) -> Result<(), ContractError> {
+    append_jsonl_with(path, value, false)
+}
+
+fn append_jsonl_with(path: &Path, value: &Value, durable: bool) -> Result<(), ContractError> {
     if let Some(parent) = path.parent() {
         crate::paths::ensure_private_dir(parent, "record directory")?;
     }
@@ -197,41 +259,59 @@ pub fn append_jsonl(path: &Path, value: &Value) -> Result<(), ContractError> {
         .and_then(|bytes| {
             String::from_utf8(bytes).map_err(|_| ContractError::internal("record is not UTF-8"))
         })?;
-    if line_present(path, &canonical)? {
-        return Ok(());
-    }
     let mut file = fs::OpenOptions::new()
         .create(true)
+        .read(true)
         .append(true)
         .open(path)
         .map_err(|error| ContractError::io("append JSONL", error))?;
-    let mut line = canonical.into_bytes();
+    // One writer at a time from the duplicate check to the write: two hooks
+    // appending the same record otherwise both find it absent. Released when
+    // the file closes.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } != 0 {
+        return Err(ContractError::io(
+            "lock JSONL",
+            std::io::Error::last_os_error(),
+        ));
+    }
+    if line_present(path, &canonical)? {
+        return Ok(());
+    }
+    // A write cut short (a full disk, a crash before the page cache reached
+    // the disk) leaves a last line with no terminator. Appending straight
+    // after it glued the new record onto the torn one and both read back as
+    // one unreadable line; terminating the torn line first loses only it.
+    let length = file
+        .metadata()
+        .map_err(|error| ContractError::io("inspect JSONL", error))?
+        .len();
+    let mut line = Vec::with_capacity(canonical.len() + 2);
+    if length > 0 {
+        let mut last = [0u8; 1];
+        file.read_exact_at(&mut last, length - 1)
+            .map_err(|error| ContractError::io("inspect JSONL", error))?;
+        if last[0] != b'\n' {
+            line.push(b'\n');
+            crate::output::diagnostic(
+                "torn-ledger-tail",
+                json!({"ledger": path.file_name().map(|name| name.to_string_lossy().into_owned()), "bytes": length}),
+            );
+        }
+    }
+    line.extend_from_slice(canonical.as_bytes());
     line.push(b'\n');
     file.write_all(&line)
-        .map_err(|error| ContractError::io("write JSONL", error))
-}
-
-pub fn read_jsonl(path: &Path) -> Result<Vec<Value>, ContractError> {
-    let text = fs::read_to_string(path).map_err(|error| ContractError::io("read JSONL", error))?;
-    text.lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| {
-            let map = parse_strict_object(line.as_bytes()).map_err(|error| {
-                ContractError::integrity(
-                    "DIGEST_MISMATCH",
-                    error,
-                    "Quarantine the malformed JSONL record.",
-                )
-            });
-            serde_json::from_value(Value::Object(map?)).map_err(|error| {
-                ContractError::integrity(
-                    "DIGEST_MISMATCH",
-                    format!("malformed JSONL record: {error}"),
-                    "Quarantine the record.",
-                )
-            })
-        })
-        .collect()
+        .map_err(|error| ContractError::io("write JSONL", error))?;
+    if durable {
+        file.sync_all()
+            .map_err(|error| ContractError::io("sync JSONL", error))?;
+        if let Some(parent) = path.parent() {
+            fs::File::open(parent)
+                .and_then(|directory| directory.sync_all())
+                .map_err(|error| ContractError::io("sync JSONL directory", error))?;
+        }
+    }
+    Ok(())
 }
 
 pub fn write_private_body(root: &Path, bytes: &[u8]) -> Result<String, ContractError> {
@@ -267,22 +347,46 @@ pub fn write_content_addressed_event(
     Ok((destination, digest))
 }
 
+/// Every readable event under `root/events`. A file that cannot be read as
+/// an event is skipped and reported: one leftover or damaged file used to
+/// fail the whole read, and callers took that for an empty store.
 pub fn read_events(root: &Path) -> Result<Vec<FactEvent>, ContractError> {
+    let events_root = root.join("events");
+    let mut files = Vec::new();
+    collect_files(&events_root, &mut files)?;
+    let mut skipped = crate::output::Skipped::default();
     let mut texts = Vec::new();
-    collect_files(&root.join("events"), &mut texts)?;
+    for path in files {
+        let name = path
+            .strip_prefix(&events_root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .into_owned();
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                skipped.push_file(&name, 0, &error.to_string());
+                continue;
+            }
+        };
+        // The parser enforces the same bound; checking first keeps an
+        // oversized file from being decoded at all.
+        if bytes.len() > crate::model::MAX_EVENT_BYTES {
+            skipped.push_file(&name, bytes.len(), "event exceeds the size bound");
+            continue;
+        }
+        texts.push((String::from_utf8_lossy(&bytes).into_owned(), name));
+    }
     texts.sort();
-    texts
-        .iter()
-        .map(|text| {
-            FactEvent::parse(text.as_bytes()).map_err(|error| {
-                ContractError::integrity(
-                    "DIGEST_MISMATCH",
-                    error,
-                    "Quarantine the malformed event.",
-                )
-            })
-        })
-        .collect()
+    let mut events = Vec::with_capacity(texts.len());
+    for (text, name) in texts {
+        match FactEvent::parse(text.as_bytes()) {
+            Ok(event) => events.push(event),
+            Err(error) => skipped.push_file(&name, text.len(), &error),
+        }
+    }
+    skipped.report("events");
+    Ok(events)
 }
 
 pub fn event_canonical_text(event: &FactEvent) -> String {
@@ -309,7 +413,9 @@ pub fn manifest_placeholder() -> Value {
     json!({"schema":"kinbase-manifest/1"})
 }
 
-fn collect_files(path: &Path, output: &mut Vec<String>) -> Result<(), ContractError> {
+/// Event files under `path`: `.json` files only, never a `write_atomic`
+/// temporary (`.tmp-*`) a crash left behind.
+fn collect_files(path: &Path, output: &mut Vec<PathBuf>) -> Result<(), ContractError> {
     if path.is_dir() {
         let mut children = fs::read_dir(path)
             .map_err(|error| ContractError::io("walk event store", error))?
@@ -321,9 +427,12 @@ fn collect_files(path: &Path, output: &mut Vec<String>) -> Result<(), ContractEr
             collect_files(&child, output)?;
         }
     } else if path.is_file() {
-        let bytes = fs::read(path).map_err(|error| ContractError::io("read event", error))?;
-        if bytes.len() <= 256 * 1024 {
-            output.push(String::from_utf8_lossy(&bytes).into_owned());
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy())
+            .unwrap_or_default();
+        if !name.starts_with(".tmp-") && name.ends_with(".json") {
+            output.push(path.to_path_buf());
         }
     }
     Ok(())

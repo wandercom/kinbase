@@ -1623,11 +1623,19 @@ fn require_session(session: &str) -> Result<(), ContractError> {
     }
 }
 
+/// Every readable record of a Personal ledger. Unreadable lines are skipped
+/// and reported by the reader; a ledger that cannot be opened is signalled,
+/// so an empty result is never silent.
 fn personal_records(name: &str) -> Vec<Value> {
-    std::env::current_dir()
-        .ok()
-        .and_then(|repo| crate::store::read_records(crate::StoreKind::Personal, &repo, name).ok())
-        .unwrap_or_default()
+    personal_records_where(name, |_| true)
+}
+
+/// Every record of a Personal ledger, for a decision about whether a step
+/// already happened: an unreadable line refuses (see
+/// `store::read_records_complete`).
+fn personal_records_complete(name: &str) -> Result<Vec<Value>, ContractError> {
+    let repo = std::env::current_dir().map_err(io_error)?;
+    crate::store::read_records_complete(crate::StoreKind::Personal, &repo, name)
 }
 
 /// `personal_records` restricted to the lines `keep` accepts, read by stream.
@@ -1652,6 +1660,11 @@ fn personal_records_where(name: &str, keep: impl Fn(&[u8]) -> bool) -> Vec<Value
 fn append_personal(name: &str, value: &Value) -> Result<(), ContractError> {
     let repo = std::env::current_dir().map_err(io_error)?;
     crate::store::append_record(crate::StoreKind::Personal, &repo, name, value)
+}
+
+fn append_personal_durable(name: &str, value: &Value) -> Result<(), ContractError> {
+    let repo = std::env::current_dir().map_err(io_error)?;
+    crate::store::append_record_durable(crate::StoreKind::Personal, &repo, name, value)
 }
 
 fn host_name(host: crate::HostKind) -> &'static str {
@@ -1812,7 +1825,7 @@ fn finalize_principal_receipt(base: &Value, saga: &Value) -> Result<Value, Contr
     let mut receipt = base.clone();
     merge_receipt(&mut receipt, saga);
     let repo_root = repo()?;
-    let already = personal_records("proposal-decisions.jsonl")
+    let already = personal_records_complete("proposal-decisions.jsonl")?
         .into_iter()
         .any(|record| {
             crate::json::get_str(&record, "candidate_id")
@@ -1822,22 +1835,12 @@ fn finalize_principal_receipt(base: &Value, saga: &Value) -> Result<Value, Contr
                 && crate::json::get_str(&record, "state") == crate::json::get_str(&receipt, "state")
         });
     if !already {
-        crate::store::append_record(
+        crate::store::append_record_durable(
             crate::StoreKind::Personal,
             &repo_root,
             "proposal-decisions.jsonl",
             &receipt,
         )?;
-        let path = crate::store::store_root(crate::StoreKind::Personal, &repo_root)
-            .join("proposal-decisions.jsonl");
-        if let Ok(file) = std::fs::File::open(&path) {
-            let _ = file.sync_all();
-        }
-        if let Some(parent) = path.parent() {
-            if let Ok(directory) = std::fs::File::open(parent) {
-                let _ = directory.sync_all();
-            }
-        }
     }
     Ok(receipt)
 }
@@ -2092,7 +2095,7 @@ fn reserve_nonce(
                 "logical_key": event.get("logical_key").cloned().unwrap_or(Value::Null)
             }),
         )?;
-        append_personal(
+        append_personal_durable(
             "nonce-reservations.jsonl",
             &json!({
                 "nonce": record.get("nonce").cloned().unwrap_or(Value::Null),
@@ -2321,9 +2324,9 @@ fn commit_company(
         // a durable commit that this failure cannot roll back. The
         // admitting principal owns the divergence; the committed
         // destination receives the apology Unknown.
-        for sibling in committed_siblings(record) {
+        for sibling in committed_siblings(record)? {
             let apology_id = apology_id_for(receipt_id, &sibling);
-            if !journal.is_complete("apology") || !apology_exists(&apology_id) {
+            if !journal.is_complete("apology") || !apology_exists(&apology_id)? {
                 let _generation = repository.admission_lock(repository_uuid)?;
                 journal.begin("apology", json!({"apology_id": apology_id, "committed_receipt_id": sibling.get("receipt_id").cloned().unwrap_or(Value::Null)}))?;
                 let unknown_id = write_apology(
@@ -2381,7 +2384,7 @@ fn receipt_from_marker(marker: &Value, receipt_id: &str) -> Value {
 
 /// Committed decisions of other destinations for the same source message
 /// (the siblings of one fan-out).
-fn committed_siblings(record: &Value) -> Vec<Value> {
+fn committed_siblings(record: &Value) -> Result<Vec<Value>, ContractError> {
     let message_id = crate::json::get_str(record, "message_id").unwrap_or_default();
     let session_id = crate::json::get_str(record, "session_id").unwrap_or_default();
     let candidate_id = crate::json::get_str(record, "candidate_id").unwrap_or_default();
@@ -2393,7 +2396,8 @@ fn committed_siblings(record: &Value) -> Vec<Value> {
                 && crate::json::get_str(other, "candidate_id") != Some(candidate_id)
         })
         .collect();
-    let decisions = personal_records("proposal-decisions.jsonl");
+    // Whether a sibling committed decides whether an apology is owed.
+    let decisions = personal_records_complete("proposal-decisions.jsonl")?;
     let mut committed = Vec::new();
     for sibling in siblings {
         let sibling_id = crate::json::get_str(&sibling, "candidate_id").unwrap_or_default();
@@ -2412,7 +2416,7 @@ fn committed_siblings(record: &Value) -> Vec<Value> {
             }
         }
     }
-    committed
+    Ok(committed)
 }
 
 fn apology_id_for(failed_receipt_id: &str, committed: &Value) -> String {
@@ -2423,10 +2427,10 @@ fn apology_id_for(failed_receipt_id: &str, committed: &Value) -> String {
     )
 }
 
-fn apology_exists(apology_id: &str) -> bool {
-    personal_records("apologies.jsonl")
+fn apology_exists(apology_id: &str) -> Result<bool, ContractError> {
+    Ok(personal_records_complete("apologies.jsonl")?
         .iter()
-        .any(|apology| crate::json::get_str(apology, "apology_id") == Some(apology_id))
+        .any(|apology| crate::json::get_str(apology, "apology_id") == Some(apology_id)))
 }
 
 /// The latest state of every apology (append-only records; last wins).
@@ -2605,7 +2609,7 @@ fn write_apology(
         "created_at": format_rfc3339_millis(now),
         "state": "awaiting_reconcile_or_abandon"
     });
-    append_personal("apologies.jsonl", &apology)?;
+    append_personal_durable("apologies.jsonl", &apology)?;
     // The pending saga is also visible to the Company cache so `status`
     // counts it among the orphans awaiting reconcile/abandon.
     if let Ok(Some((cache, _))) = launcher.company_cache() {
@@ -3007,7 +3011,7 @@ pub(crate) fn emit_due_orphan_abandonments(
     launcher: &crate::launcher::Launcher,
     repository_root: &Path,
 ) -> Result<usize, ContractError> {
-    let existing: BTreeSet<String> = personal_records("orphan-abandonments.jsonl")
+    let existing: BTreeSet<String> = personal_records_complete("orphan-abandonments.jsonl")?
         .into_iter()
         .filter_map(|record| crate::json::get_str(&record, "apology_id").map(str::to_owned))
         .collect();
@@ -3120,7 +3124,7 @@ pub(crate) fn emit_due_orphan_abandonments(
         if store == crate::StoreKind::Codebase {
             repository.update_index_cache()?;
         }
-        append_personal(
+        append_personal_durable(
             "orphan-abandonments.jsonl",
             &json!({
                 "orphan_id": format!("orphan_{}", &crate::hash::sha256_text(&apology_id)[..40]),
@@ -3203,7 +3207,7 @@ fn admit_candidate(
             "Preserve the candidate and inspect its source.",
         ));
     }
-    if let Some(previous) = personal_records("proposal-decisions.jsonl")
+    if let Some(previous) = personal_records_complete("proposal-decisions.jsonl")?
         .into_iter()
         .rev()
         .find(|receipt| {

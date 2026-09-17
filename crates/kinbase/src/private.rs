@@ -72,6 +72,22 @@ fn is_host_identifier(value: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | ':' | '@' | '/' | '-'))
 }
 
+/// The canonical text of a record bound for the private ledger, or a refusal.
+/// `canonical_text` yields "" for a record outside the canonical data model
+/// (and `value_of` yields null for one that does not serialise); either was
+/// written over the row and read back as nothing.
+fn canonical_record(record: &Value) -> Result<String, ContractError> {
+    crate::json::try_canonical_text(record).map_err(|error| {
+        ContractError::internal(format!("record violates the canonical data model: {error}"))
+    })
+}
+
+fn canonical_model<T: serde::Serialize>(value: &T) -> Result<String, ContractError> {
+    let value = serde_json::to_value(value)
+        .map_err(|error| ContractError::internal(format!("record is not serialisable: {error}")))?;
+    canonical_record(&value)
+}
+
 impl PrivateStore {
     /// Open the Personal store under `data_root` (mode 0700 enforced).
     pub fn open_personal(data_root: &Path) -> Result<Self, ContractError> {
@@ -247,7 +263,7 @@ impl PrivateStore {
                 "INSERT INTO audit(kind, record, recorded_at) VALUES (?1, ?2, ?3)",
                 params![
                     kind,
-                    crate::json::canonical_text(record),
+                    canonical_record(record)?,
                     crate::time::now_rfc3339_millis()
                 ],
             )
@@ -323,20 +339,6 @@ impl PrivateStore {
                 observation.observation_id
             ))
         })?;
-        if let Err(problem) = crate::json::validate_json(&value) {
-            if let Some(s) = value.get("statement").and_then(|v| v.as_str()) {
-                let bad: Vec<String> = s
-                    .chars()
-                    .filter(|c| (*c as u32) <= 0x1f || (0x80..=0x9f).contains(&(*c as u32)))
-                    .map(|c| format!("U+{:04X}", c as u32))
-                    .take(5)
-                    .collect();
-                eprintln!(
-                    "[debug] {problem}; statement control chars: {bad:?}; head={:?}",
-                    &s[..s.len().min(120)]
-                );
-            }
-        }
         let record = crate::json::try_canonical_bytes(&value)
             .map_err(|error| {
                 ContractError::internal(format!(
@@ -405,7 +407,7 @@ impl PrivateStore {
     /// provenance such as lifecycle, revision or adapter attributes). The
     /// observation identity and content digest never change.
     pub fn update_observation(&self, observation: &Observation) -> Result<bool, ContractError> {
-        let record = crate::json::canonical_text(&crate::model::value_of(observation));
+        let record = canonical_model(observation)?;
         let updated = self
             .connection
             .execute(
@@ -508,7 +510,7 @@ impl PrivateStore {
     }
 
     pub fn insert_atom(&self, atom: &Atom, now: &str) -> Result<bool, ContractError> {
-        let record = crate::json::canonical_text(&crate::model::value_of(atom));
+        let record = canonical_model(atom)?;
         let inserted = self
             .connection
             .execute(
@@ -577,7 +579,7 @@ impl PrivateStore {
             .connection
             .execute(
                 "INSERT OR IGNORE INTO personal_facts(fact_id, logical_key, record, created_at, status) VALUES (?1, ?2, ?3, ?4, 'current')",
-                params![fact_id, logical_key, crate::json::canonical_text(fact), now],
+                params![fact_id, logical_key, canonical_record(fact)?, now],
             )
             .map_err(sqlite_error("personal fact"))?;
         Ok(inserted == 1)
@@ -601,7 +603,7 @@ impl PrivateStore {
                     crate::json::get_str(record, "host").unwrap_or_default(),
                     crate::json::get_str(record, "repository_id"),
                     crate::json::get_str(record, "started_at").unwrap_or_default(),
-                    crate::json::canonical_text(record)
+                    canonical_record(record)?
                 ],
             )
             .map(|_| ())
@@ -648,7 +650,7 @@ impl PrivateStore {
             .connection
             .execute(
                 "INSERT OR IGNORE INTO session_events(session_id, event_id, event_type, observed_at, record) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![session_id, event_id, event_type, now, crate::json::canonical_text(record)],
+                params![session_id, event_id, event_type, now, canonical_record(record)?],
             )
             .map_err(sqlite_error("insert session event"))?;
         Ok(inserted == 1)
@@ -689,7 +691,7 @@ impl PrivateStore {
                     crate::json::get_str(record, "session_id").unwrap_or_default(),
                     crate::json::get_str(record, "destination").unwrap_or_default(),
                     crate::json::get_str(record, "payload_digest").unwrap_or_default(),
-                    crate::json::canonical_text(record),
+                    canonical_record(record)?,
                     crate::json::get_str(record, "created_at").unwrap_or_default(),
                     crate::json::get_str(record, "expires_at").unwrap_or_default(),
                 ],
@@ -792,7 +794,7 @@ impl PrivateStore {
                     crate::json::get_str(record, "destination").unwrap_or_default(),
                     crate::json::get_str(record, "decision").unwrap_or_default(),
                     crate::json::get_str(record, "digest").unwrap_or_default(),
-                    crate::json::canonical_text(record),
+                    canonical_record(record)?,
                     crate::json::get_str(record, "decided_at").unwrap_or_default(),
                 ],
             )
@@ -810,7 +812,7 @@ impl PrivateStore {
         self.connection
             .execute(
                 "INSERT INTO destination_receipts(candidate_id, destination, status, record, recorded_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![candidate_id, destination, status, crate::json::canonical_text(record), crate::time::now_rfc3339_millis()],
+                params![candidate_id, destination, status, canonical_record(record)?, crate::time::now_rfc3339_millis()],
             )
             .map(|_| ())
             .map_err(sqlite_error("destination receipt"))
@@ -1223,7 +1225,7 @@ impl PrivateStore {
         self.connection
             .execute(
                 "INSERT OR REPLACE INTO shard_observations(observed_at, record) VALUES (?1, ?2)",
-                params![now, crate::json::canonical_text(record)],
+                params![now, canonical_record(record)?],
             )
             .map(|_| ())
             .map_err(sqlite_error("shard observation"))
@@ -1283,7 +1285,7 @@ impl PrivateStore {
             .execute(
                 "INSERT INTO checkpoints(source_identity, record, updated_at) VALUES (?1, ?2, ?3)
                  ON CONFLICT(source_identity) DO UPDATE SET record=excluded.record, updated_at=excluded.updated_at",
-                params![source_identity, crate::json::canonical_text(record), now],
+                params![source_identity, canonical_record(record)?, now],
             )
             .map(|_| ())
             .map_err(sqlite_error("set checkpoint"))
@@ -1335,7 +1337,7 @@ impl PrivateStore {
                 "INSERT OR IGNORE INTO reminders(reminder_id, record, due_at, status) VALUES (?1, ?2, ?3, 'pending')",
                 params![
                     crate::json::get_str(record, "reminder_id").unwrap_or_default(),
-                    crate::json::canonical_text(record),
+                    canonical_record(record)?,
                     crate::json::get_str(record, "due_at").unwrap_or_default(),
                 ],
             )
@@ -1354,7 +1356,7 @@ impl PrivateStore {
             .execute(
                 "INSERT INTO private_unknowns(unknown_id, record, status, updated_at) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(unknown_id) DO UPDATE SET record=excluded.record, status=excluded.status, updated_at=excluded.updated_at",
-                params![unknown_id, crate::json::canonical_text(record), status, now],
+                params![unknown_id, canonical_record(record)?, status, now],
             )
             .map(|_| ())
             .map_err(sqlite_error("private unknown"))
@@ -1370,7 +1372,9 @@ impl PrivateStore {
                 "INSERT INTO quarantine(kind, record, recorded_at) VALUES (?1, ?2, ?3)",
                 params![
                     kind,
-                    crate::json::canonical_text(record),
+                    // Quarantine holds what failed the canonical rule, so it
+                    // keeps an escaped rendering rather than refusing.
+                    crate::output::single_line(record),
                     crate::time::now_rfc3339_millis()
                 ],
             )

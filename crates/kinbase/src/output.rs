@@ -55,11 +55,31 @@ impl Skipped {
     const SAMPLES: usize = 8;
 
     pub(crate) fn push(&mut self, position: usize, bytes: usize, error: &str) {
+        self.push_sample(serde_json::json!({"position": position, "bytes": bytes, "error": error}));
+    }
+
+    /// A skipped file, named relative to the store it was read from.
+    pub(crate) fn push_file(&mut self, file: &str, bytes: usize, error: &str) {
+        self.push_sample(serde_json::json!({"file": file, "bytes": bytes, "error": error}));
+    }
+
+    fn push_sample(&mut self, sample: Value) {
         self.total += 1;
         if self.samples.len() < Self::SAMPLES {
-            self.samples
-                .push(serde_json::json!({"position": position, "bytes": bytes, "error": error}));
+            self.samples.push(sample);
         }
+    }
+
+    pub(crate) fn total(&self) -> usize {
+        self.total
+    }
+
+    /// The first skipped line positions, for a refusal that names them.
+    pub(crate) fn positions(&self) -> Vec<u64> {
+        self.samples
+            .iter()
+            .filter_map(|sample| sample.get("position").and_then(Value::as_u64))
+            .collect()
     }
 
     /// The Recovered signal: one diagnostic per read naming the source, the
