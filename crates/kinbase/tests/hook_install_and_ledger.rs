@@ -5,12 +5,15 @@
 //! Roles collapsed: the lane that wrote the fix wrote these probes. They pin
 //! the shape of the defect; they do not establish oracle independence.
 
+mod support;
+
 use kinbase::private::PrivateStore;
 use serde_json::{Value, json};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
+use support::SpawnAlone;
 use tempfile::TempDir;
 
 fn fake_host(bin: &Path, name: &str, version: &str) {
@@ -34,7 +37,7 @@ fn plan(home: &Path, bin: &Path, host: &str, cwd: &Path) -> Value {
         .env("XDG_STATE_HOME", home.join(".state"))
         .env("PATH", path)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run hooks plan");
     assert!(
         output.status.success(),
@@ -276,7 +279,7 @@ fn status_survives_a_poisoned_query_log_and_signals_the_skip() {
         Command::new("git")
             .args(["init", "-q"])
             .current_dir(&repo)
-            .status()
+            .status_alone()
             .expect("git init")
             .success()
     );
@@ -287,7 +290,7 @@ fn status_survives_a_poisoned_query_log_and_signals_the_skip() {
         .env("XDG_CONFIG_HOME", &config_home)
         .env("XDG_STATE_HOME", home.join(".state"))
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run status");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -332,7 +335,7 @@ fn host_world(temp: &TempDir) -> HostWorld {
         Command::new("git")
             .args(["init", "-q"])
             .current_dir(&repo)
-            .status()
+            .status_alone()
             .expect("git init")
             .success()
     );
@@ -381,7 +384,7 @@ fn dispatch(world: &HostWorld, event: &str, stdin: &[u8], json: bool) -> std::pr
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn()
+        .spawn_alone()
         .expect("spawn dispatch");
     child
         .stdin
@@ -682,7 +685,7 @@ fn a_host_hook_never_exits_2_even_for_a_user_action_refusal() {
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn()
+        .spawn_alone()
         .expect("spawn");
     child
         .stdin

@@ -1,6 +1,8 @@
 //! Readers skip and report; decisions refuse; writers refuse; appends never
 //! lose a record to a torn line.
 
+mod support;
+
 use kinbase::StoreKind;
 use kinbase::store::{
     append_jsonl, read_events, read_jsonl_where, read_records, read_records_complete,
@@ -10,6 +12,7 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use support::SpawnAlone;
 use tempfile::TempDir;
 
 fn lines(path: &Path) -> Vec<String> {
@@ -208,7 +211,7 @@ fn a_torn_sessions_ledger_still_lets_a_session_end() {
             .env("XDG_CONFIG_HOME", home.join(".config"))
             .env("XDG_STATE_HOME", &state)
             .env_remove("KINBASE_COMPANY_URL")
-            .output()
+            .output_alone()
             .expect("run kinbase")
     };
     let started = run(&["session", "start", "--host", "codex", "--json"]);
@@ -253,7 +256,7 @@ fn a_skipped_line_is_reported_without_its_contents() {
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_STATE_HOME", &state)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run kinbase");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("unreadable-ledger-rows"), "{stderr}");
