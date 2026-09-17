@@ -590,63 +590,171 @@ fn identifier_formats(view: &str, family: &str, findings: &mut Vec<Finding>) {
             break;
         }
     }
-    // Email addresses.
-    for token in view.split(|c: char| {
-        c.is_whitespace()
-            || c == '<'
-            || c == '>'
-            || c == '('
-            || c == ')'
-            || c == ','
-            || c == ';'
-            || c == '"'
-    }) {
-        if let Some((local, domain)) = token.split_once('@') {
-            if !local.is_empty()
-                && domain.contains('.')
+    if contains_email(view) {
+        add(
+            findings,
+            "identifier-email",
+            family,
+            Taint::ForbiddenIdentifier,
+        );
+    }
+    if contains_phone_number(view) {
+        add(
+            findings,
+            "identifier-phone-format",
+            family,
+            Taint::ForbiddenIdentifier,
+        );
+    }
+}
+
+/// An email address anywhere in `view`, as people write them: after
+/// `mailto:` or a label colon, inside brackets or quotes, or ending a
+/// sentence. Reserved example domains are not addresses.
+fn contains_email(view: &str) -> bool {
+    view.split(|c: char| c.is_whitespace() || "<>()[]{},;\"'`|".contains(c))
+        .filter_map(|token| token.split_once('@'))
+        .any(|(local, domain)| {
+            // `mailto:` and `Email:` label the address; a colon after the
+            // host (`git@github.com:org/repo`) makes it a remote, and the
+            // domain check below refuses it.
+            let local = local.rsplit(':').next().unwrap_or_default();
+            let local = local.trim_start_matches(|c: char| !c.is_ascii_alphanumeric());
+            let domain = domain.trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
+            !local.is_empty()
                 && local
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b".+_-".contains(&b))
+                && domain.contains('.')
+                && !domain.starts_with('.')
+                && !domain.contains("..")
                 && domain
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
-                && !domain.ends_with('.')
+                && domain.rsplit('.').next().is_some_and(|tld| {
+                    tld.len() >= 2 && tld.bytes().all(|b| b.is_ascii_alphabetic())
+                })
                 && domain != "example.com"
                 && !domain.ends_with(".example")
-            {
-                add(
-                    findings,
-                    "identifier-email",
-                    family,
-                    Taint::ForbiddenIdentifier,
-                );
-                break;
+        })
+}
+
+/// A phone number in `view`: an E.164 number (`+` then 10 to 15 digits in
+/// groups) or a North American number grouped 3-3-4, with or without a
+/// leading `1` and parentheses around the area code. The digits must form
+/// one written number: a date, a clock time and a timezone offset elsewhere
+/// in the text are not added together, and an unformatted ten-digit run (an
+/// epoch timestamp) is not a phone number.
+fn contains_phone_number(view: &str) -> bool {
+    let chars: Vec<char> = view.chars().collect();
+    let mut index = 0;
+    while index < chars.len() {
+        let starts = chars[index].is_ascii_digit() || chars[index] == '+' || chars[index] == '(';
+        // Glued to a word before it, directly or through one `-`/`.`
+        // (`ABC-123-456-7890` is a ticket, not a phone).
+        let joined_to_word = index > 0
+            && (chars[index - 1].is_alphanumeric()
+                || (index > 1
+                    && matches!(chars[index - 1], '-' | '.')
+                    && chars[index - 2].is_alphabetic()));
+        if !starts || joined_to_word {
+            index += 1;
+            continue;
+        }
+        let mut end = index;
+        while end < chars.len() && (chars[end].is_ascii_digit() || " -.()+".contains(chars[end])) {
+            end += 1;
+        }
+        let next = end;
+        // The span ends at its last digit or closing parenthesis; a number
+        // glued to letters after it is an identifier, not a phone.
+        while end > index && " -.(+".contains(chars[end - 1]) {
+            end -= 1;
+        }
+        let glued = end < chars.len() && chars[end].is_alphanumeric();
+        if !glued && phone_span(&chars[index..end]) {
+            return true;
+        }
+        index = next.max(index + 1);
+    }
+    false
+}
+
+/// Whether one span of digits and separators holds a written phone number.
+fn phone_span(span: &[char]) -> bool {
+    // Digit groups and the separator text before each.
+    let mut groups: Vec<(String, String)> = Vec::new();
+    let mut separator = String::new();
+    let mut digits = String::new();
+    for &c in span {
+        if c.is_ascii_digit() {
+            digits.push(c);
+        } else {
+            if !digits.is_empty() {
+                groups.push((std::mem::take(&mut separator), std::mem::take(&mut digits)));
+            }
+            separator.push(c);
+        }
+    }
+    if !digits.is_empty() {
+        groups.push((separator, digits));
+    }
+    let single = |sep: &str| matches!(sep, "-" | "." | " ");
+    let chained = |sep: &str| matches!(sep, "-" | ".");
+    for (start, (sep, _)) in groups.iter().enumerate() {
+        // E.164: a `+` that opens a number (not one glued to the digits
+        // before it, as in a timezone offset), then groups joined by single
+        // separators until 10 to 15 digits have been written.
+        let opens = (start == 0 && sep.trim_start() == "+") || sep.ends_with(" +");
+        if opens {
+            let mut total = 0usize;
+            for (position, (joint, group)) in groups[start..].iter().enumerate() {
+                if position > 0 && !single(joint) {
+                    break;
+                }
+                total += group.len();
+                if (10..=15).contains(&total) {
+                    return true;
+                }
+                if total > 15 {
+                    break;
+                }
             }
         }
-    }
-    // Phone numbers: 10+ digits with separators, e.g. +1 555-123-4567.
-    let mut digits = 0usize;
-    let mut run = 0usize;
-    for c in view.chars() {
-        if c.is_ascii_digit() {
-            digits += 1;
-            run += 1;
-        } else if c == '-' || c == ' ' || c == '(' || c == ')' || c == '.' || c == '+' {
-            run = 0;
-        } else {
-            digits = 0;
-            run = 0;
+        // North American 3-3-4, optionally after `1` and with the area code
+        // in parentheses. A group chained on by `-` or `.` on either side
+        // makes it part of a longer identifier, unless the one before is
+        // the country code.
+        let Some(window) = groups.get(start..start + 3) else {
+            continue;
+        };
+        let (area_sep, area) = &window[0];
+        let (exchange_sep, exchange) = &window[1];
+        let (line_sep, line) = &window[2];
+        if (area.len(), exchange.len(), line.len()) != (3, 3, 4) {
+            continue;
         }
-        if digits >= 10 && run <= 4 && digits <= 15 && view.contains('-') && view.contains('+') {
-            add(
-                findings,
-                "identifier-phone-format",
-                family,
-                Taint::ForbiddenIdentifier,
-            );
-            break;
+        let parenthesized =
+            area_sep.ends_with('(') && matches!(exchange_sep.as_str(), ")" | ") " | ")-");
+        if !(parenthesized || single(exchange_sep)) || !single(line_sep) {
+            continue;
+        }
+        // Unparenthesized groups use one separator throughout, and groups
+        // split only by spaces ("512 256 1024") count only after a `1`.
+        let country_code = start > 0 && groups[start - 1].1 == "1";
+        if !parenthesized && (exchange_sep != line_sep || (line_sep == " " && !country_code)) {
+            continue;
+        }
+        let lead = area_sep.trim_end_matches('(');
+        let before_ok = start == 0 || !chained(lead) || country_code;
+        let after_ok = groups
+            .get(start + 3)
+            .is_none_or(|(joint, _)| !chained(joint));
+        if before_ok && after_ok {
+            return true;
         }
     }
+    false
 }
 
 fn correlation_ids(view: &str, family: &str, findings: &mut Vec<Finding>) {
@@ -699,4 +807,70 @@ pub fn scanner(text: &str) -> ScanResult {
         findings: Vec::new(),
         views_examined: 0,
     })
+}
+
+#[cfg(test)]
+mod identifier_tests {
+    use super::{contains_email, contains_phone_number};
+
+    #[test]
+    fn email_addresses_are_found_as_people_write_them() {
+        for text in [
+            "Write to alice.smith@acme-corp.io.",
+            "Contact: mailto:ops+pager@acme.co!",
+            "Email:bob@acme.org",
+            "reach me at <carol@acme.dev>",
+            "(dave@acme.com)",
+            "[erin@acme.net]",
+            "'frank@acme.io'",
+            "Is it grace@acme.io?",
+        ] {
+            assert!(contains_email(text), "{text}");
+        }
+        for text in [
+            "someone@example.com wrote the fixture",
+            "the handler for @mentions in the notifier",
+            "user@localhost is the default",
+            "a@b.c is not a valid address",
+            "decorators like @app.route are fine",
+            "npm install @scope/package@1.2.3",
+            "git clone git@github.com:acme/app.git",
+            "origin ssh://git@github.com/acme/app.git",
+        ] {
+            assert!(!contains_email(text), "{text}");
+        }
+    }
+
+    #[test]
+    fn phone_numbers_are_found_without_other_punctuation_in_the_text() {
+        for text in [
+            "Call 555-123-4567 tomorrow",
+            "call (555) 123-4567",
+            "call (555)123-4567",
+            "555.123.4567 is the desk",
+            "dial 1 555 123 4567",
+            "dial 1-555-123-4567",
+            "+1 555 123 4567",
+            "+15551234567",
+            "+44 20 7946 0958",
+            "On 2026-09-17 555-123-4567 called",
+        ] {
+            assert!(contains_phone_number(text), "{text}");
+        }
+        for text in [
+            "Deployed 2026-09-17 10:00 +0000 to prod",
+            "at 2026-09-17T10:00:00+00:00",
+            "The epoch was 1726567890 then",
+            "version 2026.09.17 shipped",
+            "ticket ABC-123-456-7890 closed",
+            "order 123-456-7890-12 shipped",
+            "ids 10.123.456.7890 in the log",
+            "PR 4035655462 was merged",
+            "retry 3 times over 12 seconds",
+            "buffer sizes 512 256 1024 bytes",
+            "ranges 555-123.4567 mixed",
+        ] {
+            assert!(!contains_phone_number(text), "{text}");
+        }
+    }
 }
