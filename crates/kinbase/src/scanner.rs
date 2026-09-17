@@ -632,7 +632,14 @@ fn contains_email(view: &str) -> bool {
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b".-".contains(&b))
                 && domain.rsplit('.').next().is_some_and(|tld| {
-                    tld.len() >= 2 && tld.bytes().all(|b| b.is_ascii_alphabetic())
+                    tld.len() >= 2
+                        && (tld.bytes().all(|b| b.is_ascii_alphabetic())
+                            || tld.strip_prefix("xn--").is_some_and(|label| {
+                                !label.is_empty()
+                                    && label
+                                        .bytes()
+                                        .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                            }))
                 })
                 && domain != "example.com"
                 && !domain.ends_with(".example")
@@ -657,8 +664,18 @@ fn contains_phone_number(view: &str) -> bool {
                 || (index > 1
                     && matches!(chars[index - 1], '-' | '.')
                     && chars[index - 2].is_alphabetic()));
-        if !starts || joined_to_word {
+        if !starts {
             index += 1;
+            continue;
+        }
+        if joined_to_word {
+            // The whole chained token is an identifier; resuming inside it
+            // found `123-456-7890` in `ABC-12-123-456-7890`.
+            while index < chars.len()
+                && (chars[index].is_alphanumeric() || matches!(chars[index], '-' | '.'))
+            {
+                index += 1;
+            }
             continue;
         }
         let mut end = index;
@@ -671,8 +688,21 @@ fn contains_phone_number(view: &str) -> bool {
         while end > index && " -.(+".contains(chars[end - 1]) {
             end -= 1;
         }
-        let glued = end < chars.len() && chars[end].is_alphanumeric();
-        if !glued && phone_span(&chars[index..end]) {
+        // Digits glued to letters after them (`9am`) are not part of the
+        // number before them: that group is dropped, not the whole span.
+        if end < chars.len() && chars[end].is_alphanumeric() {
+            while end > index && chars[end - 1].is_ascii_digit() {
+                end -= 1;
+            }
+            let separated = end > index && " -.".contains(chars[end - 1]);
+            while end > index && " -.(+".contains(chars[end - 1]) {
+                end -= 1;
+            }
+            if !separated {
+                end = index;
+            }
+        }
+        if end > index && phone_span(&chars[index..end]) {
             return true;
         }
         index = next.max(index + 1);
@@ -824,6 +854,7 @@ mod identifier_tests {
             "[erin@acme.net]",
             "'frank@acme.io'",
             "Is it grace@acme.io?",
+            "alice@mail.xn--p1ai",
         ] {
             assert!(contains_email(text), "{text}");
         }
@@ -854,6 +885,8 @@ mod identifier_tests {
             "+15551234567",
             "+44 20 7946 0958",
             "On 2026-09-17 555-123-4567 called",
+            "+1-555-123-4567 9am-5pm",
+            "555-123-4567 9am-5pm weekdays",
         ] {
             assert!(contains_phone_number(text), "{text}");
         }
@@ -869,6 +902,8 @@ mod identifier_tests {
             "retry 3 times over 12 seconds",
             "buffer sizes 512 256 1024 bytes",
             "ranges 555-123.4567 mixed",
+            "ticket ABC-12-123-456-7890 closed",
+            "build 555-123-4567abc failed",
         ] {
             assert!(!contains_phone_number(text), "{text}");
         }

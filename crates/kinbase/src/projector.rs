@@ -439,7 +439,10 @@ pub fn run(
         )
     };
     let mut sufficiency = false;
-    let mut byte_ceiling_hit = resident_byte_ceiling_hit;
+    // Whether a candidate of positive value did not fit in the round that
+    // ended selection. Only that round counts: a candidate refused for
+    // bytes earlier can have become redundant since.
+    let mut terminal_round_byte_blocked = false;
     let mut ended_at_byte_ceiling = false;
     let mut stop_round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
     let mut direction_slots_used = 0usize;
@@ -447,6 +450,7 @@ pub fn run(
     let cache = EvalCache::new(&candidates, task, decision);
     while context.len() < PROJECTION_LIMIT {
         let mut round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
+        terminal_round_byte_blocked = false;
         for fact in &candidates {
             if context
                 .iter()
@@ -461,7 +465,7 @@ pub fn run(
             let evaluation = evaluate_cached(fact, &context, &cache);
             if context_bytes(&context, Some(fact)) > PROJECTION_BYTE_LIMIT {
                 if evaluation.marginal_value > 0 {
-                    byte_ceiling_hit = true;
+                    terminal_round_byte_blocked = true;
                 }
                 continue;
             }
@@ -480,10 +484,13 @@ pub fn run(
         let Some((fact, evaluation)) = round.first().cloned() else {
             // Nothing left fits; if something of value did not, the byte
             // ceiling is what stopped the loop.
-            ended_at_byte_ceiling = byte_ceiling_hit;
+            ended_at_byte_ceiling = terminal_round_byte_blocked;
             break;
         };
         if evaluation.marginal_value <= 0 {
+            // What fits adds nothing; a candidate that would have is the
+            // byte ceiling's doing.
+            ended_at_byte_ceiling = terminal_round_byte_blocked;
             // The loop stops on net marginal value: record why every
             // remaining candidate was left out, best first.
             stop_round = round;
@@ -578,6 +585,7 @@ pub fn run(
 
     // The working set alone filled the projection: no candidate was ever
     // selected because the residents left no room.
+    let byte_ceiling_hit = resident_byte_ceiling_hit || ended_at_byte_ceiling;
     let residents_filled = residents.len() >= PROJECTION_LIMIT
         || (resident_byte_ceiling_hit && selected.is_empty() && ended_at_byte_ceiling);
     let item_ceiling_hit = context.len() >= PROJECTION_LIMIT
