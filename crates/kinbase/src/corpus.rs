@@ -651,16 +651,24 @@ pub(crate) fn load_store(
             // the offline question loop. They are private cache bytes, never
             // repository Git content.
             let company_root = crate::store::store_root(crate::StoreKind::Company, repo);
-            if let Ok(local_events) = crate::store::read_events(&company_root) {
-                events.extend(local_events.into_iter().map(|event| AdmittedEvent {
-                    event,
-                    verification: crate::reducer::Verification::Verified,
-                    store_cursor: String::new(),
-                    origin_trust: None,
-                    reachable: Some(true),
-                    source_identity: None,
-                    environment_registered: None,
-                }));
+            match crate::store::read_events(&company_root) {
+                Ok(local_events) => {
+                    events.extend(local_events.into_iter().map(|event| AdmittedEvent {
+                        event,
+                        verification: crate::reducer::Verification::Verified,
+                        store_cursor: String::new(),
+                        origin_trust: None,
+                        reachable: Some(true),
+                        source_identity: None,
+                        environment_registered: None,
+                    }))
+                }
+                // Degraded, not empty: the reduce runs without the local
+                // answers and says so.
+                Err(error) => crate::output::diagnostic(
+                    "unreadable-event-store",
+                    json!({"store": "company", "code": error.code, "message": error.message}),
+                ),
             }
             // Company snapshot and local authority-answer events are Company
             // records even when a publisher repeats Codebase event bytes.
@@ -968,7 +976,13 @@ pub fn admit(
     // still refuses a malformed event wherever trust is actually decided; being
     // permissive here would be wrong, being permissive about *listing* is not.
     let existing: std::collections::BTreeSet<String> = crate::store::read_events(&destination_root)
-        .unwrap_or_default()
+        .unwrap_or_else(|error| {
+            crate::output::diagnostic(
+                "unreadable-event-store",
+                json!({"store": store_name(store), "code": error.code, "message": error.message}),
+            );
+            Vec::new()
+        })
         .into_iter()
         .map(|event| event.logical_key)
         .collect();
@@ -1431,9 +1445,10 @@ fn classify_bulk(
     // classifier did it; it does not make the work void when the binary is
     // rebuilt, which is what keying on the fingerprint did: every rebuild
     // re-sent the whole corpus and the run made no progress on what was left.
+    // Complete, not tolerant: an unreadable receipt would send its document
+    // back to the classifier and journal it twice.
     let done: BTreeSet<String> =
-        crate::store::read_records(crate::StoreKind::Personal, repo, BULK_RECEIPTS)
-            .unwrap_or_default()
+        crate::store::read_records_complete(crate::StoreKind::Personal, repo, BULK_RECEIPTS)?
             .iter()
             .filter_map(|receipt| {
                 crate::json::get_str(receipt, "observation_id").map(str::to_owned)
