@@ -103,9 +103,11 @@ def host_binary(host: str, roots: ProofRoots, kinbase: Kinbase) -> hosts.HostBin
     recorder = hosts.install_invocation_recorder(bin_dir, host, resolved)
     kinbase.path_prefix.insert(0, bin_dir)
     # Literal, so the control-policy check can see exactly which environment names
-    # reach the probe. A version probe needs PATH and nothing else.
+    # reach the probe. A version probe needs PATH (recorder first) and the
+    # isolated HOME, so the host never reads the operator's own configuration.
+    driver_env = kinbase.base_env()
     available = hosts.host_availability(
-        host, env={"PATH": kinbase.base_env().get("PATH", "")}
+        host, env={"PATH": driver_env.get("PATH", ""), "HOME": driver_env["HOME"]}
     )
     if available is None or available.version == "unknown":
         raise HarnessInvalid("cannot record the exact version of " + host)
@@ -243,9 +245,26 @@ def test_native_host_events_prime_capture_and_exclude_personal(
     _run(kinbase, "hooks", "install", host, "--json",
          cwd=world.repo.path)
 
+    frozen = hosts.envelope_fixture(host)
+    if host_binary.version != frozen["version"]:
+        raise HarnessInvalid(
+            f"the frozen {host} envelopes describe {frozen['version']!r}; the host under "
+            f"test is {host_binary.version!r}. Re-freeze tests/fixtures/hosts/envelopes.json "
+            "for the pinned host (spec/verification.md V-9 pins both)."
+        )
     session = ids.token("native-events")
+
+    def checkpointed(row: dict) -> bool:
+        return row.get("session_id") == session and row.get("status") == "checkpointed"
+
     dispatched: dict[str, dict] = {}
+    checkpoints_before_stop = 0
     for event in NATIVE_EVENTS:
+        if event == "Stop":
+            # A checkpoint written earlier (at PreCompact, say) is not the
+            # termination handlers' work.
+            checkpoints_before_stop = len(_personal_records(
+                roots, "session-checkpoints.jsonl", checkpointed, wait_s=0))
         envelope = hosts.envelope_for(host, event, session_id=session,
                                       cwd=str(world.repo.path))
         result = _run(kinbase, "hooks", "dispatch", host, event, "--json",
@@ -263,21 +282,32 @@ def test_native_host_events_prime_capture_and_exclude_personal(
     witness.assert_not_mocked()
     start = dispatched["SessionStart"]
     rendered = json.dumps(dispatched)
+    # Capture and checkpoint are read from the Personal ledgers the product
+    # writes, not from the response's own flags (which were constants).
+    captured = _personal_records(
+        roots, "observations.jsonl",
+        lambda row: row.get("source_identity") == "session:" + session,
+    )
+    # Dispatch is synchronous: Stop and SessionEnd have written what they
+    # will write by now.
+    checkpoints = _personal_records(
+        roots, "session-checkpoints.jsonl", checkpointed, wait_s=0)
     O.check(
         "V-9.native-events",
         {
             "events_dispatched": sorted(dispatched),
             "host_invocation_records": len(invocations),
-            "not_mocked": True,
+            "not_mocked": bool(witness.session_records()),
             "session_start": {
                 "repository_root": field(start, "repository_root"),
                 "company_state": field(start, "company_state"),
             },
             "personal_root_occurrences": rendered.count(canary)
             + rendered.count(str(roots.personal_root)),
-            "capture_continued": field(
-                dispatched["UserPromptSubmit"], "capture_active"),
-            "stop_checkpointed": field(dispatched["Stop"], "checkpointed"),
+            "envelope_fixture": {"host_version": frozen["version"],
+                                 "provenance": frozen["provenance"]},
+            "capture_continued": bool(captured),
+            "stop_checkpointed": len(checkpoints) > checkpoints_before_stop,
         },
         label="native host events prime capture and exclude Personal",
     )
@@ -313,8 +343,9 @@ def test_matched_conversations_produce_identical_canonical_payloads(
         native = []
         for index, text in enumerate(messages):
             message_id = ids.token("parity-message-" + str(index))
+            # A host sends no message id or timestamp with a prompt.
             prompt = hosts.envelope_for(name, "UserPromptSubmit", session_id=session,
-                                        cwd=str(world.repo.path), id=message_id, prompt=text, timestamp=stamp)
+                                        cwd=str(world.repo.path), prompt=text)
             _run(kinbase, "hooks", "dispatch", name, "UserPromptSubmit", "--json",
                  cwd=world.repo.path, stdin=json.dumps(prompt)).ok()
             native.append({"id": message_id, "role": "user", "text": text,
@@ -363,6 +394,26 @@ def test_matched_conversations_produce_identical_canonical_payloads(
         "receipts_match": first["receipts"] == second["receipts"],
         "projections_match": bool(projections[0]) and projections[0] == projections[1],
     }, label="matched native conversations admit identical canonical knowledge and receipts")
+
+
+def _personal_records(roots: ProofRoots, name: str, keep, *, wait_s: float = 30.0) -> list[dict]:
+    """Rows of one Personal ledger that ``keep`` accepts, waiting for a queued
+    observation to drain; an absent ledger is no rows."""
+    path = roots.personal_root / name
+    deadline = time.monotonic() + wait_s
+    while True:
+        rows_found = []
+        if path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(row, dict) and keep(row):
+                    rows_found.append(row)
+        if rows_found or time.monotonic() >= deadline:
+            return rows_found
+        time.sleep(0.25)
 
 
 def _construct_state(kinbase: Kinbase, roots: ProofRoots, world, state: str) -> bool:

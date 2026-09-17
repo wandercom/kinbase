@@ -8,9 +8,8 @@ import sys
 
 import pytest
 
-from ._harness import auxsel, consumption, corpora
+from ._harness import auxsel
 from ._harness.requirements import HarnessInvalid, VERIFY, spec_ref
-from ._harness.roots import ProofRoots
 
 pytestmark = pytest.mark.selftest
 REFERENCE = VERIFY("INSTRUMENT", "fail-closed", "A detector that cannot catch its positive control yields `INVALID_HARNESS`, never PASS.")

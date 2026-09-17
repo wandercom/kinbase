@@ -651,16 +651,42 @@ pub(crate) fn load_store(
             // the offline question loop. They are private cache bytes, never
             // repository Git content.
             let company_root = crate::store::store_root(crate::StoreKind::Company, repo);
-            if let Ok(local_events) = crate::store::read_events(&company_root) {
-                events.extend(local_events.into_iter().map(|event| AdmittedEvent {
-                    event,
-                    verification: crate::reducer::Verification::Verified,
-                    store_cursor: String::new(),
-                    origin_trust: None,
-                    reachable: Some(true),
-                    source_identity: None,
-                    environment_registered: None,
-                }));
+            match crate::store::read_events(&company_root) {
+                Ok(local_events) => {
+                    // An unreadable answers ledger leaves every local answer
+                    // unverified, and says so.
+                    let answers = crate::store::read_records(
+                        crate::StoreKind::Company,
+                        repo,
+                        "answers.jsonl",
+                    )
+                    .unwrap_or_else(|error| {
+                        crate::output::diagnostic(
+                            "unreadable-answer-ledger",
+                            json!({"store": "company", "code": error.code, "message": error.message}),
+                        );
+                        Vec::new()
+                    });
+                    let revoked_keys: BTreeSet<String> = revocations
+                        .iter()
+                        .map(|revocation| revocation.revoked_key.clone())
+                        .collect();
+                    events.extend(local_events.into_iter().map(|event| AdmittedEvent {
+                        verification: local_answer_verification(&event, &answers, &revoked_keys),
+                        event,
+                        store_cursor: String::new(),
+                        origin_trust: None,
+                        reachable: Some(true),
+                        source_identity: None,
+                        environment_registered: None,
+                    }))
+                }
+                // Degraded, not empty: the reduce runs without the local
+                // answers and says so.
+                Err(error) => crate::output::diagnostic(
+                    "unreadable-event-store",
+                    json!({"store": "company", "code": error.code, "message": error.message}),
+                ),
             }
             // Company snapshot and local authority-answer events are Company
             // records even when a publisher repeats Codebase event bytes.
@@ -968,7 +994,13 @@ pub fn admit(
     // still refuses a malformed event wherever trust is actually decided; being
     // permissive here would be wrong, being permissive about *listing* is not.
     let existing: std::collections::BTreeSet<String> = crate::store::read_events(&destination_root)
-        .unwrap_or_default()
+        .unwrap_or_else(|error| {
+            crate::output::diagnostic(
+                "unreadable-event-store",
+                json!({"store": store_name(store), "code": error.code, "message": error.message}),
+            );
+            Vec::new()
+        })
         .into_iter()
         .map(|event| event.logical_key)
         .collect();
@@ -1169,7 +1201,10 @@ pub fn admit(
         crate::store::write_content_addressed_event(
             &destination_root,
             &serde_json::from_value(signed).map_err(|error| {
-                ContractError::invariant(format!("admitted event is not a fact event: {error}"))
+                ContractError::invariant(format!(
+                    "admitted event is not a fact event: {}",
+                    crate::json::serde_error_text(&error)
+                ))
             })?,
         )?;
         *by_provenance.entry(event.provenance.clone()).or_insert(0) += 1;
@@ -1311,7 +1346,8 @@ pub fn admit(
                 &destination_root,
                 &serde_json::from_value(signed).map_err(|error| {
                     ContractError::invariant(format!(
-                        "admitted atom event is not a fact event: {error}"
+                        "admitted atom event is not a fact event: {}",
+                        crate::json::serde_error_text(&error)
                     ))
                 })?,
             )?;
@@ -1425,15 +1461,17 @@ fn classify_bulk(
     classify_limit: Option<usize>,
 ) -> Result<Value, ContractError> {
     let classifier = launcher.shared.classifier.as_ref();
+    let registry = launcher.scanner_registry()?;
     let provider = crate::session::select_provider(classifier);
     let fingerprint = crate::session::classifier_fingerprint(classifier, &provider);
     // A document classified once is classified. The receipt records which
     // classifier did it; it does not make the work void when the binary is
     // rebuilt, which is what keying on the fingerprint did: every rebuild
     // re-sent the whole corpus and the run made no progress on what was left.
+    // Complete, not tolerant: an unreadable receipt would send its document
+    // back to the classifier and journal it twice.
     let done: BTreeSet<String> =
-        crate::store::read_records(crate::StoreKind::Personal, repo, BULK_RECEIPTS)
-            .unwrap_or_default()
+        crate::store::read_records_complete(crate::StoreKind::Personal, repo, BULK_RECEIPTS)?
             .iter()
             .filter_map(|receipt| {
                 crate::json::get_str(receipt, "observation_id").map(str::to_owned)
@@ -1456,8 +1494,19 @@ fn classify_bulk(
     for group in pending.chunks(BULK_DOCUMENTS_PER_PASS) {
         let mut requests_in = Vec::new();
         let mut chunk_owner: BTreeMap<String, String> = BTreeMap::new();
+        // A document holding hard-blocking material is journaled with no
+        // atoms and never sent to the classifier: scanning only the atoms
+        // let the rest of the document, or a paraphrase, through.
+        let mut blocked: BTreeSet<String> = BTreeSet::new();
         for observation in group {
             let statement = observation.statement.as_deref().unwrap_or_default();
+            if crate::scanner::scan(statement, &registry)
+                .map(|result| result.hard_block)
+                .unwrap_or(true)
+            {
+                blocked.insert(observation.observation_id.clone());
+                continue;
+            }
             for (index, chunk) in chunk_statement(statement).into_iter().enumerate() {
                 let chunk_id = format!("{}:c{index}", observation.observation_id);
                 chunk_owner.insert(chunk_id.clone(), observation.observation_id.clone());
@@ -1542,6 +1591,7 @@ fn classify_bulk(
                 .collect();
             atoms_total += receipt_atoms.len();
             let receipt = json!({
+                "hard_blocked": blocked.contains(&observation.observation_id),
                 "observation_id": observation.observation_id,
                 "logical_key": observation.logical_key,
                 "repository_id": observation.repository_id,
@@ -1598,8 +1648,238 @@ fn classify_bulk(
         "model": provider.live_model,
         "configured_model": provider.configured_model,
         "fallback_reason": provider.fallback_reason,
+        "processor": provider.processor,
+        "processor_scope": provider.processor_scope,
         "fingerprint": fingerprint,
         "requests": requests,
         "retries": retries,
     }))
+}
+
+/// A local Company event is an offline authority answer, trusted only
+/// through the answer it cites in the local answers ledger: same scope and
+/// text, signed by the authority (checked again here against the signed bytes
+/// the ledger keeps, and refused once that key is revoked), and the event's
+/// own signature valid. Ledger records from before the signed bytes were kept
+/// are accepted on the record alone, as is an event from before local events
+/// named their signing key. Every local event used to count as verified
+/// unexamined.
+fn local_answer_verification(
+    event: &crate::model::FactEvent,
+    answers: &[Value],
+    revoked_keys: &BTreeSet<String>,
+) -> crate::reducer::Verification {
+    use crate::reducer::Verification;
+    let Some(answer) =
+        answers.iter().find(|answer| {
+            event.evidence_refs.iter().any(|reference| {
+                crate::json::get_str(answer, "answer_id") == Some(reference.as_str())
+            }) && crate::json::get_str(answer, "answer") == Some(event.statement.as_str())
+                && crate::json::get_str(answer, "authority_scope")
+                    == Some(event.authority_scope.as_str())
+        })
+    else {
+        return Verification::Unverified;
+    };
+    let signer = crate::json::get_str(answer, "signer").unwrap_or_default();
+    if revoked_keys.contains(signer) {
+        return Verification::Revoked;
+    }
+    if let Some(signed) = answer.get("signed_answer") {
+        let authentic = signed.as_object().is_some_and(|signed| {
+            signed.get("answer").and_then(Value::as_str) == Some(event.statement.as_str())
+                && signed.get("signer").and_then(Value::as_str) == Some(signer)
+                && crate::crypto::PublicKey::from_hex(signer)
+                    .is_ok_and(|key| crate::questions::answer_signature_valid(signed, &key))
+        });
+        if !authentic {
+            return Verification::SignatureInvalid;
+        }
+    }
+    let legacy_signer = event.signer == event.authority_id;
+    if legacy_signer || event.verify_signature().is_some() {
+        Verification::Verified
+    } else {
+        Verification::SignatureInvalid
+    }
+}
+
+#[cfg(test)]
+mod local_answer_tests {
+    use super::*;
+    use crate::crypto::PrivateKey;
+    use crate::reducer::Verification;
+    use serde_json::Map;
+
+    const SCOPE: &str = "company:payments";
+    const TEXT: &str = "Refunds settle two business days after approval.";
+
+    fn signed_answer(authority: &PrivateKey, text: &str) -> Map<String, Value> {
+        authority
+            .sign_document(
+                "answer",
+                &json!({"question_id": "question_1", "answer": text, "authority_id": "payments-owner"}),
+            )
+            .expect("sign answer")
+            .as_object()
+            .expect("object")
+            .clone()
+    }
+
+    fn ledger_record(answer_id: &str, signed: &Map<String, Value>) -> Value {
+        json!({
+            "answer_id": answer_id,
+            "answer": signed["answer"],
+            "authority_scope": SCOPE,
+            "signer": signed["signer"],
+            "signature": signed["signature"],
+            "signed_answer": signed
+        })
+    }
+
+    fn answer_event(
+        local: &PrivateKey,
+        question: Value,
+        text: &str,
+        answer_id: &str,
+    ) -> crate::model::FactEvent {
+        crate::questions::authority_fact_event(
+            local,
+            &question,
+            text,
+            answer_id,
+            "payments-owner",
+            SCOPE,
+            "2026-09-01T00:00:00.000Z",
+            &[],
+            &[],
+        )
+        .expect("event")
+    }
+
+    fn event(local: &PrivateKey, text: &str, answer_id: &str) -> crate::model::FactEvent {
+        answer_event(
+            local,
+            json!({"question_id": "question_1", "logical_key": "logical_refunds"}),
+            text,
+            answer_id,
+        )
+    }
+
+    #[test]
+    fn an_offline_answer_takes_the_service_identities_and_verifies() {
+        let local = PrivateKey::generate();
+        let fact = event(&local, TEXT, "answer_1");
+        assert_eq!(fact.fact_id, crate::model::fact_id("company", SCOPE, TEXT));
+        assert_eq!(fact.logical_key, "logical_refunds");
+        assert_eq!(fact.signer, local.public().to_hex());
+        assert!(fact.verify_signature().is_some());
+
+        let unkeyed = answer_event(
+            &local,
+            json!({"question_id": "question_2"}),
+            TEXT,
+            "answer_2",
+        );
+        assert_eq!(
+            unkeyed.logical_key,
+            crate::model::logical_key("company", SCOPE, "question_2")
+        );
+    }
+
+    #[test]
+    fn a_later_answer_joins_the_first_answers_group() {
+        let local = PrivateKey::generate();
+        let mut legacy = event(&local, TEXT, "answer_1");
+        legacy.logical_key = "logical_legacy_scope_key".to_owned();
+        let newer = event(&local, "Refunds settle at once.", "answer_2");
+        let prior = vec![
+            json!({"answer_id": "answer_1", "event_id": legacy.event_id}),
+            json!({"answer_id": "answer_2", "event_id": newer.event_id}),
+        ];
+        let events = vec![newer.clone(), legacy.clone()];
+        assert_eq!(
+            crate::questions::answer_chain_key(&prior, &events).as_deref(),
+            Some("logical_legacy_scope_key")
+        );
+        assert_eq!(crate::questions::answer_chain_key(&prior, &[newer]), None);
+        assert_eq!(crate::questions::answer_chain_key(&[], &events), None);
+
+        // The correction carries that key, so the reducer can retire the
+        // answer it supersedes.
+        let correction = answer_event(
+            &local,
+            json!({"question_id": "question_1", "logical_key": "logical_legacy_scope_key"}),
+            "Refunds settle in one business day.",
+            "answer_3",
+        );
+        assert_eq!(correction.logical_key, legacy.logical_key);
+    }
+
+    #[test]
+    fn a_local_answer_is_trusted_only_through_its_signed_answer() {
+        let authority = PrivateKey::generate();
+        let local = PrivateKey::generate();
+        let signed = signed_answer(&authority, TEXT);
+        let ledger = vec![ledger_record("answer_1", &signed)];
+        let nothing_revoked = BTreeSet::new();
+        let fact = event(&local, TEXT, "answer_1");
+        let verify =
+            |fact: &crate::model::FactEvent, ledger: &[Value], revoked: &BTreeSet<String>| {
+                local_answer_verification(fact, ledger, revoked)
+            };
+
+        assert_eq!(
+            verify(&fact, &ledger, &nothing_revoked),
+            Verification::Verified
+        );
+        // No answer in the ledger backs the event.
+        assert_eq!(
+            verify(&event(&local, TEXT, "answer_9"), &ledger, &nothing_revoked),
+            Verification::Unverified
+        );
+        assert_eq!(
+            verify(
+                &event(&local, "Refunds settle at once.", "answer_1"),
+                &ledger,
+                &nothing_revoked
+            ),
+            Verification::Unverified
+        );
+        // The event changed after it was signed.
+        let mut altered = fact.clone();
+        altered.raw = None;
+        altered.distortion.rationale = "edited".to_owned();
+        assert_eq!(
+            verify(&altered, &ledger, &nothing_revoked),
+            Verification::SignatureInvalid
+        );
+        // The ledger's signed answer no longer matches its signature.
+        let mut edited = signed.clone();
+        edited.insert("rationale".to_owned(), json!("edited"));
+        assert_eq!(
+            verify(
+                &fact,
+                &[ledger_record("answer_1", &edited)],
+                &nothing_revoked
+            ),
+            Verification::SignatureInvalid
+        );
+        // The authority's key has since been revoked.
+        let revoked = BTreeSet::from([authority.public().to_hex()]);
+        assert_eq!(verify(&fact, &ledger, &revoked), Verification::Revoked);
+        // A ledger record and event from before signed bytes were kept.
+        let mut legacy_record = ledger_record("answer_1", &signed);
+        legacy_record
+            .as_object_mut()
+            .expect("object")
+            .remove("signed_answer");
+        let mut legacy = fact.clone();
+        legacy.raw = None;
+        legacy.signer = "payments-owner".to_owned();
+        assert_eq!(
+            verify(&legacy, &[legacy_record], &nothing_revoked),
+            Verification::Verified
+        );
+    }
 }

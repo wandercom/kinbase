@@ -268,6 +268,13 @@ may grow only through a new schema version.
 | 6 | declared dependency unavailable | retry only when `retryable=true` and within bound |
 | 70 | internal or acceptance-instrument failure | preserve evidence; no product pass |
 
+`hooks dispatch` answers a host, not a script, and hosts read exit 2 as an instruction
+to block: Claude Code refuses the tool call, or refuses to stop and runs the Stop hook
+again, so a user-action refusal inside a hook would stall or loop the session. When a
+host invokes it, `hooks dispatch` therefore reports every exit-2 refusal as exit 3,
+with the same `code`, `message` and `remediation` on stderr; no other exit changes, and
+the same refusal from an ordinary command still exits 2.
+
 | code | trigger | exit | retryable | example remediation |
 |---|---|---:|:---:|---|
 | `COMPANY_UNREACHABLE` | Company endpoint cannot answer within timeout | 6 or 3 on safe cached read | yes | Restore endpoint or continue with named facts withheld. |
@@ -306,7 +313,7 @@ Common first-run failures are fixed, not guessed:
 | unreadable token or key file | exit 4 with exact path role, never file contents |
 | token/key mode broader than 0600 | exit 4; chmod remediation |
 | Company unreachable during repo init | exit 6; no certificate/root is cached from worktree bytes |
-| command outside a Git worktree | exit 2; ordinary non-repo Personal session may continue |
+| command outside a Git worktree | exit 2 (exit 3 from host `hooks dispatch`); ordinary non-repo Personal session may continue |
 | requested store uninitialized | exit 2 with exact `company init` or `repo init` command |
 | unwritable data root | exit 4 before partial schema creation |
 | malformed certificate/config | exit 5 and quarantine; no trust-on-first-use fallback |

@@ -16,6 +16,7 @@ from ._harness import catalog as C
 from ._harness.evidence_model import Evidence, Origin
 from ._harness.killledger import run_ledger
 from ._harness.requirements import (
+    AUTHORITY_PRECEDENCE,
     HarnessInvalid,
     VERIFY,
     THREAT,
@@ -92,6 +93,11 @@ def test_every_obligation_freezes_all_four_elements() -> None:
 def test_every_obligation_quotes_the_ratified_bytes() -> None:
     unresolved: list[str] = []
     for obligation in C.OBLIGATIONS:
+        if obligation.artifact not in AUTHORITY_PRECEDENCE:
+            # A trace artifact (the unratified ruling brief) cannot create an
+            # obligation, however faithfully it is quoted.
+            unresolved.append(f"{obligation.oid}: {obligation.artifact} is not ratified")
+            continue
         haystacks = _artifact_variants(obligation.artifact)
         needles = _variants(obligation.requirement)
         if not any(n in h for n in needles for h in haystacks):

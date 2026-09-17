@@ -312,6 +312,29 @@ def _analyse_test(
             if bool(node.test.value):
                 add(node.lineno, "tautology", "assert over a truthy constant")
 
+    # -- constant evidence -------------------------------------------------
+    # A literal True/False/None handed to O.check satisfies (or defeats) its
+    # clause by construction; evidence must be derived from what ran.
+    for node in ast.walk(func):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "check"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "O"
+        ):
+            continue
+        for payload in node.args[1:2]:
+            if not isinstance(payload, ast.Dict):
+                continue
+            for key, value in zip(payload.keys, payload.values):
+                if isinstance(value, ast.Constant) and (
+                    isinstance(value.value, bool) or value.value is None
+                ):
+                    add(value.lineno, "constant-evidence",
+                        f"evidence field {ast.unparse(key) if key else '**'} is the "
+                        f"literal {value.value!r}; derive it from the run")
+
     # -- swallowed typed failures -----------------------------------------
     for node in ast.walk(func):
         if isinstance(node, ast.ExceptHandler) and not _contains_raise(node):
