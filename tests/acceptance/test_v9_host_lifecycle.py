@@ -251,8 +251,18 @@ def test_native_host_events_prime_capture_and_exclude_personal(
             "for the pinned host (spec/verification.md V-9 pins both)."
         )
     session = ids.token("native-events")
+
+    def checkpointed(row: dict) -> bool:
+        return row.get("session_id") == session and row.get("status") == "checkpointed"
+
     dispatched: dict[str, dict] = {}
+    checkpoints_before_stop = 0
     for event in NATIVE_EVENTS:
+        if event == "Stop":
+            # A checkpoint written earlier (at PreCompact, say) is not the
+            # termination handlers' work.
+            checkpoints_before_stop = len(_personal_records(
+                roots, "session-checkpoints.jsonl", checkpointed, wait_s=0))
         envelope = hosts.envelope_for(host, event, session_id=session,
                                       cwd=str(world.repo.path))
         result = _run(kinbase, "hooks", "dispatch", host, event, "--json",
@@ -276,10 +286,10 @@ def test_native_host_events_prime_capture_and_exclude_personal(
         roots, "observations.jsonl",
         lambda row: row.get("source_identity") == "session:" + session,
     )
+    # Dispatch is synchronous: Stop and SessionEnd have written what they
+    # will write by now.
     checkpoints = _personal_records(
-        roots, "session-checkpoints.jsonl",
-        lambda row: row.get("session_id") == session and row.get("status") == "checkpointed",
-    )
+        roots, "session-checkpoints.jsonl", checkpointed, wait_s=0)
     O.check(
         "V-9.native-events",
         {
@@ -295,7 +305,7 @@ def test_native_host_events_prime_capture_and_exclude_personal(
             "envelope_fixture": {"host_version": frozen["version"],
                                  "provenance": frozen["provenance"]},
             "capture_continued": bool(captured),
-            "stop_checkpointed": bool(checkpoints),
+            "stop_checkpointed": len(checkpoints) > checkpoints_before_stop,
         },
         label="native host events prime capture and exclude Personal",
     )

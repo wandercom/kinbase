@@ -110,7 +110,12 @@ def pytest_configure(config: pytest.Config) -> None:
     census = Census.build()
     census.catalog_digest = catalog_module.catalog_digest()
     from acceptance._harness.cli import product_identity
-    census.product = product_identity()
+    # The reviewer self-test is product-independent: an inherited
+    # KINBASE_BIN is neither hashed nor run there.
+    census.product = (
+        {"resolved": False, "reason": "reviewer mode runs no product"}
+        if reviewer else product_identity()
+    )
     census.mutation = mutation_catalog.active_mutation() or ""
     census.detector_mutation = os.environ.get("KINBASE_ACCEPT_DETECTOR_MUTATION", "")
     config.stash[CENSUS_KEY] = census

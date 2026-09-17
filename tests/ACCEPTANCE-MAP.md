@@ -5,7 +5,7 @@ resolved `@spec_ref` backreferences, not test counts; a single test may carry
 several exact citations.
 
 The machine-readable catalog is `tests/fixtures/catalog/obligations.json`
-(digest `145e9514d023e1c3`, which covers every per-element `each` clause):
+(digest `53252bd34dfc1cc7`, which covers every per-element `each` clause):
 112 obligations and 456 thresholds, each freezing a
 threshold, positive control, negative control, product mutation and detector
 mutation. `tests/fixtures/catalog/planters.json` records the 35

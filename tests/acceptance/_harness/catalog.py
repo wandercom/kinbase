@@ -127,7 +127,9 @@ class Obligation:
     def _clause_json(self, clause, parent: str) -> dict:
         """One threshold with its controls; an `every` threshold carries the
         sub-clauses it applies to each element, so the frozen catalog (and its
-        digest) changes whenever what the obligation really checks changes."""
+        digest) changes whenever what the obligation really checks changes.
+        Controls and mutations exist per top-level threshold only, so a
+        per-element clause names none."""
         tag = f"{parent}{clause.tag}"
         entry = {
             "tag": tag,
@@ -136,11 +138,14 @@ class Obligation:
             "bound": clause.value if not isinstance(clause.value, tuple) else list(clause.value),
             "min_len": clause.min_len,
             "why": clause.why,
-            "positive_control": self.positive_control(tag),
-            "negative_control": self.negative_control(tag),
-            "product_mutation": self.product_mutation(tag),
-            "detector_mutation": self.detector_mutation(tag),
         }
+        if not parent:
+            entry.update({
+                "positive_control": self.positive_control(tag),
+                "negative_control": self.negative_control(tag),
+                "product_mutation": self.product_mutation(tag),
+                "detector_mutation": self.detector_mutation(tag),
+            })
         if clause.each:
             entry["each"] = [self._clause_json(sub, f"{tag}/") for sub in clause.each]
         return entry
@@ -2423,4 +2428,4 @@ def catalog_digest() -> str:
 
 
 if __name__ == "__main__":  # pragma: no cover - regeneration helper
-    print(json.dumps(catalog_json(), indent=1, sort_keys=True))
+    print(json.dumps(catalog_json(), indent=2, sort_keys=True))

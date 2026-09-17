@@ -117,6 +117,27 @@ def test_no_collection_fallback_substitutes_an_empty_domain() -> None:
 
 
 @spec_ref(_FAIL_CLOSED)
+def test_no_constant_evidence_satisfies_an_obligation() -> None:
+    _report("constant-evidence",
+            "A literal True/False/None handed to O.check satisfies its clause "
+            "by construction; derive the value from what ran.")
+
+
+@spec_ref(_FAIL_CLOSED)
+def test_constant_evidence_rule_catches_its_positive_control(tmp_path: Path) -> None:
+    planted = tmp_path / "test_planted_gate.py"
+    planted.write_text(
+        "def test_planted(kinbase):\n"
+        "    result = kinbase.run('status')\n"
+        "    O.check('V-1.planted', {'ran': result.ok, 'isolated': True})\n",
+        encoding="utf-8",
+    )
+    hits = [f for f in greenpath.analyse_module(planted) if f.rule == "constant-evidence"]
+    assert len(hits) == 1, [f.render() for f in hits]
+    assert "isolated" in hits[0].render()
+
+
+@spec_ref(_FAIL_CLOSED)
 def test_no_tautological_assertion() -> None:
     _report("tautology", "The assertion is true regardless of the product.")
 

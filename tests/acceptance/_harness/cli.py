@@ -270,7 +270,8 @@ def _resolve_entrypoint() -> tuple[str, ...]:
     if not parts:
         raise HarnessInvalid("KINBASE_BIN is set but empty")
     executable = Path(parts[0])
-    if not executable.is_absolute() or not executable.is_file():
+    if (not executable.is_absolute() or not executable.is_file()
+            or not os.access(executable, os.X_OK)):
         raise HarnessInvalid(
             f"KINBASE_BIN must start with the absolute path of an executable file; got {parts[0]!r}"
         )
@@ -287,15 +288,19 @@ def product_identity() -> dict:
     except (ProductEntryPointMissing, HarnessInvalid) as exc:
         return {"resolved": False, "reason": str(exc)}
     executable = Path(parts[0])
-    digest = hashlib.sha256(executable.read_bytes()).hexdigest()
     try:
+        digest = hashlib.sha256(executable.read_bytes()).hexdigest()
         probe = subprocess.run([*parts, "--version"], capture_output=True, text=True,
                                timeout=60, env={"PATH": os.environ.get("PATH", "")})
-        version = (probe.stdout or probe.stderr).strip().splitlines()[0][:200] if probe.returncode == 0 else ""
-    except (OSError, subprocess.SubprocessError, IndexError):
-        version = ""
+    except (OSError, subprocess.SubprocessError) as exc:
+        # A product that cannot be read or run is not an identified product.
+        return {"resolved": False, "reason": f"{type(exc).__name__}: {exc}",
+                "path": str(executable)}
+    lines = (probe.stdout or probe.stderr).strip().splitlines()
     return {"resolved": True, "argv": list(parts), "path": str(executable),
-            "sha256": digest, "version": version}
+            "sha256": digest,
+            "version": lines[0][:200] if probe.returncode == 0 and lines else "",
+            "version_exit": probe.returncode}
 
 
 class Kinbase:
