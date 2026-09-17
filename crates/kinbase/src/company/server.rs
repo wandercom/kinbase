@@ -2323,19 +2323,25 @@ fn publish_registry(
             ),
         ));
     }
-    with_immediate_transaction(db, || {
+    let outcome = with_immediate_transaction(db, || {
         // Publication only moves the registry forward. A registry document is
         // a steward's statement at one authority cursor, and its signature stays
         // valid forever: any token holder could fetch an old one and post it
         // again, and every entry added since came back as an R-10 revocation.
         // Decided here, inside the write transaction, against the service's own
         // record rather than the trust state read before the request.
-        let current = trust::published_authority_cursor(db).map_err(|error| refuse(500, error))?;
+        let latest = trust::published_registry(db).map_err(|error| refuse(500, error))?;
+        let current = latest
+            .as_ref()
+            .map(|(_, cursor)| cursor.clone())
+            .unwrap_or_default();
         if let Some(existing) = db
             .event_cursor(&event_id)
             .map_err(|error| refuse(500, error))?
         {
-            if published_cursor == current {
+            // Identity, not cursor equality: the document posted again is the
+            // one the service holds as current.
+            if latest.as_ref().is_some_and(|(row, _)| *row == existing) {
                 // The current document, posted again: the same receipt, no effects.
                 return Ok((
                     200,
@@ -2567,7 +2573,18 @@ fn publish_registry(
                 "recorded_at": now
             }),
         ))
-    })
+    });
+    if let Err((_, error)) = &outcome
+        && error.code == "APPROVAL_REPLAY"
+    {
+        // A refused replay is itself worth knowing about; the transaction
+        // that decided it has rolled back, so the record is written after.
+        let _ = db.audit(
+            "registry-publication-refused",
+            &json!({"digest": digest, "authority_cursor": published_cursor, "reason": error.message}),
+        );
+    }
+    outcome
 }
 
 fn directory_write(
@@ -4072,6 +4089,52 @@ nonce_retention_seconds = 1300
             trust::published_authority_cursor(&service.db).unwrap(),
             "1001"
         );
+        assert_eq!(
+            service
+                .db
+                .audit_records("registry-publication-refused")
+                .unwrap()
+                .len(),
+            1,
+            "the refused replay is on record"
+        );
+    }
+
+    #[test]
+    fn a_superseded_document_at_the_current_cursor_is_not_current() {
+        // History from before the forward-only rule can hold two documents at
+        // one authority cursor; only the newer one is current.
+        let service = service();
+        let steward = entry("company-steward", "company:root", &service.root);
+        let first = registry(&service, Some("1000"), vec![steward.clone()]);
+        let second = registry(
+            &service,
+            Some("1000"),
+            vec![
+                steward,
+                entry("maintainer", "codebase:x", &PrivateKey::generate()),
+            ],
+        );
+        for (index, document) in [&first, &second].into_iter().enumerate() {
+            service
+                .db
+                .append_event(
+                    &format!("registry_{}", &crate::json::digest(document)[..40]),
+                    "authority-registry-entry",
+                    "registry",
+                    document,
+                    "",
+                    "verified",
+                    None,
+                )
+                .unwrap()
+                .unwrap_or_else(|| panic!("history row {index}"));
+        }
+        assert_eq!(
+            publish(&service, &first),
+            Err((409, "APPROVAL_REPLAY".to_owned()))
+        );
+        assert_eq!(publish(&service, &second), Ok(200));
     }
 
     #[test]

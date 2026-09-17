@@ -86,24 +86,28 @@ pub fn load(db: &CompanyDb, root: &PublicKey) -> Result<TrustState, ContractErro
     })
 }
 
-/// The authority cursor of the newest verified registry publication, or ""
-/// when none has been published.
-pub fn published_authority_cursor(db: &CompanyDb) -> Result<String, ContractError> {
-    let mut authority_cursor = String::new();
-    let mut latest_registry_row = None;
+/// The newest verified registry publication: its service row cursor and the
+/// authority cursor it declared. The newest row wins whatever order the rows
+/// are read in.
+pub fn published_registry(db: &CompanyDb) -> Result<Option<(i64, String)>, ContractError> {
+    let mut latest: Option<(i64, String)> = None;
     for (row_cursor, payload, verification) in db.events_of_kind("registry")? {
-        if verification != "verified"
-            || latest_registry_row.is_some_and(|latest| row_cursor <= latest)
+        if verification != "verified" || latest.as_ref().is_some_and(|(row, _)| row_cursor <= *row)
         {
             continue;
         }
-        latest_registry_row = Some(row_cursor);
         let published = crate::json::get_str(&payload, "authority_cursor").unwrap_or_default();
-        if !published.is_empty() {
-            authority_cursor = published.to_owned();
-        }
+        latest = Some((row_cursor, published.to_owned()));
     }
-    Ok(authority_cursor)
+    Ok(latest)
+}
+
+/// The authority cursor of the newest verified registry publication, or ""
+/// when none has been published.
+pub fn published_authority_cursor(db: &CompanyDb) -> Result<String, ContractError> {
+    Ok(published_registry(db)?
+        .map(|(_, cursor)| cursor)
+        .unwrap_or_default())
 }
 
 impl TrustState {
