@@ -1,5 +1,5 @@
 {
-  "closed": 22,
+  "closed": 21,
   "entries": [
     {
       "current_effect": "the attestation states its own scope and unreadable paths",
@@ -241,15 +241,15 @@
       "why_blocking": "Company started but no referenced fact version was inserted, the certificate was not installed, and cache rows hardcoded state_constructed."
     },
     {
-      "current_effect": "V-9 exercises the real host lifecycle",
+      "current_effect": "V-9 native-event evidence is INVALID_HARNESS until a host delivers its own hooks",
       "finding": 18,
       "gates": [
         "V-9"
       ],
-      "required_work": "The real host executables are typed prerequisites behind an invocation recorder; plan, denied install and approved install are compared by filesystem digest; the 250 ms Company connect budget is asserted at its ratified value; the fsck and soak corpora are built at the 10,000-event ceiling; a real submodule and nested repository are created.",
-      "status": "CLOSED",
+      "required_work": "Run each real host non-interactively with Kinbase hooks installed in the isolated HOME and credentials the operator supplies, derive `not_mocked` from dispatcher invocations the host made during that session, and pin the KINBASE_HOST_* versions in a frozen fixture.",
+      "status": "OPEN",
       "title": "V-9 performs no approved install or native host invocation",
-      "why_blocking": "Setup tests only dry-ran and refused; envelopes were synthetic; the invocation assertion was conditional; the 250 ms bound was asserted as 5 s; fsck used eight events; no submodule was created."
+      "why_blocking": "The invocation witness passed on a single `--version` probe of the host: the harness itself sends every native envelope through `hooks dispatch`, so no host ever ran a session or delivered a hook. The earlier closure (real executables behind a recorder, filesystem-digest install comparison, the 250 ms budget, 10,000-event corpora, a real submodule) stands; host-driven delivery was never shown."
     },
     {
       "current_effect": "absence of operator work is INVALID_HARNESS, never a pass",
@@ -304,8 +304,10 @@
       "why_blocking": "pytest_timeout was unavailable and the strict run still exited zero."
     }
   ],
-  "gates_with_open_debt": [],
-  "open": 0,
+  "gates_with_open_debt": [
+    "V-9"
+  ],
+  "open": 1,
   "review": "detector-reviewer dispatch 003",
   "schema": "kinbase-acceptance-instrument-debt/1",
   "total_findings": 22

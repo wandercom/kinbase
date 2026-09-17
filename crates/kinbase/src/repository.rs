@@ -622,6 +622,11 @@ impl RepoContext {
                         .clone()
                         .unwrap_or(Verification::Unverified);
                     if let Some(action) = crate::model::action_of(event) {
+                        // A terminal `orphan_abandoned` closes a divergent
+                        // fan-out by withdrawing the orphaned claim's support
+                        // (not a semantic rejection); admitted as a fact it
+                        // became a competing head and the orphan stayed current.
+                        let action = tombstone_action(action);
                         if matches!(action, "misextraction" | "never_true" | "support_withdrawn") {
                             let target_id = event
                                 .parents
@@ -1438,6 +1443,16 @@ fn client_unknown(
         status: "open".to_owned(),
         kind: "reference".to_owned(),
         authority_scopes: Vec::new(),
+    }
+}
+
+/// The tombstone a lifecycle action becomes in the reducer. A terminal
+/// `orphan_abandoned` withdraws the orphaned claim's support.
+pub(crate) fn tombstone_action(action: &str) -> &str {
+    if action == "orphan_abandoned" {
+        "support_withdrawn"
+    } else {
+        action
     }
 }
 
@@ -2689,8 +2704,14 @@ pub fn status(
     json_output: bool,
 ) -> Result<(), ContractError> {
     // Overdue apologies close under the exclusive lock before this report
-    // takes its shared read of the destination.
-    crate::session::emit_due_orphan_abandonments(&launcher, repo_path)?;
+    // takes its shared read of the destination. A report is still given
+    // when that fails, and says why.
+    if let Err(error) = crate::session::emit_due_orphan_abandonments(&launcher, repo_path) {
+        crate::output::diagnostic(
+            "orphan-abandonment-failed",
+            json!({"code": error.code, "message": error.message}),
+        );
+    }
     // Read one consistent destination generation: the shared admission lock
     // is held for the whole report so it never straddles a writer's journal
     // transition (writers advance between reads, never under one).
@@ -3403,6 +3424,11 @@ pub fn status(
                 crate::json::get_str(record, "effective_dependence_class").map(str::to_owned)
             })
         });
+    let this_destination = context
+        .trust
+        .repository_uuid
+        .as_ref()
+        .map(|uuid| format!("codebase:{uuid}"));
     let pending_orphans = context
         .launcher
         .company_cache()?
@@ -3412,6 +3438,9 @@ pub fn status(
                 .iter()
                 .filter(|saga| {
                     crate::json::get_str(saga, "state") == Some("awaiting_reconcile_or_abandon")
+                        && this_destination.as_deref().is_some_and(|destination| {
+                            crate::json::get_str(saga, "committed_destination") == Some(destination)
+                        })
                 })
                 .count()
         })
@@ -4788,5 +4817,24 @@ mod unknown_verification_tests {
             trust.verify_unknown(&signed("area:db", &owner)),
             Verification::Unverified
         );
+    }
+}
+
+#[cfg(test)]
+mod tombstone_action_tests {
+    #[test]
+    fn an_abandoned_orphan_withdraws_its_claims_support() {
+        assert_eq!(
+            super::tombstone_action("orphan_abandoned"),
+            "support_withdrawn"
+        );
+        for action in [
+            "misextraction",
+            "never_true",
+            "support_withdrawn",
+            "relaxation",
+        ] {
+            assert_eq!(super::tombstone_action(action), action);
+        }
     }
 }

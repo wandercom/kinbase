@@ -4,12 +4,15 @@
 //!
 //! Roles collapsed: the lane that wrote the fix wrote this probe.
 
+mod support;
+
 use kinbase::crypto::PrivateKey;
 use std::fs::{self, OpenOptions};
 use std::io::Write as _;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::process::Command;
+use support::SpawnAlone;
 use tempfile::TempDir;
 
 fn private_write(path: &Path, bytes: &[u8]) {
@@ -62,7 +65,7 @@ fn read_only_commands_mint_no_keys_and_create_no_cache() {
         Command::new("git")
             .args(["init", "-q"])
             .current_dir(&repo)
-            .status()
+            .status_alone()
             .unwrap()
             .success()
     );
@@ -75,7 +78,7 @@ fn read_only_commands_mint_no_keys_and_create_no_cache() {
             .env("XDG_STATE_HOME", temp.path().join("state-home"))
             .env_remove("KINBASE_COMPANY_URL")
             .env_remove("KINBASE_CLIENT_KEY_FD")
-            .output()
+            .output_alone()
             .unwrap();
         assert!(!client_key.exists(), "{args:?} minted the client key");
         assert!(

@@ -1457,6 +1457,7 @@ fn classify_bulk(
     classify_limit: Option<usize>,
 ) -> Result<Value, ContractError> {
     let classifier = launcher.shared.classifier.as_ref();
+    let registry = launcher.scanner_registry()?;
     let provider = crate::session::select_provider(classifier);
     let fingerprint = crate::session::classifier_fingerprint(classifier, &provider);
     // A document classified once is classified. The receipt records which
@@ -1489,8 +1490,19 @@ fn classify_bulk(
     for group in pending.chunks(BULK_DOCUMENTS_PER_PASS) {
         let mut requests_in = Vec::new();
         let mut chunk_owner: BTreeMap<String, String> = BTreeMap::new();
+        // A document holding hard-blocking material is journaled with no
+        // atoms and never sent to the classifier: scanning only the atoms
+        // let the rest of the document, or a paraphrase, through.
+        let mut blocked: BTreeSet<String> = BTreeSet::new();
         for observation in group {
             let statement = observation.statement.as_deref().unwrap_or_default();
+            if crate::scanner::scan(statement, &registry)
+                .map(|result| result.hard_block)
+                .unwrap_or(true)
+            {
+                blocked.insert(observation.observation_id.clone());
+                continue;
+            }
             for (index, chunk) in chunk_statement(statement).into_iter().enumerate() {
                 let chunk_id = format!("{}:c{index}", observation.observation_id);
                 chunk_owner.insert(chunk_id.clone(), observation.observation_id.clone());
@@ -1575,6 +1587,7 @@ fn classify_bulk(
                 .collect();
             atoms_total += receipt_atoms.len();
             let receipt = json!({
+                "hard_blocked": blocked.contains(&observation.observation_id),
                 "observation_id": observation.observation_id,
                 "logical_key": observation.logical_key,
                 "repository_id": observation.repository_id,

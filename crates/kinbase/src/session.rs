@@ -570,8 +570,30 @@ pub fn observe(
         ));
     }
 
+    // An observation holding hard-blocking material yields no shared
+    // candidate at all, and its text reaches no classifier: blocking each
+    // atom on its own let the rest of the message (or a paraphrase of the
+    // secret) through.
+    // The configured canary and forbidden-identifier registries apply here
+    // too, and a scan that cannot complete blocks.
+    let launcher = crate::launcher::Launcher::load()?;
+    let registry = launcher.scanner_registry()?;
+    let blocked_observations: BTreeSet<String> = observations
+        .iter()
+        .filter(|(_, event)| {
+            let native_id = event
+                .get("event_id")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            crate::scanner::scan(&session_corpus_text(&records, native_id), &registry)
+                .map(|result| result.hard_block)
+                .unwrap_or(true)
+        })
+        .map(|(observation, _)| observation.observation_id.clone())
+        .collect();
     let classifier_observations = observations
         .iter()
+        .filter(|(observation, _)| !blocked_observations.contains(&observation.observation_id))
         .map(|(observation, event)| {
             let native_id = event
                 .get("event_id")
@@ -604,7 +626,22 @@ pub fn observe(
             .unwrap_or_default();
         let text = session_corpus_text(&records, native_id);
         let mut atoms = Vec::new();
-        if let Some(external) = external_atoms.get(&observation.observation_id) {
+        if blocked_observations.contains(&observation.observation_id) {
+            let mut atom = crate::classify::atomize(
+                "codex_jsonl",
+                native_id,
+                &text,
+                "host-session",
+                8_000,
+                &observation.observation_id,
+                &observation.content_digest,
+                repository_id.as_deref(),
+            );
+            atom.hard_blocked = true;
+            atom.proposed_destinations = vec!["none".to_owned()];
+            atom.eligible_destinations = Vec::new();
+            atoms.push(atom);
+        } else if let Some(external) = external_atoms.get(&observation.observation_id) {
             for item in external {
                 atoms.push(atom_from_classifier(
                     item,
@@ -671,10 +708,16 @@ pub fn observe(
                 .cloned()
                 .collect::<Vec<_>>();
             for destination in destinations {
-                let destination = if destination == "company" {
-                    "company:root".to_owned()
-                } else {
-                    destination
+                let destination = match destination.as_str() {
+                    "company" => "company:root".to_owned(),
+                    // Outside a certified repository there is no Codebase
+                    // to admit to; the bare destination failed the whole
+                    // observation.
+                    "codebase" => match &repository_id {
+                        Some(uuid) => format!("codebase:{uuid}"),
+                        None => continue,
+                    },
+                    _ => destination,
                 };
                 let candidate = build_candidate(
                     session,
@@ -708,7 +751,6 @@ pub fn observe(
         append_personal("candidates.jsonl", candidate)?;
     }
 
-    let launcher = crate::launcher::Launcher::load()?;
     let mut admissions = Vec::new();
     let mut questions = BTreeSet::new();
     for atom in &atom_records {
@@ -2280,6 +2322,8 @@ fn merge_receipt(receipt: &mut Value, saga: &Value) {
 // ---------------------------------------------------------------------------
 
 const FANOUT_JOURNAL_SCHEMA: &str = "kinbase-fanout-journal/1";
+/// Company's admission status for an approved event awaiting a steward.
+const STEWARD_REVIEW: &str = "pending-steward-review";
 const APOLOGY_RESPONSE_WINDOW_HOURS: i64 = 24;
 
 /// The closed transition enum of the destination journal (architecture §3:
@@ -2425,12 +2469,10 @@ fn fanout_saga_result(
     let repository_uuid = crate::repository::repository_id(repo_root)?;
     if let Some(bound) = destination.strip_prefix("codebase:") {
         if bound != repository_uuid {
-            return Err(ContractError::new(
+            return Err(ContractError::refused(
                 "AUTHORITY_SCOPE_DENIED",
                 "candidate names a different repository identity than the certified one",
                 "Create a candidate for the certified repository identity.",
-                false,
-                ExitCode::UserActionRequired,
             ));
         }
     }
@@ -2439,10 +2481,11 @@ fn fanout_saga_result(
     // admission lock; the journal carries the transaction between
     // generations, so the lock is never held across a Company round trip
     // and competing local writers retry from the committed generation.
-    recover_fanout_journal(&repository, &repository_uuid, Some(candidate_id))?;
+    recover_fanout_journal(launcher, &repository, &repository_uuid, Some(candidate_id))?;
     let journal = FanoutJournal::open(&repository, candidate_id, destination)?;
     if destination.starts_with("codebase:") {
         commit_codebase(
+            launcher,
             &repository,
             &repository_uuid,
             &journal,
@@ -2468,7 +2511,9 @@ fn fanout_saga_result(
 /// Build the destination event once and bind the admission nonce to its
 /// exact bytes in the journal (nonce reservation). A replay reuses the bound
 /// bytes, so a retry can never mint a second content-addressed event.
+#[allow(clippy::too_many_arguments)]
 fn reserve_nonce(
+    launcher: &crate::launcher::Launcher,
     repository: &crate::codebase::Repository,
     journal: &FanoutJournal,
     repository_uuid: &str,
@@ -2492,7 +2537,7 @@ fn reserve_nonce(
             (canonical, event)
         }
         None => {
-            let event = build_destination_event(store, repository_uuid, record)?;
+            let event = build_destination_event(Some(launcher), store, repository_uuid, record)?;
             (canonical_text(&event), event)
         }
     };
@@ -2528,7 +2573,9 @@ fn reserve_nonce(
     Ok((canonical.into_bytes(), event))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn commit_codebase(
+    launcher: &crate::launcher::Launcher,
     repository: &crate::codebase::Repository,
     repository_uuid: &str,
     journal: &FanoutJournal,
@@ -2538,6 +2585,7 @@ fn commit_codebase(
     base_receipt: &Value,
 ) -> Result<Value, ContractError> {
     let (bytes, event) = reserve_nonce(
+        launcher,
         repository,
         journal,
         repository_uuid,
@@ -2683,6 +2731,7 @@ fn commit_company(
     base_receipt: &Value,
 ) -> Result<Value, ContractError> {
     let (_bytes, event) = reserve_nonce(
+        launcher,
         repository,
         journal,
         repository_uuid,
@@ -2708,8 +2757,24 @@ fn commit_company(
     // The Company destination runs its own transaction; the client sends
     // the event once per attempt and records the outcome it was given.
     let attempt = match launcher.company() {
-        Ok(Some(access)) => match access.client.post_fact(&event) {
-            Ok(body) => json!({"state": "committed", "company_receipt": body}),
+        Ok(Some(access)) => match approved_submission(launcher, repository, record, &event)
+            .and_then(|submission| access.client.post_fact(&submission))
+        {
+            // A signer that is not the Company authority for the scope is
+            // queued for steward review (202). Until a steward admits it the
+            // Company destination is pending: its apology stays open and
+            // later passes ask again.
+            Ok(body) => {
+                let admission = crate::json::get_str(&body, "status")
+                    .or_else(|| crate::json::get_str(&body, "admission_status"))
+                    .unwrap_or("committed")
+                    .to_owned();
+                json!({
+                    "state": if admission == STEWARD_REVIEW { "pending" } else { "committed" },
+                    "company_receipt": body,
+                    "company_admission": admission
+                })
+            }
             Err(error) => json!({
                 "state": if error.code == "COMPANY_UNREACHABLE" { "pending" } else { "refused" },
                 "error_code": error.code,
@@ -2736,11 +2801,17 @@ fn commit_company(
         .unwrap_or("refused")
         .to_owned();
     let mut apology_ids = Vec::new();
-    if state != "committed" {
+    if state == "committed" {
+        // The apology opened while Company had not answered is settled: the
+        // claim is no longer orphaned, and its deadline must not abandon it.
+        reconcile_apologies(launcher, receipt_id, &now_rfc3339_millis())?;
+    } else {
         // Divergence: another destination of the same source already holds
         // a durable commit that this failure cannot roll back. The
         // admitting principal owns the divergence; the committed
-        // destination receives the apology Unknown.
+        // destination receives the apology Unknown. A pending (unreachable)
+        // attempt is retried by later admissions, and a commit before the
+        // deadline reconciles the apology.
         for sibling in committed_siblings(record)? {
             let apology_id = apology_id_for(receipt_id, &sibling);
             if !journal.is_complete("apology") || !apology_exists(&apology_id)? {
@@ -2760,6 +2831,12 @@ fn commit_company(
             }
             apology_ids.push(apology_id);
         }
+        // Outside the admission lock: a slow Company must not hold it. An
+        // unreachable Company gets the Unknowns from a later pass.
+        if !apology_ids.is_empty() && attempt.get("company_unreachable") != Some(&Value::Bool(true))
+        {
+            deliver_apology_unknowns(launcher, repository_uuid)?;
+        }
     }
     let _generation = repository.admission_lock(repository_uuid)?;
     journal.begin("receipt", json!({}))?;
@@ -2778,6 +2855,41 @@ fn commit_company(
         journal.finish()?;
     }
     Ok(summary)
+}
+
+/// The event with the admitting principal's approval of its exact bytes.
+/// Company admits a verified authority's event directly and queues any other
+/// signer's approved event for steward review; a bare event from a
+/// non-authority signer is refused.
+fn approved_submission(
+    launcher: &crate::launcher::Launcher,
+    repository: &crate::codebase::Repository,
+    record: &Value,
+    event: &Value,
+) -> Result<Value, ContractError> {
+    let key = destination_signing_key(Some(launcher), crate::StoreKind::Company, &repository.root)?;
+    approval_envelope(&key, record, event, &now_rfc3339_millis())
+}
+
+fn approval_envelope(
+    key: &crate::crypto::PrivateKey,
+    record: &Value,
+    event: &Value,
+    now: &str,
+) -> Result<Value, ContractError> {
+    let approval = key.sign_document(
+        "approval-token",
+        &json!({
+            "schema": "kinbase-approval/1",
+            "candidate_id": record.get("candidate_id").cloned().unwrap_or(Value::Null),
+            "destination": record.get("destination").cloned().unwrap_or(Value::Null),
+            "principal": record.get("principal").cloned().unwrap_or(Value::Null),
+            "event_id": event.get("event_id").cloned().unwrap_or(Value::Null),
+            "event_digest": crate::json::digest(event),
+            "approved_at": now
+        }),
+    )?;
+    Ok(json!({"event": event, "approval_token": approval}))
 }
 
 fn receipt_from_marker(marker: &Value, receipt_id: &str) -> Value {
@@ -2834,6 +2946,40 @@ fn committed_siblings(record: &Value) -> Result<Vec<Value>, ContractError> {
         }
     }
     Ok(committed)
+}
+
+/// Mark every open apology for `failed_receipt_id` reconciled: the
+/// destination that had not answered has committed after all.
+fn reconcile_apologies(
+    launcher: &crate::launcher::Launcher,
+    failed_receipt_id: &str,
+    now: &str,
+) -> Result<(), ContractError> {
+    for apology in current_apologies_complete()? {
+        if crate::json::get_str(&apology, "failed_receipt_id") != Some(failed_receipt_id)
+            || crate::json::get_str(&apology, "state") != Some("awaiting_reconcile_or_abandon")
+        {
+            continue;
+        }
+        let update = json!({
+            "apology_id": apology.get("apology_id").cloned().unwrap_or(Value::Null),
+            "state": "reconciled",
+            "reconciled_at": now,
+            "reconciled_by": "failed-destination-committed"
+        });
+        append_personal_durable("apologies.jsonl", &update)?;
+        // The cached saga row `status` counts is settled with it.
+        if let Ok(Some((cache, _))) = launcher.company_cache() {
+            let mut settled = apology.clone();
+            merge_receipt(&mut settled, &update);
+            let _ = cache.save_saga(
+                crate::json::get_str(&apology, "candidate_id").unwrap_or_default(),
+                &settled,
+                now,
+            );
+        }
+    }
+    Ok(())
 }
 
 fn apology_id_for(failed_receipt_id: &str, committed: &Value) -> String {
@@ -2970,7 +3116,9 @@ fn write_apology(
     let store = destination_store(&committed_destination)?;
     let question = format!(
         "Apology Unknown for divergent fan-out: destination {failed_destination} failed ({}) after {committed_destination} committed receipt {}. Admitting principal {principal} is responsible; closing authority {closing_name} ({closing_role}) must reconcile or abandon by {response_due_at}. The orphaned claim is withheld from trusted use until then.",
-        crate::json::get_str(attempt, "error_code").unwrap_or("refused"),
+        crate::json::get_str(attempt, "error_code")
+            .or_else(|| crate::json::get_str(attempt, "company_admission"))
+            .unwrap_or("refused"),
         crate::json::get_str(committed, "receipt_id").unwrap_or_default()
     );
     let scope = "architecture:escalation";
@@ -3041,7 +3189,8 @@ fn write_apology(
         "unknown_id": unknown_id,
         "response_due_at": response_due_at,
         "created_at": format_rfc3339_millis(now),
-        "state": "awaiting_reconcile_or_abandon"
+        "state": "awaiting_reconcile_or_abandon",
+        "unknown_delivered": false
     });
     append_personal_durable("apologies.jsonl", &apology)?;
     // The pending saga is also visible to the Company cache so `status`
@@ -3056,11 +3205,18 @@ fn write_apology(
     Ok(unknown_id)
 }
 
+/// How many Company sagas one recovery pass retries, so an admission inside a
+/// host hook's budget is not spent draining a backlog.
+const COMPANY_RETRIES_PER_PASS: usize = 8;
+
 /// Replay every unfinished fan-out saga of this repository under the lock:
 /// a transaction whose event bytes are durable completes forward; one that
-/// never bound its bytes is rolled back. The candidate being decided now is
-/// replayed by its own idempotent transitions.
+/// never bound its bytes is rolled back. A Company saga left pending by any
+/// earlier session (Company did not answer) is posted again while Company
+/// answers. The candidate being decided now is replayed by its own
+/// idempotent transitions.
 fn recover_fanout_journal(
+    launcher: &crate::launcher::Launcher,
     repository: &crate::codebase::Repository,
     repository_uuid: &str,
     current_candidate: Option<&str>,
@@ -3070,6 +3226,8 @@ fn recover_fanout_journal(
         return Ok(Vec::new());
     }
     let mut replayed = Vec::new();
+    let mut company_retries = 0usize;
+    let mut company_answering = true;
     let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(&root)
         .map_err(|error| ContractError::io("read fan-out journal", error))?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))
@@ -3101,7 +3259,55 @@ fn recover_fanout_journal(
             candidate_id: candidate_id.clone(),
             destination: destination.clone(),
         };
-        if journal.is_done() || !destination.starts_with("codebase:") {
+        if journal.is_done() {
+            continue;
+        }
+        if destination.starts_with("company") {
+            if !company_answering || company_retries >= COMPANY_RETRIES_PER_PASS {
+                continue;
+            }
+            let Some(reservation) = journal.read("nonce_reservation") else {
+                continue;
+            };
+            if crate::json::get_str(&reservation, "event_canonical").is_none() {
+                continue;
+            }
+            company_retries += 1;
+            let payload_digest = crate::json::get_str(&reservation, "payload_digest")
+                .unwrap_or_default()
+                .to_owned();
+            let receipt_id = crate::json::get_str(&reservation, "receipt_id")
+                .unwrap_or_default()
+                .to_owned();
+            let base_receipt = json!({
+                "candidate_id": candidate_id,
+                "destination": destination,
+                "decision": "admit",
+                "digest": payload_digest,
+                "decided_at": now_rfc3339_millis(),
+                "receipt_id": receipt_id,
+                "state": "pending",
+                "recovered": true
+            });
+            let summary = commit_company(
+                launcher,
+                repository,
+                repository_uuid,
+                &journal,
+                &record,
+                &payload_digest,
+                &receipt_id,
+                &base_receipt,
+            )?;
+            let state = crate::json::get_str(&summary, "state").unwrap_or("pending");
+            if state == "pending" {
+                company_answering = false;
+            }
+            replayed
+                .push(json!({"candidate_id": candidate_id, "action": format!("company-{state}")}));
+            continue;
+        }
+        if !destination.starts_with("codebase:") {
             continue;
         }
         let Some(reservation) = journal.read("nonce_reservation") else {
@@ -3138,6 +3344,7 @@ fn recover_fanout_journal(
                         "recovered": true
         });
         commit_codebase(
+            launcher,
             repository,
             repository_uuid,
             &journal,
@@ -3149,7 +3356,63 @@ fn recover_fanout_journal(
         replayed
             .push(json!({"candidate_id": candidate_id, "digest": digest, "action": "completed"}));
     }
+    if company_answering {
+        deliver_apology_unknowns(launcher, repository_uuid)?;
+    }
     Ok(replayed)
+}
+
+/// Send this repository's undelivered apology Unknowns to Company, where
+/// the closing authority reads them; they were kept only in the admitting
+/// principal's store, so no authority ever saw one before its deadline.
+fn deliver_apology_unknowns(
+    launcher: &crate::launcher::Launcher,
+    repository_uuid: &str,
+) -> Result<(), ContractError> {
+    let destination = format!("codebase:{repository_uuid}");
+    let undelivered: Vec<Value> = current_apologies()
+        .into_iter()
+        .filter(|apology| {
+            crate::json::get_str(apology, "state") == Some("awaiting_reconcile_or_abandon")
+                && crate::json::get_str(apology, "committed_destination")
+                    == Some(destination.as_str())
+                && apology.get("unknown_delivered") != Some(&Value::Bool(true))
+        })
+        .take(COMPANY_RETRIES_PER_PASS)
+        .collect();
+    if undelivered.is_empty() {
+        return Ok(());
+    }
+    let Ok(Some(access)) = launcher.company() else {
+        return Ok(());
+    };
+    let unknowns = personal_records("unknowns.jsonl");
+    for apology in undelivered {
+        let unknown_id = crate::json::get_str(&apology, "unknown_id").unwrap_or_default();
+        let Some(document) = unknowns
+            .iter()
+            .find(|unknown| crate::json::get_str(unknown, "fact_id") == Some(unknown_id))
+        else {
+            continue;
+        };
+        match access.client.post_unknown(document) {
+            Ok(_) => append_personal(
+                "apologies.jsonl",
+                &json!({
+                    "apology_id": apology.get("apology_id").cloned().unwrap_or(Value::Null),
+                    "unknown_delivered": true,
+                    "delivered_at": now_rfc3339_millis()
+                }),
+            )?,
+            Err(error) if error.code == "COMPANY_UNREACHABLE" => break,
+            // Refused: it stays undelivered and is offered again next pass.
+            Err(error) => crate::output::diagnostic(
+                "apology-unknown-undelivered",
+                json!({"unknown_id": unknown_id, "code": error.code, "message": error.message}),
+            ),
+        }
+    }
+    Ok(())
 }
 
 /// In-flight fan-out journal markers (for `status`/`fsck`): every marker of
@@ -3206,27 +3469,34 @@ pub fn inflight_journal_state(repo_root: &Path) -> Value {
     json!(markers)
 }
 
-/// Apologies still awaiting reconcile/abandon (the orphans that are not yet
-/// terminally closed).
-pub fn pending_orphan_count(_repo_root: &Path) -> usize {
+/// This repository's apologies still awaiting reconcile/abandon (the orphans
+/// that are not yet terminally closed). The Personal store holds every
+/// repository's.
+pub fn pending_orphan_count(repo_root: &Path) -> usize {
+    let Ok(repository_uuid) = crate::repository::repository_id(repo_root) else {
+        return 0;
+    };
+    let destination = format!("codebase:{repository_uuid}");
     current_apologies()
         .iter()
         .filter(|apology| {
             crate::json::get_str(apology, "state") == Some("awaiting_reconcile_or_abandon")
+                && crate::json::get_str(apology, "committed_destination")
+                    == Some(destination.as_str())
         })
         .count()
 }
 
 /// Saga-authoritative fields for a terminal `orphan_abandoned` event that the
-/// destination service emitted: the orphaned claim's saga state (withdrawn)
-/// and the unresponsive closing authority. `None` for every other event.
+/// destination service emitted: the saga state and the unresponsive closing
+/// authority. The fact's state is the reducer's, never the saga ledger's.
+/// `None` for every other event.
 pub fn saga_terminal_event_fields(event_id: &str) -> Option<Value> {
     personal_records("orphan-abandonments.jsonl")
         .into_iter()
         .find(|record| crate::json::get_str(record, "event_id") == Some(event_id))
         .map(|record| {
             json!({
-                "fact_state": "withdrawn",
                 "saga_state": "abandoned",
                 "unresponsive_closing_authority": record.get("unresponsive_closing_authority").cloned().unwrap_or(Value::Null),
                 "apology_id": record.get("apology_id").cloned().unwrap_or(Value::Null)
@@ -3257,7 +3527,7 @@ pub fn write_fact_event(
     repo: &Path,
     record: &Value,
 ) -> Result<(String, String), ContractError> {
-    let event = build_destination_event(store, "", record)?;
+    let event = build_destination_event(None, store, "", record)?;
     let fact_id = crate::json::get_str(&event, "fact_id")
         .unwrap_or_default()
         .to_owned();
@@ -3277,9 +3547,38 @@ pub fn write_fact_event(
 /// the candidate id as evidence and binds the certified repository identity
 /// for Codebase.
 fn build_destination_event(
+    launcher: Option<&crate::launcher::Launcher>,
     store: crate::StoreKind,
     repository_uuid: &str,
     record: &Value,
+) -> Result<Value, ContractError> {
+    let repo = repo()?;
+    let key = destination_signing_key(launcher, store, &repo)?;
+    let company_authority = match (store, launcher) {
+        (crate::StoreKind::Company, Some(launcher)) => {
+            registered_authority_id(launcher, &key.public().to_hex())
+        }
+        _ => None,
+    };
+    signed_destination_event(
+        store,
+        repository_uuid,
+        record,
+        &key,
+        company_authority,
+        &now_rfc3339_millis(),
+    )
+}
+
+/// The destination event for a candidate, signed by `key` at `now`.
+/// `company_authority` is the registered identity of `key`, if any.
+fn signed_destination_event(
+    store: crate::StoreKind,
+    repository_uuid: &str,
+    record: &Value,
+    key: &crate::crypto::PrivateKey,
+    company_authority: Option<String>,
+    now: &str,
 ) -> Result<Value, ContractError> {
     let canonical = record
         .get("canonical")
@@ -3316,35 +3615,45 @@ fn build_destination_event(
         .unwrap_or("observation");
     let repository_id = (store == crate::StoreKind::Codebase && !repository_uuid.is_empty())
         .then(|| repository_uuid.to_owned());
-    let fact_id = format!(
-        "fact_{:x}",
-        Sha256::digest(format!("{scope}\0{statement}").as_bytes())
-    );
-    let event_id = format!(
-        "event_{:x}",
-        Sha256::digest(
-            record
-                .get("payload_digest")
-                .and_then(Value::as_str)
-                .unwrap_or_default()
-                .as_bytes()
-        )
-    );
-    let authority_id = if store == crate::StoreKind::Company {
-        "company-steward"
+    let signer = key.public().to_hex();
+    let store_kind = store_name(store);
+    // A Company-bound candidate is a proposal to the Company scope its
+    // destination names, attributed to the principal whose key signs it:
+    // the atom's own scope (`host-session`) is no Company authority scope,
+    // and naming the steward while a maintainer key signed misattributed it.
+    let (authority_id, authority_scope) = if store == crate::StoreKind::Company {
+        let authority_id = company_authority.unwrap_or_else(|| {
+            crate::json::get_str(record, "principal")
+                .map(str::to_owned)
+                .unwrap_or_else(principal_id)
+        });
+        (authority_id, "company:root".to_owned())
     } else {
-        "repository-maintainer"
+        ("repository-maintainer".to_owned(), scope.to_owned())
     };
-    let now = now_rfc3339_millis();
+    // The canonical identities: one fact per statement in its scope, one
+    // logical key per fact (a scope-wide key made every session statement a
+    // competing head of one claim), and one event per signed assertion. The
+    // event id used to be the payload digest alone, so the same statement in
+    // a second session reused the id with different bytes and was refused.
+    // The journal binds the bytes built here, so a retry reuses them.
+    let fact_id = crate::model::fact_id(store_kind, scope, statement);
+    let logical_key = crate::model::logical_key(store_kind, &authority_scope, &fact_id);
+    let event_id = crate::model::event_id(
+        &fact_id,
+        &crate::model::semantic_digest(statement),
+        now,
+        &signer,
+    );
     let event = FactEvent {
         schema: crate::model::EVENT_SCHEMA.to_owned(),
         event_id,
-        store_kind: store_name(store).to_owned(),
-        authority_id: authority_id.to_owned(),
-        authority_scope: scope.to_owned(),
+        store_kind: store_kind.to_owned(),
+        authority_id,
+        authority_scope,
         repository_id,
         fact_id,
-        logical_key: format!("logical_{:x}", Sha256::digest(scope.as_bytes())),
+        logical_key,
         atom_kind: atom_kind.to_owned(),
         scope: scope.to_owned(),
         statement: statement.to_owned(),
@@ -3355,8 +3664,8 @@ fn build_destination_event(
                 .unwrap_or_default()
                 .to_owned(),
         ],
-        asserted_at: now.clone(),
-        effective_from: now,
+        asserted_at: now.to_owned(),
+        effective_from: now.to_owned(),
         effective_until: None,
         disposition: "current".to_owned(),
         distortion: Distortion {
@@ -3410,9 +3719,27 @@ fn build_destination_event(
             .and_then(|value| serde_json::from_value(value.clone()).ok())
             .unwrap_or_default(),
     };
-    let repo = repo()?;
-    let key = destination_signing_key(store, &repo)?;
     key.sign_document("fact-event", &event.to_value())
+}
+
+/// The registered authority identity of a signing key, from the cached
+/// Company registry, when exactly one active entry names it.
+fn registered_authority_id(
+    launcher: &crate::launcher::Launcher,
+    public_key: &str,
+) -> Option<String> {
+    let snapshot = launcher
+        .company_cache()
+        .ok()
+        .flatten()
+        .and_then(|(cache, _)| cache.snapshot().ok().flatten())?;
+    let ids: BTreeSet<String> = crate::json::get_array(&snapshot, "registry")?
+        .iter()
+        .filter(|entry| crate::json::get_str(entry, "public_key") == Some(public_key))
+        .filter(|entry| crate::json::get_str(entry, "status").unwrap_or("active") == "active")
+        .filter_map(|entry| crate::json::get_str(entry, "authority_id").map(str::to_owned))
+        .collect();
+    (ids.len() == 1).then(|| ids.into_iter().next().unwrap_or_default())
 }
 
 /// One signer per shared store. A repository trusts its configured maintainer
@@ -3421,16 +3748,16 @@ fn build_destination_event(
 /// perfect and entirely untrusted: the same defect bulk admission had, on the
 /// other path. Shared stores sign as the maintainer whenever Company access is
 /// configured; Personal, and a machine with no Company access, keep the local
-/// key.
+/// key. The caller's launcher decides: loading another one here failed
+/// whenever a lock was held (the descriptor attestation refuses the lock's
+/// descriptors), and the failure silently fell back to the local key.
 pub(crate) fn destination_signing_key(
+    launcher: Option<&crate::launcher::Launcher>,
     store: crate::StoreKind,
     repo: &Path,
 ) -> Result<crate::crypto::PrivateKey, ContractError> {
     if store != crate::StoreKind::Personal {
-        if let Some(access) = crate::launcher::Launcher::load()
-            .ok()
-            .and_then(|launcher| launcher.shared.company.clone())
-        {
+        if let Some(access) = launcher.and_then(|launcher| launcher.shared.company.as_ref()) {
             return access.maintainer_key();
         }
     }
@@ -3451,11 +3778,22 @@ pub(crate) fn emit_due_orphan_abandonments(
         .collect();
     // An abandonment found here is trusted to be on disk; make it so.
     sync_personal("orphan-abandonments.jsonl")?;
+    // The Personal store holds every repository's apologies; this repository
+    // closes only those its own Codebase committed, and an uncertified
+    // repository closes none (it has no destination to write to).
+    let Ok(repository_uuid) = crate::repository::repository_id(repository_root) else {
+        return Ok(existing.len());
+    };
+    let this_destination = format!("codebase:{repository_uuid}");
     let now = crate::time::now_utc();
     let due: Vec<Value> = current_apologies_complete()?
         .into_iter()
         .filter(|apology| {
             crate::json::get_str(apology, "state") == Some("awaiting_reconcile_or_abandon")
+        })
+        .filter(|apology| {
+            crate::json::get_str(apology, "committed_destination")
+                == Some(this_destination.as_str())
         })
         .filter(|apology| {
             crate::json::get_str(apology, "response_due_at")
@@ -3469,21 +3807,18 @@ pub(crate) fn emit_due_orphan_abandonments(
     if due.is_empty() {
         return Ok(existing.len());
     }
+    // Written through the discovered repository root: `status` may run in a
+    // subdirectory, where `<cwd>/.kin` is a stray tree nothing reads.
     let repository = crate::codebase::Repository::discover(repository_root)?;
-    let repository_uuid = crate::repository::repository_id(repository_root).ok();
-    let _lock = match &repository_uuid {
-        Some(uuid) => Some(repository.admission_lock(uuid)?),
-        None => None,
-    };
+    repository.ensure_local()?;
+    let _lock = repository.admission_lock(&repository_uuid)?;
     let now_text = format_rfc3339_millis(now);
     for apology in due {
         let apology_id = crate::json::get_str(&apology, "apology_id")
             .unwrap_or_default()
             .to_owned();
-        let committed_destination = crate::json::get_str(&apology, "committed_destination")
-            .unwrap_or("codebase")
-            .to_owned();
-        let store = destination_store(&committed_destination).unwrap_or(crate::StoreKind::Codebase);
+        let committed_destination = this_destination.clone();
+        let store = crate::StoreKind::Codebase;
         let closing_authority = crate::json::get_str(&apology, "closing_authority")
             .or_else(|| crate::json::get_str(&apology, "closing_authority_role"))
             .unwrap_or("repository-maintainer")
@@ -3543,10 +3878,8 @@ pub(crate) fn emit_due_orphan_abandonments(
             "response_due_at": due_at,
             "fact_state": "withdrawn"
         });
-        if let (crate::StoreKind::Codebase, Some(uuid)) = (store, &repository_uuid) {
-            document["repository_id"] = Value::String(uuid.clone());
-        }
-        let key = destination_signing_key(store, repository_root)?;
+        document["repository_id"] = Value::String(repository_uuid.clone());
+        let key = destination_signing_key(Some(launcher), store, &repository.root)?;
         let signed = key.sign_document("fact-event", &document)?;
         let parsed = FactEvent::from_value(&signed).map_err(|error| {
             ContractError::integrity(
@@ -3555,11 +3888,9 @@ pub(crate) fn emit_due_orphan_abandonments(
                 "Preserve the saga record; the terminal event is malformed.",
             )
         })?;
-        let root = crate::store::ensure_store_root(store, repository_root)?;
+        let root = crate::store::ensure_store_root(store, &repository.root)?;
         let (_, digest) = crate::store::write_content_addressed_event(&root, &parsed)?;
-        if store == crate::StoreKind::Codebase {
-            repository.update_index_cache()?;
-        }
+        repository.update_index_cache()?;
         append_personal_durable(
             "orphan-abandonments.jsonl",
             &json!({
@@ -3803,5 +4134,136 @@ mod processor_scope_tests {
             let reason = selected.fallback_reason.unwrap_or_default();
             assert!(reason.starts_with("PROCESSOR_UNAUTHORIZED"), "{reason}");
         }
+    }
+}
+
+#[cfg(test)]
+mod saga_identity_tests {
+    use super::*;
+    use crate::crypto::{PrivateKey, PublicKey};
+
+    fn record(scope: &str, statement: &str) -> Value {
+        let canonical = canonical_text(&json!({
+            "destination": "codebase:repo-uuid",
+            "atom_kind": "constraint",
+            "scope": scope,
+            "statement": statement
+        }));
+        json!({
+            "candidate_id": "cand_1",
+            "destination": "codebase:repo-uuid",
+            "principal": "principal-a",
+            "payload_digest": sha256_text(&canonical),
+            "canonical": canonical,
+            "confidence": 8000
+        })
+    }
+
+    fn event(
+        store: crate::StoreKind,
+        record: &Value,
+        key: &PrivateKey,
+        authority: Option<&str>,
+        now: &str,
+    ) -> FactEvent {
+        let signed = signed_destination_event(
+            store,
+            "repo-uuid",
+            record,
+            key,
+            authority.map(str::to_owned),
+            now,
+        )
+        .expect("event");
+        let parsed = FactEvent::from_value(&signed).expect("parse");
+        assert!(parsed.verify_signature().is_some(), "the event verifies");
+        parsed
+    }
+
+    #[test]
+    fn a_statement_asserted_twice_gets_two_events_of_one_fact() {
+        let key = PrivateKey::generate();
+        let statement = "Backoff is capped at 30 seconds.";
+        let first = event(
+            crate::StoreKind::Codebase,
+            &record("host-session", statement),
+            &key,
+            None,
+            "2026-09-17T10:00:00.000Z",
+        );
+        let second = event(
+            crate::StoreKind::Codebase,
+            &record("host-session", statement),
+            &key,
+            None,
+            "2026-09-17T11:00:00.000Z",
+        );
+        assert_ne!(first.event_id, second.event_id);
+        assert_eq!(first.fact_id, second.fact_id);
+        assert_eq!(
+            first.fact_id,
+            crate::model::fact_id("codebase", "host-session", statement)
+        );
+        assert_eq!(
+            first.logical_key,
+            crate::model::logical_key("codebase", "host-session", &first.fact_id)
+        );
+        assert_eq!(first.repository_id.as_deref(), Some("repo-uuid"));
+
+        let other = event(
+            crate::StoreKind::Codebase,
+            &record("host-session", "Retries use jitter."),
+            &key,
+            None,
+            "2026-09-17T10:00:00.000Z",
+        );
+        assert_ne!(
+            other.logical_key, first.logical_key,
+            "one logical key per statement, not per scope"
+        );
+    }
+
+    #[test]
+    fn a_company_proposal_names_its_company_scope_and_its_signer() {
+        let key = PrivateKey::generate();
+        let proposal = record("host-session", "Refunds settle in two days.");
+        let registered = event(
+            crate::StoreKind::Company,
+            &proposal,
+            &key,
+            Some("payments-architect"),
+            "2026-09-17T10:00:00.000Z",
+        );
+        assert_eq!(registered.authority_scope, "company:root");
+        assert_eq!(registered.authority_id, "payments-architect");
+        assert_eq!(registered.scope, "host-session");
+        assert_eq!(registered.repository_id, None);
+        let unregistered = event(
+            crate::StoreKind::Company,
+            &proposal,
+            &key,
+            None,
+            "2026-09-17T10:00:00.000Z",
+        );
+        assert_eq!(unregistered.authority_id, "principal-a");
+
+        let envelope = approval_envelope(
+            &key,
+            &proposal,
+            &registered.to_value(),
+            "2026-09-17T10:00:01.000Z",
+        )
+        .expect("envelope");
+        assert_eq!(envelope["event"], registered.to_value());
+        let token = &envelope["approval_token"];
+        assert_eq!(
+            PublicKey::verify_document("approval-token", token).map(|key| key.to_hex()),
+            Some(key.public().to_hex())
+        );
+        assert_eq!(
+            token["event_digest"],
+            json!(crate::json::digest(&registered.to_value()))
+        );
+        assert_eq!(token["candidate_id"], "cand_1");
     }
 }

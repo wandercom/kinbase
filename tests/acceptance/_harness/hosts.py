@@ -187,6 +187,13 @@ class InvocationWitness:
     argv_records: tuple[str, ...]
     config_files: tuple[Path, ...]
 
+    def session_records(self) -> tuple[str, ...]:
+        """Invocations that ran the host, not merely asked its version."""
+        return tuple(
+            record for record in self.argv_records
+            if record.strip() not in VERSION_PROBE_ARGV
+        )
+
     def assert_not_mocked(self) -> None:
         if not self.executable.exists():
             raise ProductFailure(
@@ -199,6 +206,20 @@ class InvocationWitness:
                 "requires inspecting 'actual host config and executable "
                 "invocation records; a mocked host branch is not accepted evidence'"
             )
+        # A version probe proves the binary exists, not that the host ran a
+        # session and delivered its hooks. The harness dispatching envelopes
+        # itself is the mocked host branch V-9 refuses, so this is the
+        # instrument's missing evidence, not a product result.
+        if not self.session_records():
+            raise HarnessInvalid(
+                f"only a version probe of {self.host} was recorded "
+                f"({len(self.argv_records)} record(s)); V-9 needs the host to run "
+                "a session and deliver its own hook invocations (debt finding 18)"
+            )
+
+
+#: The argv of a version probe, which records a binary without running it.
+VERSION_PROBE_ARGV = frozenset({"--version", "-V", "version"})
 
 
 def install_invocation_recorder(bin_dir: Path, name: str, real: Path) -> Path:

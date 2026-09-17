@@ -5,12 +5,15 @@
 //! Roles collapsed: the lane that wrote the fix wrote these probes. They pin
 //! the shape of the defect; they do not establish oracle independence.
 
+mod support;
+
 use kinbase::private::PrivateStore;
 use serde_json::{Value, json};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::Command;
+use support::SpawnAlone;
 use tempfile::TempDir;
 
 fn fake_host(bin: &Path, name: &str, version: &str) {
@@ -34,7 +37,7 @@ fn plan(home: &Path, bin: &Path, host: &str, cwd: &Path) -> Value {
         .env("XDG_STATE_HOME", home.join(".state"))
         .env("PATH", path)
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run hooks plan");
     assert!(
         output.status.success(),
@@ -276,7 +279,7 @@ fn status_survives_a_poisoned_query_log_and_signals_the_skip() {
         Command::new("git")
             .args(["init", "-q"])
             .current_dir(&repo)
-            .status()
+            .status_alone()
             .expect("git init")
             .success()
     );
@@ -287,7 +290,7 @@ fn status_survives_a_poisoned_query_log_and_signals_the_skip() {
         .env("XDG_CONFIG_HOME", &config_home)
         .env("XDG_STATE_HOME", home.join(".state"))
         .env_remove("KINBASE_COMPANY_URL")
-        .output()
+        .output_alone()
         .expect("run status");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -332,7 +335,7 @@ fn host_world(temp: &TempDir) -> HostWorld {
         Command::new("git")
             .args(["init", "-q"])
             .current_dir(&repo)
-            .status()
+            .status_alone()
             .expect("git init")
             .success()
     );
@@ -381,7 +384,7 @@ fn dispatch(world: &HostWorld, event: &str, stdin: &[u8], json: bool) -> std::pr
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn()
+        .spawn_alone()
         .expect("spawn dispatch");
     child
         .stdin
@@ -682,7 +685,7 @@ fn a_host_hook_never_exits_2_even_for_a_user_action_refusal() {
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
-        .spawn()
+        .spawn_alone()
         .expect("spawn");
     child
         .stdin
@@ -703,4 +706,76 @@ fn a_host_hook_never_exits_2_even_for_a_user_action_refusal() {
     let refused = kinbase::error::ContractError::user_action("REPO_UNCERTIFIED", "m", "r");
     assert_eq!(refused.exit(), 2);
     assert_eq!(refused.for_host_hook().exit(), 3);
+}
+
+#[test]
+fn plan_refuses_a_host_outside_the_configured_range() {
+    let temp = TempDir::new().expect("tempdir");
+    let home = temp.path().join("home");
+    let bin = temp.path().join("bin");
+    let config = home.join(".config").join("kinbase");
+    fs::create_dir_all(&config).expect("config dir");
+    fs::create_dir_all(temp.path().join("personal")).expect("personal");
+    fake_host(&bin, "claude", "claude 1.2.3");
+    let write_config = |range: &str| {
+        let path = config.join("config.toml");
+        let _ = fs::remove_file(&path);
+        fs::write(
+            &path,
+            format!(
+                "schema_version = \"1\"\n\n[personal]\ndata_root = \"{}\"\n\n[hosts]\nclaude_version = \"{range}\"\n",
+                temp.path().join("personal").display()
+            ),
+        )
+        .expect("config");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).expect("chmod config");
+    };
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_kinbase"))
+            .current_dir(temp.path())
+            .args(["hooks", "plan", "claude", "--json"])
+            .env("HOME", &home)
+            .env("XDG_CONFIG_HOME", home.join(".config"))
+            .env("XDG_STATE_HOME", home.join(".state"))
+            .env(
+                "PATH",
+                format!(
+                    "{}:{}",
+                    bin.display(),
+                    std::env::var("PATH").unwrap_or_default()
+                ),
+            )
+            .env_remove("KINBASE_COMPANY_URL")
+            .output_alone()
+            .expect("run hooks plan")
+    };
+
+    write_config(">=9.0.0");
+    let refused = run();
+    assert_eq!(refused.status.code(), Some(3));
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&refused.stdout),
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(text.contains("UNSUPPORTED_HOST_VERSION"), "{text}");
+
+    // A component past u64 is a configuration error, not a zero.
+    write_config(">=18446744073709551616.0.0");
+    let overflowed = run();
+    assert!(!overflowed.status.success());
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&overflowed.stdout),
+        String::from_utf8_lossy(&overflowed.stderr)
+    );
+    assert!(text.contains("CONFIG_INVARIANT"), "{text}");
+
+    write_config(">=1.2.0");
+    let planned = run();
+    assert!(
+        planned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&planned.stderr)
+    );
 }
