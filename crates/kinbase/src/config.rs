@@ -125,8 +125,12 @@ pub struct SharedCompanyAccess {
     pub authority_token: Option<TokenRecord>,
     pub root_public_key: String,
     pub cache_root: PathBuf,
-    pub client_private_seed: String,
-    pub maintainer_private_seed: String,
+    /// Present when the key already existed (or arrived by descriptor);
+    /// otherwise the key is minted by the first command that signs with it.
+    pub client_private_seed: Option<String>,
+    pub maintainer_private_seed: Option<String>,
+    pub client_key_file: PathBuf,
+    pub maintainer_key_file: PathBuf,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,11 +153,32 @@ impl SharedCompanyAccess {
     pub fn root_key(&self) -> Result<PublicKey, ContractError> {
         PublicKey::from_hex(&self.root_public_key)
     }
+    /// The request-signing key, minted on first Company contact.
     pub fn client_key(&self) -> Result<PrivateKey, ContractError> {
-        PrivateKey::from_seed_text(&self.client_private_seed)
+        match &self.client_private_seed {
+            Some(seed) => PrivateKey::from_seed_text(seed),
+            None => PrivateKey::load_or_generate(&self.client_key_file, "client key"),
+        }
     }
+    /// The repository maintainer's signing key, for the commands that sign
+    /// as the maintainer; minted by the first of them, never by a read.
     pub fn maintainer_key(&self) -> Result<PrivateKey, ContractError> {
-        PrivateKey::from_seed_text(&self.maintainer_private_seed)
+        match &self.maintainer_private_seed {
+            Some(seed) => PrivateKey::from_seed_text(seed),
+            None => PrivateKey::load_or_generate(&self.maintainer_key_file, "maintainer key"),
+        }
+    }
+    /// The maintainer's public key if one exists; a read never mints one.
+    pub fn existing_maintainer_public_key(&self) -> Option<String> {
+        match &self.maintainer_private_seed {
+            Some(seed) => PrivateKey::from_seed_text(seed).ok(),
+            None => self
+                .maintainer_key_file
+                .exists()
+                .then(|| PrivateKey::load(&self.maintainer_key_file, "maintainer key").ok())
+                .flatten(),
+        }
+        .map(|key| key.public().to_hex())
     }
 }
 
@@ -571,18 +596,23 @@ impl UserConfig {
                     .transpose()?;
                 let root_public_key =
                     PublicKey::load(&company.root_public_key_file, "Company root public key")?;
-                paths::ensure_private_dir(&company.cache_root, "Company cache root")?;
+                // Loading the configuration creates nothing: the cache
+                // directory is made by its first write, and a key by the
+                // first command that signs with it. `hooks plan`, `doctor`
+                // and an offline `status` minted both keys before.
+                if company.cache_root.exists() {
+                    paths::ensure_private_dir(&company.cache_root, "Company cache root")?;
+                }
                 let client_key = match std::env::var("KINBASE_CLIENT_KEY_FD") {
                     Ok(fd) => {
                         let fd: i32 = fd.parse().map_err(|_| {
                             config_error("KINBASE_CLIENT_KEY_FD must be an integer")
                         })?;
-                        PrivateKey::load_fd(fd, "client key")?
+                        Some(PrivateKey::load_fd(fd, "client key")?)
                     }
-                    Err(_) => PrivateKey::load_or_generate(&company.client_key_file, "client key")?,
+                    Err(_) => existing_key(&company.client_key_file, "client key")?,
                 };
-                let maintainer_key =
-                    PrivateKey::load_or_generate(&company.maintainer_key_file, "maintainer key")?;
+                let maintainer_key = existing_key(&company.maintainer_key_file, "maintainer key")?;
                 Some(SharedCompanyAccess {
                     url: company.url.clone(),
                     facts_token,
@@ -591,8 +621,10 @@ impl UserConfig {
                     authority_token,
                     root_public_key: root_public_key.to_hex(),
                     cache_root: company.cache_root.clone(),
-                    client_private_seed: client_key.to_seed_text(),
-                    maintainer_private_seed: maintainer_key.to_seed_text(),
+                    client_private_seed: client_key.map(|key| key.to_seed_text()),
+                    maintainer_private_seed: maintainer_key.map(|key| key.to_seed_text()),
+                    client_key_file: company.client_key_file.clone(),
+                    maintainer_key_file: company.maintainer_key_file.clone(),
                 })
             }
         };
@@ -627,6 +659,14 @@ impl UserConfig {
             canary_digests,
             forbidden_identifiers,
         })
+    }
+}
+
+fn existing_key(path: &Path, role: &str) -> Result<Option<PrivateKey>, ContractError> {
+    if path.exists() {
+        PrivateKey::load(path, role).map(Some)
+    } else {
+        Ok(None)
     }
 }
 

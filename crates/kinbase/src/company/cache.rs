@@ -29,7 +29,32 @@ fn sqlite_error(context: &str) -> impl Fn(rusqlite::Error) -> ContractError + '_
     move |error| ContractError::internal(format!("{context}: {error}"))
 }
 
+const CACHE_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS snapshot(id INTEGER PRIMARY KEY CHECK(id=1), bytes BLOB NOT NULL, digest TEXT NOT NULL, stored_at TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS pins(hint TEXT PRIMARY KEY, repository_uuid TEXT NOT NULL, certificate_digest TEXT NOT NULL, pinned_at TEXT NOT NULL, cursor TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS certificates(repository_uuid TEXT PRIMARY KEY, document TEXT NOT NULL, digest TEXT NOT NULL, installed_at TEXT NOT NULL);
+     CREATE TABLE IF NOT EXISTS pending_sagas(candidate_id TEXT PRIMARY KEY, record TEXT NOT NULL, updated_at TEXT NOT NULL);";
+
 impl Cache {
+    /// Open the cache for reading. One that does not exist yet is cold, held
+    /// in memory, and nothing is created on disk; an existing one opens as
+    /// usual.
+    pub fn open_for_read(root: &Path) -> Result<Self, ContractError> {
+        if root.join(CACHE_FILE).exists() {
+            return Self::open(root);
+        }
+        let connection = Connection::open_in_memory()
+            .map_err(|error| ContractError::internal(format!("open cache: {error}")))?;
+        connection
+            .execute_batch(CACHE_SCHEMA)
+            .map_err(sqlite_error("cache schema"))?;
+        Ok(Self {
+            root: root.to_path_buf(),
+            connection: Some(connection),
+            state: CacheState::Cold,
+        })
+    }
+
     pub fn open(root: &Path) -> Result<Self, ContractError> {
         crate::paths::ensure_private_dir(root, "Company cache root")?;
         let path = root.join(CACHE_FILE);
@@ -62,14 +87,8 @@ impl Cache {
         connection
             .busy_timeout(std::time::Duration::from_secs(5))
             .map_err(sqlite_error("busy timeout"))?;
-        let migrated = connection.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS snapshot(id INTEGER PRIMARY KEY CHECK(id=1), bytes BLOB NOT NULL, digest TEXT NOT NULL, stored_at TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS pins(hint TEXT PRIMARY KEY, repository_uuid TEXT NOT NULL, certificate_digest TEXT NOT NULL, pinned_at TEXT NOT NULL, cursor TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS certificates(repository_uuid TEXT PRIMARY KEY, document TEXT NOT NULL, digest TEXT NOT NULL, installed_at TEXT NOT NULL);
-             CREATE TABLE IF NOT EXISTS pending_sagas(candidate_id TEXT PRIMARY KEY, record TEXT NOT NULL, updated_at TEXT NOT NULL);",
-        );
+        let migrated =
+            connection.execute_batch(&format!("PRAGMA journal_mode=WAL;\n{CACHE_SCHEMA}"));
         if migrated.is_err() {
             let quarantine = root.join(format!(
                 "{CACHE_FILE}.invalid-{}",
