@@ -270,7 +270,10 @@ fn handle_connection(mut stream: TcpStream, state: Arc<ServiceState>) {
 
 fn handle(state: &ServiceState, request: &Request) -> Handled {
     let host = request.header("host").unwrap_or_default();
-    if !host_is_loopback(host) {
+    // A Host that must be loopback is a DNS-rebinding guard for a service on the
+    // operator's own machine. On a non-loopback bind the Host is the Service
+    // name, so keeping the check there refuses every request; the two move together.
+    if !host_is_loopback(host) && !state.config.allow_non_loopback {
         return Err(refuse(
             403,
             ContractError::refused(
@@ -4142,6 +4145,7 @@ mod packet11_tests {
         let token_path = temp.path().join("facts.token");
         crate::crypto::write_0600(&token_path, b"facts-packet11", "facts token").unwrap();
         let config = ServiceConfig {
+            allow_non_loopback: false,
             path: temp.path().join("kinbased.toml"),
             company_id: "packet11".to_owned(),
             sqlite_path: temp.path().join("company.sqlite"),
@@ -4219,6 +4223,7 @@ mod auth_subject_tests {
         let token_path = temp.join("facts.token");
         crate::crypto::write_0600(&token_path, b"facts-subject", "facts token").unwrap();
         let config = ServiceConfig {
+            allow_non_loopback: false,
             path: temp.join("kinbased.toml"),
             company_id: "subject".to_owned(),
             sqlite_path: temp.join("company.sqlite"),

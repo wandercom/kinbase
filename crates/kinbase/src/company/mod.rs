@@ -163,6 +163,7 @@ pub fn publish(
         client_key,
         None,
         crate::paths::config_dir().join("steward-cache"),
+        config.allow_non_loopback,
     )?;
     let response = client.post(endpoint, &document)?;
     let mut result = json!({"status": response.status, "response": response.body});

@@ -295,7 +295,14 @@ pub fn error_body(error: &ContractError) -> Value {
 }
 
 /// Parse `http://host:port/base` into a socket address and base path.
-pub fn parse_url(url: &str) -> Result<(String, u16, String), ContractError> {
+/// `allow_non_loopback` is the caller's configured endpoint rule. It belongs
+/// here because this is the gate every Company request actually passes: the
+/// config check alone lets a routable URL be configured and then refused at
+/// the socket, which reads as an outage rather than as a rule.
+pub fn parse_url(
+    url: &str,
+    allow_non_loopback: bool,
+) -> Result<(String, u16, String), ContractError> {
     let rest = url
         .strip_prefix("http://")
         .ok_or_else(|| ContractError::invariant("Company URL must use http:// over loopback"))?;
@@ -312,7 +319,7 @@ pub fn parse_url(url: &str) -> Result<(String, u16, String), ContractError> {
         || host
             .parse::<std::net::IpAddr>()
             .is_ok_and(|ip| ip.is_loopback());
-    if !loopback {
+    if !loopback && !allow_non_loopback {
         return Err(ContractError::invariant(
             "Company URL must name a loopback host",
         ));

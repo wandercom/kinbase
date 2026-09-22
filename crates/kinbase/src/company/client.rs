@@ -32,8 +32,9 @@ impl Client {
         key: PrivateKey,
         root: Option<PublicKey>,
         cache_root: PathBuf,
+        allow_non_loopback: bool,
     ) -> Result<Self, ContractError> {
-        let (host, port, base_path) = http::parse_url(url)?;
+        let (host, port, base_path) = http::parse_url(url, allow_non_loopback)?;
         Ok(Self {
             host,
             port,
@@ -328,7 +329,7 @@ pub fn deliver_to_channel(
     body: &Value,
     key: &PrivateKey,
 ) -> Result<Response, ContractError> {
-    let (host, port, path) = http::parse_url(channel)?;
+    let (host, port, path) = http::parse_url(channel, false)?;
     let bytes = crate::json::canonical_bytes(body);
     let signature = key.sign("question", &bytes)?;
     let headers = vec![

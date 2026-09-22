@@ -119,6 +119,7 @@ impl Launcher {
             access.client_key()?,
             Some(root.clone()),
             access.cache_root.clone(),
+            access.allow_non_loopback,
         )?;
         Ok(Some(CompanyAccess {
             client,
@@ -152,7 +153,9 @@ impl Launcher {
         self.shared
             .company
             .as_ref()
-            .and_then(|access| crate::http::parse_url(&access.url).ok())
+            .and_then(|access| {
+                crate::http::parse_url(&access.url, access.allow_non_loopback).ok()
+            })
             .map(|(_, port, _)| port)
     }
 
