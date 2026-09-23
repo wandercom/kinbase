@@ -724,16 +724,13 @@ pub fn observe(
                 .cloned()
                 .collect::<Vec<_>>();
             for destination in destinations {
-                let destination = match destination.as_str() {
-                    "company" => "company:root".to_owned(),
-                    // Outside a certified repository there is no Codebase
-                    // to admit to; the bare destination failed the whole
-                    // observation.
-                    "codebase" => match &repository_id {
-                        Some(uuid) => format!("codebase:{uuid}"),
-                        None => continue,
-                    },
-                    _ => destination,
+                let destination = match resolved_destination(
+                    destination.as_str(),
+                    repository_id.as_deref(),
+                    launcher.shared.company.is_some(),
+                ) {
+                    Some(destination) => destination,
+                    None => continue,
                 };
                 // Nothing is left to share once de-identification removed
                 // every word.
@@ -2300,6 +2297,31 @@ fn io_error(error: std::io::Error) -> ContractError {
 
 #[cfg(test)]
 mod tests {
+    use super::resolved_destination;
+
+    #[test]
+    fn a_label_becomes_a_candidate_only_where_its_store_exists() {
+        // With Company access configured, company work routes as before.
+        assert_eq!(
+            resolved_destination("company", None, true).as_deref(),
+            Some("company:root")
+        );
+        // Without it there is no null-route noise: no candidate is minted,
+        // so no checkpoint reports REPO_UNCERTIFIED for it.
+        assert_eq!(resolved_destination("company", None, false), None);
+        // Codebase keeps its existing rule: certified repository or nothing.
+        assert_eq!(
+            resolved_destination("codebase", Some("uuid-1"), false).as_deref(),
+            Some("codebase:uuid-1")
+        );
+        assert_eq!(resolved_destination("codebase", None, true), None);
+        // Personal is always available; it is this host's own store.
+        assert_eq!(
+            resolved_destination("personal", None, false).as_deref(),
+            Some("personal")
+        );
+    }
+
     use super::deidentify_statement;
 
     #[test]
@@ -3774,6 +3796,30 @@ pub fn saga_terminal_event_fields(event_id: &str) -> Option<Value> {
                 "apology_id": record.get("apology_id").cloned().unwrap_or(Value::Null)
             })
         })
+}
+
+/// The store a classifier label names here, or `None` when this host has
+/// nowhere to put it.
+///
+/// A label only becomes a candidate if its destination exists. Outside a
+/// certified repository there is no Codebase to admit to, and with no
+/// `[company]` in the user config there is no Company either: minting the
+/// candidate anyway produced a failed admission at every single checkpoint
+/// (`REPO_UNCERTIFIED`), which is noise, not a finding. The operator whose
+/// own repositories are not company work runs a config without `[company]`,
+/// and this is what makes that a real null route rather than a louder one.
+/// A candidate already minted is still admitted and still fails loudly: this
+/// governs creation only.
+fn resolved_destination(
+    label: &str,
+    repository_id: Option<&str>,
+    company_configured: bool,
+) -> Option<String> {
+    match label {
+        "company" => company_configured.then(|| "company:root".to_owned()),
+        "codebase" => repository_id.map(|uuid| format!("codebase:{uuid}")),
+        other => Some(other.to_owned()),
+    }
 }
 
 pub fn destination_store(destination: &str) -> Result<crate::StoreKind, ContractError> {
