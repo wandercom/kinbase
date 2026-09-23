@@ -1999,6 +1999,7 @@ pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError
     // later checkpoint; it used to end the checkpoint and starve the rest.
     let mut admissions = Vec::new();
     let mut admission_failures = 0usize;
+    let mut admissions_held = 0usize;
     let mut first_failure: Option<ContractError> = None;
     if !candidates.is_empty() {
         let repo = std::env::current_dir().map_err(io_error)?;
@@ -2010,6 +2011,16 @@ pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError
             };
             match admitted {
                 Ok(receipt) => admissions.push(receipt),
+                Err(error) if error.code == "REPO_UNCERTIFIED" => {
+                    // Not a failure: this host simply has nowhere to put a
+                    // shared candidate yet. Holding it says so once and keeps
+                    // the candidate for a later checkpoint; reporting it as a
+                    // failed admission per candidate, per checkpoint, forever
+                    // buried every real signal and told the operator to run a
+                    // certification they may not own.
+                    admissions_held += 1;
+                    admissions.push(admission_held(candidate, &error));
+                }
                 Err(error) => {
                     admission_failures += 1;
                     let failure = admission_failure(candidate, &error);
@@ -2112,7 +2123,8 @@ pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError
         "personal_fact_count": personal_fact_count,
         "sweep": sweep,
         "admissions": admissions,
-        "admission_failures": admission_failures
+        "admission_failures": admission_failures,
+        "admissions_held": admissions_held
     });
     append_personal("session-checkpoints.jsonl", &record)?;
     Ok((record, first_failure))
@@ -2122,6 +2134,19 @@ pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError
 /// its destination and the typed refusal, with no receipt (nothing was
 /// decided). The prose is folded to canonical text: a refusal carrying a
 /// newline (git's stderr) made the checkpoint record unwritable.
+/// One candidate's held admission: kept for a later checkpoint because this
+/// host has no store for its destination yet. It carries the reason and no
+/// receipt, and it is not a failure.
+fn admission_held(candidate: &Value, error: &ContractError) -> Value {
+    let text = crate::json::fold_to_canonical_text;
+    json!({
+        "candidate_id": text(crate::json::get_str(candidate, "candidate_id").unwrap_or_default()),
+        "destination": text(crate::json::get_str(candidate, "destination").unwrap_or_default()),
+        "state": "held",
+        "reason": text(&error.message)
+    })
+}
+
 fn admission_failure(candidate: &Value, error: &ContractError) -> Value {
     let text = crate::json::fold_to_canonical_text;
     json!({
@@ -2147,6 +2172,13 @@ pub fn admission_lines(record: &Value) -> Vec<String> {
         .flatten()
         .map(|row| {
             let field = |name: &str| crate::json::get_str(row, name).unwrap_or("-");
+            if crate::json::get_str(row, "state") == Some("held") {
+                return format!(
+                    "admission {} -> {}: held (no store for it on this host yet)",
+                    field("candidate_id"),
+                    field("destination")
+                );
+            }
             match row.get("error") {
                 Some(error) => format!(
                     "admission {} -> {}: failed ({})",

@@ -691,12 +691,13 @@ fn checkpoint_streams_only_this_sessions_records_from_shared_ledgers() {
 }
 
 #[test]
-fn a_host_hook_never_exits_2_even_for_a_user_action_refusal() {
+fn a_host_hook_holds_a_candidate_it_cannot_place_and_never_exits_2() {
     use std::io::Write as _;
     // A session outside any Git worktree that has an automatic candidate for
-    // a shared destination: admission needs repository discovery, which
-    // refuses with REPO_UNCERTIFIED (exit 2 for a command). From a Stop hook,
-    // exit 2 tells the host to refuse to stop and fire Stop again.
+    // a shared destination: this host has nowhere to put it. That is held,
+    // not failed — the candidate waits for a later checkpoint and the hook
+    // stays quiet. Exit 2 would tell the host to refuse to stop and fire Stop
+    // again, so it is never used.
     let temp = TempDir::new().expect("tempdir");
     let world = host_world(&temp);
     let outside = temp.path().join("not-a-repository");
@@ -738,21 +739,16 @@ fn a_host_hook_never_exits_2_even_for_a_user_action_refusal() {
         .expect("write");
     let output = child.wait_with_output().expect("output");
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert_eq!(output.status.code(), Some(3), "{stderr}");
+    assert_ne!(output.status.code(), Some(2), "{stderr}");
     assert!(
-        stderr.contains("REPO_UNCERTIFIED"),
-        "the reason is kept: {stderr}"
+        !stderr.contains("REPO_UNCERTIFIED"),
+        "an unplaceable candidate is not a refusal to report: {stderr}"
     );
+    // Every candidate's outcome still reaches the channel the host shows, and
+    // the checkpoint is still written.
     assert!(
-        stderr.lines().any(|line| line.starts_with("remediation: ")),
-        "so is the remediation: {stderr}"
-    );
-    // Every candidate's outcome reaches the channel the host shows, and the
-    // checkpoint is written even though the refusal carried git's own words.
-    assert!(
-        stderr
-            .lines()
-            .any(|line| line == "admission cand_probe -> company:root: failed (REPO_UNCERTIFIED)"),
+        stderr.lines().any(|line| line
+            == "admission cand_probe -> company:root: held (no store for it on this host yet)"),
         "{stderr}"
     );
     let checkpoints =

@@ -747,9 +747,14 @@ fn dispatch_event(
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             let (checkpoint, failure) = crate::session::checkpoint_internal(session_id)?;
-            if failure.is_some() && !json {
+            let held = checkpoint
+                .get("admissions_held")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if (failure.is_some() || held > 0) && !json {
                 // The host shows only stderr for a failed hook: every
-                // candidate's outcome goes there, not just the refusal.
+                // candidate's outcome goes there, not just the refusal. A
+                // held candidate is reported the same way and exits zero.
                 for line in crate::session::admission_lines(&checkpoint) {
                     eprintln!("{line}");
                 }
@@ -772,7 +777,11 @@ fn dispatch_event(
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             let (checkpoint, failure) = crate::session::checkpoint_internal(session_id)?;
-            if failure.is_some() && !json {
+            let held = checkpoint
+                .get("admissions_held")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if (failure.is_some() || held > 0) && !json {
                 for line in crate::session::admission_lines(&checkpoint) {
                     eprintln!("{line}");
                 }
