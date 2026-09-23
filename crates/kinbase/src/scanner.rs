@@ -752,6 +752,8 @@ fn contains_phone_number(view: &str) -> bool {
         if joined_to_word {
             // The whole chained token is an identifier; resuming inside it
             // found `123-456-7890` in `ABC-12-123-456-7890`.
+            // Consume the start even when `+` or `(` is outside that chain.
+            index += 1;
             while index < chars.len()
                 && (chars[index].is_alphanumeric() || matches!(chars[index], '-' | '.'))
             {
