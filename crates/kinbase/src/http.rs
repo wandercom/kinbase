@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const MAX_HEADER_BYTES: usize = 16 * 1024;
 /// The longest request line accepted: a 2048-byte path plus method and
@@ -342,18 +342,66 @@ pub struct Response {
 /// the measured attempt, and the response carrying it, land inside 250 ms.
 pub const PROBE_BUDGET: Duration = Duration::from_millis(200);
 
+/// Resolve inside the same budget the connection gets, and report what is left
+/// of it.
+///
+/// `to_socket_addrs` blocks with no bound of its own. That cost nothing while a
+/// Company endpoint could only be a loopback address, but a name has to be
+/// asked for, and an unbounded resolution in front of a bounded connect means
+/// the budget stops describing the wait: a slow resolver pushed SessionStart
+/// past its own two-second budget while every message still said 250 ms.
+///
+/// Resolution runs on its own thread so the deadline covers both halves. A
+/// resolver that answers late finds nobody listening and the thread ends on its
+/// own; nothing is cancelled because the standard library gives no way to.
+fn resolve_within(
+    host: &str,
+    port: u16,
+    budget: Duration,
+) -> Result<(SocketAddr, Duration), ContractError> {
+    let started = Instant::now();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let name = host.to_owned();
+    std::thread::spawn(move || {
+        let found = (name.as_str(), port)
+            .to_socket_addrs()
+            .map(|mut addresses| addresses.next())
+            .map_err(|error| error.to_string());
+        let _ = sender.send(found);
+    });
+    let unresolved = || {
+        ContractError::unreachable(format!(
+            "Company endpoint did not resolve within the {} ms budget",
+            budget.as_millis()
+        ))
+    };
+    let address = match receiver.recv_timeout(budget) {
+        Ok(Ok(Some(address))) => address,
+        Ok(Ok(None)) => {
+            return Err(ContractError::unreachable("Company endpoint does not resolve"))
+        }
+        Ok(Err(error)) => {
+            return Err(ContractError::unreachable(format!(
+                "Company endpoint does not resolve ({error})"
+            )))
+        }
+        Err(_) => return Err(unresolved()),
+    };
+    let remaining = budget.saturating_sub(started.elapsed());
+    // connect_timeout rejects a zero duration, and a budget already spent is
+    // the same answer as one that runs out mid-connect.
+    if remaining.is_zero() {
+        return Err(unresolved());
+    }
+    Ok((address, remaining))
+}
+
 /// Probe only the connection budget: does the endpoint accept a TCP
 /// connection within the probe budget? Nothing is sent; the socket closes
 /// at once.
 pub fn probe_connect(host: &str, port: u16) -> Result<(), ContractError> {
-    let address = (host, port)
-        .to_socket_addrs()
-        .map_err(|error| {
-            ContractError::unreachable(format!("Company endpoint does not resolve ({error})"))
-        })?
-        .next()
-        .ok_or_else(|| ContractError::unreachable("Company endpoint does not resolve"))?;
-    TcpStream::connect_timeout(&address, PROBE_BUDGET)
+    let (address, remaining) = resolve_within(host, port, PROBE_BUDGET)?;
+    TcpStream::connect_timeout(&address, remaining)
         .map(|_stream| ())
         .map_err(|error| {
             ContractError::unreachable(format!(
@@ -375,14 +423,8 @@ pub fn request(
     body: &[u8],
     read_timeout: Duration,
 ) -> Result<Response, ContractError> {
-    let address = (host, port)
-        .to_socket_addrs()
-        .map_err(|error| {
-            ContractError::unreachable(format!("Company endpoint does not resolve ({error})"))
-        })?
-        .next()
-        .ok_or_else(|| ContractError::unreachable("Company endpoint does not resolve"))?;
-    let mut stream = TcpStream::connect_timeout(&address, CONNECT_BUDGET).map_err(|error| {
+    let (address, remaining) = resolve_within(host, port, CONNECT_BUDGET)?;
+    let mut stream = TcpStream::connect_timeout(&address, remaining).map_err(|error| {
         ContractError::unreachable(format!(
             "Company endpoint did not accept a connection within 250 ms ({})",
             error.kind()
@@ -558,5 +600,53 @@ mod request_bound_tests {
         assert_eq!(request.method, "POST");
         assert_eq!(request.body, b"{}");
         assert_eq!(request.header("host"), Some("127.0.0.1"));
+    }
+}
+
+#[cfg(test)]
+mod endpoint_budget_tests {
+    use super::*;
+
+    /// The budget has to describe the whole wait, not the half after the name
+    /// is known. A name that cannot be answered quickly is the case that used
+    /// to escape it: resolution ran to whatever the resolver decided, and only
+    /// then did a 250 ms connect begin.
+    #[test]
+    fn a_name_that_does_not_resolve_still_answers_inside_the_budget() {
+        // .invalid is reserved precisely so it can never be registered, so this
+        // either fails immediately or hangs on a resolver: both are the case
+        // under test, and neither may outlast the bound.
+        let started = Instant::now();
+        let outcome = probe_connect("kinbase-endpoint-that-cannot-exist.invalid", 8421);
+        let elapsed = started.elapsed();
+        assert!(outcome.is_err(), "an unresolvable name reported a connection");
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "resolution escaped the budget: {elapsed:?}",
+        );
+    }
+
+    /// The deterministic half of the same property. The test above depends on
+    /// how fast a resolver says no, which on a machine that answers instantly
+    /// would pass with or without a bound. This one cannot: a budget already
+    /// spent has to be refused rather than waited out.
+    #[test]
+    fn a_spent_budget_refuses_rather_than_resolving() {
+        let outcome = resolve_within("127.0.0.1", 8421, Duration::ZERO);
+        let error = outcome.expect_err("a zero budget resolved anyway");
+        assert!(
+            error.message.contains("did not resolve within"),
+            "refused for the wrong reason: {}",
+            error.message,
+        );
+    }
+
+    #[test]
+    fn a_resolvable_address_leaves_the_remainder_for_the_connection() {
+        let (address, remaining) =
+            resolve_within("127.0.0.1", 8421, PROBE_BUDGET).expect("loopback resolves");
+        assert_eq!(address.port(), 8421);
+        assert!(!remaining.is_zero(), "no budget left for the connection");
+        assert!(remaining <= PROBE_BUDGET, "remaining exceeded the budget");
     }
 }
