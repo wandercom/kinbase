@@ -342,6 +342,27 @@ pub struct Response {
 /// the measured attempt, and the response carrying it, land inside 250 ms.
 pub const PROBE_BUDGET: Duration = Duration::from_millis(200);
 
+/// Give `work` its own thread and stop waiting after `budget`. `None` means the
+/// budget ran out first.
+///
+/// The thread is not cancelled, because the standard library offers no way to.
+/// It finishes into a channel nobody is reading and ends there, which is the
+/// price of bounding a blocking call the platform will not interrupt.
+///
+/// This exists as its own function so the bound can be tested against work that
+/// is deliberately slow. A test that only resolves real names proves nothing on
+/// a machine whose resolver is fast.
+fn within<T: Send + 'static>(
+    budget: Duration,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = sender.send(work());
+    });
+    receiver.recv_timeout(budget).ok()
+}
+
 /// Resolve inside the same budget the connection gets, and report what is left
 /// of it.
 ///
@@ -360,14 +381,12 @@ fn resolve_within(
     budget: Duration,
 ) -> Result<(SocketAddr, Duration), ContractError> {
     let started = Instant::now();
-    let (sender, receiver) = std::sync::mpsc::channel();
     let name = host.to_owned();
-    std::thread::spawn(move || {
-        let found = (name.as_str(), port)
+    let resolved = within(budget, move || {
+        (name.as_str(), port)
             .to_socket_addrs()
             .map(|mut addresses| addresses.next())
-            .map_err(|error| error.to_string());
-        let _ = sender.send(found);
+            .map_err(|error| error.to_string())
     });
     let unresolved = || {
         ContractError::unreachable(format!(
@@ -375,17 +394,17 @@ fn resolve_within(
             budget.as_millis()
         ))
     };
-    let address = match receiver.recv_timeout(budget) {
-        Ok(Ok(Some(address))) => address,
-        Ok(Ok(None)) => {
+    let address = match resolved {
+        Some(Ok(Some(address))) => address,
+        Some(Ok(None)) => {
             return Err(ContractError::unreachable("Company endpoint does not resolve"))
         }
-        Ok(Err(error)) => {
+        Some(Err(error)) => {
             return Err(ContractError::unreachable(format!(
                 "Company endpoint does not resolve ({error})"
             )))
         }
-        Err(_) => return Err(unresolved()),
+        None => return Err(unresolved()),
     };
     let remaining = budget.saturating_sub(started.elapsed());
     // connect_timeout rejects a zero duration, and a budget already spent is
@@ -624,6 +643,30 @@ mod endpoint_budget_tests {
             elapsed < Duration::from_secs(2),
             "resolution escaped the budget: {elapsed:?}",
         );
+    }
+
+    /// The case the real thing exists for, and the one a resolver test cannot
+    /// reach: work that takes longer than the budget must be given up on rather
+    /// than waited out. Five seconds against fifty milliseconds is unambiguous
+    /// on any machine, fast resolver or not.
+    #[test]
+    fn work_that_outlasts_its_budget_is_abandoned_not_awaited() {
+        let started = Instant::now();
+        let outcome = within(Duration::from_millis(50), || {
+            std::thread::sleep(Duration::from_secs(5));
+            "resolved eventually"
+        });
+        let elapsed = started.elapsed();
+        assert!(outcome.is_none(), "slow work was waited out to completion");
+        assert!(
+            elapsed < Duration::from_secs(1),
+            "the bound did not hold: {elapsed:?}",
+        );
+    }
+
+    #[test]
+    fn work_that_finishes_inside_its_budget_is_returned() {
+        assert_eq!(within(Duration::from_secs(5), || 7), Some(7));
     }
 
     /// The deterministic half of the same property. The test above depends on
