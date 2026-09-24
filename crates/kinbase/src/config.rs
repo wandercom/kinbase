@@ -34,6 +34,9 @@ pub struct CompanyConfig {
     pub authority_token_file: Option<PathBuf>,
     pub client_key_file: PathBuf,
     pub maintainer_key_file: PathBuf,
+    /// Mirrors the service flag: set only where the endpoint is reached over a
+    /// network whose isolation is enforced somewhere other than the interface.
+    pub allow_non_loopback: bool,
 }
 
 /// The processors a `[classifier]` may send session text to: `local` (the
@@ -142,6 +145,9 @@ pub struct SharedCompanyAccess {
     pub maintainer_private_seed: Option<String>,
     pub client_key_file: PathBuf,
     pub maintainer_key_file: PathBuf,
+    /// Carried through so a shared process applies the same endpoint rule the
+    /// launcher was configured with, rather than re-deciding it.
+    pub allow_non_loopback: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -386,13 +392,16 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                     "authority_token_file",
                     "client_key_file",
                     "maintainer_key_file",
+                    "allow_non_loopback",
                 ],
                 "[company]",
             )?;
             let url = required_str(section, "url", "company")?.to_owned();
-            validate_loopback_url(&url)?;
+            let allow_non_loopback = optional_bool(section, "allow_non_loopback", "company")?;
+            validate_loopback_url(&url, allow_non_loopback)?;
             Some(CompanyConfig {
                 url,
+                allow_non_loopback,
                 facts_token_file: absolute(
                     required_str(section, "facts_token_file", "company")?,
                     "company.facts_token_file",
@@ -608,6 +617,23 @@ fn default_principal() -> String {
         .unwrap_or_else(|_| std::env::var("USER").unwrap_or_else(|_| "local-principal".to_owned()))
 }
 
+/// A present value that is not a boolean is malformed configuration, not a
+/// false. Reading `allow_non_loopback = "true"` as off refuses the bind while
+/// the file says otherwise, which is the hardest kind of mistake to see.
+fn optional_bool(
+    table: &toml::value::Table,
+    key: &str,
+    section: &str,
+) -> Result<bool, ContractError> {
+    match table.get(key) {
+        None => Ok(false),
+        Some(toml::Value::Boolean(value)) => Ok(*value),
+        Some(_) => Err(config_error(format!(
+            "{section}.{key} must be a boolean, true or false, unquoted"
+        ))),
+    }
+}
+
 fn default_host_instance() -> String {
     std::env::var("KINBASE_HOST_INSTANCE").unwrap_or_else(|_| {
         let host = std::fs::read_to_string("/etc/hostname")
@@ -619,10 +645,10 @@ fn default_host_instance() -> String {
     })
 }
 
-pub fn validate_loopback_url(url: &str) -> Result<(), ContractError> {
+pub fn validate_loopback_url(url: &str, allow_non_loopback: bool) -> Result<(), ContractError> {
     let rest = url
         .strip_prefix("http://")
-        .ok_or_else(|| config_error("company.url must be an http:// loopback URL in this proof"))?;
+        .ok_or_else(|| config_error("company.url must be an http:// URL"))?;
     let authority = rest.split('/').next().unwrap_or_default();
     let host = authority
         .rsplit_once(':')
@@ -633,8 +659,10 @@ pub fn validate_loopback_url(url: &str) -> Result<(), ContractError> {
         || host
             .parse::<std::net::IpAddr>()
             .is_ok_and(|ip| ip.is_loopback());
-    if !loopback {
-        return Err(config_error("company.url must name a loopback endpoint"));
+    if !loopback && !allow_non_loopback {
+        return Err(config_error(
+            "company.url must name a loopback endpoint unless company.allow_non_loopback is set",
+        ));
     }
     Ok(())
 }
@@ -684,6 +712,7 @@ impl UserConfig {
                 let maintainer_key = existing_key(&company.maintainer_key_file, "maintainer key")?;
                 Some(SharedCompanyAccess {
                     url: company.url.clone(),
+                    allow_non_loopback: company.allow_non_loopback,
                     facts_token,
                     admin_token,
                     directory_token,
@@ -787,6 +816,11 @@ pub struct ServiceConfig {
     pub company_id: String,
     pub sqlite_path: PathBuf,
     pub bind: std::net::SocketAddr,
+    /// Set only by a deployment whose isolation comes from the network rather
+    /// than from the loopback interface. Relaxes the bind and Host checks
+    /// together: enforcing Host against loopback on a routable bind refuses
+    /// every request, so the two cannot move independently.
+    pub allow_non_loopback: bool,
     pub root_key_file: PathBuf,
     pub facts_token_file: PathBuf,
     pub directory_token_file: Option<PathBuf>,
@@ -824,6 +858,7 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
             "company_id",
             "sqlite_path",
             "bind",
+            "allow_non_loopback",
             "root_key_file",
             "facts_token_file",
             "directory_token_file",
@@ -862,9 +897,10 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
     let bind: std::net::SocketAddr = bind_text
         .parse()
         .map_err(|_| config_error("bind must be an IP:port address"))?;
-    if !bind.ip().is_loopback() {
+    let allow_non_loopback = optional_bool(&table, "allow_non_loopback", "service")?;
+    if !bind.ip().is_loopback() && !allow_non_loopback {
         return Err(config_error(
-            "bind must be a loopback address in this proof",
+            "bind must be a loopback address unless allow_non_loopback is set",
         ));
     }
     let lifetime = integer("candidate_lifetime_seconds", None, 1)?;
@@ -880,6 +916,7 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
         company_id: required_str(&table, "company_id", "service")?.to_owned(),
         sqlite_path: absolute(required_str(&table, "sqlite_path", "service")?, "sqlite_path")?,
         bind,
+        allow_non_loopback,
         root_key_file: absolute(required_str(&table, "root_key_file", "service")?, "root_key_file")?,
         facts_token_file: absolute(required_str(&table, "facts_token_file", "service")?, "facts_token_file")?,
         directory_token_file: optional_path(&table, "directory_token_file", "service")?,

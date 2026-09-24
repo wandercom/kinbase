@@ -1132,7 +1132,7 @@ fn session_start(
     // Bounded probe of the configured endpoint: the connection budget only.
     let (connect_seconds, reachable) = match launcher.shared.company.as_ref() {
         Some(access) if !launcher.company_env_present => {
-            match crate::http::parse_url(&access.url) {
+            match crate::http::parse_url(&access.url, access.allow_non_loopback) {
                 Ok((host, port, _)) => {
                     let started = std::time::Instant::now();
                     let outcome = crate::http::probe_connect(&host, port);

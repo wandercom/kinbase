@@ -2118,7 +2118,16 @@ pub fn issue_certificate(
     json_output: bool,
 ) -> Result<(), ContractError> {
     let repo = Repository::discover(repo_path)?;
-    crate::config::validate_loopback_url(company_url)?;
+    // Behaviour change: this used to require a loopback URL unconditionally.
+    // It now defers to the operator's own [company] setting, so the flag governs
+    // what this argument may name as well as where the service may bind. An
+    // argument cannot widen the rule; only the configured endpoint can.
+    let allow_non_loopback = launcher
+        .shared
+        .company
+        .as_ref()
+        .is_some_and(|company| company.allow_non_loopback);
+    crate::config::validate_loopback_url(company_url, allow_non_loopback)?;
     if launcher.company_env_present {
         return Err(ContractError::new(
             "PROCESSOR_UNAUTHORIZED",
@@ -2155,6 +2164,7 @@ pub fn issue_certificate(
         access.client_key()?,
         Some(access.root_key()?),
         access.cache_root.clone(),
+        access.allow_non_loopback,
     )?;
     let hint = crate::codebase::git(&repo.root, &["remote", "get-url", "origin"])
         .map(|remote| normalize_hint(&remote))

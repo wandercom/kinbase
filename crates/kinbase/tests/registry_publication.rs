@@ -98,6 +98,7 @@ nonce_retention_seconds = 1300
             PrivateKey::generate(),
             Some(root.public()),
             temp.path().join("client-cache"),
+            false,
         )
         .expect("client");
         Service {

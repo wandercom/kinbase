@@ -38,10 +38,32 @@ pub fn signed_certificate(document: &Value) -> Value {
 }
 
 impl CompanyDb {
+    /// Opens and brings the schema up to date. Startup path: it creates the
+    /// directory, fixes the mode and runs the migration, so a request never has
+    /// to. Tests use it for the same reason.
     pub fn open(path: &Path) -> Result<Self, ContractError> {
+        // The directory has to exist before the connection is opened, not after.
         if let Some(parent) = path.parent() {
             crate::paths::ensure_dir(parent, "Company SQLite directory")?;
         }
+        let db = Self::connect(path)?;
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+        db.migrate()?;
+        Ok(db)
+    }
+
+    /// Opens a connection to a database the startup path has already migrated.
+    ///
+    /// This is what a request uses. `open` chmods the file and runs `migrate`,
+    /// and `migrate` is two `INSERT OR IGNORE` statements, so calling it per
+    /// request meant every unauthenticated connection took two write
+    /// transactions against a ten second busy timeout before anyone checked a
+    /// credential. The symlink check stays: it is a stat, and the file being
+    /// swapped underneath a running service is exactly what it exists to catch.
+    pub fn connect(path: &Path) -> Result<Self, ContractError> {
         crate::paths::reject_symlink(path, "Company SQLite")?;
         let connection = Connection::open(path).map_err(|error| {
             ContractError::refused(
@@ -61,13 +83,7 @@ impl CompanyDb {
                 "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;",
             )
             .map_err(sqlite_error("pragma"))?;
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-        }
-        let db = Self { connection };
-        db.migrate()?;
-        Ok(db)
+        Ok(Self { connection })
     }
 
     /// Idempotent schema creation/migration (Validator ruling R-2).
@@ -1308,5 +1324,39 @@ impl TokenRow {
     /// Exact canonical byte equality; missing or empty sets grant nothing.
     pub fn authority_scope_allows(&self, scope: &str) -> bool {
         self.authority_scopes.iter().any(|granted| granted == scope)
+    }
+}
+
+#[cfg(test)]
+mod open_vs_connect {
+    use super::*;
+
+    /// `open` is the startup path and has to create the directory it is handed.
+    /// An earlier revision of the split connected before creating it, which
+    /// fails on a first install and on nothing else.
+    #[test]
+    fn open_creates_a_directory_that_does_not_exist_yet() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("nested").join("deeper").join("company.sqlite3");
+        assert!(!path.parent().unwrap().exists());
+        CompanyDb::open(&path).expect("open must create the directory it is given");
+        assert!(path.exists(), "no database was created");
+    }
+
+    /// `connect` is the request path: it must not migrate, so it cannot write.
+    #[test]
+    fn connect_does_not_create_a_schema() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let path = temp.path().join("company.sqlite3");
+        let db = CompanyDb::connect(&path).expect("connect opens a fresh file");
+        let tables: i64 = db
+            .connection
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='meta'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 0, "connect migrated the schema; it must not write");
     }
 }
