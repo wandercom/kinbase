@@ -761,8 +761,10 @@ temporary homes by invoking installed hook commands and config, not by passing
 native envelope samples; `doctor` rejects unsupported ranges.
 
 SessionStart has a two-second p95 proof budget. It uses a previously verified cache
-and launches asynchronous Company refresh with a 250-millisecond connection budget;
-a blackholed endpoint cannot hold the
+and launches asynchronous Company refresh with a 250-millisecond connection budget
+and, where the endpoint names a host rather than a literal, a separate
+250-millisecond resolution budget ahead of it, so a refresh that must resolve is
+bounded at 500 milliseconds; a blackholed endpoint cannot hold the
 host open. Fail-closed means affected facts are withheld with a loud degraded/Unknown
 status, never that an ordinary editor session is prevented from starting.
 Warm, cold, cache-invalid, and full-fsck-required starts all return the hook response

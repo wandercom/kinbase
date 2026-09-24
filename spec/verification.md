@@ -492,7 +492,8 @@ cluster sizes and source dependence reported rather than manufactured.
 - Measure warm, cold, invalid-cache, and full-fsck-required SessionStart separately;
   run at least 200 invocations per host/state on the recorded proof machine, report
   CPU/RAM/filesystem, and require every state's p95 under two seconds. Company connect
-  budget is 250 ms, cold/degraded projection is empty, and background full fsck at
+  budget is 250 ms, with a separate 250 ms resolution budget where the endpoint
+  names a host, cold/degraded projection is empty, and background full fsck at
   the 10,000-event ceiling finishes within 120 seconds. Across the 20-session private
   soak, at least 90% of starts must take the warm verified path and deliver nonempty
   trusted context when eligible facts exist; after the first cold start, at most 5%
