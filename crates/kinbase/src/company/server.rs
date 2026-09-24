@@ -371,7 +371,7 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
     // The store opens before the credential is examined because
     // authentication reads it: the token record, the per-subject failure
     // counters and the request nonce all live here.
-    let db = CompanyDb::open(&state.config.sqlite_path).map_err(|error| refuse(500, error))?;
+    let db = CompanyDb::connect(&state.config.sqlite_path).map_err(|error| refuse(500, error))?;
     let now = crate::time::now_rfc3339_millis();
     let route = normalize_route(&request.route);
     if route == "/status"
