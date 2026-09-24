@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 pub const FACTS_TOKEN_SCOPES: [&str; 2] = ["facts:read", "questions:write"];
@@ -24,6 +25,40 @@ pub const AUTHORITY_TOKEN_SCOPES: [&str; 2] = ["answers:write", "questions:write
 const UNAUTHENTICATED_SUBJECT: &str = "unauthenticated";
 pub const REQUEST_EXPIRY_MAX_SECONDS: i64 = 15 * 60;
 pub const MAX_READ_ITEMS: usize = 500;
+/// The ceiling on connections being served at once. Every accepted
+/// connection costs a thread that waits out a five-second read timeout
+/// before any credential is looked at, so on a routable bind a few thousand
+/// silent sockets starve the real clients of threads. The ceiling keeps that
+/// cost a property of the service rather than of the peer.
+pub const MAX_CONCURRENT_CONNECTIONS: usize = 64;
+
+/// Connections being served right now. The process serves one listener, so
+/// one counter is the whole population.
+static LIVE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// Holds one place under [`MAX_CONCURRENT_CONNECTIONS`] for as long as it
+/// lives. Releasing on drop is what gives the place back when a handler
+/// panics or returns early: a leaked place is capacity lost until restart.
+struct ConnectionSlot;
+
+impl ConnectionSlot {
+    /// `None` when the ceiling is already taken. The count rises in one
+    /// compare-and-set, so two accepts cannot both claim the last place.
+    fn acquire() -> Option<Self> {
+        LIVE_CONNECTIONS
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |live| {
+                (live < MAX_CONCURRENT_CONNECTIONS).then_some(live + 1)
+            })
+            .ok()
+            .map(|_| ConnectionSlot)
+    }
+}
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        LIVE_CONNECTIONS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
 
 pub struct ServiceState {
     pub config: ServiceConfig,
@@ -229,10 +264,34 @@ pub fn serve(
     });
     for stream in listener.incoming() {
         let Ok(stream) = stream else { continue };
+        // The place is claimed on the accept thread, before the worker
+        // exists. Claiming it inside the worker would hand every peer a
+        // thread first and leave the ceiling decorative.
+        let Some(slot) = ConnectionSlot::acquire() else {
+            refuse_over_ceiling(stream);
+            continue;
+        };
         let state = Arc::clone(&state);
-        std::thread::spawn(move || handle_connection(stream, state));
+        std::thread::spawn(move || {
+            let _slot = slot;
+            handle_connection(stream, state)
+        });
     }
     Ok(())
+}
+
+/// The typed refusal for a connection over the ceiling, written from the
+/// accept thread. The socket goes non-blocking first: a peer advertising no
+/// receive window would otherwise hold the accept loop for a whole write
+/// timeout per connection, which is the starvation the ceiling exists to
+/// stop. A refusal that does not fit the send buffer goes with the socket.
+fn refuse_over_ceiling(mut stream: TcpStream) {
+    let error = ContractError::limit(
+        "the service is already serving its ceiling of concurrent connections",
+        json!({"refused_count": 1, "omitted_count": 1, "ceiling": MAX_CONCURRENT_CONNECTIONS}),
+    );
+    let _ = stream.set_nonblocking(true);
+    let _ = http::respond(&mut stream, 503, &http::error_body(&error));
 }
 
 fn handle_connection(mut stream: TcpStream, state: Arc<ServiceState>) {
@@ -309,9 +368,11 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
             ));
         }
     }
+    // The store opens before the credential is examined because
+    // authentication reads it: the token record, the per-subject failure
+    // counters and the request nonce all live here.
     let db = CompanyDb::open(&state.config.sqlite_path).map_err(|error| refuse(500, error))?;
     let now = crate::time::now_rfc3339_millis();
-    maintenance(&db, state, &now).map_err(|error| refuse(500, error))?;
     let route = normalize_route(&request.route);
     if route == "/status"
         && request.method == "GET"
@@ -324,6 +385,12 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
         return Err(auth_refusal());
     }
     let auth = authenticate(&db, state, request, &now)?;
+    // Periodic obligations run behind authentication, never in front of it.
+    // They prune nonces, retire lapsed manifest observations and sign
+    // fact-events with the Company root key; running them on arrival meant an
+    // unauthenticated peer drove SQLite writes and root-key signatures by
+    // connecting, which on a routable bind is anyone who can reach the port.
+    maintenance(&db, state, &now).map_err(|error| refuse(500, error))?;
     let parsed_body: Option<Value> = if request.body.is_empty() {
         None
     } else {
