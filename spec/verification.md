@@ -782,8 +782,10 @@ pass.
 - `fsck`, `doctor`, corpus status, question status, and experiment status are
   executable and useful after restart. `explain <logical-key>` shows each reducer
   admission/rejection step and the evidence needed to flip the result.
-- Kinbase HTTP rejects unauthenticated reads, non-loopback Host, Origin-bearing
-  requests, and non-JSON writes; all receive typed remediation-safe errors.
+- Kinbase HTTP rejects unauthenticated reads, Origin-bearing requests, and
+  non-JSON writes; all receive typed remediation-safe errors. A non-loopback Host
+  is rejected unless `allow_non_loopback` is set, which a managed deployment sets
+  because it is reached through a cluster Service name rather than a literal.
 - Static analysis, formatting, type checks, dependency audit, and full test suite run
   without undeclared network access.
 - [`leak-runbook.md`](leak-runbook.md) is exercised as a tabletop against one seeded
