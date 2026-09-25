@@ -1,6 +1,6 @@
 # Astra: rewrite the acceptance suite around rulings, not approvals
 
-Branch `rescue/ruling-loop`, worktree `~/WanderRepos/kinbase-work`. Build is green at
+Branch `rescue/ruling-loop`, worktree `<kinbase-worktree>`. Build is green at
 `7d558c0`. Opus is working `model.rs`, `reducer.rs`, `lifecycle.rs`, `projector.rs`
 and `codebase.rs` in parallel — **do not touch those five.** Everything under
 `tests/` is yours.

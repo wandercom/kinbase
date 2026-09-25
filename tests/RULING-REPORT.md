@@ -51,7 +51,7 @@ Validation used only the existing suite and this worktree's release binary:
 cargo build --release --offline --locked
 cargo fmt --all -- --check
 cd tests
-KINBASE_BIN=/Users/jmcentire/WanderRepos/kinbase-work/target/release/kinbase \
+KINBASE_BIN=<kinbase-worktree>/target/release/kinbase \
   ./.venv/bin/python -m pytest -c pytest.ini -q acceptance/
 ```
 

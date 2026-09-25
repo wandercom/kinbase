@@ -44,8 +44,8 @@ this report does not claim the five product failures are closed.
 Run the five from `tests/` with the worktree binary:
 
 ```sh
-export KINBASE_BIN=~/WanderRepos/kinbase-work/target/release/kinbase
-export KINBASE_SPEC_ROOT=~/WanderRepos/kinbase-work
+export KINBASE_BIN=<kinbase-worktree>/target/release/kinbase
+export KINBASE_SPEC_ROOT=<kinbase-worktree>
 ./.venv/bin/python -m pytest -c pytest.ini -q \
   acceptance/test_v2_classification.py::test_expired_closing_deadline_emits_one_signed_orphan_abandoned \
   acceptance/test_v2_classification.py::test_kill_at_every_transition_then_concurrent_retry \
