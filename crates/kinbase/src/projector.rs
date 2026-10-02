@@ -210,6 +210,34 @@ pub fn run(
     as_of: &crate::time::AsOf,
     json: bool,
 ) -> Result<(), ContractError> {
+    let projection = project(launcher, repo, task, decision, working_set, evidence_repos, as_of)?;
+    if json {
+        println!("{}", crate::json::canonical_text(&projection.result));
+    } else {
+        let result = &projection.result;
+        println!("decision: {}", result["decision"].as_str().unwrap_or_default());
+        println!("selected_count: {}", projection.selected.len());
+        println!("omitted_count: {}", result["omitted_count"]);
+        println!("stopping_reason: {}", result["stopping_reason"].as_str().unwrap_or_default());
+    }
+    Ok(())
+}
+
+/// A projection: the canonical result `run` prints, and the selected facts.
+pub struct Projection {
+    pub result: Value,
+    pub selected: Vec<CurrentFact>,
+}
+
+pub fn project(
+    launcher: &Launcher,
+    repo: &Path,
+    task: &str,
+    decision: &str,
+    working_set: &[String],
+    evidence_repos: &[std::path::PathBuf],
+    as_of: &crate::time::AsOf,
+) -> Result<Projection, ContractError> {
     // Authority refresh is an optimization, not a command gate. When Company
     // is unavailable, the cached projection is still emitted and the explicit
     // degraded policy withholds the dependent decision.
@@ -849,16 +877,7 @@ pub fn run(
     // record's `declared_use`; passing it as the session id put sentences in
     // an identifier column.
     launcher.private_store()?.log_query(None, &query_record)?;
-
-    if json {
-        println!("{}", crate::json::canonical_text(&result));
-    } else {
-        println!("decision: {decision}");
-        println!("selected_count: {}", selected.len());
-        println!("omitted_count: {omitted_count}");
-        println!("stopping_reason: {stopping_reason}");
-    }
-    Ok(())
+    Ok(Projection { result, selected })
 }
 
 fn question_unknown_id(fact: &CurrentFact) -> String {

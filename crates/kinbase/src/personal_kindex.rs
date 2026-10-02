@@ -147,12 +147,16 @@ pub fn hand_off(
     result
 }
 
-/// Answers the principal's question from the Personal Kindex graph.
+/// Answers the principal's question from the Personal Kindex graph, with
+/// `team` (statements of the shared facts a projection selected for the
+/// question) as shared knowledge alongside it. Shared facts may flow into the
+/// Personal side; nothing flows back.
 pub fn recall(
     cfg: &PersonalKindexConfig,
     data_root: &Path,
     question: &str,
     as_of: Option<&str>,
+    team: &[String],
 ) -> Result<String, ContractError> {
     let mut args = vec!["ask".to_owned()];
     args.extend(common_args(cfg, data_root));
@@ -160,10 +164,22 @@ pub fn recall(
         args.push("--as-of".to_owned());
         args.push(as_of.to_owned());
     }
+    let staging = data_root.join(".kinbase-handoff");
+    let team_file = (!team.is_empty()).then(|| staging.join(format!("team-{}.txt", uuid::Uuid::new_v4())));
+    if let Some(path) = &team_file {
+        std::fs::create_dir_all(&staging).map_err(|e| ContractError::io("Kindex team knowledge", e))?;
+        let lines: Vec<String> = team.iter().map(|statement| statement.split_whitespace().collect::<Vec<_>>().join(" ")).collect();
+        std::fs::write(path, lines.join("\n")).map_err(|e| ContractError::io("Kindex team knowledge", e))?;
+        args.push("--context-file".to_owned());
+        args.push(path.to_string_lossy().into_owned());
+    }
     args.push("--".to_owned());
     args.push(question.to_owned());
-    let out = run(cfg, args)?;
-    Ok(String::from_utf8_lossy(&out).trim().to_owned())
+    let out = run(cfg, args);
+    if let Some(path) = &team_file {
+        let _ = std::fs::remove_file(path);
+    }
+    Ok(String::from_utf8_lossy(&out?).trim().to_owned())
 }
 
 #[cfg(test)]
