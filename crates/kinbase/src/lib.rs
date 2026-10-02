@@ -30,6 +30,7 @@ pub mod lifecycle;
 pub mod model;
 pub mod output;
 pub mod paths;
+pub mod personal_kindex;
 pub mod private;
 pub mod projector;
 pub mod questions;

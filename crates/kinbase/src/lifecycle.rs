@@ -341,7 +341,7 @@ fn check_budget(scan: &mut SourceScan, bytes: usize) -> Result<(), ContractError
     Ok(())
 }
 
-fn source_files(source: &Path) -> Result<Vec<PathBuf>, ContractError> {
+pub(crate) fn source_files(source: &Path) -> Result<Vec<PathBuf>, ContractError> {
     let metadata = std::fs::symlink_metadata(source).map_err(io_error)?;
     if metadata.file_type().is_symlink() {
         return Err(ContractError::refused(
@@ -369,7 +369,7 @@ fn source_files(source: &Path) -> Result<Vec<PathBuf>, ContractError> {
 // codex_jsonl / claude_jsonl
 // --------------------------------------------------------------------------
 
-fn content_text(map: &Map<String, Value>) -> Option<String> {
+pub(crate) fn content_text(map: &Map<String, Value>) -> Option<String> {
     if let Some(Value::String(text)) = map.get("text") {
         return Some(text.clone());
     }

@@ -21,6 +21,26 @@ pub const SERVICE_CONFIG_SCHEMA: &str = "1";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersonalConfig {
     pub data_root: PathBuf,
+    /// The Personal store's Kindex (product.md: Personal is Kindex). Optional:
+    /// without it host transcripts stay in the private journal and there is no recall.
+    pub kindex: Option<PersonalKindexConfig>,
+}
+
+/// Kindex run as a pinned executable over `data_root`, the Personal Kindex
+/// graph. Only the launcher and Personal worker run it; nothing it reads or
+/// returns enters a shared store or projection.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonalKindexConfig {
+    pub executable: PathBuf,
+    pub executable_sha256: String,
+    /// Environment variables passed through to Kindex (a provider key); the
+    /// rest of the environment is scrubbed.
+    pub env: Vec<String>,
+    /// A Kindex config file (providers, `ask:` settings), passed as `--config`.
+    pub config: Option<PathBuf>,
+    pub timeout_seconds: u64,
+    /// Run Kindex's digest pass (directives, summaries) after each hand-off.
+    pub digest: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,6 +319,62 @@ fn optional_path(
     }
 }
 
+fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, ContractError> {
+    let Some(executable) = optional_path(table, "kindex_executable", "personal")? else {
+        for key in ["kindex_executable_sha256", "kindex_env", "kindex_config", "kindex_timeout_seconds", "kindex_digest"] {
+            if table.contains_key(key) {
+                return Err(config_error(format!("personal.{key} requires personal.kindex_executable")));
+            }
+        }
+        return Ok(None);
+    };
+    let executable_sha256 = required_str(table, "kindex_executable_sha256", "personal")?.to_owned();
+    if !crate::hash::is_sha256(&executable_sha256) {
+        return Err(config_error(
+            "personal.kindex_executable_sha256 must be a lowercase 64-hex digest",
+        ));
+    }
+    let env = match table.get("kindex_env") {
+        None => Vec::new(),
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| config_error("personal.kindex_env must be an array of variable names"))?
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .filter(|name| {
+                        !name.is_empty()
+                            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                    })
+                    .map(str::to_owned)
+                    .ok_or_else(|| config_error("personal.kindex_env entries must be variable names"))
+            })
+            .collect::<Result<_, _>>()?,
+    };
+    let timeout_seconds = match table.get("kindex_timeout_seconds") {
+        None => 900,
+        Some(value) => value
+            .as_integer()
+            .filter(|seconds| *seconds > 0)
+            .ok_or_else(|| config_error("personal.kindex_timeout_seconds must be a positive integer"))?
+            as u64,
+    };
+    let digest = match table.get("kindex_digest") {
+        None => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| config_error("personal.kindex_digest must be true or false"))?,
+    };
+    Ok(Some(PersonalKindexConfig {
+        executable,
+        executable_sha256,
+        env,
+        config: optional_path(table, "kindex_config", "personal")?,
+        timeout_seconds,
+        digest,
+    }))
+}
+
 fn absolute(text: &str, field: &str) -> Result<PathBuf, ContractError> {
     let path = PathBuf::from(text);
     if !path.is_absolute() {
@@ -364,11 +440,24 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
         .get("personal")
         .and_then(toml::Value::as_table)
         .ok_or_else(|| config_error("[personal] is required"))?;
-    closed_keys(personal_table, &["data_root"], "[personal]")?;
+    closed_keys(
+        personal_table,
+        &[
+            "data_root",
+            "kindex_executable",
+            "kindex_executable_sha256",
+            "kindex_env",
+            "kindex_config",
+            "kindex_timeout_seconds",
+            "kindex_digest",
+        ],
+        "[personal]",
+    )?;
     let data_root = absolute(
         required_str(personal_table, "data_root", "personal")?,
         "personal.data_root",
     )?;
+    let kindex = personal_kindex(personal_table)?;
     let config_dir = path
         .parent()
         .map(Path::to_path_buf)
@@ -602,7 +691,7 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
 
     Ok(UserConfig {
         path: path.to_path_buf(),
-        personal: PersonalConfig { data_root },
+        personal: PersonalConfig { data_root, kindex },
         company,
         classifier,
         hosts,

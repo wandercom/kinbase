@@ -817,6 +817,20 @@ pub fn ingest(
         result["error"] = crate::output::error_document(&stop)["error"].clone();
         result["ceiling_stops"] = json!([{"ceiling": "shared_event", "omitted_count": omitted_count, "ceiling_bytes": crate::model::MAX_EVENT_BYTES}]);
     }
+    // Personal is Kindex: host transcripts also go to the Personal Kindex graph,
+    // when one is configured. A failed hand-off leaves the journal record in
+    // place and is reported, not raised.
+    if matches!(source_kind, "codex_jsonl" | "claude_jsonl") {
+        if let Some(user) = &launcher.user {
+            if let Some(kindex) = &user.personal.kindex {
+                result["personal_kindex"] =
+                    match crate::personal_kindex::hand_off(kindex, &user.personal.data_root, source) {
+                        Ok(receipt) => receipt,
+                        Err(error) => crate::output::error_document(&error),
+                    };
+            }
+        }
+    }
     if json {
         println!("{}", serde_json::to_string(&result).unwrap_or_default());
     } else {

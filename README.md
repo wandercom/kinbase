@@ -77,6 +77,31 @@ It states what this run proves, what it does not, which gates the instrument its
 fails, and where the independence between the building and certifying seats is real and
 where it is not.
 
+## Personal recall through Kindex (local branch, not ratified)
+
+The specification makes the Personal store Kindex but the proof of concept never
+wired it. On this branch, with `[personal] kindex_executable` configured, host
+transcripts ingested with `kinbase ingest codex_jsonl|claude_jsonl` are also handed,
+one conversation per transcript, to the Kindex graph at the Personal root, and
+`kinbase recall --question TEXT [--as-of DATE]` answers the principal's own
+question from it through `kin ask`. Both run where the Personal root is held;
+nothing either reads or returns enters a shared store, a projection or a hook.
+Kindex runs under the classifier's executable rules (absolute path, owner, mode,
+directory chain, pinned SHA-256) with a scrubbed environment.
+
+```toml
+[personal]
+data_root = "/private/example/kindex"
+kindex_executable = "/opt/example/bin/kin"
+kindex_executable_sha256 = "<sha256 of that file>"
+kindex_env = ["OPENAI_API_KEY"]          # passed through; everything else is scrubbed
+kindex_config = "/private/example/kin.yaml"
+kindex_digest = true                      # run `kin digest` after each hand-off
+```
+
+These keys and the `recall` command are additions to `spec/cli.md`, which this
+branch does not change; they need an amendment before they are authority.
+
 ## Building and running
 
 ```

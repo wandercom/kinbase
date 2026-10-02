@@ -539,6 +539,19 @@ pub fn run_verified_executable(
     input: &[u8],
     timeout: std::time::Duration,
 ) -> Result<Vec<u8>, ContractError> {
+    run_verified_executable_with_env(executable, expected_sha256, args, &[], input, timeout)
+}
+
+/// As `run_verified_executable`, with these variables added to the scrubbed
+/// environment (named by configuration, such as a provider key).
+pub fn run_verified_executable_with_env(
+    executable: &Path,
+    expected_sha256: &str,
+    args: &[String],
+    env: &[(String, String)],
+    input: &[u8],
+    timeout: std::time::Duration,
+) -> Result<Vec<u8>, ContractError> {
     use std::os::unix::fs::MetadataExt;
     let (VerifiedExecutable { file, metadata }, _) =
         open_verified(executable, expected_sha256).map_err(|(_, error)| error)?;
@@ -562,6 +575,7 @@ pub fn run_verified_executable(
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", "/nonexistent")
         .env("KINBASE_SHARED_CONFIG_FD", fd.to_string())
+        .envs(env.iter().map(|(key, value)| (key, value)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -604,6 +618,7 @@ pub fn run_verified_executable(
                 .env("PATH", "/usr/bin:/bin")
                 .env("HOME", "/nonexistent")
                 .env("KINBASE_SHARED_CONFIG_FD", fd.to_string())
+                .envs(env.iter().map(|(key, value)| (key, value)))
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());

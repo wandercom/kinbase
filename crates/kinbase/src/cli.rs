@@ -239,6 +239,32 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             )
             .map_err(internal)?;
         }
+        Command::Recall { question, as_of } => {
+            let Some(user) = &launcher.user else {
+                return Err(ContractError::refused(
+                    "CONFIG_INVARIANT",
+                    "recall needs a user config with a [personal] section",
+                    "Create the launcher user config with [personal] data_root and kindex_executable.",
+                ));
+            };
+            let Some(kindex) = &user.personal.kindex else {
+                return Err(ContractError::refused(
+                    "CONFIG_INVARIANT",
+                    "recall needs the Personal store's Kindex ([personal] kindex_executable)",
+                    "Configure kindex_executable and kindex_executable_sha256 under [personal].",
+                ));
+            };
+            let answer = crate::personal_kindex::recall(
+                kindex,
+                &user.personal.data_root,
+                &question,
+                as_of.as_deref(),
+            )?;
+            crate::output::emit(
+                &serde_json::json!({ "status": "recalled", "store": "personal", "answer": answer }),
+                json,
+            );
+        }
         Command::Session(SessionCommand::Start { host, repo }) => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));

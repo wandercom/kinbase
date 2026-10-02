@@ -61,6 +61,16 @@ pub enum Command {
         #[arg(long)]
         authority_cursor: Option<u64>,
     },
+    /// Answer the principal's own question from the Personal store's Kindex
+    /// (`[personal] kindex_executable`). Runs only where the Personal root is
+    /// held; the answer goes to this terminal and nowhere else.
+    Recall {
+        #[arg(long)]
+        question: String,
+        /// Today's date for the answer ("now", "ago"); defaults to the current date.
+        #[arg(long = "as-of")]
+        as_of: Option<String>,
+    },
     Project {
         #[arg(long)]
         repo: Option<PathBuf>,
