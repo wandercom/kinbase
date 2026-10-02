@@ -41,7 +41,7 @@ pub fn open_descriptors() -> Vec<OpenDescriptor> {
     let max = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
     let max = if max <= 0 { 1024 } else { max.min(65_536) } as i32;
     let mut output = Vec::new();
-    for fd in 0..max {
+    for fd in live_descriptors(max) {
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
         if flags < 0 {
             continue;
@@ -61,6 +61,43 @@ pub fn open_descriptors() -> Vec<OpenDescriptor> {
         });
     }
     output
+}
+
+/// The open descriptors below `max`, found without opening one: `poll` with
+/// no requested events reports `POLLNVAL` for a closed descriptor, so one
+/// call covers 1,024 numbers. Probing each number with `fcntl` took 65,536
+/// system calls per attestation, and every process attests at startup.
+fn live_descriptors(max: i32) -> Vec<i32> {
+    const BATCH: i32 = 1024;
+    let mut live = Vec::new();
+    let mut start = 0;
+    while start < max {
+        let end = (start + BATCH).min(max);
+        let mut fds: Vec<libc::pollfd> = (start..end)
+            .map(|fd| libc::pollfd {
+                fd,
+                events: 0,
+                revents: 0,
+            })
+            .collect();
+        let rc = loop {
+            // SAFETY: `fds` is a live, correctly sized pollfd array; a zero
+            // timeout never blocks.
+            let rc = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 0) };
+            if rc >= 0 || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                break rc;
+            }
+        };
+        if rc < 0 {
+            // poll refused the batch: probe it one number at a time.
+            // SAFETY: fcntl on an integer descriptor has no memory preconditions.
+            live.extend((start..end).filter(|fd| unsafe { libc::fcntl(*fd, libc::F_GETFD) } >= 0));
+        } else {
+            live.extend(fds.iter().filter(|p| p.revents & libc::POLLNVAL == 0).map(|p| p.fd));
+        }
+        start = end;
+    }
+    live
 }
 
 #[cfg(target_os = "macos")]
@@ -1044,5 +1081,27 @@ exit 0
             Ok(output) => assert_eq!(output, b"done"),
             Err(error) => assert!(error.message.contains("did not close"), "{}", error.message),
         }
+    }
+}
+
+#[cfg(test)]
+mod descriptor_enumeration_tests {
+    use super::*;
+    use std::os::fd::AsRawFd;
+
+    /// Tests run in parallel threads that open and close descriptors, so this
+    /// pins one at a high number nothing else uses and checks it both ways.
+    #[test]
+    fn poll_enumeration_sees_an_open_descriptor_and_not_a_closed_one() {
+        const HIGH: i32 = 3_901;
+        let file = std::fs::File::open("/dev/null").unwrap();
+        // SAFETY: dup2 onto an unused descriptor number we close below.
+        assert_eq!(unsafe { libc::dup2(file.as_raw_fd(), HIGH) }, HIGH);
+        assert!(live_descriptors(4096).contains(&HIGH));
+        assert!(live_descriptors(4096).contains(&0) || unsafe { libc::fcntl(0, libc::F_GETFD) } < 0);
+        // SAFETY: closing the descriptor dup2 created.
+        unsafe { libc::close(HIGH) };
+        assert!(!live_descriptors(4096).contains(&HIGH));
+        assert!(!live_descriptors(HIGH).contains(&HIGH));
     }
 }

@@ -210,6 +210,29 @@ pub struct Repository {
 /// (notably `status --porcelain`) from opportunistically refreshing the index
 /// under `.git/index.lock`, so a background verifier never races the user's
 /// own Git operations.
+/// A worktree's top level and common Git directory, as `git rev-parse`
+/// reports them from `start`. Asked once per path per process: a session
+/// observation discovers the repository for every admission, and each answer
+/// cost two Git processes. Where a worktree lives does not change while one
+/// command runs; `.kin/config` and `HEAD` are still read fresh every time.
+fn worktree_location(start: &Path) -> Result<(String, String), ContractError> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static KNOWN: OnceLock<Mutex<HashMap<PathBuf, (String, String)>>> = OnceLock::new();
+    let known = KNOWN.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(found) = known.lock().ok().and_then(|map| map.get(start).cloned()) {
+        return Ok(found);
+    }
+    let found = (
+        git(start, &["rev-parse", "--show-toplevel"])?,
+        git(start, &["rev-parse", "--git-common-dir"])?,
+    );
+    if let Ok(mut map) = known.lock() {
+        map.insert(start.to_path_buf(), found.clone());
+    }
+    Ok(found)
+}
+
 pub fn git(repo: &Path, args: &[&str]) -> Result<String, ContractError> {
     let output = Command::new("git")
         .args(args)
@@ -290,8 +313,7 @@ impl Repository {
                 "Pass an existing Git worktree with --repo.",
             ));
         }
-        let root = git(&start, &["rev-parse", "--show-toplevel"])?;
-        let common = git(&start, &["rev-parse", "--git-common-dir"])?;
+        let (root, common) = worktree_location(&start)?;
         let root = PathBuf::from(root);
         // Git reports a relative common directory relative to where it ran
         // (`../.git` from a subdirectory), not to the top level.

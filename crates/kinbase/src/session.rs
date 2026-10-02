@@ -3560,6 +3560,10 @@ fn recover_fanout_journal(
         .filter(|path| path.is_dir())
         .collect();
     entries.sort();
+    // The candidate journal is read once per pass, and only if some fan-out
+    // is unfinished: it used to be parsed in full for every journal directory,
+    // finished or not, on every shared admission.
+    let mut candidates: Option<std::collections::HashMap<String, Value>> = None;
     for dir in entries {
         let candidate_id = dir
             .file_name()
@@ -3569,12 +3573,27 @@ fn recover_fanout_journal(
         if current_candidate == Some(candidate_id.as_str()) {
             continue;
         }
-        let Some(record) = personal_records("candidates.jsonl")
-            .into_iter()
-            .find(|record| {
-                crate::json::get_str(record, "candidate_id") == Some(candidate_id.as_str())
-            })
-        else {
+        // Finished needs only the journal's own directory.
+        let finished = FanoutJournal {
+            dir: dir.clone(),
+            candidate_id: candidate_id.clone(),
+            destination: String::new(),
+        }
+        .is_done();
+        if finished {
+            continue;
+        }
+        let candidates = candidates.get_or_insert_with(|| {
+            let mut by_id = std::collections::HashMap::new();
+            for record in personal_records("candidates.jsonl") {
+                if let Some(id) = crate::json::get_str(&record, "candidate_id") {
+                    // The first record for an id wins, as a forward search found it.
+                    by_id.entry(id.to_owned()).or_insert(record);
+                }
+            }
+            by_id
+        });
+        let Some(record) = candidates.get(&candidate_id).cloned() else {
             continue;
         };
         let destination = crate::json::get_str(&record, "destination")
