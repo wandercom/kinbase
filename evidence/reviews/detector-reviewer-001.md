@@ -24,9 +24,9 @@ I did not inspect `.kin/**`, `evidence/**`, any parent or sibling repository, pr
 
 The normal acceptance command was not executed because its bootstrap would violate this review boundary:
 
-- [`tests/conftest.py:87–99`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:87) always calls `verify_manifest()`.
-- [`tests/acceptance/_harness/requirements.py:201–227`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/_harness/requirements.py:201) reads the excluded evidence and receipt paths named by [`spec/ratification-manifest.json:39–46`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/spec/ratification-manifest.json:39).
-- [`tests/run-acceptance.sh:34–42`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/run-acceptance.sh:34) may also create `tests/.venv` and install dependencies from the network.
+- `tests/conftest.py:87–99` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:87`) always calls `verify_manifest()`.
+- `tests/acceptance/_harness/requirements.py:201–227` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/_harness/requirements.py:201`) reads the excluded evidence and receipt paths named by `spec/ratification-manifest.json:39–46` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/spec/ratification-manifest.json:39`).
+- `tests/run-acceptance.sh:34–42` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/run-acceptance.sh:34`) may also create `tests/.venv` and install dependencies from the network.
 
 ## 2. Methods and commands run
 
@@ -112,7 +112,7 @@ The following abbreviations are used in dense tables:
 
 ## 5. V-1 through V-9 obligation matrix
 
-The governing catalog rule is [`spec/verification.md:118–133`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/spec/verification.md:118): each gate must freeze its threshold, positive control, negative control, and detector mutation, with unresolved findings blocking combination.
+The governing catalog rule is `spec/verification.md:118–133` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/spec/verification.md:118`): each gate must freeze its threshold, positive control, negative control, and detector mutation, with unresolved findings blocking combination.
 
 | Gate | Ratified obligations and exact detector nodes | Positive and negative controls | Product mutations | Detector mutation | Fail-closed path and disposition |
 |---|---|---|---|---|---|
@@ -317,15 +317,15 @@ The mutation runner has no polarity implementation. `active_mutation()` is consu
 
 Concrete leaks and arm/gate selectors include:
 
-1. The V-2 runtime JSONL is built with `{**record, "text": text}` at [`test_v2_classification.py:91–101`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v2_classification.py:91). Each `record` contains `gold_atoms`, `mixed`, and `stratum`; [`routing_corpus.json:3723–3762`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/fixtures/gold/routing_corpus.json:3723) shows expected atoms/destinations adjacent to message text. That same JSONL is passed to `session observe` at `T2:216–223`, `318–325`, `360–367`, `404–411`, and `445–452`.
+1. The V-2 runtime JSONL is built with `{**record, "text": text}` at `test_v2_classification.py:91–101` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v2_classification.py:91`). Each `record` contains `gold_atoms`, `mixed`, and `stratum`; `routing_corpus.json:3723–3762` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/fixtures/gold/routing_corpus.json:3723`) shows expected atoms/destinations adjacent to message text. That same JSONL is passed to `session observe` at `T2:216–223`, `318–325`, `360–367`, `404–411`, and `445–452`.
 
-2. V-5 gives the SUT the exact table row ID at [`test_v5_temporal.py:161–183`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v5_temporal.py:161), while expected state/fragments are defined at lines 59–150.
+2. V-5 gives the SUT the exact table row ID at `test_v5_temporal.py:161–183` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v5_temporal.py:161`), while expected state/fragments are defined at lines 59–150.
 
-3. V-7 supplies `KINBASE_ACCEPTANCE_V7_FIXTURE=1` from an otherwise empty repository at [`test_v7_projection.py:82–114`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v7_projection.py:82).
+3. V-7 supplies `KINBASE_ACCEPTANCE_V7_FIXTURE=1` from an otherwise empty repository at `test_v7_projection.py:82–114` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v7_projection.py:82`).
 
 4. V-8 supplies digest scenario, criticality, validity, dependence, revocation, identity resolution, and event-count results through environment selectors rather than signed state.
 
-5. V-9 passes the full gold maintenance file to the SUT. [`maintenance_workload.json:5–26`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/fixtures/gold/maintenance_workload.json:5) includes `durable_shared_fact`, `gold_correct_admission`, `gold_label`, trust class, and severity. It is passed at `T9F:498–506`.
+5. V-9 passes the full gold maintenance file to the SUT. `maintenance_workload.json:5–26` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/fixtures/gold/maintenance_workload.json:5`) includes `durable_shared_fact`, `gold_correct_admission`, `gold_label`, trust class, and severity. It is passed at `T9F:498–506`.
 
 6. Every acceptance-prefixed environment name is visible to the SUT because `CLI:345–375` merges overrides into the child environment. The product can branch on acceptance identity even when the value is a legitimate fault schedule.
 
@@ -380,7 +380,7 @@ Required model:
 
 **No eligible corpus can be selected.**
 
-The only auxiliary file is [`tests/fixtures/policies/auxiliary-corpus-request.json`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/fixtures/policies/auxiliary-corpus-request.json:1). It describes eligibility classes and says at line 48 that it is only a request and recording contract.
+The only auxiliary file is `tests/fixtures/policies/auxiliary-corpus-request.json` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/fixtures/policies/auxiliary-corpus-request.json:1`). It describes eligibility classes and says at line 48 that it is only a request and recording contract.
 
 Absent from the allowed surface are:
 
@@ -408,112 +408,112 @@ Per `TM:198–204`, I did not broaden the input surface or invent a selection.
 
 ### 2. [BLOCKING] The prescribed self-test path crosses the Reviewer boundary and can mutate/network-install
 
-- **Locations:** [`tests/conftest.py:87–99`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:87), [`requirements.py:201–227`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/_harness/requirements.py:201), [`run-acceptance.sh:34–42`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/run-acceptance.sh:34).
+- **Locations:** `tests/conftest.py:87–99` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:87`), `requirements.py:201–227` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/_harness/requirements.py:201`), `run-acceptance.sh:34–42` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/run-acceptance.sh:34`).
 - **Violated spec:** `V:128–133`, which gives this Reviewer only specs, tests/fixtures, detector design, and the auxiliary pool.
 - **Escape:** runtime collection, imports, marker behavior, and sensitivity failures cannot be established through the provided command; dependency floors can also resolve to different implementations.
 - **Required remediation:** provide an immutable offline reviewer environment and a reviewer-specific bootstrap restricted to `spec/**` and `tests/**`; defer evidence receipt verification to the Validator.
 
 ### 3. [BLOCKING] Unexecuted work is preinitialized and emitted as PASS
 
-- **Locations:** [`tests/conftest.py:100`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:100), [`tests/conftest.py:196–203`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:196), [`tests/conftest.py:206–235`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:206).
+- **Locations:** `tests/conftest.py:100` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:100`), `tests/conftest.py:196–203` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:196`), `tests/conftest.py:206–235` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:206`).
 - **Violated spec:** `V:8–36`, `V:118–133`, and the dispatch’s total-work/fail-closed rule.
 - **Counterexample:** select only `-m v1`; V-2 through V-9 remain `PASS` without collection or execution.
 - **Required remediation:** initialize `NOT_RUN`, record every expected node and outcome, and make skips, deselections, missing collection, empty parameter sets, and incomplete controls non-green.
 
 ### 4. [BLOCKING] Invalid instrumentation can be hidden by an unverified product assertion
 
-- **Location:** [`tests/conftest.py:179–183`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:179).
-- **Violated spec:** [`spec/verification.md:34–36`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/spec/verification.md:34).
+- **Location:** `tests/conftest.py:179–183` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:179`).
+- **Violated spec:** `spec/verification.md:34–36` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/spec/verification.md:34`).
 - **Counterexample:** a detector self-test fails, then an ordinary assertion in the same gate fails; the state becomes `PRODUCT_FAILURE` even though no separate content address or detector independence was established.
 - **Required remediation:** preserve parallel instrument/product channels and apply dominance only after verifying an independently content-addressed product observation.
 
 ### 5. [BLOCKING] The preregistered catalog does not contain all four required elements per gate and obligation
 
-- **Locations:** [`mutations.py:1–14`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/_harness/mutations.py:1), [`test_backreference_integrity.py:170–192`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_backreference_integrity.py:170), [`ACCEPTANCE-MAP.md:52–86`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/ACCEPTANCE-MAP.md:52).
+- **Locations:** `mutations.py:1–14` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/_harness/mutations.py:1`), `test_backreference_integrity.py:170–192` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_backreference_integrity.py:170`), `ACCEPTANCE-MAP.md:52–86` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/ACCEPTANCE-MAP.md:52`).
 - **Violated spec:** `V:118–126`.
 - **Counterexample:** `BR:180–187` computes `marked_controls` but never asserts it; lines 188–191 only require some mutation entry per gate. V-1, V-2, and V-4 through V-9 have no formal positive/negative control and no detector mutation.
 - **Required remediation:** create a machine-readable, per-obligation catalog naming threshold, exact positive control, exact negative control, product mutation, detector mutation, surface/vector, expected outcome, and fail-closed result.
 
 ### 6. [BLOCKING] Catalog mutation coverage is declarative rather than executable and total
 
-- **Locations:** [`mutations.py:58–66`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/_harness/mutations.py:58), [`tests/conftest.py:111–120`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:111), [`test_harness_selftest.py:361–480`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_harness_selftest.py:361).
+- **Locations:** `mutations.py:58–66` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/_harness/mutations.py:58`), `tests/conftest.py:111–120` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/conftest.py:111`), `test_harness_selftest.py:361–480` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_harness_selftest.py:361`).
 - **Violated spec:** `V:120–126`; `TM:157–162`.
 - **Counterexample:** set `KINBASE_ACCEPT_MUTATION=v5.newest_wins`; no code applies that mutation or checks its nodes. Five detector entries point to a self-test that intentionally passes when the mutant is blind.
 - **Required remediation:** provide executable planters/patches, run each of all 41 entries, enforce every `must_fail` node, require negative controls to remain clean, and emit a content-addressed total kill ledger.
 
 ### 7. [BLOCKING] Expected answers and case identities reach the SUT
 
-- **Locations:** [`test_v2_classification.py:91–101`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v2_classification.py:91), [`routing_corpus.json:3723–3762`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/fixtures/gold/routing_corpus.json:3723), [`test_v5_temporal.py:161–183`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v5_temporal.py:161), [`test_v7_projection.py:90–114`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v7_projection.py:90), [`test_v9_fatigue.py:483–537`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v9_fatigue.py:483).
+- **Locations:** `test_v2_classification.py:91–101` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v2_classification.py:91`), `routing_corpus.json:3723–3762` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/fixtures/gold/routing_corpus.json:3723`), `test_v5_temporal.py:161–183` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v5_temporal.py:161`), `test_v7_projection.py:90–114` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v7_projection.py:90`), `test_v9_fatigue.py:483–537` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v9_fatigue.py:483`).
 - **Violated spec:** `V:128–133`, `TM:180–204`, and the dispatch’s oracle-independence criterion.
 - **Counterexample:** a product can map temporal case IDs, V-7 fixture mode, V-8 scenario strings, or maintenance gold labels directly to expected JSON without measuring raw work.
 - **Required remediation:** expose only raw input through ratified shipping surfaces; retain labels and expected outputs solely in the harness; limit controls to independently witnessed timing/ordering/failure schedules.
 
 ### 8. [BLOCKING] V-1 lifecycle and idempotence can pass without required raw evidence
 
-- **Locations:** [`test_v1_ingestion.py:324–353`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v1_ingestion.py:324), [`test_v1_ingestion.py:458–502`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v1_ingestion.py:458).
+- **Locations:** `test_v1_ingestion.py:324–353` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v1_ingestion.py:324`), `test_v1_ingestion.py:458–502` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v1_ingestion.py:458`).
 - **Violated spec:** `V:159–195`.
 - **Counterexample:** omit `current_view`, `duplicate_observations`, and `duplicate_facts`; two `null` views compare equal and missing counters default to zero. A product can print the lifecycle cell names and arbitrary `negative_mutation` strings without running any transition.
 - **Required remediation:** execute every one of the 64 matrix cells against raw sources, independently inspect observations/facts/Unknowns, require present counters and nonempty views, and kill at least one real negative mutation per cell.
 
 ### 9. [BLOCKING] V-2 has a missing calibration input, leaked gold, self-reported metrics, and disconnected saga state
 
-- **Locations:** [`routing_corpus.json:1601–1602`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/fixtures/gold/routing_corpus.json:1601), [`test_v2_classification.py:213–299`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v2_classification.py:213), [`test_v2_classification.py:502–654`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v2_classification.py:502), [`test_v2_classification.py:717–755`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v2_classification.py:717).
+- **Locations:** `routing_corpus.json:1601–1602` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/fixtures/gold/routing_corpus.json:1601`), `test_v2_classification.py:213–299` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v2_classification.py:213`), `test_v2_classification.py:502–654` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v2_classification.py:502`), `test_v2_classification.py:717–755` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v2_classification.py:717`).
 - **Violated spec:** `V:199–235`.
 - **Counterexample:** the referenced `tests/fixtures/gold/calibration-manifest.json` does not exist, yet a `CONFIG_INVARIANT`/`SCORER_UNCALIBRATED` refusal passes. Function-scoped roots mean saga tests list candidates without first ingesting the corpus. Crash probes use a nonexistent candidate and missing counters default to zero.
 - **Required remediation:** add the distinct frozen 60-message input, keep its gold from the SUT, compute metrics from raw predictions in the harness, seed each saga in its own test, and require independently witnessed crash points and exactly-once outcomes.
 
 ### 10. [BLOCKING] V-3 does not execute the finite threat model totally or fail closed
 
-- **Locations:** [`scanners.py:60–90`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/_harness/scanners.py:60), [`test_v3_attacks.py:91–135`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v3_attacks.py:91), [`test_v3_privacy.py:145–259`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v3_privacy.py:145), [`test_v3_qualification.py:82–159`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v3_qualification.py:82).
+- **Locations:** `scanners.py:60–90` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/_harness/scanners.py:60`), `test_v3_attacks.py:91–135` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v3_attacks.py:91`), `test_v3_privacy.py:145–259` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v3_privacy.py:145`), `test_v3_qualification.py:82–159` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v3_qualification.py:82`).
 - **Violated spec:** `V:237–329`; `TM:110–171`.
 - **Counterexample:** an unreadable subdirectory may be silently omitted by `os.walk`; three precreated surface families are enough for a clean scan; attack-family coverage checks anchor names only; randomized surface labels never traverse those surfaces; refusals/empty candidates satisfy multiple attacks; the FD is not inherited; the saturated payload is not saturated.
 - **Required remediation:** provide every enumerated vector/surface with exact PC/NC/detector mutation, require nonzero per-location receipts, propagate traversal errors, execute successful prerequisite work, use `pass_fds`, construct the full ceiling payload, run an independent reconstructor with the selected corpus, and require total family/control/mutation accounting.
 
 ### 11. [BLOCKING] V-4 substitutes scenario selectors and contains vacuous assertions
 
-- **Locations:** [`test_v4_maintenance.py:95–126`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v4_maintenance.py:95), [`test_v4_maintenance.py:227–268`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v4_maintenance.py:227), [`test_v4_maintenance.py:354–379`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v4_maintenance.py:354), [`test_v4_maintenance.py:439–643`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v4_maintenance.py:439).
+- **Locations:** `test_v4_maintenance.py:95–126` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v4_maintenance.py:95`), `test_v4_maintenance.py:227–268` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v4_maintenance.py:227`), `test_v4_maintenance.py:354–379` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v4_maintenance.py:354`), `test_v4_maintenance.py:439–643` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v4_maintenance.py:439`).
 - **Violated spec:** `V:331–368`.
 - **Counterexample:** fixed repository state plus `CYCLE_STAGE`/`MANIFEST_SCENARIO`/synthetic counts can produce expected reports; changed `as_of` always passes because of `or True`; replay/cascade may be absent; common lock existence is never asserted.
 - **Required remediation:** construct the actual event/manifests, 10× corpus, dense graph, revocation, replay, and linked-worktree operations; assert all four reducer input variations, exact lock/receipt lineage, and nonempty fail-closed state.
 
 ### 12. [BLOCKING] V-5 is entirely selected by a test-only semantic oracle
 
-- **Locations:** [`test_v5_temporal.py:59–150`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v5_temporal.py:59), [`test_v5_temporal.py:153–183`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v5_temporal.py:153).
+- **Locations:** `test_v5_temporal.py:59–150` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v5_temporal.py:59`), `test_v5_temporal.py:153–183` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v5_temporal.py:153`).
 - **Violated spec:** `V:370–388`.
 - **Counterexample:** all nine cases use the same empty initialized repository; changing only `KINBASE_ACCEPTANCE_TEMPORAL_CASE` changes the asserted state, fragment, and counterfactual.
 - **Required remediation:** plant independently signed event histories for each case through shipping ingestion, remove the selector, compute expected state from tester-held gold, and assert exact trace/counterfactual content.
 
 ### 13. [BLOCKING] V-6 never registers the authority whose round trip it claims to measure
 
-- **Locations:** [`test_v6_authority.py:50–130`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v6_authority.py:50), [`test_v6_authority.py:146–180`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v6_authority.py:146), [`test_v6_authority.py:205–264`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v6_authority.py:205), [`test_v6_authority.py:510–598`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v6_authority.py:510).
+- **Locations:** `test_v6_authority.py:50–130` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v6_authority.py:50`), `test_v6_authority.py:146–180` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v6_authority.py:146`), `test_v6_authority.py:205–264` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v6_authority.py:205`), `test_v6_authority.py:510–598` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v6_authority.py:510`).
 - **Violated spec:** `V:390–419`.
 - **Counterexample:** the helper creates a public key and channel process, but no public API registers either. The “registration” test merely lists status. Delivery receipt is optional. Cache expiration and answer service are environment modes.
 - **Required remediation:** explicitly register the authority/key/channel through a shipping API, require delivered-question and authority-process receipts, build actual cache state before expiry, and use a separate frozen service whose requests/results are independently logged.
 
 ### 14. [BLOCKING] V-7 replaces the measured candidate set with a fixture-mode flag
 
-- **Location:** [`test_v7_projection.py:82–114`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v7_projection.py:82).
+- **Location:** `test_v7_projection.py:82–114` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v7_projection.py:82`).
 - **Violated spec:** `V:421–436`.
 - **Counterexample:** an implementation can detect `KINBASE_ACCEPTANCE_V7_FIXTURE=1` and emit the exact roles, selection trace, and stopping reason expected by the tests.
 - **Required remediation:** encode raw candidate records independently, ingest them through the shipping corpus surface, keep fixture roles/expected set selection outside the SUT, and kill scalar-top-k using that raw state.
 
 ### 15. [BLOCKING] V-8 does not establish live Company/reference/cache behavior
 
-- **Locations:** [`test_v8_company_refs.py:74–114`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v8_company_refs.py:74), [`test_v8_company_refs.py:135–191`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v8_company_refs.py:135), [`test_v8_company_refs.py:260–305`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v8_company_refs.py:260), [`test_v8_company_refs.py:464–548`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v8_company_refs.py:464), [`test_v8_company_refs.py:696–834`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v8_company_refs.py:696).
+- **Locations:** `test_v8_company_refs.py:74–114` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v8_company_refs.py:74`), `test_v8_company_refs.py:135–191` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v8_company_refs.py:135`), `test_v8_company_refs.py:260–305` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v8_company_refs.py:260`), `test_v8_company_refs.py:464–548` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v8_company_refs.py:464`), `test_v8_company_refs.py:696–834` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v8_company_refs.py:696`).
 - **Violated spec:** `V:438–474`.
 - **Counterexample:** the published reference event is unsigned and stored under a fabricated digest path; the certificate is not wired into the clone; no Company server starts. Semantic values are sent through environment selectors. Manifest regression success, absent expiry events, absent projection, and several refusals pass.
 - **Required remediation:** run a real Company service; publish properly signed, correctly content-addressed fact versions and certificates; mutate live state/cache/revocation; require exact events and Unknowns; remove semantic result selectors.
 
 ### 16. [BLOCKING] V-9 can pass without installation, host invocation, real state, prompts, or operator work
 
-- **Locations:** [`test_v9_host_lifecycle.py:114–165`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v9_host_lifecycle.py:114), [`test_v9_host_lifecycle.py:190–308`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v9_host_lifecycle.py:190), [`test_v9_host_lifecycle.py:462–617`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v9_host_lifecycle.py:462), [`test_v9_fatigue.py:87–141`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v9_fatigue.py:87), [`test_v9_fatigue.py:421–537`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v9_fatigue.py:421).
+- **Locations:** `test_v9_host_lifecycle.py:114–165` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v9_host_lifecycle.py:114`), `test_v9_host_lifecycle.py:190–308` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v9_host_lifecycle.py:190`), `test_v9_host_lifecycle.py:462–617` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v9_host_lifecycle.py:462`), `test_v9_fatigue.py:87–141` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v9_fatigue.py:87`), `test_v9_fatigue.py:421–537` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v9_fatigue.py:421`).
 - **Violated spec:** `V:476–525`.
 - **Counterexample:** denied install may succeed; zero invocation records skip `assert_not_mocked`; two refusing hosts skip parity; every timing call may immediately refuse; the claimed 250-ms connect check permits five seconds; zero rendered prompts passes; operator results are optional; maintenance gold is supplied to the product. No submodule is constructed.
 - **Required remediation:** require approved and denied installation outcomes plus exact file deltas, mandatory invocation/config receipts, actual cache/fsck state construction, a 250-ms bound, real submodule topology, nonzero eligible prompt work, completed operator decisions/times, and raw gold-free maintenance observations.
 
 ### 17. [BLOCKING] Required licensed-public auxiliary corpus pool is absent
 
-- **Locations:** [`auxiliary-corpus-request.json:1–49`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/fixtures/policies/auxiliary-corpus-request.json:1), [`test_v3_qualification.py:598–629`](<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v3_qualification.py:598).
+- **Locations:** `auxiliary-corpus-request.json:1–49` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/fixtures/policies/auxiliary-corpus-request.json:1`), `test_v3_qualification.py:598–629` (`<workspace>/kinbase-proof-lanes-ac8a13d1/detector-reviewer/tests/acceptance/test_v3_qualification.py:598`).
 - **Violated spec:** `TM:198–204`; `V:128–133`, `V:250–252`.
 - **Counterexample:** a request listing field names passes the self-test despite containing no selectable source, rights record, version, content, selected bytes, or digest.
 - **Required remediation:** place the concrete eligible licensed-public pool, source-rights records, generated dictionaries, correlation records, and decoys under the permitted review surface. Then have a fresh Reviewer select and record procedure, contents, versions, rights, and digest before combination.
