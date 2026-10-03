@@ -26,8 +26,8 @@ payload comparison broke because of those new fields, decide deliberately whethe
 they belong in the canonical form — I think they do, since standing is part of what a
 projection means — and update the expectation with a comment saying why.
 
-Run: from `tests/`, `KINBASE_BIN=~/WanderRepos/kinbase-work/target/release/kinbase
-KINBASE_SPEC_ROOT=~/WanderRepos/kinbase-work ./.venv/bin/python -m pytest -c
+Run: from `tests/`, `KINBASE_BIN=<workspace>/kinbase-work/target/release/kinbase
+KINBASE_SPEC_ROOT=<workspace>/kinbase-work ./.venv/bin/python -m pytest -c
 pytest.ini -q acceptance/test_v9_host_lifecycle.py`
 
 Strictly offline; no new Cargo projects. Commit when green and report.
