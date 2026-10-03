@@ -1,6 +1,6 @@
 # Fable: cut the approval gate, make the ruling loop the main path
 
-You are working in `~/WanderRepos/kinbase-work` (branch `rescue/ruling-loop`).
+You are working in `<workspace>/kinbase-work` (branch `rescue/ruling-loop`).
 Claude Opus is working the same branch in parallel. **Strict file ownership** —
 do not edit files outside your list, even trivially; we will collide.
 

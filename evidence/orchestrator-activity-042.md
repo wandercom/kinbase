@@ -6,8 +6,8 @@
 2. Implementation language is Rust (founder decision). The Python Coder tree is discarded.
 3. Role assignment returns to SRC-6 via tmux in session `kinbase-proof`: Agy is
    Orchestrator (this window), GLM-5.3 via **Ollama cloud** is Coder (window `coder-8`,
-   Rust lane `~/Code/kinbase-rust-coder-ac8a13d1`), and a fresh Codex thread named
-   **Astra** is Tester (window `tester-astra`, lane `~/Code/kinbase-proof-lanes-ac8a13d1/tester`).
+   Rust lane `<workspace>/kinbase-rust-coder-ac8a13d1`), and a fresh Codex thread named
+   **Astra** is Tester (window `tester-astra`, lane `<workspace>/kinbase-proof-lanes-ac8a13d1/tester`).
    The Validator seat is the founder's Claude Code session.
 4. The founder's words: "Get the contract sorted between the two roles and let them fix
    their shit."
