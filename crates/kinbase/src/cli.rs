@@ -254,29 +254,50 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
                     "Configure kindex_executable and kindex_executable_sha256 under [personal].",
                 ));
             };
-            // In a certified repository, the shared facts a projection selects
+            // In a certified repository, the shared facts a projection releases
             // for the question go with it: "why did we choose X" is answered
             // from signed Company and Codebase knowledge as well as the
-            // principal's own conversations. Elsewhere, Personal alone.
+            // principal's own conversations. Elsewhere, Personal alone. The
+            // projection is read-only: the question is Personal, so it raises
+            // no question to an owner and is not logged, and a withheld
+            // projection releases nothing.
             let repo = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let team: Vec<String> = resolve_as_of(&launcher, &repo, None)
+            let team = resolve_as_of(&launcher, &repo, None)
                 .and_then(|projection_as_of| {
-                    crate::projector::project(&launcher, &repo, &question, &question, &[], &[], &projection_as_of)
+                    crate::projector::project_with(
+                        &launcher,
+                        &repo,
+                        &question,
+                        &question,
+                        &[],
+                        &[],
+                        &projection_as_of,
+                        crate::projector::Recording::ReadOnly,
+                    )
                 })
-                .map(|projection| projection.selected.iter().map(|fact| fact.statement.clone()).collect())
+                .map(|projection| {
+                    let statements = projection
+                        .selected
+                        .iter()
+                        .map(|fact| (fact.fact_id.clone(), fact.statement.clone()))
+                        .collect();
+                    crate::personal_kindex::team_knowledge(&projection.result, &statements)
+                })
                 .unwrap_or_default();
             let answer = crate::personal_kindex::recall(
                 kindex,
                 &user.personal.data_root,
                 &question,
                 as_of.as_deref(),
-                &team,
+                &team.items,
+                &crate::time::now_rfc3339_millis(),
             )?;
             crate::output::emit(
                 &serde_json::json!({
                     "status": "recalled",
                     "store": "personal",
-                    "team_facts": team.len(),
+                    "team_facts": team.facts,
+                    "team": team.report,
                     "answer": answer
                 }),
                 json,

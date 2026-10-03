@@ -612,28 +612,8 @@ impl RepoContext {
             let event = LoadedEvent { file, parsed, verification, origin_trust: origin, reachable: head_reachable };
             (event, tally)
         };
-        let files = scan.files;
         let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8);
-        let results: Vec<(LoadedEvent, EventTally)> = if threads <= 1 || files.len() < 64 {
-            files.into_iter().map(classify).collect()
-        } else {
-            let size = files.len().div_ceil(threads);
-            let mut chunks: Vec<Vec<StoredFile>> = Vec::new();
-            let mut remaining = files.into_iter().peekable();
-            while remaining.peek().is_some() {
-                chunks.push(remaining.by_ref().take(size).collect());
-            }
-            std::thread::scope(|scope| {
-                let handles: Vec<_> = chunks
-                    .into_iter()
-                    .map(|chunk| scope.spawn(|| chunk.into_iter().map(&classify).collect::<Vec<_>>()))
-                    .collect();
-                handles
-                    .into_iter()
-                    .flat_map(|handle| handle.join().expect("event verification thread"))
-                    .collect()
-            })
-        };
+        let results = map_in_order(scan.files, threads, 64, classify);
         for (event, tally) in results {
             tally.apply(&mut counts);
             loaded.push(event);
@@ -5032,6 +5012,54 @@ mod tombstone_action_tests {
             "relaxation",
         ] {
             assert_eq!(super::tombstone_action(action), action);
+        }
+    }
+}
+
+/// `items.map(f)`, in input order, split across up to `threads` scoped
+/// threads when there are at least `min_parallel` items. The order and the
+/// results are exactly a serial map's: each item is mapped on its own.
+pub(crate) fn map_in_order<T: Send, R: Send>(
+    items: Vec<T>,
+    threads: usize,
+    min_parallel: usize,
+    f: impl Fn(T) -> R + Sync,
+) -> Vec<R> {
+    if threads <= 1 || items.len() < min_parallel.max(2) {
+        return items.into_iter().map(f).collect();
+    }
+    let size = items.len().div_ceil(threads);
+    let mut chunks: Vec<Vec<T>> = Vec::new();
+    let mut remaining = items.into_iter().peekable();
+    while remaining.peek().is_some() {
+        chunks.push(remaining.by_ref().take(size).collect());
+    }
+    let f = &f;
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = chunks
+            .into_iter()
+            .map(|chunk| scope.spawn(move || chunk.into_iter().map(f).collect::<Vec<_>>()))
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("worker thread"))
+            .collect()
+    })
+}
+
+#[cfg(test)]
+mod map_in_order_tests {
+    use super::map_in_order;
+
+    #[test]
+    fn a_parallel_map_equals_a_serial_one() {
+        for len in [0usize, 1, 2, 63, 64, 65, 127, 1_000, 4_099] {
+            let items: Vec<u64> = (0..len as u64).map(|i| i.wrapping_mul(0x9e37_79b9_7f4a_7c15)).collect();
+            let serial: Vec<(u64, usize)> = items.iter().map(|x| (x.rotate_left(7) ^ 0xabc, x.count_ones() as usize)).collect();
+            for threads in [1, 2, 3, 7, 8, 64] {
+                let parallel = map_in_order(items.clone(), threads, 64, |x| (x.rotate_left(7) ^ 0xabc, x.count_ones() as usize));
+                assert_eq!(parallel, serial, "len {len}, threads {threads}");
+            }
         }
     }
 }

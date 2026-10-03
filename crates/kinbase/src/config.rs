@@ -41,6 +41,11 @@ pub struct PersonalKindexConfig {
     pub timeout_seconds: u64,
     /// Run Kindex's digest pass (directives, summaries) after each hand-off.
     pub digest: bool,
+    /// How long a transcript handed to Kindex is kept, counted from the
+    /// transcript's last change; a `.retention` sidecar beside the transcript
+    /// overrides it. Past it the conversation, and everything Kindex derived
+    /// from it, is removed. `None`: the private raw-session default (24 hours).
+    pub retention_seconds: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -321,7 +326,7 @@ fn optional_path(
 
 fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, ContractError> {
     let Some(executable) = optional_path(table, "kindex_executable", "personal")? else {
-        for key in ["kindex_executable_sha256", "kindex_env", "kindex_config", "kindex_timeout_seconds", "kindex_digest"] {
+        for key in ["kindex_executable_sha256", "kindex_env", "kindex_config", "kindex_timeout_seconds", "kindex_digest", "kindex_retention_seconds"] {
             if table.contains_key(key) {
                 return Err(config_error(format!("personal.{key} requires personal.kindex_executable")));
             }
@@ -365,6 +370,15 @@ fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, 
             .as_bool()
             .ok_or_else(|| config_error("personal.kindex_digest must be true or false"))?,
     };
+    let retention_seconds = match table.get("kindex_retention_seconds") {
+        None => None,
+        Some(value) => Some(
+            value
+                .as_integer()
+                .filter(|seconds| *seconds > 0)
+                .ok_or_else(|| config_error("personal.kindex_retention_seconds must be a positive integer"))?,
+        ),
+    };
     Ok(Some(PersonalKindexConfig {
         executable,
         executable_sha256,
@@ -372,6 +386,7 @@ fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, 
         config: optional_path(table, "kindex_config", "personal")?,
         timeout_seconds,
         digest,
+        retention_seconds,
     }))
 }
 
@@ -450,6 +465,7 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
             "kindex_config",
             "kindex_timeout_seconds",
             "kindex_digest",
+            "kindex_retention_seconds",
         ],
         "[personal]",
     )?;

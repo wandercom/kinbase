@@ -68,6 +68,19 @@ pub struct SourceRecord {
     pub reducer_owned: bool,
     /// Present in the newest snapshot of a snapshot-style export.
     pub present: bool,
+    /// The transcript a host-transcript record was read from. Not recorded
+    /// in the journal; the Personal Kindex hand-off groups and dates by it.
+    pub transcript: Option<std::sync::Arc<TranscriptOrigin>>,
+}
+
+/// A transcript file as one scan read it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptOrigin {
+    pub path: PathBuf,
+    /// Last modification, in Unix seconds: the start of its retention clock.
+    pub modified: Option<i64>,
+    /// `private_retention_seconds` from the transcript's `.retention` sidecar.
+    pub declared_retention_seconds: Option<i64>,
 }
 
 impl SourceRecord {
@@ -101,6 +114,7 @@ impl SourceRecord {
             raw_expired: false,
             reducer_owned: false,
             present: true,
+            transcript: None,
         }
     }
 
@@ -404,7 +418,7 @@ fn session_lineage(stem: &str) -> Option<String> {
         .then(|| base.to_owned())
 }
 
-fn scan_transcripts(
+pub(crate) fn scan_transcripts(
     source_kind: &str,
     source: &Path,
     now: &str,
@@ -435,18 +449,24 @@ fn scan_transcripts(
         // Private raw retention: a sidecar may declare the retention that
         // applies to this transcript; the default is the proof-root bound.
         let sidecar = path.with_file_name(format!("{name}.retention"));
-        let retention = std::fs::read_to_string(&sidecar)
+        let declared_retention = std::fs::read_to_string(&sidecar)
             .ok()
             .and_then(|text| serde_json::from_str::<Value>(&text).ok())
             .and_then(|value| {
                 value
                     .get("private_retention_seconds")
                     .and_then(Value::as_i64)
-            })
-            .unwrap_or(PRIVATE_RAW_RETENTION_SECONDS);
-        let raw_expired = file_mtime(&path)
+            });
+        let retention = declared_retention.unwrap_or(PRIVATE_RAW_RETENTION_SECONDS);
+        let modified = file_mtime(&path);
+        let raw_expired = modified
             .map(|mtime| now_seconds - mtime > retention)
             .unwrap_or(false);
+        let origin = std::sync::Arc::new(TranscriptOrigin {
+            path: path.clone(),
+            modified,
+            declared_retention_seconds: declared_retention,
+        });
         let lineage = session_lineage(&stem);
         let text = String::from_utf8_lossy(&bytes);
         for (index, line) in text.lines().enumerate() {
@@ -514,6 +534,7 @@ fn scan_transcripts(
             );
             record.origin = "personal-host".to_owned();
             record.raw_expired = raw_expired;
+            record.transcript = Some(origin.clone());
             if let Some(parent) = &lineage {
                 record
                     .attributes

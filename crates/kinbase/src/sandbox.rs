@@ -63,11 +63,32 @@ pub fn open_descriptors() -> Vec<OpenDescriptor> {
     output
 }
 
-/// The open descriptors below `max`, found without opening one: `poll` with
-/// no requested events reports `POLLNVAL` for a closed descriptor, so one
-/// call covers 1,024 numbers. Probing each number with `fcntl` took 65,536
-/// system calls per attestation, and every process attests at startup.
+/// The open descriptors below `max`, found without opening one.
+///
+/// On Linux, `poll` with no requested events reports `POLLNVAL` for a closed
+/// descriptor and only for a closed one, whatever the open one refers to
+/// (file, directory, pipe, socket, device), so one call covers 1,024 numbers.
+/// Probing each number with `fcntl` took 65,536 system calls per attestation,
+/// and every process attests at startup. Other systems do not promise that:
+/// macOS `poll` reports `POLLNVAL` for open descriptors it cannot poll, such
+/// as some devices, which would hide them from attestation. There every
+/// number is probed with `fcntl`, as before.
 fn live_descriptors(max: i32) -> Vec<i32> {
+    if cfg!(target_os = "linux") {
+        poll_live_descriptors(max)
+    } else {
+        probe_live_descriptors(0, max)
+    }
+}
+
+fn probe_live_descriptors(start: i32, end: i32) -> Vec<i32> {
+    // SAFETY: fcntl on an integer descriptor has no memory preconditions.
+    (start..end)
+        .filter(|fd| unsafe { libc::fcntl(*fd, libc::F_GETFD) } >= 0)
+        .collect()
+}
+
+fn poll_live_descriptors(max: i32) -> Vec<i32> {
     const BATCH: i32 = 1024;
     let mut live = Vec::new();
     let mut start = 0;
@@ -90,8 +111,7 @@ fn live_descriptors(max: i32) -> Vec<i32> {
         };
         if rc < 0 {
             // poll refused the batch: probe it one number at a time.
-            // SAFETY: fcntl on an integer descriptor has no memory preconditions.
-            live.extend((start..end).filter(|fd| unsafe { libc::fcntl(*fd, libc::F_GETFD) } >= 0));
+            live.extend(probe_live_descriptors(start, end));
         } else {
             live.extend(fds.iter().filter(|p| p.revents & libc::POLLNVAL == 0).map(|p| p.fd));
         }
@@ -1089,19 +1109,58 @@ mod descriptor_enumeration_tests {
     use super::*;
     use std::os::fd::AsRawFd;
 
-    /// Tests run in parallel threads that open and close descriptors, so this
-    /// pins one at a high number nothing else uses and checks it both ways.
-    #[test]
-    fn poll_enumeration_sees_an_open_descriptor_and_not_a_closed_one() {
-        const HIGH: i32 = 3_901;
-        let file = std::fs::File::open("/dev/null").unwrap();
-        // SAFETY: dup2 onto an unused descriptor number we close below.
-        assert_eq!(unsafe { libc::dup2(file.as_raw_fd(), HIGH) }, HIGH);
-        assert!(live_descriptors(4096).contains(&HIGH));
-        assert!(live_descriptors(4096).contains(&0) || unsafe { libc::fcntl(0, libc::F_GETFD) } < 0);
+    /// Tests run in parallel threads that open and close descriptors, so each
+    /// case pins its descriptor at a high number nothing else uses, and the
+    /// numbers around it, which nothing opens, must read as closed.
+    fn check(kind: &str, fd: i32, high: i32) {
+        // SAFETY: dup2 onto a descriptor number only this test uses; closed below.
+        assert_eq!(unsafe { libc::dup2(fd, high) }, high, "{kind}: dup2");
+        for enumerate in [live_descriptors, poll_live_descriptors] {
+            let live = enumerate(high + 8);
+            assert!(live.contains(&high), "{kind}: open descriptor {high} not listed");
+            assert!(!live.contains(&(high + 1)), "{kind}: closed descriptor {} listed", high + 1);
+        }
+        assert_eq!(probe_live_descriptors(high, high + 2), vec![high], "{kind}: fcntl ground truth");
         // SAFETY: closing the descriptor dup2 created.
-        unsafe { libc::close(HIGH) };
-        assert!(!live_descriptors(4096).contains(&HIGH));
-        assert!(!live_descriptors(HIGH).contains(&HIGH));
+        unsafe { libc::close(high) };
+        for enumerate in [live_descriptors, poll_live_descriptors] {
+            assert!(!enumerate(high + 8).contains(&high), "{kind}: closed descriptor {high} listed");
+        }
+    }
+
+    #[test]
+    fn enumeration_sees_open_files_directories_pipes_sockets_and_devices() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = std::fs::File::create(dir.path().join("f")).unwrap();
+        check("file", file.as_raw_fd(), 3_901);
+        let directory = std::fs::File::open(dir.path()).unwrap();
+        check("directory", directory.as_raw_fd(), 3_911);
+        let mut pipe = [0i32; 2];
+        // SAFETY: pipe writes two descriptors into the array.
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+        check("pipe read end", pipe[0], 3_921);
+        check("pipe write end", pipe[1], 3_931);
+        // SAFETY: closing the pipe's own descriptors.
+        unsafe {
+            libc::close(pipe[0]);
+            libc::close(pipe[1]);
+        }
+        let (left, right) = std::os::unix::net::UnixStream::pair().unwrap();
+        check("socket", left.as_raw_fd(), 3_941);
+        drop(right);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        check("listening socket", listener.as_raw_fd(), 3_951);
+        let device = std::fs::File::open("/dev/null").unwrap();
+        check("device", device.as_raw_fd(), 3_961);
+    }
+
+    #[test]
+    fn enumeration_matches_fcntl_over_the_low_range() {
+        // Descriptors 0..64 move as other tests run; compare the two methods
+        // on numbers that are stable for the duration: stdin, stdout, stderr.
+        let probed = probe_live_descriptors(0, 3);
+        let polled: Vec<i32> = poll_live_descriptors(3);
+        assert_eq!(polled, probed);
+        assert_eq!(live_descriptors(3), probed);
     }
 }

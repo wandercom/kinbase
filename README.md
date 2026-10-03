@@ -77,17 +77,35 @@ It states what this run proves, what it does not, which gates the instrument its
 fails, and where the independence between the building and certifying seats is real and
 where it is not.
 
-## Personal recall through Kindex (local branch, not ratified)
+## Personal recall through Kindex (branch addition, not ratified)
 
 The specification makes the Personal store Kindex but the proof of concept never
-wired it. On this branch, with `[personal] kindex_executable` configured, host
-transcripts ingested with `kinbase ingest codex_jsonl|claude_jsonl` are also handed,
-one conversation per transcript, to the Kindex graph at the Personal root, and
-`kinbase recall --question TEXT [--as-of DATE]` answers the principal's own
-question from it through `kin ask`. Both run where the Personal root is held;
-nothing either reads or returns enters a shared store, a projection or a hook.
-Kindex runs under the classifier's executable rules (absolute path, owner, mode,
-directory chain, pinned SHA-256) with a scrubbed environment.
+wired it. On this branch, with `[personal] kindex_executable` configured, what
+`kinbase ingest codex_jsonl|claude_jsonl` reads of each host transcript is also
+handed to the Kindex graph at the Personal root, and `kinbase recall --question
+TEXT [--as-of DATE]` answers the principal's own question from it through
+`kin ask`. Both run where the Personal root is held; nothing either reads or
+returns enters a shared store, a projection or a hook.
+
+- The hand-off exports the ingest scan's records, so the scan's bounds apply
+  (an oversized transcript is skipped, an oversized directory refused).
+- A transcript is one conversation per calendar day its messages carry, with an
+  id made of the host's session id and a digest of the transcript's path.
+- Each transcript is kept for its retention: a `.retention` sidecar's
+  `private_retention_seconds`, else `kindex_retention_seconds`, else the
+  24-hour private raw-session default, counted from its last change. Kindex is
+  told the expiry; a ledger under the Personal root retracts a conversation (and
+  everything Kindex derived from it) once its retention passes, or when its
+  transcript is gone from a source that is ingested again.
+- The Personal root is checked before every Kindex run: not a symlink, owned by
+  the effective user, mode 0700. Staging files are written under it, mode 0600.
+- In a certified repository, recall also makes a read-only projection for the
+  question: it raises no question to an owner and logs nothing. A withheld
+  projection passes no shared statement, only a note that team guidance is
+  pending; a released statement keeps its role, kind, store, standing,
+  provenance and governed paths, and a stale authority snapshot is stated.
+- Kindex runs under the classifier's executable rules (absolute path, owner,
+  mode, directory chain, pinned SHA-256) with a scrubbed environment.
 
 ```toml
 [personal]
@@ -97,6 +115,7 @@ kindex_executable_sha256 = "<sha256 of that file>"
 kindex_env = ["OPENAI_API_KEY"]          # passed through; everything else is scrubbed
 kindex_config = "/private/example/kin.yaml"
 kindex_digest = true                      # run `kin digest` after each hand-off
+kindex_retention_seconds = 7776000        # keep handed-off transcripts 90 days
 ```
 
 These keys and the `recall` command are additions to `spec/cli.md`, which this

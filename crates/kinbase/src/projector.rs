@@ -229,6 +229,17 @@ pub struct Projection {
     pub selected: Vec<CurrentFact>,
 }
 
+/// What a projection records besides its result. `kinbase project` raises a
+/// question to the owner of a blocking Unknown and logs the query. A
+/// projection made for a principal's own question (`kinbase recall`) records
+/// neither: the question is Personal and must not reach a shared store or a
+/// durable log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recording {
+    Full,
+    ReadOnly,
+}
+
 pub fn project(
     launcher: &Launcher,
     repo: &Path,
@@ -237,6 +248,20 @@ pub fn project(
     working_set: &[String],
     evidence_repos: &[std::path::PathBuf],
     as_of: &crate::time::AsOf,
+) -> Result<Projection, ContractError> {
+    project_with(launcher, repo, task, decision, working_set, evidence_repos, as_of, Recording::Full)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn project_with(
+    launcher: &Launcher,
+    repo: &Path,
+    task: &str,
+    decision: &str,
+    working_set: &[String],
+    evidence_repos: &[std::path::PathBuf],
+    as_of: &crate::time::AsOf,
+    recording: Recording,
 ) -> Result<Projection, ContractError> {
     // Authority refresh is an optimization, not a command gate. When Company
     // is unavailable, the cached projection is still emitted and the explicit
@@ -587,7 +612,7 @@ pub fn project(
         ));
     }
 
-    let question_id = if !has_blocking_unknown {
+    let question_id = if !has_blocking_unknown || recording == Recording::ReadOnly {
         None
     } else {
         let evidence: Vec<String> = context
@@ -876,7 +901,9 @@ pub fn project(
     // A projection has no host session, and the decision is already the
     // record's `declared_use`; passing it as the session id put sentences in
     // an identifier column.
-    launcher.private_store()?.log_query(None, &query_record)?;
+    if recording == Recording::Full {
+        launcher.private_store()?.log_query(None, &query_record)?;
+    }
     Ok(Projection { result, selected })
 }
 
@@ -2526,5 +2553,169 @@ mod brief_tests {
             "{}",
             error.message
         );
+    }
+}
+
+/// SetFold against the scan it replaced: the set-scanning complementarity and
+/// redundancy functions as they were before folding, kept here as the
+/// reference, compared on generated fact sets, folded at once and one member
+/// at a time.
+#[cfg(test)]
+mod set_fold_differential_tests {
+    use super::*;
+    use rand::{Rng, SeedableRng, seq::SliceRandom};
+
+    fn reference_complementarity(fact: &CurrentFact, set: &[CurrentFact], cache: &EvalCache) -> (i64, String) {
+        const GAIN: i64 = 2_500;
+        let fact_terms = cache.distinctive(fact);
+        for existing in set {
+            if fact.complements.contains(&existing.fact_id) || existing.complements.contains(&fact.fact_id) {
+                return (GAIN, format!("explicit_edge:{}", existing.fact_id));
+            }
+            let (Some(left), Some(right)) = (evidence_class(&fact.atom_kind), evidence_class(&existing.atom_kind)) else {
+                continue;
+            };
+            if left == right {
+                continue;
+            }
+            if let (Some(subject), Some(other)) = (key_subject(&fact.logical_key), key_subject(&existing.logical_key)) {
+                if subject == other && fact.logical_key != existing.logical_key {
+                    return (GAIN, format!("shared_subject_key:{subject}"));
+                }
+            }
+            let existing_terms = cache.distinctive(existing);
+            let shared: Vec<&str> = fact_terms.intersection(&existing_terms).map(String::as_str).collect();
+            if shared.len() >= 2 {
+                return (GAIN, format!("shared_subject_terms:{}", shared.join(",")));
+            }
+        }
+        (0, "none".to_owned())
+    }
+
+    fn reference_redundancy(fact: &CurrentFact, set: &[CurrentFact], cache: &EvalCache) -> (i64, String) {
+        let protected = fact.distortion.loss_if_absent >= 7_000 && matches!(fact.atom_kind.as_str(), "constraint" | "decision");
+        let fact_support = cache.support(fact);
+        for existing in set {
+            if fact.redundancy_with.contains(&existing.fact_id) || existing.redundancy_with.contains(&fact.fact_id) {
+                return if protected {
+                    (2_000, format!("protected_invariant_explicit_edge:{}", existing.fact_id))
+                } else {
+                    (8_000, format!("explicit_edge:{}", existing.fact_id))
+                };
+            }
+            let existing_support = cache.support(existing);
+            if fact_support.iter().any(|id| existing_support.contains(id)) {
+                return if protected {
+                    (1_000, format!("protected_invariant_shared_provenance:{}", existing.fact_id))
+                } else {
+                    (3_000, format!("shared_provenance:{}", existing.fact_id))
+                };
+            }
+        }
+        let fact_terms = cache.statement_terms(fact);
+        let mut best = (0i64, "none".to_owned());
+        for existing in set {
+            let existing_terms = cache.statement_terms(existing);
+            let intersection = fact_terms.intersection(&existing_terms).count() as i64;
+            let total = fact_terms.len() as i64 + existing_terms.len() as i64;
+            if total == 0 {
+                continue;
+            }
+            let similarity = intersection.saturating_mul(2).saturating_mul(10_000).saturating_div(total);
+            if similarity >= 6_000 {
+                let complementary = evidence_class(&fact.atom_kind).is_some()
+                    && evidence_class(&existing.atom_kind).is_some()
+                    && evidence_class(&fact.atom_kind) != evidence_class(&existing.atom_kind);
+                let ceiling = if protected || complementary { 2_000 } else { 10_000 };
+                let penalty = similarity.min(ceiling);
+                if penalty > best.0 {
+                    best = (penalty, format!("lexical_similarity:{similarity}:{}", existing.fact_id));
+                }
+            }
+        }
+        best
+    }
+
+    const WORDS: [&str; 14] = [
+        "retry", "backoff", "ledger", "invoice", "scheduler", "webhook", "timeout", "payment",
+        "reconcile", "booking", "the", "should", "queue", "cache",
+    ];
+    const KINDS: [&str; 7] = ["constraint", "decision", "rationale", "test", "observation", "claim", "runtime_trace"];
+
+    fn generated(rng: &mut rand::rngs::StdRng, index: usize, count: usize) -> CurrentFact {
+        let words: Vec<&str> = (0..rng.gen_range(1..7)).map(|_| *WORDS.choose(rng).unwrap()).collect();
+        let pick_ids = |rng: &mut rand::rngs::StdRng| -> Vec<String> {
+            (0..rng.gen_range(0..2)).map(|_| format!("f{}", rng.gen_range(0..count))).collect()
+        };
+        let complements = pick_ids(rng);
+        let redundancy_with = pick_ids(rng);
+        CurrentFact {
+            standing: "present".to_owned(),
+            provenance: "unknown".to_owned(),
+            governs_paths: Vec::new(),
+            anchors: Vec::new(),
+            fact_id: format!("f{index}"),
+            event_id: format!("e{index}"),
+            logical_key: format!("area{}/{}", rng.gen_range(0..3), ["retry", "ledger", "queue", "cache"][rng.gen_range(0..4)]),
+            atom_kind: KINDS.choose(rng).unwrap().to_string(),
+            scope: "test".to_owned(),
+            statement: words.join(" "),
+            status: "current".to_owned(),
+            disposition: "approved".to_owned(),
+            authority_id: "a".to_owned(),
+            authority_scope: "codebase:x".to_owned(),
+            store_kind: "codebase".to_owned(),
+            effective_from: "2026-09-01T00:00:00.000Z".to_owned(),
+            effective_until: None,
+            distortion: crate::model::Distortion {
+                trigger: WORDS.choose(rng).unwrap().to_string(),
+                loss_if_absent: rng.gen_range(3_000..9_500),
+                rationale: "generated".to_owned(),
+            },
+            company_refs: Vec::new(),
+            evidence_refs: (0..rng.gen_range(0..2)).map(|_| format!("ev{}", rng.gen_range(0..4))).collect(),
+            support_event_ids: (0..rng.gen_range(0..2)).map(|_| format!("ev{}", rng.gen_range(0..4))).collect(),
+            independent_support_count: 0,
+            redundancy_with,
+            complements,
+            confidence: 8_000,
+            criticality: String::new(),
+            trust: "trusted".to_owned(),
+            stale_reasons: Vec::new(),
+            authority_snapshot_cursor: String::new(),
+            effective_dependence_class: None,
+        }
+    }
+
+    #[test]
+    fn folding_the_set_matches_scanning_it() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0x5e7f01d);
+        let mut compared = 0;
+        for _ in 0..400 {
+            let count = rng.gen_range(2..14);
+            let facts: Vec<CurrentFact> = (0..count).map(|i| generated(&mut rng, i, count)).collect();
+            let refs: Vec<&CurrentFact> = facts.iter().collect();
+            let cache = EvalCache::new(&refs, "reconcile the ledger", "which retry backoff");
+            for fact in &facts {
+                let set: Vec<CurrentFact> = facts.iter().filter(|other| other.fact_id != fact.fact_id)
+                    .filter(|_| rng.gen_bool(0.6)).cloned().collect();
+                // At once, and one member at a time as selection appends them.
+                let whole = SetFold::of(fact, &set, &cache);
+                let mut incremental = SetFold::new();
+                for member in &set {
+                    incremental.absorb(fact, member, &cache);
+                }
+                for fold in [&whole, &incremental] {
+                    assert_eq!(fold.complement.clone().unwrap_or((0, "none".to_owned())),
+                               reference_complementarity(fact, &set, &cache));
+                    assert_eq!(fold.edge.clone().unwrap_or_else(|| fold.lexical.clone()),
+                               reference_redundancy(fact, &set, &cache));
+                    assert_eq!(fold.covered, set.iter().any(|existing| existing.logical_key == fact.logical_key
+                        || cache.normalized(existing) == cache.normalized(fact)));
+                }
+                compared += 1;
+            }
+        }
+        assert!(compared > 2_000);
     }
 }
