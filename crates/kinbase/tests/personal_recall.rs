@@ -349,8 +349,28 @@ fn files_containing(world: &World, needle: &str) -> Vec<PathBuf> {
     out
 }
 
+/// `kinbase recall`, given `question` on standard input.
 fn recall(world: &World, question: &str) -> Value {
-    let output = kinbase(world, &["recall", "--question", question, "--json"]);
+    use std::io::Write;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kinbase"))
+        .current_dir(&world.repo)
+        .args(["recall", "--json"])
+        .env("HOME", &world.home)
+        .env("XDG_CONFIG_HOME", &world.config_home)
+        .env("XDG_STATE_HOME", world.home.join("state"))
+        .env_remove("KINBASE_COMPANY_URL")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn_alone()
+        .expect("run kinbase recall");
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(question.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().expect("kinbase recall output");
     assert!(
         output.status.success(),
         "recall failed: {}",
@@ -523,4 +543,27 @@ fn a_removed_transcript_source_is_retracted_from_kindex() {
         second["personal_kindex"]["retracted_removed"], 1,
         "{second}"
     );
+}
+
+#[test]
+fn recall_takes_its_question_only_on_standard_input() {
+    let world = world(false);
+    // Not on the command line, where the process list would show it.
+    let argv = kinbase(
+        &world,
+        &["recall", "--question", "what did I decide?", "--json"],
+    );
+    assert!(!argv.status.success());
+    // An empty standard input is refused, not answered.
+    let empty = kinbase(&world, &["recall", "--json"]);
+    assert!(!empty.status.success());
+    assert!(
+        String::from_utf8_lossy(&empty.stdout).contains("standard input"),
+        "{}",
+        String::from_utf8_lossy(&empty.stdout)
+    );
+    let receipt = recall(&world, "what did I decide?");
+    assert_eq!(receipt["answer"], "answered", "{receipt}");
+    let asked = fs::read_to_string(world.personal.join("personal-kindex").join("asked")).unwrap();
+    assert!(asked.contains("what did I decide?"), "{asked}");
 }

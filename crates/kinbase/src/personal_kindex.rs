@@ -773,6 +773,8 @@ fn resolve_config(cfg: &PersonalKindexConfig) -> Result<(Value, Vec<Processor>),
 struct Setup {
     config: PathBuf,
     processors: Vec<Processor>,
+    /// The config enables Kindex's LLM, so `kin digest` has work to do.
+    llm: bool,
 }
 
 /// What an authorized run is given and reports: the processors' credentials
@@ -805,6 +807,7 @@ fn setup(cfg: &PersonalKindexConfig, dir: &Path) -> Result<Setup, ContractError>
     crate::paths::write_atomic(&path, &bytes, 0o600, false)?;
     Ok(Setup {
         config: path,
+        llm: config["llm"]["enabled"] == json!(true),
         processors,
     })
 }
@@ -991,7 +994,8 @@ pub fn hand_off(
         "retracted_expired": plan.expired,
         "retracted_removed": plan.removed,
         "stale": plan.stale,
-        "digested": false
+        "digested": false,
+        "embedded": false
     });
     if plan.entries.is_empty() {
         save_ledger(&dir, &plan.ledger)?;
@@ -1003,13 +1007,22 @@ pub fn hand_off(
     save_ledger(&dir, &plan.ledger)?;
     if cfg.digest && plan.conversations > 0 {
         match setup.authorize(cfg) {
-            Ok(authorized) => {
-                let mut args = vec!["digest".to_owned()];
+            // `kin digest` needs the LLM: without one it stops before doing
+            // anything, embeddings included. With only an embedding provider,
+            // its queue is drained on its own. With neither, nothing runs.
+            Ok(authorized) if setup.llm || !authorized.processors.is_empty() => {
+                let mut args = if setup.llm {
+                    vec!["digest".to_owned()]
+                } else {
+                    vec!["embed".to_owned(), "drain".to_owned()]
+                };
                 args.extend(common_args(&root, &setup));
                 run(cfg, args, &authorized.env, &[])?;
-                receipt["digested"] = json!(true);
+                receipt["digested"] = json!(setup.llm);
+                receipt["embedded"] = json!(true);
                 receipt["processors"] = json!(authorized.processors);
             }
+            Ok(_) => {}
             Err(refused) => {
                 receipt["digest_refused"] =
                     crate::output::error_document(&refused)["error"].clone();
@@ -1765,6 +1778,7 @@ mod tests {
             "case \"$command\" in\n",
             "ingest) [ \"$3 $4\" = \"--limit 0\" ] || exit 9; mkdir -p \"$root/received\" && cp \"$6\"/*.json \"$root/received/\" && ls -ld \"$6\" > \"$root/staging-mode\" ;;\n",
             "digest) echo digest >> \"$root/digests\" ;;\n",
+            "embed) echo \"$2\" >> \"$root/embeds\" ;;\n",
             "ask) cat > \"$root/question\"; if [ -n \"$context\" ]; then cat \"$context\"; fi ;;\n",
             "esac\n",
         );
@@ -1825,10 +1839,9 @@ mod tests {
                 .unwrap()
                 .starts_with("drwx------")
         );
-        assert_eq!(
-            std::fs::read_to_string(graph(&root).join("digests")).unwrap(),
-            "digest\n"
-        );
+        // No LLM is configured, so there is nothing to digest and nothing runs.
+        assert_eq!(receipt["digested"], false, "{receipt}");
+        assert!(!graph(&root).join("digests").exists());
         let ledger = std::fs::metadata(graph(&root).join(HANDOFF_DIR).join(LEDGER_FILE)).unwrap();
         assert_eq!(ledger.permissions().mode() & 0o777, 0o600);
 
@@ -2339,6 +2352,66 @@ mod tests {
                 "CONFIG_INVARIANT",
                 "{config}"
             );
+        }
+    }
+
+    #[test]
+    fn the_receipt_says_what_ran_after_a_hand_off() {
+        let base = tempfile::TempDir::new_in(verified_base()).unwrap();
+        let fake = fake_kindex(base.path(), Some(30 * 86_400));
+        set_credential("UNIT_VOYAGE_API_KEY", "pa-embedding-account");
+        set_credential("UNIT_OPENAI_API_KEY", "sk-llm-account");
+        let embedder = grant(
+            "voyage",
+            "voyage-3.5",
+            "UNIT_VOYAGE_API_KEY",
+            "pa-embedding-account",
+        );
+        let llm = grant(
+            "openai",
+            "gpt-6-luna",
+            "UNIT_OPENAI_API_KEY",
+            "sk-llm-account",
+        );
+        let cases = [
+            // Embeddings only: `kin digest` would stop at once, so the queue is
+            // drained on its own and nothing is called digested.
+            (
+                r#"{"embedding": {"provider": "voyage", "model": "voyage-3.5", "api_key_env": "UNIT_VOYAGE_API_KEY"}}"#,
+                vec![embedder.clone()],
+                (false, true, None, Some("drain\n")),
+            ),
+            // An LLM: `kin digest`, which drains the queue too.
+            (
+                r#"{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna", "api_key_env": "UNIT_OPENAI_API_KEY"},
+                    "embedding": {"provider": "voyage", "model": "voyage-3.5", "api_key_env": "UNIT_VOYAGE_API_KEY"}}"#,
+                vec![llm, embedder],
+                (true, true, Some("digest\n"), None),
+            ),
+        ];
+        for (index, (config, grants, (digested, embedded, digests, embeds))) in
+            cases.into_iter().enumerate()
+        {
+            let path = base.path().join(format!("kin-{index}.json"));
+            std::fs::write(&path, config).unwrap();
+            let cfg = with(&fake, Some(&path), &grants);
+            let root = base.path().join(format!("personal-{index}"));
+            let source = base.path().join(format!("transcripts-{index}"));
+            std::fs::create_dir(&source).unwrap();
+            std::fs::write(source.join("s.jsonl"), LINE).unwrap();
+            let now = crate::time::now_rfc3339_millis();
+            let scan = crate::lifecycle::scan_transcripts("claude_jsonl", &source, &now).unwrap();
+            let receipt = hand_off(&cfg, &root, &source, &scan, &now).unwrap();
+            assert_eq!(receipt["digested"], digested, "{receipt}");
+            assert_eq!(receipt["embedded"], embedded, "{receipt}");
+            assert_eq!(
+                receipt["processors"].as_array().unwrap().len(),
+                grants.len(),
+                "{receipt}"
+            );
+            let read = |name: &str| std::fs::read_to_string(graph(&root).join(name)).ok();
+            assert_eq!(read("digests").as_deref(), digests, "{receipt}");
+            assert_eq!(read("embeds").as_deref(), embeds, "{receipt}");
         }
     }
 

@@ -82,9 +82,9 @@ where it is not.
 The specification makes the Personal store Kindex but the proof of concept never
 wired it. On this branch, with `[personal] kindex_executable` configured, what
 `kinbase ingest codex_jsonl|claude_jsonl` reads of each host transcript is also
-handed to a Kindex graph under the Personal root, and `kinbase recall --question
-TEXT [--as-of DATE]` answers the principal's own question from it through
-`kin ask`. Both run where the Personal root is held; nothing either reads or
+handed to a Kindex graph under the Personal root, and `kinbase recall [--as-of
+DATE]` answers the principal's own question, read from standard input, from it
+through `kin ask`. Both run where the Personal root is held; nothing either reads or
 returns enters a shared store, a projection or a hook.
 
 **Kindex version.** This needs a Kindex with `kin ingest conversations` (with
@@ -136,7 +136,8 @@ matches its pin.
     (`personal_kindex.digest_refused`).
   - Kindex is given the authorized keys and nothing else of Kinbase's
     environment. Storing a conversation makes no model call and is given no key.
-  - The question reaches `kin ask` on standard input, never the command line.
+  - The question reaches `kinbase recall`, and then `kin ask`, on standard
+    input, never on a command line.
   - The recall receipt lists each processor (provider, model, account digest,
     retention) and the SHA-256 of the question and team statements Kinbase
     handed Kindex.

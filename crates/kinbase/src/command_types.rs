@@ -64,9 +64,9 @@ pub enum Command {
     /// Answer the principal's own question from the Personal store's Kindex
     /// (`[personal] kindex_executable`). Runs only where the Personal root is
     /// held; the answer goes to this terminal and nowhere else.
+    /// Answers the question read from standard input (never the command line,
+    /// where the process list would show it) from the Personal Kindex.
     Recall {
-        #[arg(long)]
-        question: String,
         /// Today's date for the answer ("now", "ago"); defaults to the current date.
         #[arg(long = "as-of")]
         as_of: Option<String>,

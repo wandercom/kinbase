@@ -28,10 +28,11 @@ enforces around it.
   separate authorization. The host-provider rule and the classifier rule stand
   unchanged, and a host's provider relationship never stands in for a recall
   processor.
-- `cli.md`: it adds `kinbase recall --question TEXT [--as-of DATE] [--json]` and the
-  `[personal] kindex_*` keys (`kindex_executable`, `kindex_executable_sha256`,
-  `kindex_config`, `kindex_timeout_seconds`, `kindex_digest`,
-  `kindex_retention_seconds`, `kindex_team_knowledge` and `[[personal.kindex_processors]]`).
+- `cli.md`: it adds `kinbase recall [--as-of DATE] [--json]`, which reads the question
+  from standard input, and the `[personal] kindex_*` keys: `kindex_executable`,
+  `kindex_executable_sha256`, `kindex_config`, `kindex_timeout_seconds`,
+  `kindex_digest`, `kindex_retention_seconds`, `kindex_team_knowledge` and
+  `[[personal.kindex_processors]]`.
 
 On every other point the earlier artifacts govern.
 
@@ -67,8 +68,8 @@ On every other point the earlier artifacts govern.
      retracted.
    - Reconciliation uses what the scan itself saw. A scan that began before the newest
      scan of the same source never imports, restores or retracts anything there.
-6. **The question stays private** (`recall-question`). The question reaches Kindex on
-   standard input, never on a command line. Recall raises no question to an owner,
+6. **The question stays private** (`recall-question`). The question reaches Kinbase,
+   and then Kindex, on standard input, never on a command line. Recall raises no question to an owner,
    logs nothing, and writes nothing to a shared store, projection or hook.
 7. **Team knowledge is opt-in** (`recall-team`). Shared statements go to a recall
    processor only when `kindex_team_knowledge` is set. They come from a read-only
