@@ -316,6 +316,49 @@ pub struct LoadedEvent {
     pub reachable: Option<bool>,
 }
 
+/// What one event file adds to `LoadCounts`, computed alongside it.
+#[derive(Default)]
+struct EventTally {
+    path_alias: Option<String>,
+    oversized: bool,
+    malformed: bool,
+    fact: Option<Verification>,
+    unknown_unverified: Option<bool>,
+}
+
+impl EventTally {
+    fn apply(self, counts: &mut LoadCounts) {
+        if let Some(path) = self.path_alias {
+            counts.path_alias += 1;
+            counts.foreign_paths.push(path);
+        }
+        if self.oversized {
+            counts.oversized += 1;
+            counts.malformed += 1;
+        }
+        if self.malformed {
+            counts.malformed += 1;
+        }
+        if let Some(verification) = self.fact {
+            counts.fact_events += 1;
+            match verification {
+                Verification::Verified => counts.verified += 1,
+                Verification::Unverified => counts.unverified += 1,
+                Verification::Foreign => counts.foreign += 1,
+                Verification::SignatureInvalid => counts.signature_invalid += 1,
+                Verification::Revoked => counts.revoked += 1,
+                Verification::WrongScope => counts.wrong_scope += 1,
+            }
+        }
+        if let Some(unverified) = self.unknown_unverified {
+            counts.unknown_events += 1;
+            if unverified {
+                counts.unverified_unknowns += 1;
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct LoadCounts {
     pub total_files: usize,
@@ -514,101 +557,67 @@ impl RepoContext {
         };
         counts.total_files = scan.total;
         counts.deferred = scan.deferred;
-        for file in scan.files {
+        // Each event is parsed, verified and classified on its own, so the
+        // files are split across threads; results come back in file order and
+        // the counts are tallied here, exactly as a single pass tallied them.
+        // Every projection, status and session admission reads the whole
+        // store, so this pass is on the hot path of everything.
+        let trust = &self.trust;
+        let root = &self.repo.root;
+        let classify = |file: StoredFile| -> (LoadedEvent, EventTally) {
+            let mut tally = EventTally::default();
+            let origin = event_path_origin_class(root, &file.relative, &tracked_paths, &dirty_paths, &default_origin);
             if file.path_alias {
-                counts.path_alias += 1;
-                counts
-                    .foreign_paths
-                    .push(format!(".kin/events/{}", file.relative.to_string_lossy()));
-                // Keep the aliased bytes in the loaded list so fsck can report
-                // the exact refusal reason, but mark them malformed so no
-                // reducer path can admit a non-content-addressed event.
-                let origin = event_path_origin_class(
-                    &self.repo.root,
-                    &file.relative,
-                    &tracked_paths,
-                    &dirty_paths,
-                    &default_origin,
-                );
-                loaded.push(LoadedEvent {
+                tally.path_alias = Some(format!(".kin/events/{}", file.relative.to_string_lossy()));
+                let event = LoadedEvent {
                     file,
-                    parsed: ParsedEvent::Malformed(
-                        "event path is not its content digest".to_owned(),
-                    ),
+                    parsed: ParsedEvent::Malformed("event path is not its content digest".to_owned()),
                     verification: None,
                     origin_trust: origin,
                     reachable: head_reachable,
-                });
-                continue;
+                };
+                return (event, tally);
             }
             if file.bytes.len() > crate::model::MAX_EVENT_BYTES {
-                counts.oversized += 1;
-                counts.malformed += 1;
-                // Listed (without its bytes) so fsck can name it; it was
-                // counted and dropped, and no report said which file it was.
-                let origin = event_path_origin_class(
-                    &self.repo.root,
-                    &file.relative,
-                    &tracked_paths,
-                    &dirty_paths,
-                    &default_origin,
-                );
+                tally.oversized = true;
                 let mut file = file;
                 file.bytes = Vec::new();
-                loaded.push(LoadedEvent {
+                let event = LoadedEvent {
                     file,
                     parsed: ParsedEvent::Malformed("event exceeds the size bound".to_owned()),
                     verification: None,
                     origin_trust: origin,
                     reachable: head_reachable,
-                });
-                continue;
+                };
+                return (event, tally);
             }
             let parsed = parse_stored(&file.bytes);
             let verification = match &parsed {
                 ParsedEvent::Fact(event) => {
-                    counts.fact_events += 1;
-                    let verification = self.trust.verify(event);
-                    match verification {
-                        Verification::Verified => counts.verified += 1,
-                        Verification::Unverified => counts.unverified += 1,
-                        Verification::Foreign => counts.foreign += 1,
-                        Verification::SignatureInvalid => counts.signature_invalid += 1,
-                        Verification::Revoked => counts.revoked += 1,
-                        Verification::WrongScope => counts.wrong_scope += 1,
-                    }
+                    let verification = trust.verify(event);
+                    tally.fact = Some(verification.clone());
                     Some(verification)
                 }
                 ParsedEvent::Unknown(unknown) => {
-                    counts.unknown_events += 1;
-                    let verification = self.trust.verify_unknown(unknown);
-                    if verification != Verification::Verified {
-                        counts.unverified_unknowns += 1;
-                    }
+                    let verification = trust.verify_unknown(unknown);
+                    tally.unknown_unverified = Some(verification != Verification::Verified);
                     Some(verification)
                 }
                 ParsedEvent::Tombstone(_) => Some(Verification::Verified),
                 ParsedEvent::Malformed(_) => {
-                    counts.malformed += 1;
+                    tally.malformed = true;
                     None
                 }
             };
-            let origin = event_path_origin_class(
-                &self.repo.root,
-                &file.relative,
-                &tracked_paths,
-                &dirty_paths,
-                &default_origin,
-            );
-            loaded.push(LoadedEvent {
-                file,
-                parsed,
-                verification,
-                origin_trust: origin,
-                reachable: head_reachable,
-            });
+            let event = LoadedEvent { file, parsed, verification, origin_trust: origin, reachable: head_reachable };
+            (event, tally)
+        };
+        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).min(8);
+        let results = map_in_order(scan.files, threads, 64, classify);
+        for (event, tally) in results {
+            tally.apply(&mut counts);
+            loaded.push(event);
         }
-        // Non-reserved artefacts under .kin/ are foreign paths (C24).
         for entry in std::fs::read_dir(&self.repo.kin)
             .into_iter()
             .flatten()
@@ -5003,6 +5012,54 @@ mod tombstone_action_tests {
             "relaxation",
         ] {
             assert_eq!(super::tombstone_action(action), action);
+        }
+    }
+}
+
+/// `items.map(f)`, in input order, split across up to `threads` scoped
+/// threads when there are at least `min_parallel` items. The order and the
+/// results are exactly a serial map's: each item is mapped on its own.
+pub(crate) fn map_in_order<T: Send, R: Send>(
+    items: Vec<T>,
+    threads: usize,
+    min_parallel: usize,
+    f: impl Fn(T) -> R + Sync,
+) -> Vec<R> {
+    if threads <= 1 || items.len() < min_parallel.max(2) {
+        return items.into_iter().map(f).collect();
+    }
+    let size = items.len().div_ceil(threads);
+    let mut chunks: Vec<Vec<T>> = Vec::new();
+    let mut remaining = items.into_iter().peekable();
+    while remaining.peek().is_some() {
+        chunks.push(remaining.by_ref().take(size).collect());
+    }
+    let f = &f;
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = chunks
+            .into_iter()
+            .map(|chunk| scope.spawn(move || chunk.into_iter().map(f).collect::<Vec<_>>()))
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().expect("worker thread"))
+            .collect()
+    })
+}
+
+#[cfg(test)]
+mod map_in_order_tests {
+    use super::map_in_order;
+
+    #[test]
+    fn a_parallel_map_equals_a_serial_one() {
+        for len in [0usize, 1, 2, 63, 64, 65, 127, 1_000, 4_099] {
+            let items: Vec<u64> = (0..len as u64).map(|i| i.wrapping_mul(0x9e37_79b9_7f4a_7c15)).collect();
+            let serial: Vec<(u64, usize)> = items.iter().map(|x| (x.rotate_left(7) ^ 0xabc, x.count_ones() as usize)).collect();
+            for threads in [1, 2, 3, 7, 8, 64] {
+                let parallel = map_in_order(items.clone(), threads, 64, |x| (x.rotate_left(7) ^ 0xabc, x.count_ones() as usize));
+                assert_eq!(parallel, serial, "len {len}, threads {threads}");
+            }
         }
     }
 }

@@ -21,6 +21,53 @@ pub const SERVICE_CONFIG_SCHEMA: &str = "1";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersonalConfig {
     pub data_root: PathBuf,
+    /// The Personal store's Kindex (product.md: Personal is Kindex). Optional:
+    /// without it host transcripts stay in the private journal and there is no recall.
+    pub kindex: Option<PersonalKindexConfig>,
+}
+
+/// Kindex run as a pinned executable over `data_root`, the Personal Kindex
+/// graph. Only the launcher and Personal worker run it; nothing it reads or
+/// returns enters a shared store or projection.
+/// One processor authorized for historical Personal-store text: the exact
+/// provider, model, account and retention mode (threat-model.md, model-provider
+/// boundary).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizedProcessor {
+    pub provider: String,
+    pub model: String,
+    /// The variable holding the account's API key; Kindex's config names it.
+    pub key_env: String,
+    /// SHA-256 of that key: the authorization covers this account alone.
+    pub key_sha256: String,
+    /// The retention mode the account is under, as authorized.
+    pub retention: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersonalKindexConfig {
+    pub executable: PathBuf,
+    pub executable_sha256: String,
+    /// A Kindex config file (providers, `ask:` settings), passed as `--config`.
+    pub config: Option<PathBuf>,
+    pub timeout_seconds: u64,
+    /// Run Kindex's digest pass (directives, summaries) after each hand-off.
+    pub digest: bool,
+    /// How long a transcript handed to Kindex is kept, counted from the
+    /// transcript's last change; a `.retention` sidecar beside the transcript
+    /// overrides it. Past it the conversation, and everything Kindex derived
+    /// from it, is removed. `None`: the private raw-session default (24 hours).
+    pub retention_seconds: Option<i64>,
+    /// The off-machine processors explicitly authorized to receive
+    /// Personal-store text from Kindex: its LLM (digest, recall) and its
+    /// embedding provider. A host's provider relationship does not cover
+    /// historical Personal recall (threat-model.md); empty means Kindex may run
+    /// only locally. Kindex is given the credential of each, and no other
+    /// environment.
+    pub processors: Vec<AuthorizedProcessor>,
+    /// Send the team facts a read-only projection releases along with a
+    /// recall question. Off unless named: they go to the same processor.
+    pub team_knowledge: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -299,6 +346,117 @@ fn optional_path(
     }
 }
 
+/// One `[[personal.kindex_processors]]` entry. Every field is required: the
+/// authorization names the exact provider, model, account and retention mode.
+fn authorized_processor(value: &toml::Value) -> Result<AuthorizedProcessor, ContractError> {
+    let fields = ["provider", "model", "key_env", "key_sha256", "retention"];
+    let table = value.as_table().ok_or_else(|| {
+        config_error("personal.kindex_processors entries must be tables with provider, model, key_env, key_sha256 and retention")
+    })?;
+    closed_keys(table, &fields, "[[personal.kindex_processors]]")?;
+    let field = |name: &str| -> Result<String, ContractError> {
+        table
+            .get(name)
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty() && !value.chars().any(char::is_whitespace))
+            .map(str::to_owned)
+            .ok_or_else(|| config_error(format!("personal.kindex_processors entries need {name} (text without spaces)")))
+    };
+    let key_env = field("key_env")?;
+    if !(key_env.len() > "_API_KEY".len()
+        && key_env.ends_with("_API_KEY")
+        && key_env.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+    {
+        return Err(config_error("personal.kindex_processors key_env must be a variable ending in _API_KEY"));
+    }
+    let key_sha256 = field("key_sha256")?;
+    if key_sha256.len() != 64 || !key_sha256.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)) {
+        return Err(config_error("personal.kindex_processors key_sha256 must be the key's SHA-256 in lowercase hex"));
+    }
+    Ok(AuthorizedProcessor {
+        provider: field("provider")?,
+        model: field("model")?,
+        key_env,
+        key_sha256,
+        retention: field("retention")?,
+    })
+}
+
+fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, ContractError> {
+    // The Personal Kindex is for testing only: a normal build refuses its keys
+    // rather than ignore them.
+    if !cfg!(feature = "personal-recall") {
+        if let Some(key) = table.keys().find(|key| key.starts_with("kindex_")) {
+            return Err(config_error(format!(
+                "personal.{key} needs a kinbase built with the personal-recall feature, which is for testing only"
+            )));
+        }
+        return Ok(None);
+    }
+    let Some(executable) = optional_path(table, "kindex_executable", "personal")? else {
+        for key in ["kindex_executable_sha256", "kindex_config", "kindex_timeout_seconds", "kindex_digest", "kindex_retention_seconds", "kindex_processors", "kindex_team_knowledge"] {
+            if table.contains_key(key) {
+                return Err(config_error(format!("personal.{key} requires personal.kindex_executable")));
+            }
+        }
+        return Ok(None);
+    };
+    let executable_sha256 = required_str(table, "kindex_executable_sha256", "personal")?.to_owned();
+    if !crate::hash::is_sha256(&executable_sha256) {
+        return Err(config_error(
+            "personal.kindex_executable_sha256 must be a lowercase 64-hex digest",
+        ));
+    }
+    let timeout_seconds = match table.get("kindex_timeout_seconds") {
+        None => 900,
+        Some(value) => value
+            .as_integer()
+            .filter(|seconds| *seconds > 0)
+            .ok_or_else(|| config_error("personal.kindex_timeout_seconds must be a positive integer"))?
+            as u64,
+    };
+    let digest = match table.get("kindex_digest") {
+        None => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| config_error("personal.kindex_digest must be true or false"))?,
+    };
+    let retention_seconds = match table.get("kindex_retention_seconds") {
+        None => None,
+        Some(value) => Some(
+            value
+                .as_integer()
+                .filter(|seconds| *seconds > 0)
+                .ok_or_else(|| config_error("personal.kindex_retention_seconds must be a positive integer"))?,
+        ),
+    };
+    let processors = match table.get("kindex_processors") {
+        None => Vec::new(),
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| config_error("personal.kindex_processors must be an array of tables"))?
+            .iter()
+            .map(authorized_processor)
+            .collect::<Result<_, _>>()?,
+    };
+    let team_knowledge = match table.get("kindex_team_knowledge") {
+        None => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| config_error("personal.kindex_team_knowledge must be true or false"))?,
+    };
+    Ok(Some(PersonalKindexConfig {
+        executable,
+        executable_sha256,
+        config: optional_path(table, "kindex_config", "personal")?,
+        timeout_seconds,
+        digest,
+        retention_seconds,
+        processors,
+        team_knowledge,
+    }))
+}
+
 fn absolute(text: &str, field: &str) -> Result<PathBuf, ContractError> {
     let path = PathBuf::from(text);
     if !path.is_absolute() {
@@ -364,11 +522,26 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
         .get("personal")
         .and_then(toml::Value::as_table)
         .ok_or_else(|| config_error("[personal] is required"))?;
-    closed_keys(personal_table, &["data_root"], "[personal]")?;
+    closed_keys(
+        personal_table,
+        &[
+            "data_root",
+            "kindex_executable",
+            "kindex_executable_sha256",
+            "kindex_config",
+            "kindex_timeout_seconds",
+            "kindex_digest",
+            "kindex_retention_seconds",
+            "kindex_processors",
+            "kindex_team_knowledge",
+        ],
+        "[personal]",
+    )?;
     let data_root = absolute(
         required_str(personal_table, "data_root", "personal")?,
         "personal.data_root",
     )?;
+    let kindex = personal_kindex(personal_table)?;
     let config_dir = path
         .parent()
         .map(Path::to_path_buf)
@@ -602,7 +775,7 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
 
     Ok(UserConfig {
         path: path.to_path_buf(),
-        personal: PersonalConfig { data_root },
+        personal: PersonalConfig { data_root, kindex },
         company,
         classifier,
         hosts,
@@ -1042,5 +1215,21 @@ mod host_range_tests {
         ] {
             assert_eq!(hosts(bad).expect_err(bad).code, "CONFIG_INVARIANT", "{bad}");
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "personal-recall")))]
+mod personal_recall_build_tests {
+    use super::*;
+
+    #[test]
+    fn a_normal_build_refuses_the_personal_kindex_keys() {
+        let text = "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\nkindex_executable = \"/opt/example/bin/kin\"\n";
+        let error = parse_user_config(Path::new("/private/example/config.toml"), text)
+            .expect_err("refused");
+        assert!(error.message.contains("personal-recall"), "{}", error.message);
+        let plain = "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n";
+        let config = parse_user_config(Path::new("/private/example/config.toml"), plain).expect("parses");
+        assert!(config.personal.kindex.is_none());
     }
 }

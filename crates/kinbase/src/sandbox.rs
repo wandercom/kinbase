@@ -41,7 +41,7 @@ pub fn open_descriptors() -> Vec<OpenDescriptor> {
     let max = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
     let max = if max <= 0 { 1024 } else { max.min(65_536) } as i32;
     let mut output = Vec::new();
-    for fd in 0..max {
+    for fd in live_descriptors(max) {
         let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };
         if flags < 0 {
             continue;
@@ -61,6 +61,63 @@ pub fn open_descriptors() -> Vec<OpenDescriptor> {
         });
     }
     output
+}
+
+/// The open descriptors below `max`, found without opening one.
+///
+/// On Linux, `poll` with no requested events reports `POLLNVAL` for a closed
+/// descriptor and only for a closed one, whatever the open one refers to
+/// (file, directory, pipe, socket, device), so one call covers 1,024 numbers.
+/// Probing each number with `fcntl` took 65,536 system calls per attestation,
+/// and every process attests at startup. Other systems do not promise that:
+/// macOS `poll` reports `POLLNVAL` for open descriptors it cannot poll, such
+/// as some devices, which would hide them from attestation. There every
+/// number is probed with `fcntl`, as before.
+fn live_descriptors(max: i32) -> Vec<i32> {
+    if cfg!(target_os = "linux") {
+        poll_live_descriptors(max)
+    } else {
+        probe_live_descriptors(0, max)
+    }
+}
+
+fn probe_live_descriptors(start: i32, end: i32) -> Vec<i32> {
+    // SAFETY: fcntl on an integer descriptor has no memory preconditions.
+    (start..end)
+        .filter(|fd| unsafe { libc::fcntl(*fd, libc::F_GETFD) } >= 0)
+        .collect()
+}
+
+fn poll_live_descriptors(max: i32) -> Vec<i32> {
+    const BATCH: i32 = 1024;
+    let mut live = Vec::new();
+    let mut start = 0;
+    while start < max {
+        let end = (start + BATCH).min(max);
+        let mut fds: Vec<libc::pollfd> = (start..end)
+            .map(|fd| libc::pollfd {
+                fd,
+                events: 0,
+                revents: 0,
+            })
+            .collect();
+        let rc = loop {
+            // SAFETY: `fds` is a live, correctly sized pollfd array; a zero
+            // timeout never blocks.
+            let rc = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, 0) };
+            if rc >= 0 || std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
+                break rc;
+            }
+        };
+        if rc < 0 {
+            // poll refused the batch: probe it one number at a time.
+            live.extend(probe_live_descriptors(start, end));
+        } else {
+            live.extend(fds.iter().filter(|p| p.revents & libc::POLLNVAL == 0).map(|p| p.fd));
+        }
+        start = end;
+    }
+    live
 }
 
 #[cfg(target_os = "macos")]
@@ -539,6 +596,19 @@ pub fn run_verified_executable(
     input: &[u8],
     timeout: std::time::Duration,
 ) -> Result<Vec<u8>, ContractError> {
+    run_verified_executable_with_env(executable, expected_sha256, args, &[], input, timeout)
+}
+
+/// As `run_verified_executable`, with these variables added to the scrubbed
+/// environment (named by configuration, such as a provider key).
+pub fn run_verified_executable_with_env(
+    executable: &Path,
+    expected_sha256: &str,
+    args: &[String],
+    env: &[(String, String)],
+    input: &[u8],
+    timeout: std::time::Duration,
+) -> Result<Vec<u8>, ContractError> {
     use std::os::unix::fs::MetadataExt;
     let (VerifiedExecutable { file, metadata }, _) =
         open_verified(executable, expected_sha256).map_err(|(_, error)| error)?;
@@ -562,6 +632,7 @@ pub fn run_verified_executable(
         .env("PATH", "/usr/bin:/bin")
         .env("HOME", "/nonexistent")
         .env("KINBASE_SHARED_CONFIG_FD", fd.to_string())
+        .envs(env.iter().map(|(key, value)| (key, value)))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -604,6 +675,7 @@ pub fn run_verified_executable(
                 .env("PATH", "/usr/bin:/bin")
                 .env("HOME", "/nonexistent")
                 .env("KINBASE_SHARED_CONFIG_FD", fd.to_string())
+                .envs(env.iter().map(|(key, value)| (key, value)))
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
@@ -1028,6 +1100,91 @@ exit 0
         match result {
             Ok(output) => assert_eq!(output, b"done"),
             Err(error) => assert!(error.message.contains("did not close"), "{}", error.message),
+        }
+    }
+}
+
+#[cfg(test)]
+mod descriptor_enumeration_tests {
+    use super::*;
+    use std::os::fd::AsRawFd;
+
+    /// The first of the descriptor numbers these tests pin: high enough that
+    /// nothing else in the test process uses them, and below the soft
+    /// RLIMIT_NOFILE (1,024 on many systems), where dup2 would fail.
+    fn slot(offset: i32) -> i32 {
+        let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        // SAFETY: getrlimit writes into the struct it is given.
+        let soft = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } == 0 {
+            limit.rlim_cur.min(65_536) as i32
+        } else {
+            1_024
+        };
+        (soft - 80).min(3_901) + offset
+    }
+
+    /// The enumerations attestation can use: `poll` only on Linux, the one
+    /// system where it never reports an open descriptor as closed.
+    fn enumerations() -> Vec<fn(i32) -> Vec<i32>> {
+        if cfg!(target_os = "linux") {
+            vec![live_descriptors, poll_live_descriptors]
+        } else {
+            vec![live_descriptors]
+        }
+    }
+
+    /// Tests run in parallel threads that open and close descriptors, so each
+    /// case pins its descriptor at a high number nothing else uses, and the
+    /// numbers around it, which nothing opens, must read as closed.
+    fn check(kind: &str, fd: i32, high: i32) {
+        // SAFETY: dup2 onto a descriptor number only this test uses; closed below.
+        assert_eq!(unsafe { libc::dup2(fd, high) }, high, "{kind}: dup2");
+        for enumerate in enumerations() {
+            let live = enumerate(high + 8);
+            assert!(live.contains(&high), "{kind}: open descriptor {high} not listed");
+            assert!(!live.contains(&(high + 1)), "{kind}: closed descriptor {} listed", high + 1);
+        }
+        assert_eq!(probe_live_descriptors(high, high + 2), vec![high], "{kind}: fcntl ground truth");
+        // SAFETY: closing the descriptor dup2 created.
+        unsafe { libc::close(high) };
+        for enumerate in enumerations() {
+            assert!(!enumerate(high + 8).contains(&high), "{kind}: closed descriptor {high} listed");
+        }
+    }
+
+    #[test]
+    fn enumeration_sees_open_files_directories_pipes_sockets_and_devices() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = std::fs::File::create(dir.path().join("f")).unwrap();
+        check("file", file.as_raw_fd(), slot(0));
+        let directory = std::fs::File::open(dir.path()).unwrap();
+        check("directory", directory.as_raw_fd(), slot(10));
+        let mut pipe = [0i32; 2];
+        // SAFETY: pipe writes two descriptors into the array.
+        assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
+        check("pipe read end", pipe[0], slot(20));
+        check("pipe write end", pipe[1], slot(30));
+        // SAFETY: closing the pipe's own descriptors.
+        unsafe {
+            libc::close(pipe[0]);
+            libc::close(pipe[1]);
+        }
+        let (left, right) = std::os::unix::net::UnixStream::pair().unwrap();
+        check("socket", left.as_raw_fd(), slot(40));
+        drop(right);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        check("listening socket", listener.as_raw_fd(), slot(50));
+        let device = std::fs::File::open("/dev/null").unwrap();
+        check("device", device.as_raw_fd(), slot(60));
+    }
+
+    #[test]
+    fn enumeration_matches_fcntl_over_the_low_range() {
+        // Descriptors 0..64 move as other tests run; compare the two methods
+        // on numbers that are stable for the duration: stdin, stdout, stderr.
+        let probed = probe_live_descriptors(0, 3);
+        for enumerate in enumerations() {
+            assert_eq!(enumerate(3), probed);
         }
     }
 }

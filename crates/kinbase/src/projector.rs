@@ -210,6 +210,59 @@ pub fn run(
     as_of: &crate::time::AsOf,
     json: bool,
 ) -> Result<(), ContractError> {
+    let projection = project(launcher, repo, task, decision, working_set, evidence_repos, as_of)?;
+    if json {
+        println!("{}", crate::json::canonical_text(&projection.result));
+    } else {
+        let result = &projection.result;
+        println!("decision: {}", result["decision"].as_str().unwrap_or_default());
+        println!("selected_count: {}", projection.selected.len());
+        println!("omitted_count: {}", result["omitted_count"]);
+        println!("stopping_reason: {}", result["stopping_reason"].as_str().unwrap_or_default());
+    }
+    Ok(())
+}
+
+/// A projection: the canonical result `run` prints, and the selected facts.
+pub struct Projection {
+    pub result: Value,
+    pub selected: Vec<CurrentFact>,
+}
+
+/// What a projection records besides its result. `kinbase project` raises a
+/// question to the owner of a blocking Unknown and logs the query. A
+/// projection made for a principal's own question (`kinbase recall`) records
+/// neither: the question is Personal and must not reach a shared store or a
+/// durable log.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recording {
+    Full,
+    ReadOnly,
+}
+
+pub fn project(
+    launcher: &Launcher,
+    repo: &Path,
+    task: &str,
+    decision: &str,
+    working_set: &[String],
+    evidence_repos: &[std::path::PathBuf],
+    as_of: &crate::time::AsOf,
+) -> Result<Projection, ContractError> {
+    project_with(launcher, repo, task, decision, working_set, evidence_repos, as_of, Recording::Full)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn project_with(
+    launcher: &Launcher,
+    repo: &Path,
+    task: &str,
+    decision: &str,
+    working_set: &[String],
+    evidence_repos: &[std::path::PathBuf],
+    as_of: &crate::time::AsOf,
+    recording: Recording,
+) -> Result<Projection, ContractError> {
     // Authority refresh is an optimization, not a command gate. When Company
     // is unavailable, the cached projection is still emitted and the explicit
     // degraded policy withholds the dependent decision.
@@ -468,6 +521,10 @@ pub fn run(
     let mut direction_slots_used = 0usize;
     let mut direction_slots_withheld = 0usize;
     let cache = EvalCache::new(&candidates, task, decision);
+    let mut folds: BTreeMap<&str, SetFold> = candidates
+        .iter()
+        .map(|fact| (fact.fact_id.as_str(), SetFold::of(fact, &context, &cache)))
+        .collect();
     while context.len() < PROJECTION_LIMIT {
         let mut round: Vec<(&CurrentFact, Evaluation)> = Vec::new();
         // Whether a candidate of positive value did not fit in this round.
@@ -485,7 +542,10 @@ pub fn run(
                 direction_slots_withheld += 1;
                 continue;
             }
-            let evaluation = evaluate_cached(fact, &context, &cache);
+            let evaluation = match folds.get(fact.fact_id.as_str()) {
+                Some(fold) => evaluate_folded(fact, fold, &cache),
+                None => evaluate_cached(fact, &context, &cache),
+            };
             if context_bytes(&context, Some(fact)) > PROJECTION_BYTE_LIMIT {
                 if evaluation.marginal_value > 0 {
                     round_byte_blocked = true;
@@ -531,6 +591,11 @@ pub fn run(
         }
         selected.push(fact.clone());
         context.push(fact.clone());
+        for candidate in &candidates {
+            if let Some(fold) = folds.get_mut(candidate.fact_id.as_str()) {
+                fold.absorb(candidate, fact, &cache);
+            }
+        }
         if is_authority_answer(fact) && !has_blocking_unknown {
             sufficiency = true;
             break;
@@ -547,7 +612,7 @@ pub fn run(
         ));
     }
 
-    let question_id = if !has_blocking_unknown {
+    let question_id = if !has_blocking_unknown || recording == Recording::ReadOnly {
         None
     } else {
         let evidence: Vec<String> = context
@@ -836,17 +901,10 @@ pub fn run(
     // A projection has no host session, and the decision is already the
     // record's `declared_use`; passing it as the session id put sentences in
     // an identifier column.
-    launcher.private_store()?.log_query(None, &query_record)?;
-
-    if json {
-        println!("{}", crate::json::canonical_text(&result));
-    } else {
-        println!("decision: {decision}");
-        println!("selected_count: {}", selected.len());
-        println!("omitted_count: {omitted_count}");
-        println!("stopping_reason: {stopping_reason}");
+    if recording == Recording::Full {
+        launcher.private_store()?.log_query(None, &query_record)?;
     }
-    Ok(())
+    Ok(Projection { result, selected })
 }
 
 fn question_unknown_id(fact: &CurrentFact) -> String {
@@ -1334,6 +1392,106 @@ struct EvalCache {
     trigger_terms: BTreeMap<String, BTreeSet<String>>,
     distinctive: BTreeMap<String, BTreeSet<String>>,
     support: BTreeMap<String, BTreeSet<String>>,
+    /// Relevance in basis points (2,000 to 10,000) per fact, from `relevance_scores`.
+    relevance: BTreeMap<String, i64>,
+}
+
+/// BM25 parameters: term-frequency saturation and length normalisation.
+const BM25_K1: f64 = 1.2;
+const BM25_B: f64 = 0.75;
+/// Question words weigh this much more when they come from the decision.
+const DECISION_WEIGHT: f64 = 1.5;
+
+/// How well each candidate's statement matches the task and decision, scored
+/// BM25-style over light-stemmed terms and mapped onto the relevance range
+/// (2,000 for no shared term, 10,000 for the best match among the candidates).
+/// A shared word counts by how rare it is among the candidates (inverse
+/// document frequency), not as one of at most four equal words: a repository's
+/// name, shared by every fact about it, no longer weighs what a word naming
+/// the one mechanism asked about does.
+fn relevance_scores(facts: &[&CurrentFact], task: &str, decision: &str) -> BTreeMap<String, i64> {
+    let sets: Vec<(&str, BTreeSet<String>)> = facts
+        .iter()
+        .map(|fact| (fact.fact_id.as_str(), stemmed_terms(&fact.statement)))
+        .collect();
+    let mut query: BTreeMap<String, f64> = BTreeMap::new();
+    for term in stemmed_terms(task) {
+        query.insert(term, 1.0);
+    }
+    for term in stemmed_terms(decision) {
+        query.insert(term, DECISION_WEIGHT);
+    }
+    let count = sets.len().max(1) as f64;
+    let mut frequency: BTreeMap<&str, usize> = BTreeMap::new();
+    for (_, set) in &sets {
+        for term in set {
+            if query.contains_key(term) {
+                *frequency.entry(term.as_str()).or_default() += 1;
+            }
+        }
+    }
+    let average = (sets.iter().map(|(_, set)| set.len()).sum::<usize>() as f64 / count).max(1.0);
+    let scores: Vec<(&str, f64)> = sets
+        .iter()
+        .map(|(id, set)| {
+            let norm = 1.0 + BM25_K1 * (1.0 - BM25_B + BM25_B * set.len() as f64 / average);
+            let score = query
+                .iter()
+                .filter(|(term, _)| set.contains(*term))
+                .map(|(term, weight)| {
+                    let df = frequency.get(term.as_str()).copied().unwrap_or(0) as f64;
+                    let idf = (1.0 + (count - df + 0.5) / (df + 0.5)).ln();
+                    weight * idf * (BM25_K1 + 1.0) / norm
+                })
+                .sum::<f64>();
+            (*id, score)
+        })
+        .collect();
+    let best = scores.iter().map(|(_, score)| *score).fold(0.0_f64, f64::max);
+    scores
+        .into_iter()
+        .map(|(id, score)| {
+            let bp = if best > 0.0 && score > 0.0 {
+                2_000 + (8_000.0 * score / best).round() as i64
+            } else {
+                2_000
+            };
+            (id.to_owned(), bp)
+        })
+        .collect()
+}
+
+/// `terms`, each reduced to a light stem (plural and verb endings), so a
+/// question about "snapshots" or "validated" meets a fact about a "snapshot"
+/// that "validates". Used for relevance only.
+fn stemmed_terms(value: &str) -> BTreeSet<String> {
+    terms(value).into_iter().map(|term| stem(&term)).collect()
+}
+
+fn stem(word: &str) -> String {
+    let w = word;
+    let n = w.len();
+    let cut = |k: usize| w[..n - k].to_owned();
+    let stripped = if n > 4 && (w.ends_with("ies") || w.ends_with("ied")) {
+        format!("{}y", &w[..n - 3])
+    } else if n > 5 && w.ends_with("ing") {
+        cut(3)
+    } else if n > 4 && w.ends_with("ed") && !w.ends_with("eed") {
+        cut(2)
+    } else if n > 4 && (w.ends_with("sses") || w.ends_with("xes") || w.ends_with("ches") || w.ends_with("shes")) {
+        cut(2)
+    } else if n > 3 && w.ends_with('s') && !w.ends_with("ss") && !w.ends_with("us") && !w.ends_with("is") {
+        cut(1)
+    } else {
+        w.to_owned()
+    };
+    // A silent final e goes too, so "validate", "validates", "validated" and
+    // "validating" all reduce to "validat".
+    if stripped.len() > 3 && stripped.ends_with('e') && !stripped.ends_with("ee") {
+        stripped[..stripped.len() - 1].to_owned()
+    } else {
+        stripped
+    }
 }
 
 impl EvalCache {
@@ -1358,6 +1516,7 @@ impl EvalCache {
             trigger_terms,
             distinctive,
             support,
+            relevance: relevance_scores(facts, task, decision),
         }
     }
 
@@ -1412,6 +1571,10 @@ fn evaluate_cached(
     current_set: &[CurrentFact],
     cache: &EvalCache,
 ) -> Evaluation {
+    evaluate_folded(fact, &SetFold::of(fact, current_set, cache), cache)
+}
+
+fn evaluate_folded(fact: &CurrentFact, set: &SetFold, cache: &EvalCache) -> Evaluation {
     let decision_terms = &cache.decision_terms;
     let task_terms = &cache.task_terms;
     let statement_terms = cache.statement_terms(fact);
@@ -1423,15 +1586,13 @@ fn evaluate_cached(
     // was asked. A fact that shares nothing with the question keeps a floor --
     // context without lexical overlap is still context -- but it must not
     // outrank one that answers it.
-    let relevance =
+    let relevance = cache.relevance.get(&fact.fact_id).copied().unwrap_or_else(|| {
         (2_000 + decision_overlap.saturating_mul(1_500) + task_overlap.saturating_mul(1_000))
-            .min(10_000);
+            .min(10_000)
+    });
     // Distortion already covered by an equivalent member of S is not newly
     // covered: a paraphrase of a resident fact covers nothing new.
-    let fact_normalized = cache.normalized(fact);
-    let covered_by_set = current_set.iter().any(|existing| {
-        existing.logical_key == fact.logical_key || cache.normalized(existing) == fact_normalized
-    });
+    let covered_by_set = set.covered;
     // The trigger names the decision a fact exists to settle. Full weight goes
     // to a fact whose *trigger* the question is about -- not one whose own
     // statement merely mentions its own trigger, which every honestly written
@@ -1464,13 +1625,14 @@ fn evaluate_cached(
             };
         base + (i64::from(fact.confidence) / 20).min(500)
     };
-    let (complementarity, complementarity_basis) = complementarity(fact, current_set, cache);
+    let (complementarity, complementarity_basis) =
+        set.complement.clone().unwrap_or((0, "none".to_owned()));
     let uncertainty = (i64::try_from(fact.independent_support_count)
         .unwrap_or(i64::MAX)
         .saturating_mul(250))
     .min(1_000)
         + if fact.company_refs.is_empty() { 0 } else { 250 };
-    let (redundancy, redundancy_basis) = redundancy(fact, current_set, cache);
+    let (redundancy, redundancy_basis) = set.edge.clone().unwrap_or_else(|| set.lexical.clone());
     let cost = 250;
     let stale = 0;
     Evaluation {
@@ -1575,115 +1737,164 @@ fn support_ids(fact: &CurrentFact) -> BTreeSet<String> {
         .collect()
 }
 
-fn complementarity(
+/// Complementarity with one member of the set; the set's value is the first
+/// member, in set order, that complements the fact.
+fn complement_with(
     fact: &CurrentFact,
-    current_set: &[CurrentFact],
+    existing: &CurrentFact,
     cache: &EvalCache,
-) -> (i64, String) {
+) -> Option<(i64, String)> {
     const GAIN: i64 = 2_500;
-    let fact_terms = cache.distinctive(fact);
-    for existing in current_set {
-        if fact.complements.contains(&existing.fact_id)
-            || existing.complements.contains(&fact.fact_id)
-        {
-            return (GAIN, format!("explicit_edge:{}", existing.fact_id));
-        }
-        let (Some(left), Some(right)) = (
-            evidence_class(&fact.atom_kind),
-            evidence_class(&existing.atom_kind),
-        ) else {
-            continue;
-        };
-        if left == right {
-            continue;
-        }
-        if let (Some(subject), Some(other)) = (
-            key_subject(&fact.logical_key),
-            key_subject(&existing.logical_key),
-        ) {
-            if subject == other && fact.logical_key != existing.logical_key {
-                return (GAIN, format!("shared_subject_key:{subject}"));
-            }
-        }
-        let existing_terms = cache.distinctive(existing);
-        let shared: Vec<&str> = fact_terms
-            .intersection(&existing_terms)
-            .map(String::as_str)
-            .collect();
-        if shared.len() >= 2 {
-            return (GAIN, format!("shared_subject_terms:{}", shared.join(",")));
+    if fact.complements.contains(&existing.fact_id) || existing.complements.contains(&fact.fact_id) {
+        return Some((GAIN, format!("explicit_edge:{}", existing.fact_id)));
+    }
+    let (Some(left), Some(right)) = (
+        evidence_class(&fact.atom_kind),
+        evidence_class(&existing.atom_kind),
+    ) else {
+        return None;
+    };
+    if left == right {
+        return None;
+    }
+    if let (Some(subject), Some(other)) = (
+        key_subject(&fact.logical_key),
+        key_subject(&existing.logical_key),
+    ) {
+        if subject == other && fact.logical_key != existing.logical_key {
+            return Some((GAIN, format!("shared_subject_key:{subject}")));
         }
     }
-    (0, "none".to_owned())
+    let fact_terms = cache.distinctive(fact);
+    let existing_terms = cache.distinctive(existing);
+    if fact_terms.intersection(&existing_terms).nth(1).is_none() {
+        return None;
+    }
+    let shared: Vec<&str> = fact_terms
+        .intersection(&existing_terms)
+        .map(String::as_str)
+        .collect();
+    Some((GAIN, format!("shared_subject_terms:{}", shared.join(","))))
 }
 
-/// Redundancy against the current set: explicit edges, shared provenance,
-/// then lexical similarity. Returns the positive penalty and its basis.
-fn redundancy(fact: &CurrentFact, current_set: &[CurrentFact], cache: &EvalCache) -> (i64, String) {
-    let protected_invariant = fact.distortion.loss_if_absent >= 7_000
-        && matches!(fact.atom_kind.as_str(), "constraint" | "decision");
-    let fact_support = cache.support(fact);
-    for existing in current_set {
-        let explicit = fact.redundancy_with.contains(&existing.fact_id)
-            || existing.redundancy_with.contains(&fact.fact_id);
-        if explicit {
-            return if protected_invariant {
-                (
-                    2_000,
-                    format!("protected_invariant_explicit_edge:{}", existing.fact_id),
-                )
-            } else {
-                (8_000, format!("explicit_edge:{}", existing.fact_id))
-            };
-        }
-        let existing_support = cache.support(existing);
-        if fact_support.iter().any(|id| existing_support.contains(id)) {
-            return if protected_invariant {
-                (
-                    1_000,
-                    format!("protected_invariant_shared_provenance:{}", existing.fact_id),
-                )
-            } else {
-                (3_000, format!("shared_provenance:{}", existing.fact_id))
-            };
-        }
+/// A high-loss constraint or decision: redundancy reduces its value but is
+/// capped so it stays recoverable.
+fn protected_invariant(fact: &CurrentFact) -> bool {
+    fact.distortion.loss_if_absent >= 7_000
+        && matches!(fact.atom_kind.as_str(), "constraint" | "decision")
+}
+
+/// Redundancy through an explicit edge or shared provenance with one member;
+/// the first member, in set order, that has one decides.
+fn redundancy_edge_with(
+    fact: &CurrentFact,
+    existing: &CurrentFact,
+    cache: &EvalCache,
+) -> Option<(i64, String)> {
+    let protected = protected_invariant(fact);
+    let explicit = fact.redundancy_with.contains(&existing.fact_id)
+        || existing.redundancy_with.contains(&fact.fact_id);
+    if explicit {
+        return Some(if protected {
+            (2_000, format!("protected_invariant_explicit_edge:{}", existing.fact_id))
+        } else {
+            (8_000, format!("explicit_edge:{}", existing.fact_id))
+        });
     }
+    let fact_support = cache.support(fact);
+    let existing_support = cache.support(existing);
+    if fact_support.iter().any(|id| existing_support.contains(id)) {
+        return Some(if protected {
+            (1_000, format!("protected_invariant_shared_provenance:{}", existing.fact_id))
+        } else {
+            (3_000, format!("shared_provenance:{}", existing.fact_id))
+        });
+    }
+    None
+}
+
+/// Lexical redundancy with one member, when the statements are near
+/// duplicates; the set's value is the largest, earliest member on ties.
+fn lexical_redundancy_with(
+    fact: &CurrentFact,
+    existing: &CurrentFact,
+    cache: &EvalCache,
+) -> Option<(i64, String)> {
     let fact_terms = cache.statement_terms(fact);
-    let mut best = (0i64, "none".to_owned());
-    for existing in current_set {
-        let existing_terms = cache.statement_terms(existing);
-        let intersection = fact_terms.intersection(&existing_terms).count() as i64;
-        let total = fact_terms.len() as i64 + existing_terms.len() as i64;
-        if total == 0 {
-            continue;
+    let existing_terms = cache.statement_terms(existing);
+    let intersection = fact_terms.intersection(&existing_terms).count() as i64;
+    let total = fact_terms.len() as i64 + existing_terms.len() as i64;
+    if total == 0 {
+        return None;
+    }
+    let similarity = intersection
+        .saturating_mul(2)
+        .saturating_mul(10_000)
+        .saturating_div(total);
+    if similarity < 6_000 {
+        return None;
+    }
+    // A near-duplicate may reduce value, but a distinct high-loss
+    // invariant must remain recoverable. Complementary test/rationale
+    // evidence is likewise capped so its gain is reported
+    // separately instead of being erased by lexical redundancy.
+    let complementary = evidence_class(&fact.atom_kind).is_some()
+        && evidence_class(&existing.atom_kind).is_some()
+        && evidence_class(&fact.atom_kind) != evidence_class(&existing.atom_kind);
+    let ceiling = if protected_invariant(fact) || complementary {
+        2_000
+    } else {
+        10_000
+    };
+    let penalty = similarity.min(ceiling);
+    (penalty > 0).then(|| (penalty, format!("lexical_similarity:{similarity}:{}", existing.fact_id)))
+}
+
+/// Everything an evaluation depends on from the current set, folded member by
+/// member in set order: coverage by an equivalent member, complementarity,
+/// and redundancy (explicit edges and shared provenance first, then lexical
+/// similarity). Selection only ever appends to the set, so a
+/// candidate's fold carries from one round to the next and absorbs just the
+/// newly selected fact; folding the whole set gives exactly what scanning it
+/// gave.
+#[derive(Clone)]
+struct SetFold {
+    covered: bool,
+    complement: Option<(i64, String)>,
+    edge: Option<(i64, String)>,
+    lexical: (i64, String),
+}
+
+impl SetFold {
+    fn new() -> Self {
+        Self { covered: false, complement: None, edge: None, lexical: (0, "none".to_owned()) }
+    }
+
+    fn of(fact: &CurrentFact, set: &[CurrentFact], cache: &EvalCache) -> Self {
+        let mut fold = Self::new();
+        for existing in set {
+            fold.absorb(fact, existing, cache);
         }
-        let similarity = intersection
-            .saturating_mul(2)
-            .saturating_mul(10_000)
-            .saturating_div(total);
-        if similarity >= 6_000 {
-            // A near-duplicate may reduce value, but a distinct high-loss
-            // invariant must remain recoverable. Complementary test/rationale
-            // evidence is likewise capped so its gain is reported
-            // separately instead of being erased by lexical redundancy.
-            let complementary = evidence_class(&fact.atom_kind).is_some()
-                && evidence_class(&existing.atom_kind).is_some()
-                && evidence_class(&fact.atom_kind) != evidence_class(&existing.atom_kind);
-            let ceiling = if protected_invariant || complementary {
-                2_000
-            } else {
-                10_000
-            };
-            let penalty = similarity.min(ceiling);
-            if penalty > best.0 {
-                best = (
-                    penalty,
-                    format!("lexical_similarity:{similarity}:{}", existing.fact_id),
-                );
+        fold
+    }
+
+    fn absorb(&mut self, fact: &CurrentFact, existing: &CurrentFact, cache: &EvalCache) {
+        if !self.covered {
+            self.covered = existing.logical_key == fact.logical_key
+                || cache.normalized(existing) == cache.normalized(fact);
+        }
+        if self.complement.is_none() {
+            self.complement = complement_with(fact, existing, cache);
+        }
+        if self.edge.is_none() {
+            self.edge = redundancy_edge_with(fact, existing, cache);
+        }
+        if let Some(lexical) = lexical_redundancy_with(fact, existing, cache) {
+            if lexical.0 > self.lexical.0 {
+                self.lexical = lexical;
             }
         }
     }
-    best
 }
 
 fn is_authority_answer(fact: &CurrentFact) -> bool {
@@ -2346,5 +2557,188 @@ mod brief_tests {
             "{}",
             error.message
         );
+    }
+}
+
+/// SetFold against the scan it replaced: the set-scanning complementarity and
+/// redundancy functions as they were before folding, kept here as the
+/// reference, compared on generated fact sets, folded at once and one member
+/// at a time.
+#[cfg(test)]
+mod set_fold_differential_tests {
+    use super::*;
+    use rand::{Rng, SeedableRng, seq::SliceRandom};
+
+    fn reference_complementarity(fact: &CurrentFact, set: &[CurrentFact], cache: &EvalCache) -> (i64, String) {
+        const GAIN: i64 = 2_500;
+        let fact_terms = cache.distinctive(fact);
+        for existing in set {
+            if fact.complements.contains(&existing.fact_id) || existing.complements.contains(&fact.fact_id) {
+                return (GAIN, format!("explicit_edge:{}", existing.fact_id));
+            }
+            let (Some(left), Some(right)) = (evidence_class(&fact.atom_kind), evidence_class(&existing.atom_kind)) else {
+                continue;
+            };
+            if left == right {
+                continue;
+            }
+            if let (Some(subject), Some(other)) = (key_subject(&fact.logical_key), key_subject(&existing.logical_key)) {
+                if subject == other && fact.logical_key != existing.logical_key {
+                    return (GAIN, format!("shared_subject_key:{subject}"));
+                }
+            }
+            let existing_terms = cache.distinctive(existing);
+            let shared: Vec<&str> = fact_terms.intersection(&existing_terms).map(String::as_str).collect();
+            if shared.len() >= 2 {
+                return (GAIN, format!("shared_subject_terms:{}", shared.join(",")));
+            }
+        }
+        (0, "none".to_owned())
+    }
+
+    fn reference_redundancy(fact: &CurrentFact, set: &[CurrentFact], cache: &EvalCache) -> (i64, String) {
+        let protected = fact.distortion.loss_if_absent >= 7_000 && matches!(fact.atom_kind.as_str(), "constraint" | "decision");
+        let fact_support = cache.support(fact);
+        for existing in set {
+            if fact.redundancy_with.contains(&existing.fact_id) || existing.redundancy_with.contains(&fact.fact_id) {
+                return if protected {
+                    (2_000, format!("protected_invariant_explicit_edge:{}", existing.fact_id))
+                } else {
+                    (8_000, format!("explicit_edge:{}", existing.fact_id))
+                };
+            }
+            let existing_support = cache.support(existing);
+            if fact_support.iter().any(|id| existing_support.contains(id)) {
+                return if protected {
+                    (1_000, format!("protected_invariant_shared_provenance:{}", existing.fact_id))
+                } else {
+                    (3_000, format!("shared_provenance:{}", existing.fact_id))
+                };
+            }
+        }
+        let fact_terms = cache.statement_terms(fact);
+        let mut best = (0i64, "none".to_owned());
+        for existing in set {
+            let existing_terms = cache.statement_terms(existing);
+            let intersection = fact_terms.intersection(&existing_terms).count() as i64;
+            let total = fact_terms.len() as i64 + existing_terms.len() as i64;
+            if total == 0 {
+                continue;
+            }
+            let similarity = intersection.saturating_mul(2).saturating_mul(10_000).saturating_div(total);
+            if similarity >= 6_000 {
+                let complementary = evidence_class(&fact.atom_kind).is_some()
+                    && evidence_class(&existing.atom_kind).is_some()
+                    && evidence_class(&fact.atom_kind) != evidence_class(&existing.atom_kind);
+                let ceiling = if protected || complementary { 2_000 } else { 10_000 };
+                let penalty = similarity.min(ceiling);
+                if penalty > best.0 {
+                    best = (penalty, format!("lexical_similarity:{similarity}:{}", existing.fact_id));
+                }
+            }
+        }
+        best
+    }
+
+    const WORDS: [&str; 14] = [
+        "retry", "backoff", "ledger", "invoice", "scheduler", "webhook", "timeout", "payment",
+        "reconcile", "booking", "the", "should", "queue", "cache",
+    ];
+    const KINDS: [&str; 7] = ["constraint", "decision", "rationale", "test", "observation", "claim", "runtime_trace"];
+
+    fn generated(rng: &mut rand::rngs::StdRng, index: usize, count: usize) -> CurrentFact {
+        let words: Vec<&str> = (0..rng.gen_range(1..7)).map(|_| *WORDS.choose(rng).unwrap()).collect();
+        let pick_ids = |rng: &mut rand::rngs::StdRng| -> Vec<String> {
+            (0..rng.gen_range(0..2)).map(|_| format!("f{}", rng.gen_range(0..count))).collect()
+        };
+        let complements = pick_ids(rng);
+        let redundancy_with = pick_ids(rng);
+        CurrentFact {
+            standing: "present".to_owned(),
+            provenance: "unknown".to_owned(),
+            governs_paths: Vec::new(),
+            anchors: Vec::new(),
+            fact_id: format!("f{index}"),
+            event_id: format!("e{index}"),
+            logical_key: format!("area{}/{}", rng.gen_range(0..3), ["retry", "ledger", "queue", "cache"][rng.gen_range(0..4)]),
+            atom_kind: KINDS.choose(rng).unwrap().to_string(),
+            scope: "test".to_owned(),
+            statement: words.join(" "),
+            status: "current".to_owned(),
+            disposition: "approved".to_owned(),
+            authority_id: "a".to_owned(),
+            authority_scope: "codebase:x".to_owned(),
+            store_kind: "codebase".to_owned(),
+            effective_from: "2026-09-01T00:00:00.000Z".to_owned(),
+            effective_until: None,
+            distortion: crate::model::Distortion {
+                trigger: WORDS.choose(rng).unwrap().to_string(),
+                loss_if_absent: rng.gen_range(3_000..9_500),
+                rationale: "generated".to_owned(),
+            },
+            company_refs: Vec::new(),
+            evidence_refs: (0..rng.gen_range(0..2)).map(|_| format!("ev{}", rng.gen_range(0..4))).collect(),
+            support_event_ids: (0..rng.gen_range(0..2)).map(|_| format!("ev{}", rng.gen_range(0..4))).collect(),
+            independent_support_count: 0,
+            redundancy_with,
+            complements,
+            confidence: 8_000,
+            criticality: String::new(),
+            trust: "trusted".to_owned(),
+            stale_reasons: Vec::new(),
+            authority_snapshot_cursor: String::new(),
+            effective_dependence_class: None,
+        }
+    }
+
+    #[test]
+    fn folding_the_set_matches_scanning_it() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0x5e7f01d);
+        let mut compared = 0;
+        for _ in 0..400 {
+            let count = rng.gen_range(2..14);
+            let facts: Vec<CurrentFact> = (0..count).map(|i| generated(&mut rng, i, count)).collect();
+            let refs: Vec<&CurrentFact> = facts.iter().collect();
+            let cache = EvalCache::new(&refs, "reconcile the ledger", "which retry backoff");
+            for fact in &facts {
+                let set: Vec<CurrentFact> = facts.iter().filter(|other| other.fact_id != fact.fact_id)
+                    .filter(|_| rng.gen_bool(0.6)).cloned().collect();
+                // At once, and one member at a time as selection appends them.
+                let whole = SetFold::of(fact, &set, &cache);
+                let mut incremental = SetFold::new();
+                for member in &set {
+                    incremental.absorb(fact, member, &cache);
+                }
+                for fold in [&whole, &incremental] {
+                    assert_eq!(fold.complement.clone().unwrap_or((0, "none".to_owned())),
+                               reference_complementarity(fact, &set, &cache));
+                    assert_eq!(fold.edge.clone().unwrap_or_else(|| fold.lexical.clone()),
+                               reference_redundancy(fact, &set, &cache));
+                    assert_eq!(fold.covered, set.iter().any(|existing| existing.logical_key == fact.logical_key
+                        || cache.normalized(existing) == cache.normalized(fact)));
+                }
+                compared += 1;
+            }
+        }
+        assert!(compared > 2_000);
+    }
+}
+
+#[cfg(test)]
+mod stem_tests {
+    use super::stem;
+
+    #[test]
+    fn inflections_of_one_verb_share_a_stem() {
+        for group in [
+            ["validate", "validates", "validated", "validating"],
+            ["cache", "caches", "cached", "caching"],
+            ["retry", "retries", "retried", "retrying"],
+        ] {
+            let stems: std::collections::BTreeSet<String> = group.iter().map(|w| stem(w)).collect();
+            assert_eq!(stems.len(), 1, "{group:?} -> {stems:?}");
+        }
+        assert_eq!(stem("free"), "free");
+        assert_eq!(stem("status"), "status");
     }
 }

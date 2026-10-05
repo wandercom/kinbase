@@ -184,7 +184,12 @@ pub fn ingest(
             )
             .with_detail(serde_json::json!({"omitted_count": 1})));
         }
-        crate::lifecycle::SourceScan::default()
+        // A scan of a source that is gone: it lists nothing, so what was
+        // handed off from it is retracted.
+        crate::lifecycle::SourceScan {
+            transcripts: Some(crate::lifecycle::TranscriptScan::begin()),
+            ..crate::lifecycle::SourceScan::default()
+        }
     } else if kin_events_intake {
         // Admission is one transaction, and the `.kin/` intake ceiling is the
         // first thing in it: a store already at 10,000 events / 128 MiB refuses
@@ -817,6 +822,23 @@ pub fn ingest(
         result["error"] = crate::output::error_document(&stop)["error"].clone();
         result["ceiling_stops"] = json!([{"ceiling": "shared_event", "omitted_count": omitted_count, "ceiling_bytes": crate::model::MAX_EVENT_BYTES}]);
     }
+    // Personal is Kindex: what this scan read of the host transcripts also
+    // goes to the Personal Kindex graph, when one is configured, under the
+    // transcripts' retention. A failed hand-off leaves the journal record in
+    // place and is reported, not raised. Only in a build with the test-only
+    // `personal-recall` feature.
+    #[cfg(feature = "personal-recall")]
+    if matches!(source_kind, "codex_jsonl" | "claude_jsonl") {
+        if let Some(user) = &launcher.user {
+            if let Some(kindex) = &user.personal.kindex {
+                result["personal_kindex"] =
+                    match crate::personal_kindex::hand_off(kindex, &user.personal.data_root, source, &scan, &now) {
+                        Ok(receipt) => receipt,
+                        Err(error) => crate::output::error_document(&error),
+                    };
+            }
+        }
+    }
     if json {
         println!("{}", serde_json::to_string(&result).unwrap_or_default());
     } else {
@@ -826,6 +848,21 @@ pub fn ingest(
         println!("fact_count: {fact_count}");
         println!("idempotent_count: {skipped}");
         println!("store: {}", store_name(store));
+        // The hand-off to the Personal Kindex is reported here too: a failure
+        // keeps the journal record, but must not pass silently.
+        if let Some(handoff) = result.get("personal_kindex") {
+            match handoff.get("error") {
+                Some(error) => eprintln!(
+                    "warning: Personal Kindex hand-off failed ({}): {}",
+                    error["code"].as_str().unwrap_or("error"),
+                    error["message"].as_str().unwrap_or("unknown")
+                ),
+                None => println!(
+                    "personal_kindex_conversations: {}",
+                    handoff["conversations"].as_u64().unwrap_or(0)
+                ),
+            }
+        }
     }
     Ok(())
 }

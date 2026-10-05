@@ -239,6 +239,79 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             )
             .map_err(internal)?;
         }
+        #[cfg(feature = "personal-recall")]
+        Command::Recall { as_of } => {
+            let Some(user) = &launcher.user else {
+                return Err(ContractError::refused(
+                    "CONFIG_INVARIANT",
+                    "recall needs a user config with a [personal] section",
+                    "Create the launcher user config with [personal] data_root and kindex_executable.",
+                ));
+            };
+            let Some(kindex) = &user.personal.kindex else {
+                return Err(ContractError::refused(
+                    "CONFIG_INVARIANT",
+                    "recall needs the Personal store's Kindex ([personal] kindex_executable)",
+                    "Configure kindex_executable and kindex_executable_sha256 under [personal].",
+                ));
+            };
+            let question = read_question()?;
+            // In a certified repository, and only when the configuration asks
+            // for it (they go to the same processor as the question), the team
+            // facts a read-only projection releases go with the question. The
+            // projection raises no question to an owner and logs nothing, and a
+            // withheld projection releases nothing.
+            let team = if kindex.team_knowledge {
+                let repo = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                resolve_as_of(&launcher, &repo, None)
+                    .and_then(|projection_as_of| {
+                        crate::projector::project_with(
+                            &launcher,
+                            &repo,
+                            &question,
+                            &question,
+                            &[],
+                            &[],
+                            &projection_as_of,
+                            crate::projector::Recording::ReadOnly,
+                        )
+                    })
+                    .map(|projection| {
+                        let statements = projection
+                            .selected
+                            .iter()
+                            .map(|fact| (fact.fact_id.clone(), fact.statement.clone()))
+                            .collect();
+                        crate::personal_kindex::team_knowledge(&projection.result, &statements)
+                    })
+                    .unwrap_or_default()
+            } else {
+                crate::personal_kindex::TeamKnowledge {
+                    report: serde_json::json!({"projection_state": "not_requested"}),
+                    ..Default::default()
+                }
+            };
+            let recalled = crate::personal_kindex::recall(
+                kindex,
+                &user.personal.data_root,
+                &question,
+                as_of.as_deref(),
+                &team.items,
+                &crate::time::now_rfc3339_millis(),
+            )?;
+            crate::output::emit(
+                &serde_json::json!({
+                    "status": "recalled",
+                    "store": "personal",
+                    "team_facts": team.facts,
+                    "team": team.report,
+                    "processors": recalled.processors,
+                    "sent_sha256": recalled.sent_sha256,
+                    "answer": recalled.answer
+                }),
+                json,
+            );
+        }
         Command::Session(SessionCommand::Start { host, repo }) => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -291,6 +364,38 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
 
 fn internal(error: crate::error::ContractError) -> ContractError {
     error
+}
+
+/// The recall question, from standard input: a private question never goes on
+/// a command line.
+#[cfg(feature = "personal-recall")]
+fn read_question() -> Result<String, ContractError> {
+    use std::io::Read;
+    const LIMIT: u64 = 64 * 1024;
+    let mut bytes = Vec::new();
+    std::io::stdin()
+        .lock()
+        .take(LIMIT + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| ContractError::io("recall question", error))?;
+    let refused = |message: &str| {
+        ContractError::refused(
+            "CONFIG_INVARIANT",
+            message,
+            "Pass the question on standard input, e.g. `printf %s 'your question' | kinbase recall`.",
+        )
+    };
+    if bytes.len() as u64 > LIMIT {
+        return Err(refused("the recall question is over 64 KiB"));
+    }
+    let question = String::from_utf8(bytes)
+        .map_err(|_| refused("the recall question is not UTF-8"))?
+        .trim()
+        .to_owned();
+    if question.is_empty() {
+        return Err(refused("recall reads its question from standard input, and none was given"));
+    }
+    Ok(question)
 }
 
 fn resolve_as_of(

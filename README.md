@@ -77,6 +77,127 @@ It states what this run proves, what it does not, which gates the instrument its
 fails, and where the independence between the building and certifying seats is real and
 where it is not.
 
+## Personal recall through Kindex (test-only build feature)
+
+The specification makes the Personal store Kindex but the proof of concept never
+wired it. This does, for testing only: it is compiled only with the
+`personal-recall` Cargo feature (`cargo build --release --features
+personal-recall`), which is off in normal builds. It exists to measure recall on
+the conversational-memory benchmarks (LoCoMo, LongMemEval, BEAM), using
+synthetic or public conversations. It can send historical Personal-store text
+to a model provider, which `spec/threat-model.md` does not allow for real
+Personal data, so a normal build refuses every `kindex_*` key and has no
+`recall` command.
+
+In such a build, with `[personal] kindex_executable` configured, what
+`kinbase ingest codex_jsonl|claude_jsonl` reads of each host transcript is also
+handed to a Kindex graph under the Personal root, and `kinbase recall [--as-of
+DATE]` answers the principal's own question, read from standard input, from it
+through `kin ask`. Both run where the Personal root is held; nothing either reads or
+returns enters a shared store, a projection or a hook.
+
+**Kindex version.** This needs a Kindex with `kin ingest conversations` (with
+`expires`, `retracted` and `--limit 0`), `kin digest` and `kin ask --as-of` /
+`--context-file` / `-` (the question on standard input). No Kindex release has them yet: they are in
+[wandercom/kindex#73](https://github.com/wandercom/kindex/pull/73), which must
+merge first. Until a release ships them, install Kindex from that branch, point
+`kindex_executable` at its `kin`, and pin it with `shasum -a 256 "$(command -v kin)"`;
+a Kindex upgrade changes the digest, and Kinbase refuses a `kin` that no longer
+matches its pin.
+
+- The hand-off exports the ingest scan's records, so the scan's bounds apply
+  (an oversized transcript is skipped, an oversized directory refused).
+- A transcript is one conversation per calendar day its messages carry, with an
+  id made of the host's session id and a digest of the transcript's path.
+- Each transcript is kept for its retention: a `.retention` sidecar's
+  `private_retention_seconds`, else `kindex_retention_seconds`, else the
+  24-hour private raw-session default, counted from its last change. Kindex is
+  told the day the retention ends (it expires by calendar day); a ledger under
+  the Personal root keeps the exact deadline and retracts a conversation (and
+  everything Kindex derived from it) once it passes, at the next hand-off or
+  `recall`, or when its transcript is emptied or gone from a source that is
+  ingested again. The ledger is locked while a hand-off or purge runs.
+- A hand-off reconciles only against what its own scan listed and read (a
+  source that is gone lists nothing). The ledger records, for each source,
+  when the newest scan of it that was handed off began. That scan settled
+  every transcript under the source, listed or not, so a scan begun earlier
+  neither imports, restores nor retracts any of them.
+- Historical Personal text reaches a model only through a processor the
+  principal has authorized, as `spec/threat-model.md` requires:
+  - Kinbase resolves the Kindex config itself and passes it to every Kindex
+    run with `--config`, so Kindex loads no global, project or profile config.
+    The config comes from `kindex_config`, which must be JSON (Kindex reads JSON
+    as YAML), or is empty. It may set only `llm`, `embedding`, `ask`,
+    `conversations` and `budget`; any other section or key, or a value Kindex
+    could read differently (`"enabled": "true"`), is refused.
+  - Its processors are the LLM when `llm.enabled` and the embedding provider
+    unless it is `local`. Each names its `provider` and `model`: `anthropic` or
+    `openai` for the LLM, and `voyage`, `openai` or `gemini` for embeddings.
+    Embeddings are local unless a provider is named.
+  - Each also names the variable holding its key (`api_key_env`, one name
+    ending in `_API_KEY`). Every processor must match a
+    `[[personal.kindex_processors]]` entry: the same provider, model and key
+    variable, and a key whose SHA-256 is the entry's `key_sha256`. That is the
+    exact provider, account and retention mode the threat model requires
+    (`retention` records the mode the account is under); another account's key
+    is not covered. Otherwise `recall` refuses with `PROCESSOR_UNAUTHORIZED`,
+    and the hand-off stores the conversations but skips `kin digest`
+    (`personal_kindex.digest_refused`).
+  - Kindex is given the authorized keys and nothing else of Kinbase's
+    environment. Storing a conversation makes no model call and is given no key.
+  - The question reaches `kinbase recall`, and then `kin ask`, on standard
+    input, never on a command line.
+  - The recall receipt lists each processor (provider, model, account digest,
+    retention) and the SHA-256 of the question and team statements Kinbase
+    handed Kindex.
+- A hand-off that fails keeps the journal record and is reported (a warning on
+  stderr in text mode, `personal_kindex.error` in JSON).
+- Kindex keeps the graph in `personal-kindex/` under the Personal root, a
+  directory Kinbase creates and marks; an existing one Kinbase did not create
+  is refused, so no other Kindex process (a daemon or its cron, with their own
+  config) works on it, and its embedding queue is drained only by Kinbase's own
+  authorized runs. The Personal root is checked before every Kindex run: not a
+  symlink, owned by the effective user, mode 0700. Staging files are written
+  under it, mode 0600; what an interrupted run left is removed at the next
+  hand-off or recall.
+- With `kindex_team_knowledge = true`, in a certified repository, recall also
+  makes a read-only projection for the question and passes its released
+  statements to the same processors (it is off by default). The projection
+  raises no question to an owner and logs nothing. A withheld projection passes
+  no shared statement, only a note that team guidance is pending; a released
+  statement keeps its role, kind, store, standing, provenance and governed
+  paths, and a stale authority snapshot is stated.
+- Kindex runs under the classifier's executable rules (absolute path, owner,
+  mode, directory chain, pinned SHA-256).
+
+```toml
+[personal]
+data_root = "/private/example/kindex"
+kindex_executable = "/opt/example/bin/kin"
+kindex_executable_sha256 = "<sha256 of that file>"
+kindex_config = "/private/example/kin.json"
+kindex_team_knowledge = false             # pass projected team statements to recall
+kindex_digest = true                      # run `kin digest` after each hand-off
+kindex_retention_seconds = 7776000        # keep handed-off transcripts 90 days
+
+# One entry per processor authorized for historical Personal data.
+[[personal.kindex_processors]]
+provider = "openai"
+model = "gpt-6-luna"
+key_env = "OPENAI_API_KEY"
+key_sha256 = "<printf %s \"$OPENAI_API_KEY\" | shasum -a 256>"
+retention = "zero-data-retention"
+```
+
+with `kin.json`:
+
+```json
+{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna", "api_key_env": "OPENAI_API_KEY"}}
+```
+
+These keys and the `recall` command are not part of `spec/cli.md`: they exist
+only in a `personal-recall` build, for testing.
+
 ## Building and running
 
 ```

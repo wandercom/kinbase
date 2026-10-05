@@ -210,6 +210,64 @@ pub struct Repository {
 /// (notably `status --porcelain`) from opportunistically refreshing the index
 /// under `.git/index.lock`, so a background verifier never races the user's
 /// own Git operations.
+/// A worktree's top level and common Git directory, as `git rev-parse`
+/// reports them from `start`. Asked once per path per process: a session
+/// observation discovers the repository for every admission, and each answer
+/// cost two Git processes. Where a worktree lives does not change while one
+/// command runs; `.kin/config` and `HEAD` are still read fresh every time.
+///
+/// The cache is keyed by the resolved path, so a symlink retargeted to another
+/// repository is looked up afresh, and the common directory is stored resolved
+/// and absolute, never relative to a path that may since point elsewhere. An
+/// answer is reused only while it still holds (see `still_holds`).
+fn worktree_location(start: &Path) -> Result<(String, String), ContractError> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static KNOWN: OnceLock<Mutex<HashMap<PathBuf, (String, String)>>> = OnceLock::new();
+    let known = KNOWN.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
+    if let Some(found) = known.lock().ok().and_then(|map| map.get(&key).cloned()) {
+        if still_holds(&key, Path::new(&found.0)) {
+            return Ok(found);
+        }
+    }
+    let root = git(&key, &["rev-parse", "--show-toplevel"])?;
+    let common = git(&key, &["rev-parse", "--git-common-dir"])?;
+    let common = if Path::new(&common).is_absolute() {
+        PathBuf::from(&common)
+    } else {
+        key.join(&common)
+    };
+    let common = common.canonicalize().unwrap_or(common);
+    let found = (root, common.to_string_lossy().into_owned());
+    if let Ok(mut map) = known.lock() {
+        map.insert(key, found.clone());
+    }
+    Ok(found)
+}
+
+/// A remembered worktree root still holds for `start` while the root keeps its
+/// `.git` and no directory from `start` up to it has gained one (a nested
+/// `git init`, or a new worktree): a few `stat` calls instead of two Git
+/// processes.
+fn still_holds(start: &Path, root: &Path) -> bool {
+    let Ok(root) = root.canonicalize() else {
+        return false;
+    };
+    if std::fs::symlink_metadata(root.join(".git")).is_err() {
+        return false;
+    }
+    for dir in start.ancestors() {
+        if dir == root {
+            return true;
+        }
+        if std::fs::symlink_metadata(dir.join(".git")).is_ok() {
+            return false;
+        }
+    }
+    false
+}
+
 pub fn git(repo: &Path, args: &[&str]) -> Result<String, ContractError> {
     let output = Command::new("git")
         .args(args)
@@ -290,8 +348,7 @@ impl Repository {
                 "Pass an existing Git worktree with --repo.",
             ));
         }
-        let root = git(&start, &["rev-parse", "--show-toplevel"])?;
-        let common = git(&start, &["rev-parse", "--git-common-dir"])?;
+        let (root, common) = worktree_location(&start)?;
         let root = PathBuf::from(root);
         // Git reports a relative common directory relative to where it ran
         // (`../.git` from a subdirectory), not to the top level.
@@ -1433,5 +1490,56 @@ pub fn compare_event_sets(local: &BTreeSet<String>, published: &BTreeSet<String>
         "subset"
     } else {
         "incomparable"
+    }
+}
+
+#[cfg(test)]
+mod worktree_location_tests {
+    use super::*;
+
+    fn init(dir: &Path) {
+        let out = Command::new("git")
+            .args(["init", "-q"])
+            .arg(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    }
+
+    #[test]
+    fn a_retargeted_repository_symlink_is_looked_up_afresh() {
+        let base = tempfile::tempdir().unwrap();
+        let (a, b) = (base.path().join("a"), base.path().join("b"));
+        for dir in [&a, &b] {
+            std::fs::create_dir(dir).unwrap();
+            init(dir);
+        }
+        let link = base.path().join("repo");
+        std::os::unix::fs::symlink(&a, &link).unwrap();
+        let (root_a, common_a) = worktree_location(&link).unwrap();
+        assert_eq!(Path::new(&root_a).canonicalize().unwrap(), a.canonicalize().unwrap());
+        assert!(Path::new(&common_a).is_absolute());
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&b, &link).unwrap();
+        let (root_b, common_b) = worktree_location(&link).unwrap();
+        assert_eq!(Path::new(&root_b).canonicalize().unwrap(), b.canonicalize().unwrap());
+        assert!(Path::new(&common_b).starts_with(b.canonicalize().unwrap()), "{common_b}");
+    }
+
+    #[test]
+    fn a_repository_initialized_inside_a_known_one_is_found() {
+        let base = tempfile::tempdir().unwrap();
+        let outer = base.path().join("outer");
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        init(&outer);
+        let (root, _) = worktree_location(&inner).unwrap();
+        assert_eq!(Path::new(&root).canonicalize().unwrap(), outer.canonicalize().unwrap());
+        init(&inner);
+        let (root, common) = worktree_location(&inner).unwrap();
+        assert_eq!(Path::new(&root).canonicalize().unwrap(), inner.canonicalize().unwrap());
+        assert!(Path::new(&common).starts_with(inner.canonicalize().unwrap()), "{common}");
     }
 }
