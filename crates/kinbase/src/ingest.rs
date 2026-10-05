@@ -184,7 +184,12 @@ pub fn ingest(
             )
             .with_detail(serde_json::json!({"omitted_count": 1})));
         }
-        crate::lifecycle::SourceScan::default()
+        // A scan of a source that is gone: it lists nothing, so what was
+        // handed off from it is retracted.
+        crate::lifecycle::SourceScan {
+            transcripts: Some(crate::lifecycle::TranscriptScan::begin()),
+            ..crate::lifecycle::SourceScan::default()
+        }
     } else if kin_events_intake {
         // Admission is one transaction, and the `.kin/` intake ceiling is the
         // first thing in it: a store already at 10,000 events / 128 MiB refuses

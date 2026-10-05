@@ -142,8 +142,10 @@ fn world_with(blocked: bool, team_knowledge: bool) -> World {
     let kin = root.path().join("bin").join("kin");
     let body = concat!(
         "#!/bin/sh\n",
+        "root=; context=; previous=\n",
+        "for arg in \"$@\"; do case \"$previous\" in --data-dir) root=$arg ;; --context-file) context=$arg ;; esac; previous=$arg; done\n",
         "case \"$1\" in\n",
-        "ask) printf '%s\\n' \"$@\" > \"$3/asked\"; if [ \"$4\" = --context-file ]; then cat \"$5\" > \"$3/team\"; fi; echo answered ;;\n",
+        "ask) printf '%s\\n' \"$@\" > \"$root/asked\"; if [ -n \"$context\" ]; then cat \"$context\" > \"$root/team\"; fi; echo answered ;;\n",
         "esac\n",
     );
     fs::create_dir_all(kin.parent().unwrap()).expect("create bin");
@@ -454,7 +456,13 @@ fn a_failed_kindex_hand_off_is_reported_in_text_output() {
     fs::write(&kin, "#!/bin/sh\nexit 0\n").unwrap();
     let output = kinbase(
         &world,
-        &["ingest", "claude_jsonl", &transcripts.display().to_string(), "--repo", &world.repo.display().to_string()],
+        &[
+            "ingest",
+            "claude_jsonl",
+            &transcripts.display().to_string(),
+            "--repo",
+            &world.repo.display().to_string(),
+        ],
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -476,4 +484,43 @@ fn without_team_knowledge_recall_projects_nothing() {
     assert_eq!(receipt["team_facts"], 0);
     assert_eq!(receipt["processors"], serde_json::json!([]));
     assert!(!world.personal.join("team").exists());
+}
+
+#[test]
+fn a_removed_transcript_source_is_retracted_from_kindex() {
+    let world = world(false);
+    let transcripts = world.repo.join("transcripts");
+    fs::create_dir_all(&transcripts).unwrap();
+    fs::write(
+        transcripts.join("s.jsonl"),
+        r#"{"type":"user","timestamp":"2026-10-03T09:00:00.000Z","message":{"role":"user","content":"I bought a red kayak."}}"#,
+    )
+    .unwrap();
+    let ingest = || -> Value {
+        let output = kinbase(
+            &world,
+            &[
+                "ingest",
+                "claude_jsonl",
+                &transcripts.display().to_string(),
+                "--repo",
+                &world.repo.display().to_string(),
+                "--json",
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).expect("ingest receipt is JSON")
+    };
+    let first = ingest();
+    assert_eq!(first["personal_kindex"]["conversations"], 1, "{first}");
+    fs::remove_dir_all(&transcripts).unwrap();
+    let second = ingest();
+    assert_eq!(
+        second["personal_kindex"]["retracted_removed"], 1,
+        "{second}"
+    );
 }

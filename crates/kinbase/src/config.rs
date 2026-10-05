@@ -355,13 +355,17 @@ fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, 
             .ok_or_else(|| config_error("personal.kindex_env must be an array of variable names"))?
             .iter()
             .map(|item| {
+                // Credentials only: a variable that moves Kindex's home,
+                // config, endpoint or proxy would change what it reads or
+                // where it sends Personal text.
                 item.as_str()
                     .filter(|name| {
-                        !name.is_empty()
+                        name.len() > "_API_KEY".len()
+                            && name.ends_with("_API_KEY")
                             && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
                     })
                     .map(str::to_owned)
-                    .ok_or_else(|| config_error("personal.kindex_env entries must be variable names"))
+                    .ok_or_else(|| config_error("personal.kindex_env entries must be credential variables ending in _API_KEY"))
             })
             .collect::<Result<_, _>>()?,
     };

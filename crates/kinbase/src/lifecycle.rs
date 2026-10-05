@@ -161,6 +161,19 @@ pub struct TranscriptScan {
     pub read: Vec<PathBuf>,
 }
 
+impl TranscriptScan {
+    /// A scan beginning now, having listed and read nothing yet.
+    pub fn begin() -> Self {
+        TranscriptScan {
+            started_at_nanos: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos() as i128)
+                .unwrap_or(0),
+            ..TranscriptScan::default()
+        }
+    }
+}
+
 impl SourceScan {
     pub fn skip(&mut self, reason: impl Into<String>) {
         *self.skipped.entry(reason.into()).or_insert(0) += 1;
@@ -442,13 +455,7 @@ pub(crate) fn scan_transcripts(
     let now_seconds = parse_rfc3339_millis(now)
         .map(|value| value.timestamp())
         .unwrap_or(0);
-    let mut seen = TranscriptScan {
-        started_at_nanos: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_nanos() as i128)
-            .unwrap_or(0),
-        ..TranscriptScan::default()
-    };
+    let mut seen = TranscriptScan::begin();
     for path in source_files(source)? {
         let name = path
             .file_name()

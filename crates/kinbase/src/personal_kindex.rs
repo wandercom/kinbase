@@ -149,14 +149,28 @@ struct LedgerEntry {
     deadline: i64,
     /// The Kindex conversation ids it was handed over as.
     segments: Vec<String>,
-    /// When the scan that last handed it over began (Unix nanoseconds). A scan
-    /// that began earlier saw an older state of the source and must not undo
-    /// what this one did.
-    #[serde(default)]
-    seen_at: i128,
 }
 
-type Ledger = BTreeMap<String, LedgerEntry>;
+/// What earlier hand-offs sent, and which scan settled each transcript.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+struct Ledger {
+    /// Handed-off transcripts, by conversation base.
+    conversations: BTreeMap<String, LedgerEntry>,
+    /// For each transcript path, when the newest scan that settled it began
+    /// (Unix nanoseconds). It outlives the path's conversations, so a scan
+    /// that began earlier saw an older state of the file and can neither
+    /// restore nor retract what the newer one did.
+    scanned: BTreeMap<String, i128>,
+    /// When a settled path is forgotten (a day after its last conversation
+    /// went), this moves to its scan; a scan that began no later changes
+    /// nothing.
+    horizon: i128,
+}
+
+/// How long a transcript's last scan is remembered once it holds no
+/// conversation.
+const FORGET_SCANNED_NANOS: i128 =
+    crate::lifecycle::PRIVATE_RAW_RETENTION_SECONDS as i128 * 1_000_000_000;
 
 /// An exclusive lock on the hand-off ledger, held from reading it to writing it
 /// back, so two hand-offs (or a hand-off and a purge) never overwrite each
@@ -201,10 +215,19 @@ struct Plan {
     stale: usize,
 }
 
+/// A path's canonical form. A path that no longer exists takes its nearest
+/// existing ancestor's, so a removed transcript or source still matches what
+/// was recorded while it existed.
 fn canonical(path: &Path) -> PathBuf {
-    std::fs::canonicalize(path)
-        .or_else(|_| std::path::absolute(path))
-        .unwrap_or_else(|_| path.to_path_buf())
+    if let Ok(path) = std::fs::canonicalize(path) {
+        return path;
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => {
+            canonical(parent).join(name)
+        }
+        _ => std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf()),
+    }
 }
 
 /// The conversation identity of one transcript: the host's session id (the
@@ -229,9 +252,10 @@ fn retract(entries: &mut Vec<Value>, segments: &[String]) {
     );
 }
 
-/// Plans a hand-off of `records` (one scan of `source`), given what the
-/// ledger says earlier hand-offs sent. `present` is every transcript file the
-/// source holds now, scanned or not, canonical.
+/// Plans a hand-off of `records` (one scan of `source`, begun at
+/// `scan_started`), given what the ledger says earlier hand-offs sent.
+/// `present` is every transcript file the scan listed and `read` every one it
+/// read in full, canonical.
 #[allow(clippy::too_many_arguments)]
 fn plan(
     default_retention: i64,
@@ -244,6 +268,17 @@ fn plan(
     now: i64,
 ) -> Plan {
     let mut out = Plan::default();
+    // A transcript a scan begun after this one has settled is left as that
+    // scan left it: this one read an older state of it.
+    let settled = ledger.scanned.clone();
+    let horizon = ledger.horizon;
+    let newer = |path: &str| {
+        scan_started < horizon
+            || settled
+                .get(path)
+                .is_some_and(|started| *started > scan_started)
+    };
+    let mut stale: BTreeSet<String> = BTreeSet::new();
     let mut by_file: BTreeMap<
         PathBuf,
         (
@@ -266,6 +301,7 @@ fn plan(
     }
     let mut handled: BTreeSet<String> = BTreeSet::new();
     for (path, (origin, file_records)) in &by_file {
+        let key = path.to_string_lossy().into_owned();
         let lines: Vec<String> = file_records
             .iter()
             .map(|record| String::from_utf8_lossy(&record.content).into_owned())
@@ -277,15 +313,11 @@ fn plan(
         });
         let base = conversation_base(path, session.as_deref());
         handled.insert(base.clone());
-        if ledger
-            .get(&base)
-            .is_some_and(|entry| entry.seen_at > scan_started)
-        {
-            // A later scan already handed this transcript over: this one read an
-            // older state of it and leaves that hand-off alone.
-            out.stale += 1;
+        if newer(&key) {
+            stale.insert(key);
             continue;
         }
+        ledger.scanned.insert(key.clone(), scan_started);
         let retention = origin
             .declared_retention_seconds
             .unwrap_or(default_retention);
@@ -294,7 +326,7 @@ fn plan(
         // ledger keeps the exact deadline, and `recall` and every hand-off
         // retract a conversation once it passes.
         let expires = day_of_seconds(deadline);
-        let previous = ledger.remove(&base);
+        let previous = ledger.conversations.remove(&base);
         if deadline <= now {
             out.expired += 1;
             if let Some(previous) = previous {
@@ -314,12 +346,12 @@ fn plan(
             .filter_map(|segment| segment["id"].as_str().map(str::to_owned))
             .collect();
         if let Some(previous) = previous {
-            let stale: Vec<String> = previous
+            let gone: Vec<String> = previous
                 .segments
                 .into_iter()
                 .filter(|id| !ids.contains(id))
                 .collect();
-            retract(&mut out.entries, &stale);
+            retract(&mut out.entries, &gone);
         }
         for segment in &mut segments {
             segment["expires"] = json!(expires);
@@ -327,21 +359,27 @@ fn plan(
         out.conversations += segments.len();
         out.transcripts += 1;
         out.entries.extend(segments);
-        ledger.insert(
+        ledger.conversations.insert(
             base,
             LedgerEntry {
-                path: path.to_string_lossy().into_owned(),
+                path: key,
                 deadline,
                 segments: ids,
-                seen_at: scan_started,
             },
         );
+    }
+    // A transcript read in full settles it, even one with no conversation.
+    for path in read {
+        let key = path.to_string_lossy().into_owned();
+        if !newer(&key) {
+            ledger.scanned.insert(key, scan_started);
+        }
     }
     // Earlier hand-offs: past retention, or their transcript is gone from
     // this source.
     let scope = canonical(source);
-    let mut kept = Ledger::new();
-    for (base, entry) in ledger {
+    let mut kept = BTreeMap::new();
+    for (base, entry) in std::mem::take(&mut ledger.conversations) {
         if handled.contains(&base) {
             kept.insert(base, entry);
             continue;
@@ -350,21 +388,43 @@ fn plan(
         if entry.deadline <= now {
             out.expired += 1;
             retract(&mut out.entries, &entry.segments);
-        } else if entry.seen_at > scan_started {
-            // Handed over by a scan that began after this one: this scan's
-            // view of the source is older and cannot say it is gone.
-            out.stale += 1;
+        } else if !path.starts_with(&scope) {
             kept.insert(base, entry);
-        } else if path.starts_with(&scope) && (!present.contains(&path) || read.contains(&path)) {
+        } else if newer(&entry.path) {
+            stale.insert(entry.path.clone());
+            kept.insert(base, entry);
+        } else if !present.contains(&path) || read.contains(&path) {
             // Gone from the source, or read by this scan and no longer holding
             // this conversation (emptied, or now another session).
             out.removed += 1;
             retract(&mut out.entries, &entry.segments);
+            ledger.scanned.insert(entry.path, scan_started);
         } else {
             kept.insert(base, entry);
         }
     }
-    out.ledger = kept;
+    ledger.conversations = kept;
+    // A day after a transcript last held a conversation, its scan is
+    // forgotten, and a scan begun before that one changes nothing.
+    let live: BTreeSet<&str> = ledger
+        .conversations
+        .values()
+        .map(|entry| entry.path.as_str())
+        .collect();
+    let cutoff = i128::from(now) * 1_000_000_000 - FORGET_SCANNED_NANOS;
+    let forgotten: Vec<String> = ledger
+        .scanned
+        .iter()
+        .filter(|(path, started)| **started < cutoff && !live.contains(path.as_str()))
+        .map(|(path, _)| path.clone())
+        .collect();
+    for path in forgotten {
+        if let Some(started) = ledger.scanned.remove(&path) {
+            ledger.horizon = ledger.horizon.max(started);
+        }
+    }
+    out.stale = stale.len();
+    out.ledger = ledger;
     out
 }
 
@@ -407,10 +467,17 @@ fn handoff_dir(root: &Path) -> Result<PathBuf, ContractError> {
 fn load_ledger(dir: &Path) -> Result<Ledger, ContractError> {
     let path = dir.join(LEDGER_FILE);
     if std::fs::symlink_metadata(&path).is_err() {
-        return Ok(Ledger::new());
+        return Ok(Ledger::default());
     }
     let bytes = crate::paths::read_bounded(&path, LEDGER_LIMIT, "Kindex hand-off ledger")?;
-    serde_json::from_slice(&bytes).map_err(|error| {
+    if let Ok(ledger) = serde_json::from_slice::<Ledger>(&bytes) {
+        return Ok(ledger);
+    }
+    // A ledger written before scans were recorded holds only conversations.
+    serde_json::from_slice::<BTreeMap<String, LedgerEntry>>(&bytes).map(|conversations| Ledger {
+        conversations,
+        ..Ledger::default()
+    }).map_err(|error| {
         ContractError::refused(
             "CONFIG_INVARIANT",
             format!("Kindex hand-off ledger is unreadable ({error})"),
@@ -425,73 +492,234 @@ fn save_ledger(dir: &Path, ledger: &Ledger) -> Result<(), ContractError> {
     crate::paths::write_atomic(&dir.join(LEDGER_FILE), &bytes, 0o600, false).map(|_| ())
 }
 
-/// The off-machine processors a Kindex run could send Personal text to, read
-/// from Kindex's config: its LLM when enabled (`kin digest`, `kin ask`) and its
-/// embedding provider unless local. Kindex reads provider credentials only from
-/// its environment, which is scrubbed to the variables `kindex_env` names, so
-/// with none passed it can reach no provider. With some passed, `kindex_config`
-/// must be JSON (JSON is YAML to Kindex) so the processors can be read; without
-/// it Kindex's defaults apply (LLM off, Voyage embeddings).
-fn kindex_processors(cfg: &PersonalKindexConfig) -> Result<Vec<String>, ContractError> {
-    if cfg.env.is_empty() {
-        return Ok(Vec::new());
+/// The sections of a Kindex config Kinbase checks and passes on. Kindex's
+/// others (channels, reminders, agents, profiles and the rest) are refused:
+/// what they would reach is not checked.
+const CONFIG_SECTIONS: [&str; 5] = ["llm", "embedding", "ask", "conversations", "budget"];
+const LLM_KEYS: [&str; 7] = [
+    "enabled",
+    "provider",
+    "model",
+    "api_key_env",
+    "cache_control",
+    "codebook_min_weight",
+    "tier2_max_tokens",
+];
+const EMBEDDING_KEYS: [&str; 11] = [
+    "provider",
+    "model",
+    "api_key_env",
+    "dimensions",
+    "strategy",
+    "chunk_chars",
+    "chunk_overlap_chars",
+    "max_group_chunks",
+    "reindex_max_jobs",
+    "reindex_max_queue",
+    "drain_time_budget",
+];
+/// The providers Kindex calls over the network, for its LLM and embeddings.
+const LLM_PROVIDERS: [&str; 2] = ["anthropic", "openai"];
+const EMBEDDING_PROVIDERS: [&str; 3] = ["voyage", "openai", "gemini"];
+
+fn config_refused(message: impl Into<String>) -> ContractError {
+    ContractError::refused(
+        "CONFIG_INVARIANT",
+        message,
+        "Fix the Kindex config named by [personal] kindex_config; nothing was sent to Kindex.",
+    )
+}
+
+/// One section of the config (created empty when absent), with only `keys`.
+fn config_section<'a>(
+    sections: &'a mut serde_json::Map<String, Value>,
+    name: &str,
+    keys: &[&str],
+) -> Result<&'a mut serde_json::Map<String, Value>, ContractError> {
+    let Some(section) = sections
+        .entry(name)
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+    else {
+        return Err(config_refused(format!(
+            "kindex_config `{name}` must be an object"
+        )));
+    };
+    if let Some(key) = section.keys().find(|key| !keys.contains(&key.as_str())) {
+        return Err(config_refused(format!(
+            "kindex_config sets `{name}.{key}`, which Kinbase does not check"
+        )));
     }
-    let config: Value = match &cfg.config {
+    Ok(section)
+}
+
+/// A string setting; any other type is refused, since Kindex might read it
+/// differently.
+fn config_text(
+    section: &serde_json::Map<String, Value>,
+    name: &str,
+    key: &str,
+) -> Result<Option<String>, ContractError> {
+    match section.get(key) {
+        None => Ok(None),
+        Some(Value::String(value)) => Ok(Some(value.clone())),
+        Some(_) => Err(config_refused(format!(
+            "kindex_config `{name}.{key}` must be a string"
+        ))),
+    }
+}
+
+/// Resolves the config every Kindex run is given: `kindex_config` (JSON;
+/// Kindex reads JSON as YAML) or, without one, an empty one. Embeddings stay
+/// local unless a provider is named. Returns it and the off-machine
+/// processors it names: the LLM when enabled (`kin digest`, `kin ask`) and the
+/// embedding provider unless local (`kin digest` embeds what it stores,
+/// `kin ask` the question). Anything Kindex might read differently is refused.
+fn resolve_config(cfg: &PersonalKindexConfig) -> Result<(Value, Vec<String>), ContractError> {
+    let mut config: Value = match &cfg.config {
         None => json!({}),
         Some(path) => {
             let bytes = crate::paths::read_bounded(path, 1024 * 1024, "Kindex config")?;
             serde_json::from_slice(&bytes).map_err(|_| {
-                ContractError::refused(
-                    "CONFIG_INVARIANT",
-                    "kindex_config is not JSON, so the processors Kindex would send Personal text to cannot be checked",
-                    "Write the Kindex config as JSON (Kindex reads JSON as YAML); nothing was sent.",
+                config_refused(
+                    "kindex_config is not JSON, so what Kindex would send Personal text to cannot be checked",
                 )
             })?
         }
     };
-    let text = |section: &str, key: &str, default: &str| -> String {
-        config[section][key]
-            .as_str()
-            .unwrap_or(default)
-            .trim()
-            .to_owned()
+    let Some(sections) = config.as_object_mut() else {
+        return Err(config_refused("kindex_config must be a JSON object"));
     };
+    if let Some(key) = sections
+        .keys()
+        .find(|key| !CONFIG_SECTIONS.contains(&key.as_str()))
+    {
+        return Err(config_refused(format!(
+            "kindex_config sets `{key}`; Kinbase passes Kindex only {}",
+            CONFIG_SECTIONS.join(", ")
+        )));
+    }
+    for name in ["ask", "conversations", "budget"] {
+        if sections
+            .get(name)
+            .is_some_and(|section| !section.is_object())
+        {
+            return Err(config_refused(format!(
+                "kindex_config `{name}` must be an object"
+            )));
+        }
+    }
     let mut processors = Vec::new();
-    if config["llm"]["enabled"].as_bool().unwrap_or(false) {
-        processors.push(format!(
-            "{}:{}",
-            text("llm", "provider", "anthropic"),
-            text("llm", "model", "claude-haiku-4-5-20251001")
-        ));
+    let llm = config_section(sections, "llm", &LLM_KEYS)?;
+    let enabled = match llm.get("enabled") {
+        None => false,
+        Some(Value::Bool(enabled)) => *enabled,
+        // Kindex would read "true" or 1 as true.
+        Some(_) => {
+            return Err(config_refused(
+                "kindex_config `llm.enabled` must be true or false",
+            ));
+        }
+    };
+    let provider = config_text(llm, "llm", "provider")?;
+    let model = config_text(llm, "llm", "model")?;
+    config_text(llm, "llm", "api_key_env")?;
+    if enabled {
+        // Named, not left to Kindex's defaults: the processor authorized is
+        // the one used.
+        let (Some(provider), Some(model)) =
+            (provider, model.filter(|model| !model.trim().is_empty()))
+        else {
+            return Err(config_refused(
+                "kindex_config enables the LLM without naming `llm.provider` and `llm.model`",
+            ));
+        };
+        if !LLM_PROVIDERS.contains(&provider.as_str()) {
+            return Err(config_refused(format!(
+                "kindex_config `llm.provider` is `{provider}`; it must be {}",
+                LLM_PROVIDERS.join(" or ")
+            )));
+        }
+        processors.push(format!("{provider}:{model}"));
     }
-    let embedding = text("embedding", "provider", "voyage");
-    if !matches!(embedding.as_str(), "local" | "none" | "") {
-        let model = text("embedding", "model", "");
-        processors.push(format!(
-            "{embedding}:{}",
-            if model.is_empty() { "default" } else { &model }
-        ));
+    let embedding = config_section(sections, "embedding", &EMBEDDING_KEYS)?;
+    let model = config_text(embedding, "embedding", "model")?;
+    config_text(embedding, "embedding", "api_key_env")?;
+    config_text(embedding, "embedding", "strategy")?;
+    match config_text(embedding, "embedding", "provider")?.as_deref() {
+        // Unnamed, embeddings stay local (Kindex's own default is Voyage).
+        None => {
+            embedding.insert("provider".to_owned(), json!("local"));
+        }
+        Some("local") => {}
+        Some(provider) if EMBEDDING_PROVIDERS.contains(&provider) => {
+            let Some(model) = model.filter(|model| !model.trim().is_empty()) else {
+                return Err(config_refused(format!(
+                    "kindex_config names the `{provider}` embedding provider without `embedding.model`"
+                )));
+            };
+            processors.push(format!("{provider}:{model}"));
+        }
+        Some(provider) => {
+            return Err(config_refused(format!(
+                "kindex_config `embedding.provider` is `{provider}`; it must be local, {}",
+                EMBEDDING_PROVIDERS.join(", ")
+            )));
+        }
     }
-    Ok(processors)
+    Ok((config, processors))
 }
 
-/// Refuses, before any Personal byte reaches Kindex for a model call, unless
-/// every processor that call could use is explicitly authorized
-/// (`[personal] kindex_processors`). Returns the processors, for the receipt.
-pub(crate) fn authorize(cfg: &PersonalKindexConfig) -> Result<Vec<String>, ContractError> {
-    let processors = kindex_processors(cfg)?;
-    if let Some(unauthorized) = processors.iter().find(|p| !cfg.processors.contains(p)) {
-        return Err(ContractError::integrity(
-            "PROCESSOR_UNAUTHORIZED",
-            format!(
-                "Kindex would send Personal-store text to the `{unauthorized}` processor, which [personal] kindex_processors does not authorize"
-            ),
-            format!(
-                "Name \"{unauthorized}\" in [personal] kindex_processors only if that provider, account and retention mode are authorized for historical Personal data, or configure Kindex to run locally; nothing was sent."
-            ),
-        ));
+/// The resolved Kindex config of one hand-off or recall, written under the
+/// hand-off directory for it alone (and removed after), and the processors it
+/// names. Every Kindex run is passed exactly this file, so Kindex loads no
+/// global, project or profile config.
+struct Setup {
+    config: PathBuf,
+    processors: Vec<String>,
+}
+
+impl Drop for Setup {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.config);
     }
-    Ok(processors)
+}
+
+fn setup(cfg: &PersonalKindexConfig, dir: &Path) -> Result<Setup, ContractError> {
+    let (config, processors) = resolve_config(cfg)?;
+    let bytes =
+        serde_json::to_vec(&config).map_err(|error| ContractError::internal(error.to_string()))?;
+    let path = dir.join(format!("kindex-config-{}.json", uuid::Uuid::new_v4()));
+    crate::paths::write_atomic(&path, &bytes, 0o600, false)?;
+    Ok(Setup {
+        config: path,
+        processors,
+    })
+}
+
+impl Setup {
+    /// Refuses, before any Personal byte reaches Kindex for a model call,
+    /// unless every processor the config names is explicitly authorized
+    /// (`[personal] kindex_processors`). Returns the processors, for the
+    /// receipt.
+    fn authorize(&self, cfg: &PersonalKindexConfig) -> Result<Vec<String>, ContractError> {
+        if let Some(unauthorized) = self
+            .processors
+            .iter()
+            .find(|processor| !cfg.processors.contains(processor))
+        {
+            return Err(ContractError::integrity(
+                "PROCESSOR_UNAUTHORIZED",
+                format!(
+                    "Kindex would send Personal-store text to the `{unauthorized}` processor, which [personal] kindex_processors does not authorize"
+                ),
+                format!(
+                    "Name \"{unauthorized}\" in [personal] kindex_processors only if that provider, account and retention mode are authorized for historical Personal data, or configure Kindex to run locally; nothing was sent."
+                ),
+            ));
+        }
+        Ok(self.processors.clone())
+    }
 }
 
 fn run(cfg: &PersonalKindexConfig, args: Vec<String>) -> Result<Vec<u8>, ContractError> {
@@ -514,13 +742,13 @@ fn run(cfg: &PersonalKindexConfig, args: Vec<String>) -> Result<Vec<u8>, Contrac
     })
 }
 
-fn common_args(cfg: &PersonalKindexConfig, root: &Path) -> Vec<String> {
-    let mut args = vec!["--data-dir".to_owned(), root.to_string_lossy().into_owned()];
-    if let Some(config) = &cfg.config {
-        args.push("--config".to_owned());
-        args.push(config.to_string_lossy().into_owned());
-    }
-    args
+fn common_args(root: &Path, setup: &Setup) -> Vec<String> {
+    vec![
+        "--data-dir".to_owned(),
+        root.to_string_lossy().into_owned(),
+        "--config".to_owned(),
+        setup.config.to_string_lossy().into_owned(),
+    ]
 }
 
 /// Sends `entries` (conversations and retractions) to Kindex through a private
@@ -529,6 +757,7 @@ fn ingest(
     cfg: &PersonalKindexConfig,
     root: &Path,
     dir: &Path,
+    setup: &Setup,
     entries: &[Value],
 ) -> Result<(), ContractError> {
     let staging = dir.join(uuid::Uuid::new_v4().to_string());
@@ -554,7 +783,7 @@ fn ingest(
             "--directory".to_owned(),
         ];
         args.push(staging.to_string_lossy().into_owned());
-        args.extend(common_args(cfg, root));
+        args.extend(common_args(root, setup));
         run(cfg, args).map(|_| ())
     })();
     let _ = std::fs::remove_dir_all(&staging);
@@ -578,13 +807,18 @@ pub fn hand_off(
     now: &str,
 ) -> Result<Value, ContractError> {
     let now = seconds(now)?;
-    let root = protect_root(data_root)?;
-    let dir = handoff_dir(&root)?;
-    let _lock = lock_ledger(&dir)?;
-    let ledger = load_ledger(&dir)?;
     // What the scan itself listed and read: the files as they are now may have
     // changed since, and another hand-off may already have sent the change.
-    let seen = scan.transcripts.clone().unwrap_or_default();
+    let Some(seen) = &scan.transcripts else {
+        return Err(ContractError::internal(
+            "a transcript hand-off needs what its scan listed and read",
+        ));
+    };
+    let root = protect_root(data_root)?;
+    let dir = handoff_dir(&root)?;
+    let setup = setup(cfg, &dir)?;
+    let _lock = lock_ledger(&dir)?;
+    let ledger = load_ledger(&dir)?;
     let present: BTreeSet<PathBuf> = seen.listed.iter().map(|path| canonical(path)).collect();
     let read: BTreeSet<PathBuf> = seen.read.iter().map(|path| canonical(path)).collect();
     let default_retention = cfg
@@ -614,13 +848,13 @@ pub fn hand_off(
     }
     // Storing the conversations is local to the Personal root; the digest
     // sends them to a model, so it runs only for an authorized processor.
-    ingest(cfg, &root, &dir, &plan.entries)?;
+    ingest(cfg, &root, &dir, &setup, &plan.entries)?;
     save_ledger(&dir, &plan.ledger)?;
     if cfg.digest && plan.conversations > 0 {
-        match authorize(cfg) {
+        match setup.authorize(cfg) {
             Ok(processors) => {
                 let mut args = vec!["digest".to_owned()];
-                args.extend(common_args(cfg, &root));
+                args.extend(common_args(&root, &setup));
                 run(cfg, args)?;
                 receipt["digested"] = json!(true);
                 receipt["processors"] = json!(processors);
@@ -639,11 +873,12 @@ fn purge_expired(
     cfg: &PersonalKindexConfig,
     root: &Path,
     dir: &Path,
+    setup: &Setup,
     now: i64,
 ) -> Result<usize, ContractError> {
     let _lock = lock_ledger(dir)?;
-    let ledger = load_ledger(dir)?;
-    let (due, kept): (Ledger, Ledger) = ledger
+    let mut ledger = load_ledger(dir)?;
+    let (due, kept): (BTreeMap<_, _>, BTreeMap<_, _>) = std::mem::take(&mut ledger.conversations)
         .into_iter()
         .partition(|(_, entry)| entry.deadline <= now);
     if due.is_empty() {
@@ -653,8 +888,9 @@ fn purge_expired(
     for entry in due.values() {
         retract(&mut entries, &entry.segments);
     }
-    ingest(cfg, root, dir, &entries)?;
-    save_ledger(dir, &kept)?;
+    ingest(cfg, root, dir, setup, &entries)?;
+    ledger.conversations = kept;
+    save_ledger(dir, &ledger)?;
     Ok(due.len())
 }
 
@@ -684,11 +920,12 @@ pub fn recall(
 ) -> Result<Recalled, ContractError> {
     let root = protect_root(data_root)?;
     let dir = handoff_dir(&root)?;
+    let setup = setup(cfg, &dir)?;
     // Retention is honoured whatever the processor: retractions carry no text.
-    purge_expired(cfg, &root, &dir, seconds(now)?)?;
-    let processors = authorize(cfg)?;
+    purge_expired(cfg, &root, &dir, &setup, seconds(now)?)?;
+    let processors = setup.authorize(cfg)?;
     let mut args = vec!["ask".to_owned()];
-    args.extend(common_args(cfg, &root));
+    args.extend(common_args(&root, &setup));
     if let Some(as_of) = as_of {
         args.push("--as-of".to_owned());
         args.push(as_of.to_owned());
@@ -934,7 +1171,7 @@ mod tests {
             &present,
             &BTreeSet::new(),
             0,
-            Ledger::new(),
+            Ledger::default(),
             NOW,
         );
         let ids: BTreeSet<&str> = out
@@ -944,7 +1181,7 @@ mod tests {
             .collect();
         assert_eq!(ids.len(), 2, "{ids:?}");
         assert!(ids.iter().all(|id| id.starts_with("sess-1@")));
-        assert_eq!(out.ledger.len(), 2);
+        assert_eq!(out.ledger.conversations.len(), 2);
     }
 
     #[test]
@@ -961,7 +1198,7 @@ mod tests {
             &present,
             &BTreeSet::new(),
             0,
-            Ledger::new(),
+            Ledger::default(),
             NOW,
         );
         assert_eq!(
@@ -976,7 +1213,7 @@ mod tests {
             &present,
             &BTreeSet::new(),
             0,
-            Ledger::new(),
+            Ledger::default(),
             NOW,
         );
         assert_eq!(
@@ -1000,7 +1237,7 @@ mod tests {
             expired.entries,
             vec![json!({"id": fresh.entries[0]["id"], "retracted": true})]
         );
-        assert!(expired.ledger.is_empty());
+        assert!(expired.ledger.conversations.is_empty());
         // Past retention with no transcript in the scan at all: retracted too.
         let swept = plan(
             30 * 86_400,
@@ -1029,7 +1266,7 @@ mod tests {
             &present,
             &BTreeSet::new(),
             0,
-            Ledger::new(),
+            Ledger::default(),
             NOW,
         );
         // Ingesting another source leaves it alone.
@@ -1043,7 +1280,7 @@ mod tests {
             first.ledger.clone(),
             NOW,
         );
-        assert!(other.entries.is_empty() && other.ledger.len() == 1);
+        assert!(other.entries.is_empty() && other.ledger.conversations.len() == 1);
         // The same source without it: retracted.
         let gone = plan(
             86_400 * 30,
@@ -1063,16 +1300,15 @@ mod tests {
     fn a_day_no_longer_in_the_transcript_is_retracted() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("s.jsonl");
-        let mut ledger = Ledger::new();
+        let mut ledger = Ledger::default();
         let base = conversation_base(&canonical(&path), Some("sess-1"));
         std::fs::write(&path, LINE).unwrap();
-        ledger.insert(
+        ledger.conversations.insert(
             base.clone(),
             LedgerEntry {
                 path: canonical(&path).to_string_lossy().into_owned(),
                 deadline: NOW + 86_400 * 30,
                 segments: vec![format!("{base}#2026-09-01"), format!("{base}#2026-10-03")],
-                seen_at: 0,
             },
         );
         let present = [canonical(&path)].into_iter().collect();
@@ -1138,12 +1374,13 @@ mod tests {
             &present,
             &BTreeSet::new(),
             0,
-            Ledger::new(),
+            Ledger::default(),
             NOW,
         );
         assert_eq!(out.transcripts, 1);
         assert!(
             out.ledger
+                .conversations
                 .values()
                 .all(|entry| entry.path.ends_with("small.jsonl"))
         );
@@ -1282,14 +1519,19 @@ mod tests {
     }
 
     /// A pinned fake `kin`: `ingest` copies the staged conversations to
-    /// `<data-dir>/received/`, `digest` is counted, `ask` prints its context file.
+    /// `<data-dir>/received/`, `digest` is counted, `ask` prints its context
+    /// file. Each run copies the config it is given to `<data-dir>/config.<command>`.
     fn fake_kindex(dir: &Path, retention_seconds: Option<i64>) -> PersonalKindexConfig {
         let body = concat!(
             "#!/bin/sh\n",
-            "case \"$1\" in\n",
-            "ingest) [ \"$3 $4\" = \"--limit 0\" ] || exit 9; mkdir -p \"$8/received\" && cp \"$6\"/*.json \"$8/received/\" && ls -ld \"$6\" > \"$8/staging-mode\" ;;\n",
-            "digest) echo digest >> \"$3/digests\" ;;\n",
-            "ask) if [ \"$4\" = --context-file ]; then cat \"$5\"; fi ;;\n",
+            "command=$1; root=; config=; context=; previous=\n",
+            "for arg in \"$@\"; do case \"$previous\" in --data-dir) root=$arg ;; --config) config=$arg ;; --context-file) context=$arg ;; esac; previous=$arg; done\n",
+            "[ -n \"$root\" ] && [ -f \"$config\" ] || exit 8\n",
+            "cp \"$config\" \"$root/config.$command\"\n",
+            "case \"$command\" in\n",
+            "ingest) [ \"$3 $4\" = \"--limit 0\" ] || exit 9; mkdir -p \"$root/received\" && cp \"$6\"/*.json \"$root/received/\" && ls -ld \"$6\" > \"$root/staging-mode\" ;;\n",
+            "digest) echo digest >> \"$root/digests\" ;;\n",
+            "ask) if [ -n \"$context\" ]; then cat \"$context\"; fi ;;\n",
             "esac\n",
         );
         let executable = dir.join("kin");
@@ -1366,7 +1608,12 @@ mod tests {
             retracted,
             vec![json!({"id": sent[0]["id"], "retracted": true})]
         );
-        assert!(load_ledger(&root.join(HANDOFF_DIR)).unwrap().is_empty());
+        assert!(
+            load_ledger(&root.join(HANDOFF_DIR))
+                .unwrap()
+                .conversations
+                .is_empty()
+        );
     }
 
     #[test]
@@ -1407,7 +1654,7 @@ mod tests {
             &present,
             &present,
             0,
-            Ledger::new(),
+            Ledger::default(),
             NOW,
         );
         // Truncated to nothing: still present, read, and no records.
@@ -1436,7 +1683,7 @@ mod tests {
             first.ledger,
             NOW,
         );
-        assert!(oversized.entries.is_empty() && oversized.ledger.len() == 1);
+        assert!(oversized.entries.is_empty() && oversized.ledger.conversations.len() == 1);
     }
 
     #[test]
@@ -1455,11 +1702,14 @@ mod tests {
             &present,
             &present,
             0,
-            Ledger::new(),
+            Ledger::default(),
             NOW,
         );
         assert_eq!(out.transcripts, 1, "{:?}", out.entries);
-        assert_eq!(out.entries[0]["expires"], day_of_seconds(twenty_hours_ago + 86_400));
+        assert_eq!(
+            out.entries[0]["expires"],
+            day_of_seconds(twenty_hours_ago + 86_400)
+        );
         // A one-hour retention on a fresh transcript is sent too.
         let short = plan(
             3600,
@@ -1468,7 +1718,7 @@ mod tests {
             &present,
             &present,
             0,
-            Ledger::new(),
+            Ledger::default(),
             NOW,
         );
         assert_eq!(short.transcripts, 1);
@@ -1484,7 +1734,11 @@ mod tests {
             .map(|i| {
                 let source = base.path().join(format!("source-{i}"));
                 std::fs::create_dir(&source).unwrap();
-                std::fs::write(source.join("s.jsonl"), LINE.replace("sess-1", &format!("sess-{i}"))).unwrap();
+                std::fs::write(
+                    source.join("s.jsonl"),
+                    LINE.replace("sess-1", &format!("sess-{i}")),
+                )
+                .unwrap();
                 source
             })
             .collect();
@@ -1499,7 +1753,12 @@ mod tests {
             }
         });
         let ledger = load_ledger(&root.join(HANDOFF_DIR)).unwrap();
-        assert_eq!(ledger.len(), 6, "{:?}", ledger.keys().collect::<Vec<_>>());
+        assert_eq!(
+            ledger.conversations.len(),
+            6,
+            "{:?}",
+            ledger.conversations.keys().collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1508,7 +1767,8 @@ mod tests {
         let path = dir.path().join("s.jsonl");
         std::fs::write(&path, LINE).unwrap();
         let file: BTreeSet<PathBuf> = [canonical(&path)].into_iter().collect();
-        let (older, newer) = (1_000, 2_000);
+        let newer = i128::from(NOW) * 1_000_000_000;
+        let older = newer - 1_000;
         // The newer scan read the transcript with content and handed it over.
         let handed = plan(
             86_400 * 30,
@@ -1517,7 +1777,7 @@ mod tests {
             &file,
             &file,
             newer,
-            Ledger::new(),
+            Ledger::default(),
             NOW,
         );
         assert_eq!(handed.transcripts, 1);
@@ -1573,6 +1833,47 @@ mod tests {
             NOW,
         );
         assert_eq!(fresh_empty.removed, 1);
+        assert!(fresh_empty.ledger.conversations.is_empty());
+        // The retraction outlives the entry: a scan begun before it, which read
+        // the transcript with content, restores nothing.
+        let resurrected = plan(
+            86_400 * 30,
+            &[record(&path, LINE, NOW, None)],
+            dir.path(),
+            &file,
+            &file,
+            newer,
+            fresh_empty.ledger.clone(),
+            NOW,
+        );
+        assert!(resurrected.entries.is_empty(), "{:?}", resurrected.entries);
+        assert_eq!(resurrected.stale, 1);
+        // A day on, the emptied transcript's scan is forgotten; a scan begun
+        // before it still changes nothing.
+        let day_later = NOW + 86_400 + 1;
+        let forgotten = plan(
+            86_400 * 30,
+            &[],
+            dir.path(),
+            &file,
+            &file,
+            newer + 2,
+            fresh_empty.ledger,
+            day_later,
+        );
+        assert!(forgotten.ledger.scanned.is_empty());
+        assert_eq!(forgotten.ledger.horizon, newer + 2);
+        let ancient = plan(
+            86_400 * 30,
+            &[record(&path, LINE, day_later, None)],
+            dir.path(),
+            &file,
+            &file,
+            newer + 1,
+            forgotten.ledger,
+            day_later,
+        );
+        assert!(ancient.entries.is_empty() && ancient.stale == 1);
     }
 
     #[test]
@@ -1594,63 +1895,154 @@ mod tests {
         // ...then the early scan's hand-off runs: nothing it saw is newer.
         let receipt = hand_off(&cfg, &root, &source, &early, &now).unwrap();
         assert_eq!(receipt["retracted_removed"], 0, "{receipt}");
-        assert_eq!(load_ledger(&root.join(HANDOFF_DIR)).unwrap().len(), 1);
+        assert_eq!(
+            load_ledger(&root.join(HANDOFF_DIR))
+                .unwrap()
+                .conversations
+                .len(),
+            1
+        );
+        received(&root);
+
+        // The reverse: a scan reads the transcript with content, the
+        // transcript is emptied, and a later scan's hand-off retracts it first.
+        let with_content =
+            crate::lifecycle::scan_transcripts("claude_jsonl", &source, &now).unwrap();
+        std::fs::write(&path, "").unwrap();
+        let emptied = crate::lifecycle::scan_transcripts("claude_jsonl", &source, &now).unwrap();
+        let receipt = hand_off(&cfg, &root, &source, &emptied, &now).unwrap();
+        assert_eq!(receipt["retracted_removed"], 1, "{receipt}");
+        received(&root);
+        // The earlier scan's hand-off restores none of the deleted text.
+        let receipt = hand_off(&cfg, &root, &source, &with_content, &now).unwrap();
+        assert_eq!(receipt["conversations"], 0, "{receipt}");
+        assert_eq!(receipt["stale"], 1, "{receipt}");
+        assert!(received(&root).is_empty());
+        assert!(
+            load_ledger(&root.join(HANDOFF_DIR))
+                .unwrap()
+                .conversations
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_source_that_is_gone_retracts_what_it_handed_off() {
+        let base = tempfile::TempDir::new_in(verified_base()).unwrap();
+        let cfg = fake_kindex(base.path(), Some(30 * 86_400));
+        let root = base.path().join("personal");
+        let source = base.path().join("transcripts");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("s.jsonl"), LINE).unwrap();
+        let now = crate::time::now_rfc3339_millis();
+        let scan = crate::lifecycle::scan_transcripts("claude_jsonl", &source, &now).unwrap();
+        hand_off(&cfg, &root, &source, &scan, &now).unwrap();
+        received(&root);
+        std::fs::remove_dir_all(&source).unwrap();
+        // What ingest passes for a source that is no longer there.
+        let gone = crate::lifecycle::SourceScan {
+            transcripts: Some(crate::lifecycle::TranscriptScan::begin()),
+            ..crate::lifecycle::SourceScan::default()
+        };
+        let receipt = hand_off(&cfg, &root, &source, &gone, &now).unwrap();
+        assert_eq!(receipt["retracted_removed"], 1, "{receipt}");
+        assert_eq!(received(&root).len(), 1);
+        // A scan without what it listed and read is refused, not guessed at.
+        let unrecorded = crate::lifecycle::SourceScan::default();
+        assert!(hand_off(&cfg, &root, &source, &unrecorded, &now).is_err());
     }
 
     fn with(
         cfg: &PersonalKindexConfig,
-        env: &[&str],
         config: Option<&Path>,
         processors: &[&str],
     ) -> PersonalKindexConfig {
         PersonalKindexConfig {
-            env: env.iter().map(|v| v.to_string()).collect(),
+            env: vec!["OPENAI_API_KEY".to_owned()],
             config: config.map(Path::to_path_buf),
             processors: processors.iter().map(|v| v.to_string()).collect(),
             ..cfg.clone()
         }
     }
 
+    fn authorize(cfg: &PersonalKindexConfig) -> Result<Vec<String>, ContractError> {
+        let dir = tempfile::tempdir().unwrap();
+        setup(cfg, dir.path())?.authorize(cfg)
+    }
+
+    /// The processors and resolved config of `config` (JSON text).
+    fn resolved(base: &Path, config: &str) -> Result<(Value, Vec<String>), ContractError> {
+        let path = base.join(format!("kin-{}.json", uuid::Uuid::new_v4()));
+        std::fs::write(&path, config).unwrap();
+        resolve_config(&with(&fake_kindex(base, None), Some(&path), &[]))
+    }
+
     #[test]
     fn the_processors_kindex_would_use_are_read_from_its_config() {
         let base = tempfile::TempDir::new_in(verified_base()).unwrap();
         let cfg = fake_kindex(base.path(), None);
-        // No credentials passed: Kindex can reach no provider.
+        // No config: no LLM, and embeddings local (Kindex's own default is
+        // Voyage), whatever credentials are passed.
+        let (config, processors) = resolve_config(&with(&cfg, None, &[])).unwrap();
+        assert!(processors.is_empty());
+        assert_eq!(config["embedding"]["provider"], "local");
         assert_eq!(
-            kindex_processors(&with(&cfg, &[], None, &[])).unwrap(),
-            Vec::<String>::new()
-        );
-        let config = base.path().join("kin.json");
-        std::fs::write(&config, r#"{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna"},
-                                    "embedding": {"provider": "openai", "model": "text-embedding-3-small"}}"#).unwrap();
-        assert_eq!(
-            kindex_processors(&with(&cfg, &["OPENAI_API_KEY"], Some(&config), &[])).unwrap(),
+            resolved(base.path(), r#"{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna"},
+                                      "embedding": {"provider": "openai", "model": "text-embedding-3-small"}}"#)
+                .unwrap()
+                .1,
             ["openai:gpt-6-luna", "openai:text-embedding-3-small"]
         );
-        // Kindex's defaults without a config: no LLM, Voyage embeddings.
         assert_eq!(
-            kindex_processors(&with(&cfg, &["VOYAGE_API_KEY"], None, &[])).unwrap(),
-            ["voyage:default"]
+            resolved(
+                base.path(),
+                r#"{"embedding": {"provider": "voyage", "model": "voyage-3.5"}}"#
+            )
+            .unwrap()
+            .1,
+            ["voyage:voyage-3.5"]
         );
-        let local = base.path().join("local.json");
-        std::fs::write(
-            &local,
-            r#"{"llm": {"enabled": false}, "embedding": {"provider": "local"}}"#,
-        )
-        .unwrap();
-        assert!(
-            kindex_processors(&with(&cfg, &["X"], Some(&local), &[]))
+        // An enabled LLM is a processor whatever its credentials: Kindex would
+        // send the request even with a key read from HOME.
+        assert_eq!(
+            resolved(base.path(), r#"{"llm": {"enabled": true, "provider": "anthropic", "model": "claude-haiku-4-5", "api_key_env": "HOME"}}"#)
                 .unwrap()
-                .is_empty()
+                .1,
+            ["anthropic:claude-haiku-4-5"]
         );
-        let yaml = base.path().join("kin.yaml");
-        std::fs::write(&yaml, "llm:\n  enabled: true\n").unwrap();
-        assert_eq!(
-            kindex_processors(&with(&cfg, &["X"], Some(&yaml), &[]))
-                .unwrap_err()
-                .code,
-            "CONFIG_INVARIANT"
+        assert!(
+            resolved(
+                base.path(),
+                r#"{"llm": {"enabled": false}, "embedding": {"provider": "local"}}"#
+            )
+            .unwrap()
+            .1
+            .is_empty()
         );
+        // Whatever Kindex might read differently from Kinbase is refused.
+        for config in [
+            "llm:\n  enabled: true\n",
+            r#"["llm"]"#,
+            r#"{"llm": {"enabled": "true", "provider": "openai", "model": "gpt-6-luna"}}"#,
+            r#"{"llm": {"enabled": 1, "provider": "openai", "model": "gpt-6-luna"}}"#,
+            r#"{"llm": {"enabled": true}}"#,
+            r#"{"llm": {"enabled": true, "provider": "OpenAI", "model": "gpt-6-luna"}}"#,
+            r#"{"llm": {"enabled": true, "provider": "openai", "model": 6}}"#,
+            r#"{"llm": {"base_url": "https://example.invalid"}}"#,
+            r#"{"embedding": {"provider": "none"}}"#,
+            r#"{"embedding": {"provider": "voyage"}}"#,
+            r#"{"embedding": {"provider": 1}}"#,
+            r#"{"profiles": {"work": {"llm": {"enabled": true}}}}"#,
+            r#"{"default_profile": "work"}"#,
+            r#"{"channels": {"slack": {"enabled": true}}}"#,
+            r#"{"ask": 3}"#,
+        ] {
+            assert_eq!(
+                resolved(base.path(), config).unwrap_err().code,
+                "CONFIG_INVARIANT",
+                "{config}"
+            );
+        }
     }
 
     #[test]
@@ -1664,18 +2056,22 @@ mod tests {
                                     "embedding": {"provider": "local"}}"#,
         )
         .unwrap();
-        let unauthorized = with(&fake, &["OPENAI_API_KEY"], Some(&config), &[]);
-        let authorized = with(
-            &fake,
-            &["OPENAI_API_KEY"],
-            Some(&config),
-            &["openai:gpt-6-luna"],
-        );
+        let unauthorized = with(&fake, Some(&config), &[]);
+        let authorized = with(&fake, Some(&config), &["openai:gpt-6-luna"]);
         assert_eq!(
             authorize(&unauthorized).unwrap_err().code,
             "PROCESSOR_UNAUTHORIZED"
         );
         assert_eq!(authorize(&authorized).unwrap(), ["openai:gpt-6-luna"]);
+        // Without credentials passed, an enabled LLM still needs authorizing.
+        let no_env = PersonalKindexConfig {
+            env: Vec::new(),
+            ..unauthorized.clone()
+        };
+        assert_eq!(
+            authorize(&no_env).unwrap_err().code,
+            "PROCESSOR_UNAUTHORIZED"
+        );
 
         // Hand-off: the conversations are stored (local); the digest is refused.
         let root = base.path().join("personal");
@@ -1699,6 +2095,25 @@ mod tests {
         assert_eq!(
             answered.sent_sha256,
             crate::hash::sha256_text("what did I say?")
+        );
+        // Every Kindex run was given exactly the checked config, and nothing
+        // of it is left behind.
+        let (checked, _) = resolve_config(&authorized).unwrap();
+        for command in ["ingest", "ask"] {
+            let given: Value = serde_json::from_slice(
+                &std::fs::read(root.join(format!("config.{command}"))).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(given, checked, "{command}");
+        }
+        assert!(
+            std::fs::read_dir(root.join(HANDOFF_DIR))
+                .unwrap()
+                .flatten()
+                .all(|entry| !entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("kindex-config"))
         );
     }
 }

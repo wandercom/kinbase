@@ -108,20 +108,32 @@ matches its pin.
   everything Kindex derived from it) once it passes, at the next hand-off or
   `recall`, or when its transcript is emptied or gone from a source that is
   ingested again. The ledger is locked while a hand-off or purge runs.
-- A hand-off reconciles only against what its own scan listed and read, and
-  the ledger records when each conversation's scan began: a scan that started
-  before another hand-off stored a conversation neither re-sends nor retracts it.
+- A hand-off reconciles only against what its own scan listed and read (a
+  source that is gone lists nothing). The ledger records, for each transcript,
+  when the newest scan that settled it began, and keeps that after retracting
+  it: a scan that began earlier neither restores, re-sends nor retracts it. A
+  day after a transcript last held a conversation its record is dropped, and
+  any scan begun before that record changes nothing.
 - Historical Personal text reaches a model only through a processor the
-  principal has authorized, as `spec/threat-model.md` requires. Kinbase reads
-  the processors Kindex would use from `kindex_config` (which must then be JSON;
-  Kindex reads JSON as YAML): the LLM when `llm.enabled`, and the embedding
-  provider unless it is `local` or `none`. With no `kindex_env`, Kindex has no
-  credentials and stays local. Every processor must be named in
-  `kindex_processors`, else `recall` refuses with `PROCESSOR_UNAUTHORIZED` and
-  the hand-off stores the conversations but skips `kin digest`
-  (`personal_kindex.digest_refused`). Storing a conversation makes no model call.
-  The recall receipt lists the processors and the SHA-256 of the question and
-  team statements Kinbase handed Kindex.
+  principal has authorized, as `spec/threat-model.md` requires:
+  - Kinbase resolves the Kindex config itself and passes it to every Kindex
+    run with `--config`, so Kindex loads no global, project or profile config.
+    The config comes from `kindex_config`, which must be JSON (Kindex reads JSON
+    as YAML), or is empty. It may set only `llm`, `embedding`, `ask`,
+    `conversations` and `budget`; any other section or key, or a value Kindex
+    could read differently (`"enabled": "true"`), is refused.
+  - Its processors are the LLM when `llm.enabled` and the embedding provider
+    unless it is `local`. Each names its `provider` and `model`: `anthropic` or
+    `openai` for the LLM, and `voyage`, `openai` or `gemini` for embeddings.
+    Embeddings are local unless a provider is named.
+  - Every processor must be listed in `kindex_processors`, whatever credentials
+    are passed. Otherwise `recall` refuses with `PROCESSOR_UNAUTHORIZED`, and
+    the hand-off stores the conversations but skips `kin digest`
+    (`personal_kindex.digest_refused`). Storing a conversation makes no model
+    call.
+  - `kindex_env` passes only credentials (names ending in `_API_KEY`).
+  - The recall receipt lists the processors and the SHA-256 of the question and
+    team statements Kinbase handed Kindex.
 - A hand-off that fails keeps the journal record and is reported (a warning on
   stderr in text mode, `personal_kindex.error` in JSON).
 - The Personal root is checked before every Kindex run: not a symlink, owned by
@@ -142,9 +154,8 @@ data_root = "/private/example/kindex"
 kindex_executable = "/opt/example/bin/kin"
 kindex_executable_sha256 = "<sha256 of that file>"
 kindex_env = ["OPENAI_API_KEY"]          # passed through; everything else is scrubbed
-kindex_config = "/private/example/kin.json"
-kindex_processors = ["openai:gpt-6-luna"] # each authorized for historical Personal data;
-                                          # kin.json sets embedding.provider "local"
+kindex_config = "/private/example/kin.json" # {"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna"}}
+kindex_processors = ["openai:gpt-6-luna"] # each authorized for historical Personal data
 kindex_team_knowledge = false             # pass projected team statements to recall
 kindex_digest = true                      # run `kin digest` after each hand-off
 kindex_retention_seconds = 7776000        # keep handed-off transcripts 90 days
