@@ -82,14 +82,14 @@ where it is not.
 The specification makes the Personal store Kindex but the proof of concept never
 wired it. On this branch, with `[personal] kindex_executable` configured, what
 `kinbase ingest codex_jsonl|claude_jsonl` reads of each host transcript is also
-handed to the Kindex graph at the Personal root, and `kinbase recall --question
+handed to a Kindex graph under the Personal root, and `kinbase recall --question
 TEXT [--as-of DATE]` answers the principal's own question from it through
 `kin ask`. Both run where the Personal root is held; nothing either reads or
 returns enters a shared store, a projection or a hook.
 
 **Kindex version.** This needs a Kindex with `kin ingest conversations` (with
 `expires`, `retracted` and `--limit 0`), `kin digest` and `kin ask --as-of` /
-`--context-file`. No Kindex release has them yet: they are in
+`--context-file` / `-` (the question on standard input). No Kindex release has them yet: they are in
 [wandercom/kindex#73](https://github.com/wandercom/kindex/pull/73), which must
 merge first. Until a release ships them, install Kindex from that branch, point
 `kindex_executable` at its `kin`, and pin it with `shasum -a 256 "$(command -v kin)"`;
@@ -125,18 +125,33 @@ matches its pin.
     unless it is `local`. Each names its `provider` and `model`: `anthropic` or
     `openai` for the LLM, and `voyage`, `openai` or `gemini` for embeddings.
     Embeddings are local unless a provider is named.
-  - Every processor must be listed in `kindex_processors`, whatever credentials
-    are passed. Otherwise `recall` refuses with `PROCESSOR_UNAUTHORIZED`, and
-    the hand-off stores the conversations but skips `kin digest`
-    (`personal_kindex.digest_refused`). Storing a conversation makes no model
-    call.
-  - `kindex_env` passes only credentials (names ending in `_API_KEY`).
-  - The recall receipt lists the processors and the SHA-256 of the question and
-    team statements Kinbase handed Kindex.
+  - Each also names the variable holding its key (`api_key_env`, one name
+    ending in `_API_KEY`). Every processor must match a
+    `[[personal.kindex_processors]]` entry: the same provider, model and key
+    variable, and a key whose SHA-256 is the entry's `key_sha256`. That is the
+    exact provider, account and retention mode the threat model requires
+    (`retention` records the mode the account is under); another account's key
+    is not covered. Otherwise `recall` refuses with `PROCESSOR_UNAUTHORIZED`,
+    and the hand-off stores the conversations but skips `kin digest`
+    (`personal_kindex.digest_refused`).
+  - Kindex is given the authorized keys and nothing else of Kinbase's
+    environment. Storing a conversation makes no model call and is given no key.
+  - The question reaches `kin ask` on standard input, never the command line.
+  - The recall receipt lists each processor (provider, model, account digest,
+    retention) and the SHA-256 of the question and team statements Kinbase
+    handed Kindex.
+  - `spec/amendment-004-personal-recall.md` proposes this boundary for
+    ratification; until it is ratified, it is not authority.
 - A hand-off that fails keeps the journal record and is reported (a warning on
   stderr in text mode, `personal_kindex.error` in JSON).
-- The Personal root is checked before every Kindex run: not a symlink, owned by
-  the effective user, mode 0700. Staging files are written under it, mode 0600.
+- Kindex keeps the graph in `personal-kindex/` under the Personal root, a
+  directory Kinbase creates and marks; an existing one Kinbase did not create
+  is refused, so no other Kindex process (a daemon or its cron, with their own
+  config) works on it, and its embedding queue is drained only by Kinbase's own
+  authorized runs. The Personal root is checked before every Kindex run: not a
+  symlink, owned by the effective user, mode 0700. Staging files are written
+  under it, mode 0600; what an interrupted run left is removed at the next
+  hand-off or recall.
 - With `kindex_team_knowledge = true`, in a certified repository, recall also
   makes a read-only projection for the question and passes its released
   statements to the same processors (it is off by default). The projection
@@ -145,23 +160,37 @@ matches its pin.
   statement keeps its role, kind, store, standing, provenance and governed
   paths, and a stale authority snapshot is stated.
 - Kindex runs under the classifier's executable rules (absolute path, owner,
-  mode, directory chain, pinned SHA-256) with a scrubbed environment.
+  mode, directory chain, pinned SHA-256).
 
 ```toml
 [personal]
 data_root = "/private/example/kindex"
 kindex_executable = "/opt/example/bin/kin"
 kindex_executable_sha256 = "<sha256 of that file>"
-kindex_env = ["OPENAI_API_KEY"]          # passed through; everything else is scrubbed
-kindex_config = "/private/example/kin.json" # {"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna"}}
-kindex_processors = ["openai:gpt-6-luna"] # each authorized for historical Personal data
+kindex_config = "/private/example/kin.json"
 kindex_team_knowledge = false             # pass projected team statements to recall
 kindex_digest = true                      # run `kin digest` after each hand-off
 kindex_retention_seconds = 7776000        # keep handed-off transcripts 90 days
+
+# One entry per processor authorized for historical Personal data.
+[[personal.kindex_processors]]
+provider = "openai"
+model = "gpt-6-luna"
+key_env = "OPENAI_API_KEY"
+key_sha256 = "<printf %s \"$OPENAI_API_KEY\" | shasum -a 256>"
+retention = "zero-data-retention"
 ```
 
-These keys and the `recall` command are additions to `spec/cli.md`, which this
-branch does not change; they need an amendment before they are authority.
+with `kin.json`:
+
+```json
+{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna", "api_key_env": "OPENAI_API_KEY"}}
+```
+
+These keys and the `recall` command are additions to `spec/cli.md`. They, and
+the processor boundary above, are proposed in
+`spec/amendment-004-personal-recall.md` and are not authority until it is
+ratified.
 
 ## Building and running
 

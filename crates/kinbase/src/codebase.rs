@@ -218,7 +218,8 @@ pub struct Repository {
 ///
 /// The cache is keyed by the resolved path, so a symlink retargeted to another
 /// repository is looked up afresh, and the common directory is stored resolved
-/// and absolute, never relative to a path that may since point elsewhere.
+/// and absolute, never relative to a path that may since point elsewhere. An
+/// answer is reused only while it still holds (see `still_holds`).
 fn worktree_location(start: &Path) -> Result<(String, String), ContractError> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
@@ -226,7 +227,9 @@ fn worktree_location(start: &Path) -> Result<(String, String), ContractError> {
     let known = KNOWN.get_or_init(|| Mutex::new(HashMap::new()));
     let key = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
     if let Some(found) = known.lock().ok().and_then(|map| map.get(&key).cloned()) {
-        return Ok(found);
+        if still_holds(&key, Path::new(&found.0)) {
+            return Ok(found);
+        }
     }
     let root = git(&key, &["rev-parse", "--show-toplevel"])?;
     let common = git(&key, &["rev-parse", "--git-common-dir"])?;
@@ -241,6 +244,28 @@ fn worktree_location(start: &Path) -> Result<(String, String), ContractError> {
         map.insert(key, found.clone());
     }
     Ok(found)
+}
+
+/// A remembered worktree root still holds for `start` while the root keeps its
+/// `.git` and no directory from `start` up to it has gained one (a nested
+/// `git init`, or a new worktree): a few `stat` calls instead of two Git
+/// processes.
+fn still_holds(start: &Path, root: &Path) -> bool {
+    let Ok(root) = root.canonicalize() else {
+        return false;
+    };
+    if std::fs::symlink_metadata(root.join(".git")).is_err() {
+        return false;
+    }
+    for dir in start.ancestors() {
+        if dir == root {
+            return true;
+        }
+        if std::fs::symlink_metadata(dir.join(".git")).is_ok() {
+            return false;
+        }
+    }
+    false
 }
 
 pub fn git(repo: &Path, args: &[&str]) -> Result<String, ContractError> {
@@ -1501,5 +1526,20 @@ mod worktree_location_tests {
         let (root_b, common_b) = worktree_location(&link).unwrap();
         assert_eq!(Path::new(&root_b).canonicalize().unwrap(), b.canonicalize().unwrap());
         assert!(Path::new(&common_b).starts_with(b.canonicalize().unwrap()), "{common_b}");
+    }
+
+    #[test]
+    fn a_repository_initialized_inside_a_known_one_is_found() {
+        let base = tempfile::tempdir().unwrap();
+        let outer = base.path().join("outer");
+        let inner = outer.join("inner");
+        std::fs::create_dir_all(&inner).unwrap();
+        init(&outer);
+        let (root, _) = worktree_location(&inner).unwrap();
+        assert_eq!(Path::new(&root).canonicalize().unwrap(), outer.canonicalize().unwrap());
+        init(&inner);
+        let (root, common) = worktree_location(&inner).unwrap();
+        assert_eq!(Path::new(&root).canonicalize().unwrap(), inner.canonicalize().unwrap());
+        assert!(Path::new(&common).starts_with(inner.canonicalize().unwrap()), "{common}");
     }
 }

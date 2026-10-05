@@ -1123,13 +1123,23 @@ mod descriptor_enumeration_tests {
         (soft - 80).min(3_901) + offset
     }
 
+    /// The enumerations attestation can use: `poll` only on Linux, the one
+    /// system where it never reports an open descriptor as closed.
+    fn enumerations() -> Vec<fn(i32) -> Vec<i32>> {
+        if cfg!(target_os = "linux") {
+            vec![live_descriptors, poll_live_descriptors]
+        } else {
+            vec![live_descriptors]
+        }
+    }
+
     /// Tests run in parallel threads that open and close descriptors, so each
     /// case pins its descriptor at a high number nothing else uses, and the
     /// numbers around it, which nothing opens, must read as closed.
     fn check(kind: &str, fd: i32, high: i32) {
         // SAFETY: dup2 onto a descriptor number only this test uses; closed below.
         assert_eq!(unsafe { libc::dup2(fd, high) }, high, "{kind}: dup2");
-        for enumerate in [live_descriptors, poll_live_descriptors] {
+        for enumerate in enumerations() {
             let live = enumerate(high + 8);
             assert!(live.contains(&high), "{kind}: open descriptor {high} not listed");
             assert!(!live.contains(&(high + 1)), "{kind}: closed descriptor {} listed", high + 1);
@@ -1137,7 +1147,7 @@ mod descriptor_enumeration_tests {
         assert_eq!(probe_live_descriptors(high, high + 2), vec![high], "{kind}: fcntl ground truth");
         // SAFETY: closing the descriptor dup2 created.
         unsafe { libc::close(high) };
-        for enumerate in [live_descriptors, poll_live_descriptors] {
+        for enumerate in enumerations() {
             assert!(!enumerate(high + 8).contains(&high), "{kind}: closed descriptor {high} listed");
         }
     }
@@ -1173,8 +1183,8 @@ mod descriptor_enumeration_tests {
         // Descriptors 0..64 move as other tests run; compare the two methods
         // on numbers that are stable for the duration: stdin, stdout, stderr.
         let probed = probe_live_descriptors(0, 3);
-        let polled: Vec<i32> = poll_live_descriptors(3);
-        assert_eq!(polled, probed);
-        assert_eq!(live_descriptors(3), probed);
+        for enumerate in enumerations() {
+            assert_eq!(enumerate(3), probed);
+        }
     }
 }

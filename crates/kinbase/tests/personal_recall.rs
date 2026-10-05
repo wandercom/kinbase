@@ -145,7 +145,7 @@ fn world_with(blocked: bool, team_knowledge: bool) -> World {
         "root=; context=; previous=\n",
         "for arg in \"$@\"; do case \"$previous\" in --data-dir) root=$arg ;; --context-file) context=$arg ;; esac; previous=$arg; done\n",
         "case \"$1\" in\n",
-        "ask) printf '%s\\n' \"$@\" > \"$root/asked\"; if [ -n \"$context\" ]; then cat \"$context\" > \"$root/team\"; fi; echo answered ;;\n",
+        "ask) { printf '%s\\n' \"$@\"; cat; } > \"$root/asked\"; if [ -n \"$context\" ]; then cat \"$context\" > \"$root/team\"; fi; echo answered ;;\n",
         "esac\n",
     );
     fs::create_dir_all(kin.parent().unwrap()).expect("create bin");
@@ -375,11 +375,11 @@ fn a_private_question_with_a_blocking_unknown_is_recorded_nowhere_shared() {
     // The Personal Kindex was asked, and told team guidance is withheld
     // rather than given the blocked statement.
     assert!(
-        fs::read_to_string(world.personal.join("asked"))
+        fs::read_to_string(world.personal.join("personal-kindex").join("asked"))
             .unwrap()
             .contains("canary-7f3a")
     );
-    let team = fs::read_to_string(world.personal.join("team")).unwrap();
+    let team = fs::read_to_string(world.personal.join("personal-kindex").join("team")).unwrap();
     assert!(
         team.contains("withheld") && !team.contains(STATEMENT),
         "{team}"
@@ -417,7 +417,7 @@ fn an_unblocked_projection_releases_annotated_statements() {
         "{receipt}"
     );
     assert_eq!(receipt["team_facts"], 1, "{receipt}");
-    let team = fs::read_to_string(world.personal.join("team")).unwrap();
+    let team = fs::read_to_string(world.personal.join("personal-kindex").join("team")).unwrap();
     let lines: Vec<&str> = team.lines().collect();
     // The snapshot is weeks old and the Company is unreachable: said first.
     assert!(
@@ -483,7 +483,7 @@ fn without_team_knowledge_recall_projects_nothing() {
     );
     assert_eq!(receipt["team_facts"], 0);
     assert_eq!(receipt["processors"], serde_json::json!([]));
-    assert!(!world.personal.join("team").exists());
+    assert!(!world.personal.join("personal-kindex").join("team").exists());
 }
 
 #[test]

@@ -29,13 +29,25 @@ pub struct PersonalConfig {
 /// Kindex run as a pinned executable over `data_root`, the Personal Kindex
 /// graph. Only the launcher and Personal worker run it; nothing it reads or
 /// returns enters a shared store or projection.
+/// One processor authorized for historical Personal-store text: the exact
+/// provider, model, account and retention mode (threat-model.md, model-provider
+/// boundary).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthorizedProcessor {
+    pub provider: String,
+    pub model: String,
+    /// The variable holding the account's API key; Kindex's config names it.
+    pub key_env: String,
+    /// SHA-256 of that key: the authorization covers this account alone.
+    pub key_sha256: String,
+    /// The retention mode the account is under, as authorized.
+    pub retention: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersonalKindexConfig {
     pub executable: PathBuf,
     pub executable_sha256: String,
-    /// Environment variables passed through to Kindex (a provider key); the
-    /// rest of the environment is scrubbed.
-    pub env: Vec<String>,
     /// A Kindex config file (providers, `ask:` settings), passed as `--config`.
     pub config: Option<PathBuf>,
     pub timeout_seconds: u64,
@@ -46,12 +58,13 @@ pub struct PersonalKindexConfig {
     /// overrides it. Past it the conversation, and everything Kindex derived
     /// from it, is removed. `None`: the private raw-session default (24 hours).
     pub retention_seconds: Option<i64>,
-    /// The off-machine processors (`provider:model`, as Kindex's config names
-    /// them) explicitly authorized to receive Personal-store text from Kindex:
-    /// its LLM (digest, recall) and its embedding provider. A host's provider
-    /// relationship does not cover historical Personal recall
-    /// (threat-model.md); empty means Kindex may run only locally.
-    pub processors: Vec<String>,
+    /// The off-machine processors explicitly authorized to receive
+    /// Personal-store text from Kindex: its LLM (digest, recall) and its
+    /// embedding provider. A host's provider relationship does not cover
+    /// historical Personal recall (threat-model.md); empty means Kindex may run
+    /// only locally. Kindex is given the credential of each, and no other
+    /// environment.
+    pub processors: Vec<AuthorizedProcessor>,
     /// Send the team facts a read-only projection releases along with a
     /// recall question. Off unless named: they go to the same processor.
     pub team_knowledge: bool,
@@ -333,9 +346,45 @@ fn optional_path(
     }
 }
 
+/// One `[[personal.kindex_processors]]` entry. Every field is required: the
+/// authorization names the exact provider, model, account and retention mode.
+fn authorized_processor(value: &toml::Value) -> Result<AuthorizedProcessor, ContractError> {
+    let fields = ["provider", "model", "key_env", "key_sha256", "retention"];
+    let table = value.as_table().ok_or_else(|| {
+        config_error("personal.kindex_processors entries must be tables with provider, model, key_env, key_sha256 and retention")
+    })?;
+    closed_keys(table, &fields, "[[personal.kindex_processors]]")?;
+    let field = |name: &str| -> Result<String, ContractError> {
+        table
+            .get(name)
+            .and_then(toml::Value::as_str)
+            .filter(|value| !value.is_empty() && !value.chars().any(char::is_whitespace))
+            .map(str::to_owned)
+            .ok_or_else(|| config_error(format!("personal.kindex_processors entries need {name} (text without spaces)")))
+    };
+    let key_env = field("key_env")?;
+    if !(key_env.len() > "_API_KEY".len()
+        && key_env.ends_with("_API_KEY")
+        && key_env.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+    {
+        return Err(config_error("personal.kindex_processors key_env must be a variable ending in _API_KEY"));
+    }
+    let key_sha256 = field("key_sha256")?;
+    if key_sha256.len() != 64 || !key_sha256.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)) {
+        return Err(config_error("personal.kindex_processors key_sha256 must be the key's SHA-256 in lowercase hex"));
+    }
+    Ok(AuthorizedProcessor {
+        provider: field("provider")?,
+        model: field("model")?,
+        key_env,
+        key_sha256,
+        retention: field("retention")?,
+    })
+}
+
 fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, ContractError> {
     let Some(executable) = optional_path(table, "kindex_executable", "personal")? else {
-        for key in ["kindex_executable_sha256", "kindex_env", "kindex_config", "kindex_timeout_seconds", "kindex_digest", "kindex_retention_seconds", "kindex_processors", "kindex_team_knowledge"] {
+        for key in ["kindex_executable_sha256", "kindex_config", "kindex_timeout_seconds", "kindex_digest", "kindex_retention_seconds", "kindex_processors", "kindex_team_knowledge"] {
             if table.contains_key(key) {
                 return Err(config_error(format!("personal.{key} requires personal.kindex_executable")));
             }
@@ -348,27 +397,6 @@ fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, 
             "personal.kindex_executable_sha256 must be a lowercase 64-hex digest",
         ));
     }
-    let env = match table.get("kindex_env") {
-        None => Vec::new(),
-        Some(value) => value
-            .as_array()
-            .ok_or_else(|| config_error("personal.kindex_env must be an array of variable names"))?
-            .iter()
-            .map(|item| {
-                // Credentials only: a variable that moves Kindex's home,
-                // config, endpoint or proxy would change what it reads or
-                // where it sends Personal text.
-                item.as_str()
-                    .filter(|name| {
-                        name.len() > "_API_KEY".len()
-                            && name.ends_with("_API_KEY")
-                            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                    })
-                    .map(str::to_owned)
-                    .ok_or_else(|| config_error("personal.kindex_env entries must be credential variables ending in _API_KEY"))
-            })
-            .collect::<Result<_, _>>()?,
-    };
     let timeout_seconds = match table.get("kindex_timeout_seconds") {
         None => 900,
         Some(value) => value
@@ -396,17 +424,9 @@ fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, 
         None => Vec::new(),
         Some(value) => value
             .as_array()
-            .ok_or_else(|| config_error("personal.kindex_processors must be an array of \"provider:model\" names"))?
+            .ok_or_else(|| config_error("personal.kindex_processors must be an array of tables"))?
             .iter()
-            .map(|item| {
-                item.as_str()
-                    .filter(|name| {
-                        name.split_once(':').is_some_and(|(provider, model)| !provider.is_empty() && !model.is_empty())
-                            && !name.chars().any(char::is_whitespace)
-                    })
-                    .map(str::to_owned)
-                    .ok_or_else(|| config_error("personal.kindex_processors entries must be \"provider:model\""))
-            })
+            .map(authorized_processor)
             .collect::<Result<_, _>>()?,
     };
     let team_knowledge = match table.get("kindex_team_knowledge") {
@@ -418,7 +438,6 @@ fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, 
     Ok(Some(PersonalKindexConfig {
         executable,
         executable_sha256,
-        env,
         config: optional_path(table, "kindex_config", "personal")?,
         timeout_seconds,
         digest,
@@ -499,7 +518,6 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
             "data_root",
             "kindex_executable",
             "kindex_executable_sha256",
-            "kindex_env",
             "kindex_config",
             "kindex_timeout_seconds",
             "kindex_digest",

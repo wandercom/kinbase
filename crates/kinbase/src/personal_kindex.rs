@@ -34,6 +34,12 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+/// The directory Kindex keeps the Personal graph in, inside the Personal root.
+const KINDEX_DIR: &str = "personal-kindex";
+/// Written into that directory when Kinbase creates it. Kindex is only ever
+/// given a directory Kinbase made for it, never one another Kindex process (a
+/// daemon or its cron, with their own config) may already use.
+const KINDEX_MARKER: &str = ".kinbase-personal-kindex";
 const HANDOFF_DIR: &str = ".kinbase-handoff";
 const LEDGER_FILE: &str = "conversations.json";
 const LEDGER_LOCK: &str = "conversations.lock";
@@ -424,6 +430,94 @@ pub(crate) fn protect_root(data_root: &Path) -> Result<PathBuf, ContractError> {
         .map_err(|error| ContractError::unreadable("Personal data root", &error))
 }
 
+/// The Personal Kindex directory under the (protected) Personal root, created
+/// by Kinbase with its marker; an existing directory without the marker is
+/// refused, as is a graph an earlier build kept in the Personal root itself.
+/// Returns its canonical path.
+pub(crate) fn kindex_root(data_root: &Path) -> Result<PathBuf, ContractError> {
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+    let personal = protect_root(data_root)?;
+    if std::fs::symlink_metadata(personal.join(HANDOFF_DIR)).is_ok() {
+        return Err(ContractError::refused(
+            "CONFIG_INVARIANT",
+            "the Personal root holds a Personal Kindex graph from an earlier build, outside its own directory",
+            format!(
+                "Remove that graph (the Kindex files and {HANDOFF_DIR} in {}) and retry; Kinbase now keeps it in {KINDEX_DIR}/.",
+                personal.display()
+            ),
+        ));
+    }
+    let root = personal.join(KINDEX_DIR);
+    if std::fs::symlink_metadata(&root).is_err() {
+        // Made under another name and moved into place whole, so a concurrent
+        // run never sees the directory without its marker.
+        let fresh = personal.join(format!(".{KINDEX_DIR}-{}", uuid::Uuid::new_v4()));
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&fresh)
+            .map_err(|error| ContractError::io("Personal Kindex directory", error))?;
+        crate::paths::write_atomic(&fresh.join(KINDEX_MARKER), b"kinbase\n", 0o600, false)?;
+        if std::fs::rename(&fresh, &root).is_err() {
+            let _ = std::fs::remove_dir_all(&fresh);
+        }
+    }
+    let refused = || {
+        ContractError::refused(
+            "CONFIG_INVARIANT",
+            format!("{} was not created by Kinbase", root.display()),
+            format!(
+                "Kinbase gives Kindex only a directory it made, so no other Kindex process works on the Personal graph; move {} aside and retry.",
+                root.display()
+            ),
+        )
+    };
+    let metadata = std::fs::symlink_metadata(&root)
+        .map_err(|error| ContractError::unreadable("Personal Kindex directory", &error))?;
+    // SAFETY: geteuid has no preconditions.
+    let euid = unsafe { libc::geteuid() };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() || metadata.uid() != euid {
+        return Err(refused());
+    }
+    if !std::fs::symlink_metadata(root.join(KINDEX_MARKER)).is_ok_and(|marker| marker.is_file()) {
+        return Err(refused());
+    }
+    if metadata.mode() & 0o077 != 0 {
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700))
+            .map_err(|error| ContractError::io("Personal Kindex directory", error))?;
+    }
+    Ok(root)
+}
+
+/// Removes what an interrupted run left in the hand-off directory. Staging
+/// directories are made only while the ledger is locked, as it is when this
+/// runs, so none is in use; a per-run file (config, team knowledge) is removed
+/// once it is older than any Kindex run lasts.
+fn sweep(dir: &Path, cfg: &PersonalKindexConfig) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let limit = std::time::Duration::from_secs(cfg.timeout_seconds.saturating_add(60));
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if name == LEDGER_FILE || name == LEDGER_LOCK {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else {
+            continue;
+        };
+        if metadata.is_dir() {
+            let _ = std::fs::remove_dir_all(entry.path());
+        } else if metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > limit)
+        {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
 /// The hand-off directory under the Personal root, private and not a symlink.
 fn handoff_dir(root: &Path) -> Result<PathBuf, ContractError> {
     let dir = root.join(HANDOFF_DIR);
@@ -542,7 +636,34 @@ fn config_text(
 /// processors it names: the LLM when enabled (`kin digest`, `kin ask`) and the
 /// embedding provider unless local (`kin digest` embeds what it stores,
 /// `kin ask` the question). Anything Kindex might read differently is refused.
-fn resolve_config(cfg: &PersonalKindexConfig) -> Result<(Value, Vec<String>), ContractError> {
+/// A processor a resolved config names: its provider, model and the variable
+/// Kindex reads its key from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Processor {
+    provider: String,
+    model: String,
+    key_env: String,
+}
+
+/// The variable a processor's key is read from: named, one variable, ending in
+/// `_API_KEY`, so it is the credential that identifies the account.
+fn key_env(section: &serde_json::Map<String, Value>, name: &str) -> Result<String, ContractError> {
+    config_text(section, name, "api_key_env")?
+        .filter(|key| {
+            key.len() > "_API_KEY".len()
+                && key.ends_with("_API_KEY")
+                && key
+                    .chars()
+                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        })
+        .ok_or_else(|| {
+            config_refused(format!(
+                "kindex_config `{name}.api_key_env` must name the one variable, ending in _API_KEY, that holds the account's key"
+            ))
+        })
+}
+
+fn resolve_config(cfg: &PersonalKindexConfig) -> Result<(Value, Vec<Processor>), ContractError> {
     let mut config: Value = match &cfg.config {
         None => json!({}),
         Some(path) => {
@@ -607,7 +728,11 @@ fn resolve_config(cfg: &PersonalKindexConfig) -> Result<(Value, Vec<String>), Co
                 LLM_PROVIDERS.join(" or ")
             )));
         }
-        processors.push(format!("{provider}:{model}"));
+        processors.push(Processor {
+            key_env: key_env(llm, "llm")?,
+            provider,
+            model,
+        });
     }
     let embedding = config_section(sections, "embedding", &EMBEDDING_KEYS)?;
     let model = config_text(embedding, "embedding", "model")?;
@@ -625,7 +750,11 @@ fn resolve_config(cfg: &PersonalKindexConfig) -> Result<(Value, Vec<String>), Co
                     "kindex_config names the `{provider}` embedding provider without `embedding.model`"
                 )));
             };
-            processors.push(format!("{provider}:{model}"));
+            processors.push(Processor {
+                provider: provider.to_owned(),
+                model,
+                key_env: key_env(embedding, "embedding")?,
+            });
         }
         Some(provider) => {
             return Err(config_refused(format!(
@@ -643,7 +772,23 @@ fn resolve_config(cfg: &PersonalKindexConfig) -> Result<(Value, Vec<String>), Co
 /// global, project or profile config.
 struct Setup {
     config: PathBuf,
-    processors: Vec<String>,
+    processors: Vec<Processor>,
+}
+
+/// What an authorized run is given and reports: the processors' credentials
+/// (Kindex's only environment) and, for the receipt, each processor.
+struct Authorized {
+    env: Vec<(String, String)>,
+    processors: Vec<Value>,
+}
+
+/// A credential from Kinbase's environment (in tests, from a per-thread map).
+fn credential(name: &str) -> Option<String> {
+    #[cfg(test)]
+    if let Some(value) = tests::CREDENTIALS.with(|map| map.borrow().get(name).cloned()) {
+        return Some(value);
+    }
+    std::env::var(name).ok()
 }
 
 impl Drop for Setup {
@@ -666,41 +811,78 @@ fn setup(cfg: &PersonalKindexConfig, dir: &Path) -> Result<Setup, ContractError>
 
 impl Setup {
     /// Refuses, before any Personal byte reaches Kindex for a model call,
-    /// unless every processor the config names is explicitly authorized
-    /// (`[personal] kindex_processors`). Returns the processors, for the
-    /// receipt.
-    fn authorize(&self, cfg: &PersonalKindexConfig) -> Result<Vec<String>, ContractError> {
-        if let Some(unauthorized) = self
-            .processors
-            .iter()
-            .find(|processor| !cfg.processors.contains(processor))
-        {
-            return Err(ContractError::integrity(
-                "PROCESSOR_UNAUTHORIZED",
-                format!(
-                    "Kindex would send Personal-store text to the `{unauthorized}` processor, which [personal] kindex_processors does not authorize"
-                ),
-                format!(
-                    "Name \"{unauthorized}\" in [personal] kindex_processors only if that provider, account and retention mode are authorized for historical Personal data, or configure Kindex to run locally; nothing was sent."
-                ),
-            ));
+    /// unless every processor the config names is explicitly authorized in
+    /// `[personal] kindex_processors`: the same provider, model and key
+    /// variable, and a key whose SHA-256 is the authorized account's.
+    fn authorize(&self, cfg: &PersonalKindexConfig) -> Result<Authorized, ContractError> {
+        let mut authorized = Authorized {
+            env: Vec::new(),
+            processors: Vec::new(),
+        };
+        for processor in &self.processors {
+            let named = format!("{}:{}", processor.provider, processor.model);
+            let unauthorized = |why: &str| {
+                ContractError::integrity(
+                    "PROCESSOR_UNAUTHORIZED",
+                    format!("Kindex would send Personal-store text to `{named}`, {why}"),
+                    format!(
+                        "Add a [[personal.kindex_processors]] entry for `{named}` (provider, model, key_env, key_sha256, retention) only if that provider, account and retention mode are authorized for historical Personal data, or configure Kindex to run locally; nothing was sent."
+                    ),
+                )
+            };
+            let Some(grant) = cfg.processors.iter().find(|grant| {
+                grant.provider == processor.provider
+                    && grant.model == processor.model
+                    && grant.key_env == processor.key_env
+            }) else {
+                return Err(unauthorized(
+                    "which no [[personal.kindex_processors]] entry authorizes with that key variable",
+                ));
+            };
+            let Some(key) = credential(&processor.key_env) else {
+                return Err(unauthorized(&format!(
+                    "but {} is not set",
+                    processor.key_env
+                )));
+            };
+            if crate::hash::sha256_text(&key) != grant.key_sha256 {
+                return Err(unauthorized(&format!(
+                    "but {} holds the key of an account other than the authorized one",
+                    processor.key_env
+                )));
+            }
+            if !authorized
+                .env
+                .iter()
+                .any(|(name, _)| *name == processor.key_env)
+            {
+                authorized.env.push((processor.key_env.clone(), key));
+            }
+            authorized.processors.push(json!({
+                "provider": processor.provider,
+                "model": processor.model,
+                "account": &grant.key_sha256[..16],
+                "retention": grant.retention,
+            }));
         }
-        Ok(self.processors.clone())
+        Ok(authorized)
     }
 }
 
-fn run(cfg: &PersonalKindexConfig, args: Vec<String>) -> Result<Vec<u8>, ContractError> {
-    let env: Vec<(String, String)> = cfg
-        .env
-        .iter()
-        .filter_map(|name| std::env::var(name).ok().map(|value| (name.clone(), value)))
-        .collect();
+/// Runs Kindex with `env` (an authorized run's credentials; nothing else of
+/// Kinbase's environment) and `input` on its standard input.
+fn run(
+    cfg: &PersonalKindexConfig,
+    args: Vec<String>,
+    env: &[(String, String)],
+    input: &[u8],
+) -> Result<Vec<u8>, ContractError> {
     crate::sandbox::run_verified_executable_with_env(
         &cfg.executable,
         &cfg.executable_sha256,
         &args,
-        &env,
-        &[],
+        env,
+        input,
         std::time::Duration::from_secs(cfg.timeout_seconds),
     )
     .map_err(|mut error| {
@@ -751,7 +933,8 @@ fn ingest(
         ];
         args.push(staging.to_string_lossy().into_owned());
         args.extend(common_args(root, setup));
-        run(cfg, args).map(|_| ())
+        // Storing makes no model call, so Kindex is given no credential.
+        run(cfg, args, &[], &[]).map(|_| ())
     })();
     let _ = std::fs::remove_dir_all(&staging);
     result
@@ -781,10 +964,11 @@ pub fn hand_off(
             "a transcript hand-off needs what its scan listed and read",
         ));
     };
-    let root = protect_root(data_root)?;
+    let root = kindex_root(data_root)?;
     let dir = handoff_dir(&root)?;
     let setup = setup(cfg, &dir)?;
     let _lock = lock_ledger(&dir)?;
+    sweep(&dir, cfg);
     let ledger = load_ledger(&dir)?;
     let present: BTreeSet<PathBuf> = seen.listed.iter().map(|path| canonical(path)).collect();
     let read: BTreeSet<PathBuf> = seen.read.iter().map(|path| canonical(path)).collect();
@@ -819,12 +1003,12 @@ pub fn hand_off(
     save_ledger(&dir, &plan.ledger)?;
     if cfg.digest && plan.conversations > 0 {
         match setup.authorize(cfg) {
-            Ok(processors) => {
+            Ok(authorized) => {
                 let mut args = vec!["digest".to_owned()];
                 args.extend(common_args(&root, &setup));
-                run(cfg, args)?;
+                run(cfg, args, &authorized.env, &[])?;
                 receipt["digested"] = json!(true);
-                receipt["processors"] = json!(processors);
+                receipt["processors"] = json!(authorized.processors);
             }
             Err(refused) => {
                 receipt["digest_refused"] =
@@ -844,6 +1028,7 @@ fn purge_expired(
     now: i64,
 ) -> Result<usize, ContractError> {
     let _lock = lock_ledger(dir)?;
+    sweep(dir, cfg);
     let mut ledger = load_ledger(dir)?;
     let (due, kept): (BTreeMap<_, _>, BTreeMap<_, _>) = std::mem::take(&mut ledger.conversations)
         .into_iter()
@@ -870,8 +1055,9 @@ fn purge_expired(
 #[derive(Debug, Clone, PartialEq)]
 pub struct Recalled {
     pub answer: String,
-    /// The off-machine processors the answer could use (empty: local only).
-    pub processors: Vec<String>,
+    /// The off-machine processors the answer could use, each with its account
+    /// (the key's SHA-256, abbreviated) and retention mode (empty: local only).
+    pub processors: Vec<Value>,
     /// SHA-256 of what was handed to Kindex for this purpose: the question and
     /// the team knowledge lines.
     pub sent_sha256: String,
@@ -885,12 +1071,12 @@ pub fn recall(
     team: &[String],
     now: &str,
 ) -> Result<Recalled, ContractError> {
-    let root = protect_root(data_root)?;
+    let root = kindex_root(data_root)?;
     let dir = handoff_dir(&root)?;
     let setup = setup(cfg, &dir)?;
     // Retention is honoured whatever the processor: retractions carry no text.
     purge_expired(cfg, &root, &dir, &setup, seconds(now)?)?;
-    let processors = setup.authorize(cfg)?;
+    let authorized = setup.authorize(cfg)?;
     let mut args = vec!["ask".to_owned()];
     args.extend(common_args(&root, &setup));
     if let Some(as_of) = as_of {
@@ -908,9 +1094,11 @@ pub fn recall(
         args.push("--context-file".to_owned());
         args.push(path.to_string_lossy().into_owned());
     }
+    // The question goes on standard input (`-`), never on the command line,
+    // where the process list would show it.
     args.push("--".to_owned());
-    args.push(question.to_owned());
-    let out = run(cfg, args);
+    args.push("-".to_owned());
+    let out = run(cfg, args, &authorized.env, question.as_bytes());
     if let Some(path) = &team_file {
         let _ = std::fs::remove_file(path);
     }
@@ -921,7 +1109,7 @@ pub fn recall(
     }
     Ok(Recalled {
         answer: String::from_utf8_lossy(&out?).trim().to_owned(),
-        processors,
+        processors: authorized.processors,
         sent_sha256: crate::hash::sha256_text(&sent),
     })
 }
@@ -1025,11 +1213,28 @@ pub fn team_knowledge(result: &Value, statements: &BTreeMap<String, String>) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::AuthorizedProcessor;
     use crate::lifecycle::TranscriptOrigin;
     use std::os::unix::fs::PermissionsExt;
     use std::sync::Arc;
 
     const NOW: i64 = 1_791_000_000; // 2026-10-03
+
+    thread_local! {
+        /// Credentials `credential` returns in this test's thread, instead of
+        /// the process environment.
+        pub(super) static CREDENTIALS: std::cell::RefCell<BTreeMap<String, String>> =
+            const { std::cell::RefCell::new(BTreeMap::new()) };
+    }
+
+    fn set_credential(name: &str, value: &str) {
+        CREDENTIALS.with(|map| map.borrow_mut().insert(name.to_owned(), value.to_owned()));
+    }
+
+    /// Where Kindex keeps the graph under the Personal root `root`.
+    fn graph(root: &Path) -> PathBuf {
+        root.join(KINDEX_DIR)
+    }
 
     fn segments(base: &str, lines: &[&str]) -> Vec<Value> {
         transcript_segments(base, lines.iter().copied())
@@ -1400,6 +1605,68 @@ mod tests {
     }
 
     #[test]
+    fn kindex_gets_only_a_directory_kinbase_made() {
+        let dir = tempfile::tempdir().unwrap();
+        let personal = dir.path().join("personal");
+        let root = kindex_root(&personal).unwrap();
+        assert_eq!(root, protect_root(&personal).unwrap().join(KINDEX_DIR));
+        assert!(root.join(KINDEX_MARKER).is_file());
+        assert_eq!(
+            std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(kindex_root(&personal).unwrap(), root);
+        // A directory Kinbase did not make (another Kindex's data directory).
+        let other = dir.path().join("other");
+        std::fs::create_dir_all(other.join(KINDEX_DIR)).unwrap();
+        std::fs::write(other.join(KINDEX_DIR).join("kindex.db"), "").unwrap();
+        std::fs::set_permissions(&other, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(kindex_root(&other).unwrap_err().code, "CONFIG_INVARIANT");
+        // A graph an earlier build kept in the Personal root itself.
+        let earlier = dir.path().join("earlier");
+        std::fs::create_dir_all(earlier.join(HANDOFF_DIR)).unwrap();
+        std::fs::set_permissions(&earlier, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(kindex_root(&earlier).unwrap_err().code, "CONFIG_INVARIANT");
+    }
+
+    #[test]
+    fn an_interrupted_run_leaves_nothing_past_the_next_one() {
+        let base = tempfile::TempDir::new_in(verified_base()).unwrap();
+        let cfg = fake_kindex(base.path(), Some(30 * 86_400));
+        let root = base.path().join("personal");
+        let dir = handoff_dir(&kindex_root(&root).unwrap()).unwrap();
+        // A staging directory a killed hand-off left, and an old per-run file.
+        let staging = dir.join(uuid::Uuid::new_v4().to_string());
+        std::fs::create_dir(&staging).unwrap();
+        std::fs::write(staging.join("000000.json"), "{}").unwrap();
+        let old = dir.join("team-old.txt");
+        std::fs::write(&old, "x").unwrap();
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3_600);
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        let fresh = dir.join("team-fresh.txt");
+        std::fs::write(&fresh, "x").unwrap();
+        recall(
+            &cfg,
+            &root,
+            "anything?",
+            None,
+            &[],
+            &crate::time::now_rfc3339_millis(),
+        )
+        .unwrap();
+        assert!(!staging.exists() && !old.exists());
+        assert!(
+            fresh.exists(),
+            "a file a concurrent run may still use was removed"
+        );
+    }
+
+    #[test]
     fn a_symlinked_handoff_directory_is_never_written_through() {
         let dir = tempfile::tempdir().unwrap();
         let root = protect_root(&dir.path().join("personal")).unwrap();
@@ -1494,11 +1761,11 @@ mod tests {
             "command=$1; root=; config=; context=; previous=\n",
             "for arg in \"$@\"; do case \"$previous\" in --data-dir) root=$arg ;; --config) config=$arg ;; --context-file) context=$arg ;; esac; previous=$arg; done\n",
             "[ -n \"$root\" ] && [ -f \"$config\" ] || exit 8\n",
-            "cp \"$config\" \"$root/config.$command\"\n",
+            "cp \"$config\" \"$root/config.$command\" && printf '%s\\n' \"$@\" > \"$root/argv.$command\" && env > \"$root/env.$command\"\n",
             "case \"$command\" in\n",
             "ingest) [ \"$3 $4\" = \"--limit 0\" ] || exit 9; mkdir -p \"$root/received\" && cp \"$6\"/*.json \"$root/received/\" && ls -ld \"$6\" > \"$root/staging-mode\" ;;\n",
             "digest) echo digest >> \"$root/digests\" ;;\n",
-            "ask) if [ -n \"$context\" ]; then cat \"$context\"; fi ;;\n",
+            "ask) cat > \"$root/question\"; if [ -n \"$context\" ]; then cat \"$context\"; fi ;;\n",
             "esac\n",
         );
         let executable = dir.join("kin");
@@ -1507,7 +1774,6 @@ mod tests {
         PersonalKindexConfig {
             executable,
             executable_sha256: crate::hash::sha256_bytes(body.as_bytes()),
-            env: Vec::new(),
             config: None,
             timeout_seconds: 30,
             digest: true,
@@ -1518,6 +1784,7 @@ mod tests {
     }
 
     fn received(root: &Path) -> Vec<Value> {
+        let root = graph(root);
         let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("received"))
             .map(|dir| dir.flatten().map(|entry| entry.path()).collect())
             .unwrap_or_default();
@@ -1554,15 +1821,15 @@ mod tests {
         assert!(sent[0]["id"].as_str().unwrap().starts_with("sess-1@"));
         assert!(sent[0]["expires"].is_string());
         assert!(
-            std::fs::read_to_string(root.join("staging-mode"))
+            std::fs::read_to_string(graph(&root).join("staging-mode"))
                 .unwrap()
                 .starts_with("drwx------")
         );
         assert_eq!(
-            std::fs::read_to_string(root.join("digests")).unwrap(),
+            std::fs::read_to_string(graph(&root).join("digests")).unwrap(),
             "digest\n"
         );
-        let ledger = std::fs::metadata(root.join(HANDOFF_DIR).join(LEDGER_FILE)).unwrap();
+        let ledger = std::fs::metadata(graph(&root).join(HANDOFF_DIR).join(LEDGER_FILE)).unwrap();
         assert_eq!(ledger.permissions().mode() & 0o777, 0o600);
 
         // Three days later the transcript is past its retention: recall
@@ -1576,7 +1843,7 @@ mod tests {
             vec![json!({"id": sent[0]["id"], "retracted": true})]
         );
         assert!(
-            load_ledger(&root.join(HANDOFF_DIR))
+            load_ledger(&graph(&root).join(HANDOFF_DIR))
                 .unwrap()
                 .conversations
                 .is_empty()
@@ -1600,7 +1867,7 @@ mod tests {
         .answer;
         assert_eq!(answer, "[ratified ruling] Use the ledger.");
         // Nothing is left behind but the (empty) ledger lock.
-        let leftovers: Vec<_> = std::fs::read_dir(root.join(HANDOFF_DIR))
+        let leftovers: Vec<_> = std::fs::read_dir(graph(&root).join(HANDOFF_DIR))
             .unwrap()
             .flatten()
             .filter(|entry| entry.file_name() != LEDGER_LOCK)
@@ -1719,7 +1986,7 @@ mod tests {
                 });
             }
         });
-        let ledger = load_ledger(&root.join(HANDOFF_DIR)).unwrap();
+        let ledger = load_ledger(&graph(&root).join(HANDOFF_DIR)).unwrap();
         assert_eq!(
             ledger.conversations.len(),
             6,
@@ -1884,7 +2151,7 @@ mod tests {
         let receipt = hand_off(&cfg, &root, &source, &early, &now).unwrap();
         assert_eq!(receipt["retracted_removed"], 0, "{receipt}");
         assert_eq!(
-            load_ledger(&root.join(HANDOFF_DIR))
+            load_ledger(&graph(&root).join(HANDOFF_DIR))
                 .unwrap()
                 .conversations
                 .len(),
@@ -1907,7 +2174,7 @@ mod tests {
         assert_eq!(receipt["stale"], 1, "{receipt}");
         assert!(received(&root).is_empty());
         assert!(
-            load_ledger(&root.join(HANDOFF_DIR))
+            load_ledger(&graph(&root).join(HANDOFF_DIR))
                 .unwrap()
                 .conversations
                 .is_empty()
@@ -1966,26 +2233,47 @@ mod tests {
     fn with(
         cfg: &PersonalKindexConfig,
         config: Option<&Path>,
-        processors: &[&str],
+        processors: &[AuthorizedProcessor],
     ) -> PersonalKindexConfig {
         PersonalKindexConfig {
-            env: vec!["OPENAI_API_KEY".to_owned()],
             config: config.map(Path::to_path_buf),
-            processors: processors.iter().map(|v| v.to_string()).collect(),
+            processors: processors.to_vec(),
             ..cfg.clone()
         }
     }
 
-    fn authorize(cfg: &PersonalKindexConfig) -> Result<Vec<String>, ContractError> {
-        let dir = tempfile::tempdir().unwrap();
-        setup(cfg, dir.path())?.authorize(cfg)
+    /// An authorization of `provider:model` for the account whose key is `key`.
+    fn grant(provider: &str, model: &str, key_env: &str, key: &str) -> AuthorizedProcessor {
+        AuthorizedProcessor {
+            provider: provider.to_owned(),
+            model: model.to_owned(),
+            key_env: key_env.to_owned(),
+            key_sha256: crate::hash::sha256_text(key),
+            retention: "zero-data-retention".to_owned(),
+        }
     }
 
-    /// The processors and resolved config of `config` (JSON text).
+    fn authorize(cfg: &PersonalKindexConfig) -> Result<Vec<Value>, ContractError> {
+        let dir = tempfile::tempdir().unwrap();
+        setup(cfg, dir.path())?
+            .authorize(cfg)
+            .map(|authorized| authorized.processors)
+    }
+
+    /// The resolved config of `config` (JSON text), and its processors as
+    /// `provider:model@key_env`.
     fn resolved(base: &Path, config: &str) -> Result<(Value, Vec<String>), ContractError> {
         let path = base.join(format!("kin-{}.json", uuid::Uuid::new_v4()));
         std::fs::write(&path, config).unwrap();
-        resolve_config(&with(&fake_kindex(base, None), Some(&path), &[]))
+        resolve_config(&with(&fake_kindex(base, None), Some(&path), &[])).map(
+            |(config, processors)| {
+                let named = processors
+                    .iter()
+                    .map(|p| format!("{}:{}@{}", p.provider, p.model, p.key_env))
+                    .collect();
+                (config, named)
+            },
+        )
     }
 
     #[test]
@@ -1998,28 +2286,20 @@ mod tests {
         assert!(processors.is_empty());
         assert_eq!(config["embedding"]["provider"], "local");
         assert_eq!(
-            resolved(base.path(), r#"{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna"},
-                                      "embedding": {"provider": "openai", "model": "text-embedding-3-small"}}"#)
+            resolved(base.path(), r#"{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna", "api_key_env": "OPENAI_API_KEY"},
+                                      "embedding": {"provider": "openai", "model": "text-embedding-3-small", "api_key_env": "OPENAI_API_KEY"}}"#)
                 .unwrap()
                 .1,
-            ["openai:gpt-6-luna", "openai:text-embedding-3-small"]
+            ["openai:gpt-6-luna@OPENAI_API_KEY", "openai:text-embedding-3-small@OPENAI_API_KEY"]
         );
         assert_eq!(
             resolved(
                 base.path(),
-                r#"{"embedding": {"provider": "voyage", "model": "voyage-3.5"}}"#
+                r#"{"embedding": {"provider": "voyage", "model": "voyage-3.5", "api_key_env": "VOYAGE_API_KEY"}}"#
             )
             .unwrap()
             .1,
-            ["voyage:voyage-3.5"]
-        );
-        // An enabled LLM is a processor whatever its credentials: Kindex would
-        // send the request even with a key read from HOME.
-        assert_eq!(
-            resolved(base.path(), r#"{"llm": {"enabled": true, "provider": "anthropic", "model": "claude-haiku-4-5", "api_key_env": "HOME"}}"#)
-                .unwrap()
-                .1,
-            ["anthropic:claude-haiku-4-5"]
+            ["voyage:voyage-3.5@VOYAGE_API_KEY"]
         );
         assert!(
             resolved(
@@ -2039,6 +2319,12 @@ mod tests {
             r#"{"llm": {"enabled": true}}"#,
             r#"{"llm": {"enabled": true, "provider": "OpenAI", "model": "gpt-6-luna"}}"#,
             r#"{"llm": {"enabled": true, "provider": "openai", "model": 6}}"#,
+            // The key variable is named, one variable, a credential: it is the
+            // account the processor is authorized for.
+            r#"{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna"}}"#,
+            r#"{"llm": {"enabled": true, "provider": "anthropic", "model": "claude-haiku-4-5", "api_key_env": "HOME"}}"#,
+            r#"{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna", "api_key_env": "A_API_KEY,B_API_KEY"}}"#,
+            r#"{"embedding": {"provider": "voyage", "model": "voyage-3.5"}}"#,
             r#"{"llm": {"base_url": "https://example.invalid"}}"#,
             r#"{"embedding": {"provider": "none"}}"#,
             r#"{"embedding": {"provider": "voyage"}}"#,
@@ -2063,26 +2349,61 @@ mod tests {
         let config = base.path().join("kin.json");
         std::fs::write(
             &config,
-            r#"{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna"},
-                                    "embedding": {"provider": "local"}}"#,
+            r#"{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna", "api_key_env": "UNIT_OPENAI_API_KEY"},
+                "embedding": {"provider": "local"}}"#,
         )
         .unwrap();
+        set_credential("UNIT_OPENAI_API_KEY", "sk-authorized-account");
         let unauthorized = with(&fake, Some(&config), &[]);
-        let authorized = with(&fake, Some(&config), &["openai:gpt-6-luna"]);
+        let authorized = with(
+            &fake,
+            Some(&config),
+            &[grant(
+                "openai",
+                "gpt-6-luna",
+                "UNIT_OPENAI_API_KEY",
+                "sk-authorized-account",
+            )],
+        );
         assert_eq!(
             authorize(&unauthorized).unwrap_err().code,
             "PROCESSOR_UNAUTHORIZED"
         );
-        assert_eq!(authorize(&authorized).unwrap(), ["openai:gpt-6-luna"]);
-        // Without credentials passed, an enabled LLM still needs authorizing.
-        let no_env = PersonalKindexConfig {
-            env: Vec::new(),
-            ..unauthorized.clone()
-        };
         assert_eq!(
-            authorize(&no_env).unwrap_err().code,
-            "PROCESSOR_UNAUTHORIZED"
+            authorize(&authorized).unwrap(),
+            [json!({"provider": "openai", "model": "gpt-6-luna",
+                    "account": &crate::hash::sha256_text("sk-authorized-account")[..16],
+                    "retention": "zero-data-retention"})]
         );
+        // The authorization is for one account: another key, another model or
+        // another key variable is not covered.
+        for other in [
+            grant(
+                "openai",
+                "gpt-6-luna",
+                "UNIT_OPENAI_API_KEY",
+                "sk-another-account",
+            ),
+            grant(
+                "openai",
+                "gpt-6-sol",
+                "UNIT_OPENAI_API_KEY",
+                "sk-authorized-account",
+            ),
+            grant(
+                "openai",
+                "gpt-6-luna",
+                "OTHER_OPENAI_API_KEY",
+                "sk-authorized-account",
+            ),
+        ] {
+            assert_eq!(
+                authorize(&with(&fake, Some(&config), &[other]))
+                    .unwrap_err()
+                    .code,
+                "PROCESSOR_UNAUTHORIZED"
+            );
+        }
 
         // Hand-off: the conversations are stored (local); the digest is refused.
         let root = base.path().join("personal");
@@ -2095,14 +2416,35 @@ mod tests {
         assert_eq!(receipt["conversations"], 1);
         assert_eq!(receipt["digested"], false);
         assert_eq!(receipt["digest_refused"]["code"], "PROCESSOR_UNAUTHORIZED");
-        assert!(!root.join("digests").exists(), "the digest ran");
+        assert!(!graph(&root).join("digests").exists(), "the digest ran");
         assert_eq!(received(&root).len(), 1);
 
         // Recall: refused before the question is handed to Kindex.
         let refused = recall(&unauthorized, &root, "what did I say?", None, &[], &now).unwrap_err();
         assert_eq!(refused.code, "PROCESSOR_UNAUTHORIZED");
         let answered = recall(&authorized, &root, "what did I say?", None, &[], &now).unwrap();
-        assert_eq!(answered.processors, ["openai:gpt-6-luna"]);
+        assert_eq!(answered.processors[0]["model"], "gpt-6-luna");
+        // The question reached Kindex on standard input, not the command line,
+        // and Kindex was given the authorized credential and no other.
+        assert_eq!(
+            std::fs::read_to_string(graph(&root).join("question")).unwrap(),
+            "what did I say?"
+        );
+        assert!(
+            !std::fs::read_to_string(graph(&root).join("argv.ask"))
+                .unwrap()
+                .contains("what did I say")
+        );
+        let env = std::fs::read_to_string(graph(&root).join("env.ask")).unwrap();
+        assert!(
+            env.contains("UNIT_OPENAI_API_KEY=sk-authorized-account"),
+            "{env}"
+        );
+        let stored = std::fs::read_to_string(graph(&root).join("env.ingest")).unwrap();
+        assert!(
+            !stored.contains("API_KEY"),
+            "storing was given a credential: {stored}"
+        );
         assert_eq!(
             answered.sent_sha256,
             crate::hash::sha256_text("what did I say?")
@@ -2112,13 +2454,13 @@ mod tests {
         let (checked, _) = resolve_config(&authorized).unwrap();
         for command in ["ingest", "ask"] {
             let given: Value = serde_json::from_slice(
-                &std::fs::read(root.join(format!("config.{command}"))).unwrap(),
+                &std::fs::read(graph(&root).join(format!("config.{command}"))).unwrap(),
             )
             .unwrap();
             assert_eq!(given, checked, "{command}");
         }
         assert!(
-            std::fs::read_dir(root.join(HANDOFF_DIR))
+            std::fs::read_dir(graph(&root).join(HANDOFF_DIR))
                 .unwrap()
                 .flatten()
                 .all(|entry| !entry
