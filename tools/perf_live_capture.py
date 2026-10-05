@@ -201,12 +201,20 @@ def machine() -> dict:
             "cpu": cpu, "cores": os.cpu_count()}
 
 
+def positive(text: str) -> int:
+    """An argument that must be a whole number above zero (checked before any service starts)."""
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be at least 1, not {value}")
+    return value
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--old", type=Path, required=True)
     ap.add_argument("--new", type=Path, required=True)
-    ap.add_argument("--messages", type=int, default=80)
-    ap.add_argument("--reps", type=int, default=5)
+    ap.add_argument("--messages", type=positive, default=80)
+    ap.add_argument("--reps", type=positive, default=5)
     ap.add_argument("--seed", type=int, default=20261003)
     ap.add_argument("--bin-dir", type=Path, default=Path.home() / ".kinbase-perf-bin")
     ap.add_argument("--out", type=Path)

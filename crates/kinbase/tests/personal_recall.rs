@@ -433,3 +433,26 @@ fn an_unblocked_projection_releases_annotated_statements() {
         Vec::<PathBuf>::new()
     );
 }
+
+#[test]
+fn a_failed_kindex_hand_off_is_reported_in_text_output() {
+    let world = world(false);
+    let transcripts = world.repo.join("transcripts");
+    fs::create_dir_all(&transcripts).unwrap();
+    fs::write(
+        transcripts.join("s.jsonl"),
+        r#"{"type":"user","timestamp":"2026-10-03T09:00:00.000Z","message":{"role":"user","content":"I bought a red kayak."}}"#,
+    )
+    .unwrap();
+    // The pinned Kindex no longer matches its digest: the hand-off is refused.
+    let kin = world.personal.parent().unwrap().join("bin").join("kin");
+    fs::write(&kin, "#!/bin/sh\nexit 0\n").unwrap();
+    let output = kinbase(
+        &world,
+        &["ingest", "claude_jsonl", &transcripts.display().to_string(), "--repo", &world.repo.display().to_string()],
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("status: ingested"), "{stdout}\n{stderr}");
+    assert!(stderr.contains("warning: Personal Kindex hand-off failed"), "{stdout}\n{stderr}");
+}

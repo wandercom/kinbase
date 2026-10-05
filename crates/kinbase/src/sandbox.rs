@@ -1109,6 +1109,20 @@ mod descriptor_enumeration_tests {
     use super::*;
     use std::os::fd::AsRawFd;
 
+    /// The first of the descriptor numbers these tests pin: high enough that
+    /// nothing else in the test process uses them, and below the soft
+    /// RLIMIT_NOFILE (1,024 on many systems), where dup2 would fail.
+    fn slot(offset: i32) -> i32 {
+        let mut limit = libc::rlimit { rlim_cur: 0, rlim_max: 0 };
+        // SAFETY: getrlimit writes into the struct it is given.
+        let soft = if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } == 0 {
+            limit.rlim_cur.min(65_536) as i32
+        } else {
+            1_024
+        };
+        (soft - 80).min(3_901) + offset
+    }
+
     /// Tests run in parallel threads that open and close descriptors, so each
     /// case pins its descriptor at a high number nothing else uses, and the
     /// numbers around it, which nothing opens, must read as closed.
@@ -1132,26 +1146,26 @@ mod descriptor_enumeration_tests {
     fn enumeration_sees_open_files_directories_pipes_sockets_and_devices() {
         let dir = tempfile::tempdir().unwrap();
         let file = std::fs::File::create(dir.path().join("f")).unwrap();
-        check("file", file.as_raw_fd(), 3_901);
+        check("file", file.as_raw_fd(), slot(0));
         let directory = std::fs::File::open(dir.path()).unwrap();
-        check("directory", directory.as_raw_fd(), 3_911);
+        check("directory", directory.as_raw_fd(), slot(10));
         let mut pipe = [0i32; 2];
         // SAFETY: pipe writes two descriptors into the array.
         assert_eq!(unsafe { libc::pipe(pipe.as_mut_ptr()) }, 0);
-        check("pipe read end", pipe[0], 3_921);
-        check("pipe write end", pipe[1], 3_931);
+        check("pipe read end", pipe[0], slot(20));
+        check("pipe write end", pipe[1], slot(30));
         // SAFETY: closing the pipe's own descriptors.
         unsafe {
             libc::close(pipe[0]);
             libc::close(pipe[1]);
         }
         let (left, right) = std::os::unix::net::UnixStream::pair().unwrap();
-        check("socket", left.as_raw_fd(), 3_941);
+        check("socket", left.as_raw_fd(), slot(40));
         drop(right);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        check("listening socket", listener.as_raw_fd(), 3_951);
+        check("listening socket", listener.as_raw_fd(), slot(50));
         let device = std::fs::File::open("/dev/null").unwrap();
-        check("device", device.as_raw_fd(), 3_961);
+        check("device", device.as_raw_fd(), slot(60));
     }
 
     #[test]

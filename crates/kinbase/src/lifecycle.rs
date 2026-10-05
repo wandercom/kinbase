@@ -18,7 +18,7 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-const MAX_FILE_BYTES: usize = 1024 * 1024;
+pub(crate) const MAX_FILE_BYTES: usize = 1024 * 1024;
 const MAX_DIRECTORY_BYTES: usize = 128 * 1024 * 1024;
 /// Default private raw-session retention in proof roots (verification
 /// "Operational limits": 24 hours).

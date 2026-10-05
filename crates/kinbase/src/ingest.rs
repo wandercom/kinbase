@@ -841,6 +841,21 @@ pub fn ingest(
         println!("fact_count: {fact_count}");
         println!("idempotent_count: {skipped}");
         println!("store: {}", store_name(store));
+        // The hand-off to the Personal Kindex is reported here too: a failure
+        // keeps the journal record, but must not pass silently.
+        if let Some(handoff) = result.get("personal_kindex") {
+            match handoff.get("error") {
+                Some(error) => eprintln!(
+                    "warning: Personal Kindex hand-off failed ({}): {}",
+                    error["code"].as_str().unwrap_or("error"),
+                    error["message"].as_str().unwrap_or("unknown")
+                ),
+                None => println!(
+                    "personal_kindex_conversations: {}",
+                    handoff["conversations"].as_u64().unwrap_or(0)
+                ),
+            }
+        }
     }
     Ok(())
 }

@@ -87,6 +87,15 @@ TEXT [--as-of DATE]` answers the principal's own question from it through
 `kin ask`. Both run where the Personal root is held; nothing either reads or
 returns enters a shared store, a projection or a hook.
 
+**Kindex version.** This needs a Kindex with `kin ingest conversations` (with
+`expires`, `retracted` and `--limit 0`), `kin digest` and `kin ask --as-of` /
+`--context-file`. No Kindex release has them yet: they are in
+[wandercom/kindex#73](https://github.com/wandercom/kindex/pull/73), which must
+merge first. Until a release ships them, install Kindex from that branch, point
+`kindex_executable` at its `kin`, and pin it with `shasum -a 256 "$(command -v kin)"`;
+a Kindex upgrade changes the digest, and Kinbase refuses a `kin` that no longer
+matches its pin.
+
 - The hand-off exports the ingest scan's records, so the scan's bounds apply
   (an oversized transcript is skipped, an oversized directory refused).
 - A transcript is one conversation per calendar day its messages carry, with an
@@ -94,9 +103,13 @@ returns enters a shared store, a projection or a hook.
 - Each transcript is kept for its retention: a `.retention` sidecar's
   `private_retention_seconds`, else `kindex_retention_seconds`, else the
   24-hour private raw-session default, counted from its last change. Kindex is
-  told the expiry; a ledger under the Personal root retracts a conversation (and
-  everything Kindex derived from it) once its retention passes, or when its
-  transcript is gone from a source that is ingested again.
+  told the day the retention ends (it expires by calendar day); a ledger under
+  the Personal root keeps the exact deadline and retracts a conversation (and
+  everything Kindex derived from it) once it passes, at the next hand-off or
+  `recall`, or when its transcript is emptied or gone from a source that is
+  ingested again. The ledger is locked while a hand-off or purge runs.
+- A hand-off that fails keeps the journal record and is reported (a warning on
+  stderr in text mode, `personal_kindex.error` in JSON).
 - The Personal root is checked before every Kindex run: not a symlink, owned by
   the effective user, mode 0700. Staging files are written under it, mode 0600.
 - In a certified repository, recall also makes a read-only projection for the

@@ -36,6 +36,7 @@ use std::path::{Path, PathBuf};
 
 const HANDOFF_DIR: &str = ".kinbase-handoff";
 const LEDGER_FILE: &str = "conversations.json";
+const LEDGER_LOCK: &str = "conversations.lock";
 const LEDGER_LIMIT: usize = 64 * 1024 * 1024;
 const DAY_SECONDS: i64 = 86_400;
 
@@ -153,6 +154,34 @@ struct LedgerEntry {
 
 type Ledger = BTreeMap<String, LedgerEntry>;
 
+/// An exclusive lock on the hand-off ledger, held from reading it to writing it
+/// back, so two hand-offs (or a hand-off and a purge) never overwrite each
+/// other's entries. Released when dropped.
+struct LedgerLock(std::fs::File);
+
+fn lock_ledger(dir: &Path) -> Result<LedgerLock, ContractError> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(dir.join(LEDGER_LOCK))
+        .map_err(|error| ContractError::io("Kindex hand-off ledger lock", error))?;
+    loop {
+        // SAFETY: flock on a descriptor this function owns.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
+            return Ok(LedgerLock(file));
+        }
+        let error = std::io::Error::last_os_error();
+        if error.kind() != std::io::ErrorKind::Interrupted {
+            return Err(ContractError::io("Kindex hand-off ledger lock", error));
+        }
+    }
+}
+
 /// What one hand-off sends to Kindex and the ledger it leaves.
 #[derive(Debug, Default)]
 struct Plan {
@@ -200,11 +229,11 @@ fn plan(
     records: &[SourceRecord],
     source: &Path,
     present: &BTreeSet<PathBuf>,
+    read: &BTreeSet<PathBuf>,
     mut ledger: Ledger,
     now: i64,
 ) -> Plan {
     let mut out = Plan::default();
-    let today = day_of_seconds(now);
     let mut by_file: BTreeMap<
         PathBuf,
         (
@@ -242,11 +271,12 @@ fn plan(
             .declared_retention_seconds
             .unwrap_or(default_retention);
         let deadline = origin.modified.unwrap_or(now).saturating_add(retention);
-        // Kindex expires by day and keeps a node through its expiry day, so the
-        // last day is the one before the deadline's: never kept past it.
-        let expires = day_of_seconds(deadline - DAY_SECONDS);
+        // Kindex expires by calendar day, so it is told the deadline's day; the
+        // ledger keeps the exact deadline, and `recall` and every hand-off
+        // retract a conversation once it passes.
+        let expires = day_of_seconds(deadline);
         let previous = ledger.remove(&base);
-        if deadline <= now || expires < today {
+        if deadline <= now {
             out.expired += 1;
             if let Some(previous) = previous {
                 retract(&mut out.entries, &previous.segments);
@@ -300,7 +330,9 @@ fn plan(
         if entry.deadline <= now {
             out.expired += 1;
             retract(&mut out.entries, &entry.segments);
-        } else if path.starts_with(&scope) && !present.contains(&path) {
+        } else if path.starts_with(&scope) && (!present.contains(&path) || read.contains(&path)) {
+            // Gone from the source, or read by this scan and no longer holding
+            // this conversation (emptied, or now another session).
             out.removed += 1;
             retract(&mut out.entries, &entry.segments);
         } else {
@@ -418,9 +450,13 @@ fn ingest(
                 false,
             )?;
         }
+        // Every staged entry is sent: without a limit Kindex caps an ingest at
+        // 50 conversations, and the ledger records the whole batch as delivered.
         let mut args = vec![
             "ingest".to_owned(),
             "conversations".to_owned(),
+            "--limit".to_owned(),
+            "0".to_owned(),
             "--directory".to_owned(),
         ];
         args.push(staging.to_string_lossy().into_owned());
@@ -450,17 +486,28 @@ pub fn hand_off(
     let now = seconds(now)?;
     let root = protect_root(data_root)?;
     let dir = handoff_dir(&root)?;
+    let _lock = lock_ledger(&dir)?;
     let ledger = load_ledger(&dir)?;
-    let present: BTreeSet<PathBuf> = crate::lifecycle::source_files(source)
+    let files: Vec<PathBuf> = crate::lifecycle::source_files(source)
         .unwrap_or_default()
         .into_iter()
         .filter(|path| path.to_str().is_some_and(|name| name.ends_with(".jsonl")))
-        .map(|path| canonical(&path))
+        .collect();
+    let present: BTreeSet<PathBuf> = files.iter().map(|path| canonical(path)).collect();
+    // The transcripts this scan read in full (one over the per-file bound is
+    // skipped, so its earlier conversations stand).
+    let read: BTreeSet<PathBuf> = files
+        .iter()
+        .filter(|path| {
+            std::fs::metadata(path)
+                .is_ok_and(|meta| meta.len() as usize <= crate::lifecycle::MAX_FILE_BYTES)
+        })
+        .map(|path| canonical(path))
         .collect();
     let default_retention = cfg
         .retention_seconds
         .unwrap_or(crate::lifecycle::PRIVATE_RAW_RETENTION_SECONDS);
-    let plan = plan(default_retention, records, source, &present, ledger, now);
+    let plan = plan(default_retention, records, source, &present, &read, ledger, now);
     let receipt = json!({
         "conversations": plan.conversations,
         "transcripts": plan.transcripts,
@@ -489,6 +536,7 @@ fn purge_expired(
     dir: &Path,
     now: i64,
 ) -> Result<usize, ContractError> {
+    let _lock = lock_ledger(dir)?;
     let ledger = load_ledger(dir)?;
     let (due, kept): (Ledger, Ledger) = ledger
         .into_iter()
@@ -752,7 +800,7 @@ mod tests {
         }
         let records = vec![record(&a, LINE, NOW, None), record(&b, LINE, NOW, None)];
         let present = [canonical(&a), canonical(&b)].into_iter().collect();
-        let out = plan(86_400, &records, dir.path(), &present, Ledger::new(), NOW);
+        let out = plan(86_400, &records, dir.path(), &present, &BTreeSet::new(), Ledger::new(), NOW);
         let ids: BTreeSet<&str> = out
             .entries
             .iter()
@@ -769,18 +817,19 @@ mod tests {
         let path = dir.path().join("s.jsonl");
         std::fs::write(&path, LINE).unwrap();
         let present = [canonical(&path)].into_iter().collect();
-        // Kept for 30 days from its last change: Kindex is told the last day.
+        // Kept for 30 days from its last change: Kindex is told the deadline's day.
         let fresh = plan(
             30 * 86_400,
             &[record(&path, LINE, NOW, None)],
             dir.path(),
             &present,
+            &BTreeSet::new(),
             Ledger::new(),
             NOW,
         );
         assert_eq!(
             fresh.entries[0]["expires"],
-            day_of_seconds(NOW + 29 * 86_400)
+            day_of_seconds(NOW + 30 * 86_400)
         );
         // A sidecar's declared retention wins over the configured one.
         let declared = plan(
@@ -788,12 +837,13 @@ mod tests {
             &[record(&path, LINE, NOW, Some(3 * 86_400))],
             dir.path(),
             &present,
+            &BTreeSet::new(),
             Ledger::new(),
             NOW,
         );
         assert_eq!(
             declared.entries[0]["expires"],
-            day_of_seconds(NOW + 2 * 86_400)
+            day_of_seconds(NOW + 3 * 86_400)
         );
         // Later, past retention: the same transcript is retracted, not resent.
         let later = NOW + 31 * 86_400;
@@ -802,6 +852,7 @@ mod tests {
             &[record(&path, LINE, NOW, None)],
             dir.path(),
             &present,
+            &BTreeSet::new(),
             fresh.ledger.clone(),
             later,
         );
@@ -816,6 +867,7 @@ mod tests {
             30 * 86_400,
             &[],
             Path::new("/elsewhere"),
+            &BTreeSet::new(),
             &BTreeSet::new(),
             fresh.ledger,
             later,
@@ -835,6 +887,7 @@ mod tests {
             &[record(&path, LINE, NOW, None)],
             dir.path(),
             &present,
+            &BTreeSet::new(),
             Ledger::new(),
             NOW,
         );
@@ -843,6 +896,7 @@ mod tests {
             86_400 * 30,
             &[],
             Path::new("/elsewhere"),
+            &BTreeSet::new(),
             &BTreeSet::new(),
             first.ledger.clone(),
             NOW,
@@ -853,6 +907,7 @@ mod tests {
             86_400 * 30,
             &[],
             dir.path(),
+            &BTreeSet::new(),
             &BTreeSet::new(),
             first.ledger,
             NOW,
@@ -882,6 +937,7 @@ mod tests {
             &[record(&path, LINE, NOW, None)],
             dir.path(),
             &present,
+            &BTreeSet::new(),
             ledger,
             NOW,
         );
@@ -935,6 +991,7 @@ mod tests {
             &scan.records,
             dir.path(),
             &present,
+            &BTreeSet::new(),
             Ledger::new(),
             NOW,
         );
@@ -1084,7 +1141,7 @@ mod tests {
         let body = concat!(
             "#!/bin/sh\n",
             "case \"$1\" in\n",
-            "ingest) mkdir -p \"$6/received\" && cp \"$4\"/*.json \"$6/received/\" && ls -ld \"$4\" > \"$6/staging-mode\" ;;\n",
+            "ingest) [ \"$3 $4\" = \"--limit 0\" ] || exit 9; mkdir -p \"$8/received\" && cp \"$6\"/*.json \"$8/received/\" && ls -ld \"$6\" > \"$8/staging-mode\" ;;\n",
             "digest) echo digest >> \"$3/digests\" ;;\n",
             "ask) if [ \"$4\" = --context-file ]; then cat \"$5\"; fi ;;\n",
             "esac\n",
@@ -1179,10 +1236,84 @@ mod tests {
         )
         .unwrap();
         assert_eq!(answer, "[ratified ruling] Use the ledger.");
+        // Nothing is left behind but the (empty) ledger lock.
         let leftovers: Vec<_> = std::fs::read_dir(root.join(HANDOFF_DIR))
             .unwrap()
             .flatten()
+            .filter(|entry| entry.file_name() != LEDGER_LOCK)
             .collect();
         assert!(leftovers.is_empty(), "{leftovers:?}");
+    }
+
+    #[test]
+    fn an_emptied_transcript_is_retracted_and_an_oversized_one_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        std::fs::write(&path, LINE).unwrap();
+        let present: BTreeSet<PathBuf> = [canonical(&path)].into_iter().collect();
+        let first = plan(
+            86_400 * 30,
+            &[record(&path, LINE, NOW, None)],
+            dir.path(),
+            &present,
+            &present,
+            Ledger::new(),
+            NOW,
+        );
+        // Truncated to nothing: still present, read, and no records.
+        std::fs::write(&path, "").unwrap();
+        let emptied = plan(86_400 * 30, &[], dir.path(), &present, &present, first.ledger.clone(), NOW);
+        assert_eq!(emptied.removed, 1);
+        assert_eq!(emptied.entries[0]["retracted"], true);
+        // Grown past the per-file bound: present but not read, so its earlier
+        // conversation stands.
+        let oversized = plan(86_400 * 30, &[], dir.path(), &present, &BTreeSet::new(), first.ledger, NOW);
+        assert!(oversized.entries.is_empty() && oversized.ledger.len() == 1);
+    }
+
+    #[test]
+    fn a_transcript_inside_its_retention_is_sent() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        std::fs::write(&path, LINE).unwrap();
+        let present: BTreeSet<PathBuf> = [canonical(&path)].into_iter().collect();
+        // Default 24-hour retention, changed 20 hours ago: kept, expiring on
+        // its deadline's day.
+        let twenty_hours_ago = NOW - 20 * 3600;
+        let out = plan(86_400, &[record(&path, LINE, twenty_hours_ago, None)], dir.path(), &present,
+                       &present, Ledger::new(), NOW);
+        assert_eq!(out.transcripts, 1, "{:?}", out.entries);
+        assert_eq!(out.entries[0]["expires"], day_of_seconds(twenty_hours_ago + 86_400));
+        // A one-hour retention on a fresh transcript is sent too.
+        let short = plan(3600, &[record(&path, LINE, NOW, None)], dir.path(), &present, &present,
+                         Ledger::new(), NOW);
+        assert_eq!(short.transcripts, 1);
+    }
+
+    #[test]
+    fn concurrent_hand_offs_keep_each_others_ledger_entries() {
+        let base = tempfile::TempDir::new_in(verified_base()).unwrap();
+        let cfg = fake_kindex(base.path(), Some(30 * 86_400));
+        let root = base.path().join("personal");
+        let now = crate::time::now_rfc3339_millis();
+        let sources: Vec<PathBuf> = (0..6)
+            .map(|i| {
+                let source = base.path().join(format!("source-{i}"));
+                std::fs::create_dir(&source).unwrap();
+                std::fs::write(source.join("s.jsonl"), LINE.replace("sess-1", &format!("sess-{i}"))).unwrap();
+                source
+            })
+            .collect();
+        std::thread::scope(|scope| {
+            for source in &sources {
+                let (cfg, root, now) = (&cfg, &root, &now);
+                scope.spawn(move || {
+                    let scan = crate::lifecycle::scan_transcripts("claude_jsonl", source, now).unwrap();
+                    hand_off(cfg, root, source, &scan.records, now).unwrap();
+                });
+            }
+        });
+        let ledger = load_ledger(&root.join(HANDOFF_DIR)).unwrap();
+        assert_eq!(ledger.len(), 6, "{:?}", ledger.keys().collect::<Vec<_>>());
     }
 }

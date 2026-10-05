@@ -1472,22 +1472,26 @@ fn stem(word: &str) -> String {
     let w = word;
     let n = w.len();
     let cut = |k: usize| w[..n - k].to_owned();
-    if n > 4 && w.ends_with("ies") {
-        return format!("{}y", &w[..n - 3]);
+    let stripped = if n > 4 && (w.ends_with("ies") || w.ends_with("ied")) {
+        format!("{}y", &w[..n - 3])
+    } else if n > 5 && w.ends_with("ing") {
+        cut(3)
+    } else if n > 4 && w.ends_with("ed") && !w.ends_with("eed") {
+        cut(2)
+    } else if n > 4 && (w.ends_with("sses") || w.ends_with("xes") || w.ends_with("ches") || w.ends_with("shes")) {
+        cut(2)
+    } else if n > 3 && w.ends_with('s') && !w.ends_with("ss") && !w.ends_with("us") && !w.ends_with("is") {
+        cut(1)
+    } else {
+        w.to_owned()
+    };
+    // A silent final e goes too, so "validate", "validates", "validated" and
+    // "validating" all reduce to "validat".
+    if stripped.len() > 3 && stripped.ends_with('e') && !stripped.ends_with("ee") {
+        stripped[..stripped.len() - 1].to_owned()
+    } else {
+        stripped
     }
-    if n > 5 && w.ends_with("ing") {
-        return cut(3);
-    }
-    if n > 4 && w.ends_with("ed") && !w.ends_with("eed") {
-        return cut(2);
-    }
-    if n > 4 && (w.ends_with("sses") || w.ends_with("xes") || w.ends_with("ches") || w.ends_with("shes")) {
-        return cut(2);
-    }
-    if n > 3 && w.ends_with('s') && !w.ends_with("ss") && !w.ends_with("us") && !w.ends_with("is") {
-        return cut(1);
-    }
-    w.to_owned()
 }
 
 impl EvalCache {
@@ -2717,5 +2721,24 @@ mod set_fold_differential_tests {
             }
         }
         assert!(compared > 2_000);
+    }
+}
+
+#[cfg(test)]
+mod stem_tests {
+    use super::stem;
+
+    #[test]
+    fn inflections_of_one_verb_share_a_stem() {
+        for group in [
+            ["validate", "validates", "validated", "validating"],
+            ["cache", "caches", "cached", "caching"],
+            ["retry", "retries", "retried", "retrying"],
+        ] {
+            let stems: std::collections::BTreeSet<String> = group.iter().map(|w| stem(w)).collect();
+            assert_eq!(stems.len(), 1, "{group:?} -> {stems:?}");
+        }
+        assert_eq!(stem("free"), "free");
+        assert_eq!(stem("status"), "status");
     }
 }

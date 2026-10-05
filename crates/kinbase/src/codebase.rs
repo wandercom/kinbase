@@ -215,20 +215,30 @@ pub struct Repository {
 /// observation discovers the repository for every admission, and each answer
 /// cost two Git processes. Where a worktree lives does not change while one
 /// command runs; `.kin/config` and `HEAD` are still read fresh every time.
+///
+/// The cache is keyed by the resolved path, so a symlink retargeted to another
+/// repository is looked up afresh, and the common directory is stored resolved
+/// and absolute, never relative to a path that may since point elsewhere.
 fn worktree_location(start: &Path) -> Result<(String, String), ContractError> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     static KNOWN: OnceLock<Mutex<HashMap<PathBuf, (String, String)>>> = OnceLock::new();
     let known = KNOWN.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(found) = known.lock().ok().and_then(|map| map.get(start).cloned()) {
+    let key = std::fs::canonicalize(start).unwrap_or_else(|_| start.to_path_buf());
+    if let Some(found) = known.lock().ok().and_then(|map| map.get(&key).cloned()) {
         return Ok(found);
     }
-    let found = (
-        git(start, &["rev-parse", "--show-toplevel"])?,
-        git(start, &["rev-parse", "--git-common-dir"])?,
-    );
+    let root = git(&key, &["rev-parse", "--show-toplevel"])?;
+    let common = git(&key, &["rev-parse", "--git-common-dir"])?;
+    let common = if Path::new(&common).is_absolute() {
+        PathBuf::from(&common)
+    } else {
+        key.join(&common)
+    };
+    let common = common.canonicalize().unwrap_or(common);
+    let found = (root, common.to_string_lossy().into_owned());
     if let Ok(mut map) = known.lock() {
-        map.insert(start.to_path_buf(), found.clone());
+        map.insert(key, found.clone());
     }
     Ok(found)
 }
@@ -1455,5 +1465,41 @@ pub fn compare_event_sets(local: &BTreeSet<String>, published: &BTreeSet<String>
         "subset"
     } else {
         "incomparable"
+    }
+}
+
+#[cfg(test)]
+mod worktree_location_tests {
+    use super::*;
+
+    fn init(dir: &Path) {
+        let out = Command::new("git")
+            .args(["init", "-q"])
+            .arg(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+    }
+
+    #[test]
+    fn a_retargeted_repository_symlink_is_looked_up_afresh() {
+        let base = tempfile::tempdir().unwrap();
+        let (a, b) = (base.path().join("a"), base.path().join("b"));
+        for dir in [&a, &b] {
+            std::fs::create_dir(dir).unwrap();
+            init(dir);
+        }
+        let link = base.path().join("repo");
+        std::os::unix::fs::symlink(&a, &link).unwrap();
+        let (root_a, common_a) = worktree_location(&link).unwrap();
+        assert_eq!(Path::new(&root_a).canonicalize().unwrap(), a.canonicalize().unwrap());
+        assert!(Path::new(&common_a).is_absolute());
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&b, &link).unwrap();
+        let (root_b, common_b) = worktree_location(&link).unwrap();
+        assert_eq!(Path::new(&root_b).canonicalize().unwrap(), b.canonicalize().unwrap());
+        assert!(Path::new(&common_b).starts_with(b.canonicalize().unwrap()), "{common_b}");
     }
 }
