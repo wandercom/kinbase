@@ -108,15 +108,31 @@ matches its pin.
   everything Kindex derived from it) once it passes, at the next hand-off or
   `recall`, or when its transcript is emptied or gone from a source that is
   ingested again. The ledger is locked while a hand-off or purge runs.
+- A hand-off reconciles only against what its own scan listed and read, and
+  the ledger records when each conversation's scan began: a scan that started
+  before another hand-off stored a conversation neither re-sends nor retracts it.
+- Historical Personal text reaches a model only through a processor the
+  principal has authorized, as `spec/threat-model.md` requires. Kinbase reads
+  the processors Kindex would use from `kindex_config` (which must then be JSON;
+  Kindex reads JSON as YAML): the LLM when `llm.enabled`, and the embedding
+  provider unless it is `local` or `none`. With no `kindex_env`, Kindex has no
+  credentials and stays local. Every processor must be named in
+  `kindex_processors`, else `recall` refuses with `PROCESSOR_UNAUTHORIZED` and
+  the hand-off stores the conversations but skips `kin digest`
+  (`personal_kindex.digest_refused`). Storing a conversation makes no model call.
+  The recall receipt lists the processors and the SHA-256 of the question and
+  team statements Kinbase handed Kindex.
 - A hand-off that fails keeps the journal record and is reported (a warning on
   stderr in text mode, `personal_kindex.error` in JSON).
 - The Personal root is checked before every Kindex run: not a symlink, owned by
   the effective user, mode 0700. Staging files are written under it, mode 0600.
-- In a certified repository, recall also makes a read-only projection for the
-  question: it raises no question to an owner and logs nothing. A withheld
-  projection passes no shared statement, only a note that team guidance is
-  pending; a released statement keeps its role, kind, store, standing,
-  provenance and governed paths, and a stale authority snapshot is stated.
+- With `kindex_team_knowledge = true`, in a certified repository, recall also
+  makes a read-only projection for the question and passes its released
+  statements to the same processors (it is off by default). The projection
+  raises no question to an owner and logs nothing. A withheld projection passes
+  no shared statement, only a note that team guidance is pending; a released
+  statement keeps its role, kind, store, standing, provenance and governed
+  paths, and a stale authority snapshot is stated.
 - Kindex runs under the classifier's executable rules (absolute path, owner,
   mode, directory chain, pinned SHA-256) with a scrubbed environment.
 
@@ -126,7 +142,10 @@ data_root = "/private/example/kindex"
 kindex_executable = "/opt/example/bin/kin"
 kindex_executable_sha256 = "<sha256 of that file>"
 kindex_env = ["OPENAI_API_KEY"]          # passed through; everything else is scrubbed
-kindex_config = "/private/example/kin.yaml"
+kindex_config = "/private/example/kin.json"
+kindex_processors = ["openai:gpt-6-luna"] # each authorized for historical Personal data;
+                                          # kin.json sets embedding.provider "local"
+kindex_team_knowledge = false             # pass projected team statements to recall
 kindex_digest = true                      # run `kin digest` after each hand-off
 kindex_retention_seconds = 7776000        # keep handed-off transcripts 90 days
 ```

@@ -254,37 +254,42 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
                     "Configure kindex_executable and kindex_executable_sha256 under [personal].",
                 ));
             };
-            // In a certified repository, the shared facts a projection releases
-            // for the question go with it: "why did we choose X" is answered
-            // from signed Company and Codebase knowledge as well as the
-            // principal's own conversations. Elsewhere, Personal alone. The
-            // projection is read-only: the question is Personal, so it raises
-            // no question to an owner and is not logged, and a withheld
-            // projection releases nothing.
-            let repo = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let team = resolve_as_of(&launcher, &repo, None)
-                .and_then(|projection_as_of| {
-                    crate::projector::project_with(
-                        &launcher,
-                        &repo,
-                        &question,
-                        &question,
-                        &[],
-                        &[],
-                        &projection_as_of,
-                        crate::projector::Recording::ReadOnly,
-                    )
-                })
-                .map(|projection| {
-                    let statements = projection
-                        .selected
-                        .iter()
-                        .map(|fact| (fact.fact_id.clone(), fact.statement.clone()))
-                        .collect();
-                    crate::personal_kindex::team_knowledge(&projection.result, &statements)
-                })
-                .unwrap_or_default();
-            let answer = crate::personal_kindex::recall(
+            // In a certified repository, and only when the configuration asks
+            // for it (they go to the same processor as the question), the team
+            // facts a read-only projection releases go with the question. The
+            // projection raises no question to an owner and logs nothing, and a
+            // withheld projection releases nothing.
+            let team = if kindex.team_knowledge {
+                let repo = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+                resolve_as_of(&launcher, &repo, None)
+                    .and_then(|projection_as_of| {
+                        crate::projector::project_with(
+                            &launcher,
+                            &repo,
+                            &question,
+                            &question,
+                            &[],
+                            &[],
+                            &projection_as_of,
+                            crate::projector::Recording::ReadOnly,
+                        )
+                    })
+                    .map(|projection| {
+                        let statements = projection
+                            .selected
+                            .iter()
+                            .map(|fact| (fact.fact_id.clone(), fact.statement.clone()))
+                            .collect();
+                        crate::personal_kindex::team_knowledge(&projection.result, &statements)
+                    })
+                    .unwrap_or_default()
+            } else {
+                crate::personal_kindex::TeamKnowledge {
+                    report: serde_json::json!({"projection_state": "not_requested"}),
+                    ..Default::default()
+                }
+            };
+            let recalled = crate::personal_kindex::recall(
                 kindex,
                 &user.personal.data_root,
                 &question,
@@ -298,7 +303,9 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
                     "store": "personal",
                     "team_facts": team.facts,
                     "team": team.report,
-                    "answer": answer
+                    "processors": recalled.processors,
+                    "sent_sha256": recalled.sent_sha256,
+                    "answer": recalled.answer
                 }),
                 json,
             );

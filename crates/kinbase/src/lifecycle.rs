@@ -144,6 +144,21 @@ pub struct SourceScan {
     pub present_elsewhere: BTreeMap<String, String>,
     /// Where the next page of a windowed source starts, when there is one.
     pub next_checkpoint: Option<String>,
+    /// For host transcripts: what this scan saw, and when it began, so a
+    /// hand-off reconciles against the scan itself rather than the files as
+    /// they are by the time it runs.
+    pub transcripts: Option<TranscriptScan>,
+}
+
+/// The transcript files one scan listed and read, and when it started.
+#[derive(Debug, Default, Clone)]
+pub struct TranscriptScan {
+    /// Wall-clock nanoseconds since the Unix epoch at the start of the scan.
+    pub started_at_nanos: i128,
+    /// Every transcript file the scan listed, read or skipped.
+    pub listed: Vec<PathBuf>,
+    /// The transcript files it read in full (an oversized one is not read).
+    pub read: Vec<PathBuf>,
 }
 
 impl SourceScan {
@@ -427,6 +442,13 @@ pub(crate) fn scan_transcripts(
     let now_seconds = parse_rfc3339_millis(now)
         .map(|value| value.timestamp())
         .unwrap_or(0);
+    let mut seen = TranscriptScan {
+        started_at_nanos: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos() as i128)
+            .unwrap_or(0),
+        ..TranscriptScan::default()
+    };
     for path in source_files(source)? {
         let name = path
             .file_name()
@@ -436,6 +458,7 @@ pub(crate) fn scan_transcripts(
             continue;
         }
         let stem = name.trim_end_matches(".jsonl").to_owned();
+        seen.listed.push(path.clone());
         // One long session is not a reason to read none of the others.
         if std::fs::metadata(&path).map_err(io_error)?.len() as usize > MAX_FILE_BYTES {
             scan.skip(format!(
@@ -445,6 +468,7 @@ pub(crate) fn scan_transcripts(
         }
         let bytes = read_bounded(&path)?;
         check_budget(&mut scan, bytes.len())?;
+        seen.read.push(path.clone());
         scan.unit_ids.insert(stem.clone());
         // Private raw retention: a sidecar may declare the retention that
         // applies to this transcript; the default is the proof-root bound.
@@ -554,6 +578,7 @@ pub(crate) fn scan_transcripts(
             scan.records.push(record);
         }
     }
+    scan.transcripts = Some(seen);
     Ok(scan)
 }
 

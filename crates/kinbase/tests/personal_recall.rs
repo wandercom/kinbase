@@ -125,6 +125,10 @@ fn fact(repository_uuid: &str, statement: &str) -> kinbase::model::FactEvent {
 /// config whose Personal Kindex is a pinned fake that records what it is asked
 /// and the team knowledge it is given.
 fn world(blocked: bool) -> World {
+    world_with(blocked, true)
+}
+
+fn world_with(blocked: bool, team_knowledge: bool) -> World {
     let root = TempDir::new_in(verified_base()).expect("temporary root");
     let home = root.path().join("home");
     let config_home = root.path().join("config-home");
@@ -155,10 +159,11 @@ fn world(blocked: bool) -> World {
     private_write(
         &kinbase_config.join("config.toml"),
         format!(
-            "schema_version = \"1\"\n\n[personal]\ndata_root = {}\nkindex_executable = {}\nkindex_executable_sha256 = \"{}\"\n\n[company]\nurl = \"http://127.0.0.1:1\"\nfacts_token_file = {}\nroot_public_key_file = {}\ncache_root = {}\n",
+            "schema_version = \"1\"\n\n[personal]\ndata_root = {}\nkindex_executable = {}\nkindex_executable_sha256 = \"{}\"\nkindex_team_knowledge = {}\n\n[company]\nurl = \"http://127.0.0.1:1\"\nfacts_token_file = {}\nroot_public_key_file = {}\ncache_root = {}\n",
             quoted(&personal),
             quoted(&kin),
             kinbase::hash::sha256_bytes(body.as_bytes()),
+            team_knowledge,
             quoted(&kinbase_config.join("facts.token")),
             quoted(&kinbase_config.join("root-public.key")),
             quoted(&cache_root)
@@ -454,5 +459,21 @@ fn a_failed_kindex_hand_off_is_reported_in_text_output() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.contains("status: ingested"), "{stdout}\n{stderr}");
-    assert!(stderr.contains("warning: Personal Kindex hand-off failed"), "{stdout}\n{stderr}");
+    assert!(
+        stderr.contains("warning: Personal Kindex hand-off failed"),
+        "{stdout}\n{stderr}"
+    );
+}
+
+#[test]
+fn without_team_knowledge_recall_projects_nothing() {
+    let world = world_with(false, false);
+    let receipt = recall(&world, "scheduler diagnosis wire format migration");
+    assert_eq!(
+        receipt["team"]["projection_state"], "not_requested",
+        "{receipt}"
+    );
+    assert_eq!(receipt["team_facts"], 0);
+    assert_eq!(receipt["processors"], serde_json::json!([]));
+    assert!(!world.personal.join("team").exists());
 }

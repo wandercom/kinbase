@@ -38,7 +38,6 @@ const HANDOFF_DIR: &str = ".kinbase-handoff";
 const LEDGER_FILE: &str = "conversations.json";
 const LEDGER_LOCK: &str = "conversations.lock";
 const LEDGER_LIMIT: usize = 64 * 1024 * 1024;
-const DAY_SECONDS: i64 = 86_400;
 
 /// One transcript line (Claude Code or Codex JSON Lines) as a Kindex message,
 /// with the line's timestamp. `None` for a line with no message text.
@@ -150,6 +149,11 @@ struct LedgerEntry {
     deadline: i64,
     /// The Kindex conversation ids it was handed over as.
     segments: Vec<String>,
+    /// When the scan that last handed it over began (Unix nanoseconds). A scan
+    /// that began earlier saw an older state of the source and must not undo
+    /// what this one did.
+    #[serde(default)]
+    seen_at: i128,
 }
 
 type Ledger = BTreeMap<String, LedgerEntry>;
@@ -157,7 +161,9 @@ type Ledger = BTreeMap<String, LedgerEntry>;
 /// An exclusive lock on the hand-off ledger, held from reading it to writing it
 /// back, so two hand-offs (or a hand-off and a purge) never overwrite each
 /// other's entries. Released when dropped.
-struct LedgerLock(std::fs::File);
+struct LedgerLock {
+    _file: std::fs::File,
+}
 
 fn lock_ledger(dir: &Path) -> Result<LedgerLock, ContractError> {
     use std::os::fd::AsRawFd;
@@ -173,7 +179,7 @@ fn lock_ledger(dir: &Path) -> Result<LedgerLock, ContractError> {
     loop {
         // SAFETY: flock on a descriptor this function owns.
         if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
-            return Ok(LedgerLock(file));
+            return Ok(LedgerLock { _file: file });
         }
         let error = std::io::Error::last_os_error();
         if error.kind() != std::io::ErrorKind::Interrupted {
@@ -191,6 +197,8 @@ struct Plan {
     transcripts: usize,
     expired: usize,
     removed: usize,
+    /// Transcripts a later scan has already handed over, left as they are.
+    stale: usize,
 }
 
 fn canonical(path: &Path) -> PathBuf {
@@ -224,12 +232,14 @@ fn retract(entries: &mut Vec<Value>, segments: &[String]) {
 /// Plans a hand-off of `records` (one scan of `source`), given what the
 /// ledger says earlier hand-offs sent. `present` is every transcript file the
 /// source holds now, scanned or not, canonical.
+#[allow(clippy::too_many_arguments)]
 fn plan(
     default_retention: i64,
     records: &[SourceRecord],
     source: &Path,
     present: &BTreeSet<PathBuf>,
     read: &BTreeSet<PathBuf>,
+    scan_started: i128,
     mut ledger: Ledger,
     now: i64,
 ) -> Plan {
@@ -267,6 +277,15 @@ fn plan(
         });
         let base = conversation_base(path, session.as_deref());
         handled.insert(base.clone());
+        if ledger
+            .get(&base)
+            .is_some_and(|entry| entry.seen_at > scan_started)
+        {
+            // A later scan already handed this transcript over: this one read an
+            // older state of it and leaves that hand-off alone.
+            out.stale += 1;
+            continue;
+        }
         let retention = origin
             .declared_retention_seconds
             .unwrap_or(default_retention);
@@ -314,6 +333,7 @@ fn plan(
                 path: path.to_string_lossy().into_owned(),
                 deadline,
                 segments: ids,
+                seen_at: scan_started,
             },
         );
     }
@@ -330,6 +350,11 @@ fn plan(
         if entry.deadline <= now {
             out.expired += 1;
             retract(&mut out.entries, &entry.segments);
+        } else if entry.seen_at > scan_started {
+            // Handed over by a scan that began after this one: this scan's
+            // view of the source is older and cannot say it is gone.
+            out.stale += 1;
+            kept.insert(base, entry);
         } else if path.starts_with(&scope) && (!present.contains(&path) || read.contains(&path)) {
             // Gone from the source, or read by this scan and no longer holding
             // this conversation (emptied, or now another session).
@@ -398,6 +423,75 @@ fn save_ledger(dir: &Path, ledger: &Ledger) -> Result<(), ContractError> {
     let bytes =
         serde_json::to_vec(ledger).map_err(|error| ContractError::internal(error.to_string()))?;
     crate::paths::write_atomic(&dir.join(LEDGER_FILE), &bytes, 0o600, false).map(|_| ())
+}
+
+/// The off-machine processors a Kindex run could send Personal text to, read
+/// from Kindex's config: its LLM when enabled (`kin digest`, `kin ask`) and its
+/// embedding provider unless local. Kindex reads provider credentials only from
+/// its environment, which is scrubbed to the variables `kindex_env` names, so
+/// with none passed it can reach no provider. With some passed, `kindex_config`
+/// must be JSON (JSON is YAML to Kindex) so the processors can be read; without
+/// it Kindex's defaults apply (LLM off, Voyage embeddings).
+fn kindex_processors(cfg: &PersonalKindexConfig) -> Result<Vec<String>, ContractError> {
+    if cfg.env.is_empty() {
+        return Ok(Vec::new());
+    }
+    let config: Value = match &cfg.config {
+        None => json!({}),
+        Some(path) => {
+            let bytes = crate::paths::read_bounded(path, 1024 * 1024, "Kindex config")?;
+            serde_json::from_slice(&bytes).map_err(|_| {
+                ContractError::refused(
+                    "CONFIG_INVARIANT",
+                    "kindex_config is not JSON, so the processors Kindex would send Personal text to cannot be checked",
+                    "Write the Kindex config as JSON (Kindex reads JSON as YAML); nothing was sent.",
+                )
+            })?
+        }
+    };
+    let text = |section: &str, key: &str, default: &str| -> String {
+        config[section][key]
+            .as_str()
+            .unwrap_or(default)
+            .trim()
+            .to_owned()
+    };
+    let mut processors = Vec::new();
+    if config["llm"]["enabled"].as_bool().unwrap_or(false) {
+        processors.push(format!(
+            "{}:{}",
+            text("llm", "provider", "anthropic"),
+            text("llm", "model", "claude-haiku-4-5-20251001")
+        ));
+    }
+    let embedding = text("embedding", "provider", "voyage");
+    if !matches!(embedding.as_str(), "local" | "none" | "") {
+        let model = text("embedding", "model", "");
+        processors.push(format!(
+            "{embedding}:{}",
+            if model.is_empty() { "default" } else { &model }
+        ));
+    }
+    Ok(processors)
+}
+
+/// Refuses, before any Personal byte reaches Kindex for a model call, unless
+/// every processor that call could use is explicitly authorized
+/// (`[personal] kindex_processors`). Returns the processors, for the receipt.
+pub(crate) fn authorize(cfg: &PersonalKindexConfig) -> Result<Vec<String>, ContractError> {
+    let processors = kindex_processors(cfg)?;
+    if let Some(unauthorized) = processors.iter().find(|p| !cfg.processors.contains(p)) {
+        return Err(ContractError::integrity(
+            "PROCESSOR_UNAUTHORIZED",
+            format!(
+                "Kindex would send Personal-store text to the `{unauthorized}` processor, which [personal] kindex_processors does not authorize"
+            ),
+            format!(
+                "Name \"{unauthorized}\" in [personal] kindex_processors only if that provider, account and retention mode are authorized for historical Personal data, or configure Kindex to run locally; nothing was sent."
+            ),
+        ));
+    }
+    Ok(processors)
 }
 
 fn run(cfg: &PersonalKindexConfig, args: Vec<String>) -> Result<Vec<u8>, ContractError> {
@@ -480,7 +574,7 @@ pub fn hand_off(
     cfg: &PersonalKindexConfig,
     data_root: &Path,
     source: &Path,
-    records: &[SourceRecord],
+    scan: &crate::lifecycle::SourceScan,
     now: &str,
 ) -> Result<Value, ContractError> {
     let now = seconds(now)?;
@@ -488,43 +582,54 @@ pub fn hand_off(
     let dir = handoff_dir(&root)?;
     let _lock = lock_ledger(&dir)?;
     let ledger = load_ledger(&dir)?;
-    let files: Vec<PathBuf> = crate::lifecycle::source_files(source)
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|path| path.to_str().is_some_and(|name| name.ends_with(".jsonl")))
-        .collect();
-    let present: BTreeSet<PathBuf> = files.iter().map(|path| canonical(path)).collect();
-    // The transcripts this scan read in full (one over the per-file bound is
-    // skipped, so its earlier conversations stand).
-    let read: BTreeSet<PathBuf> = files
-        .iter()
-        .filter(|path| {
-            std::fs::metadata(path)
-                .is_ok_and(|meta| meta.len() as usize <= crate::lifecycle::MAX_FILE_BYTES)
-        })
-        .map(|path| canonical(path))
-        .collect();
+    // What the scan itself listed and read: the files as they are now may have
+    // changed since, and another hand-off may already have sent the change.
+    let seen = scan.transcripts.clone().unwrap_or_default();
+    let present: BTreeSet<PathBuf> = seen.listed.iter().map(|path| canonical(path)).collect();
+    let read: BTreeSet<PathBuf> = seen.read.iter().map(|path| canonical(path)).collect();
     let default_retention = cfg
         .retention_seconds
         .unwrap_or(crate::lifecycle::PRIVATE_RAW_RETENTION_SECONDS);
-    let plan = plan(default_retention, records, source, &present, &read, ledger, now);
-    let receipt = json!({
+    let plan = plan(
+        default_retention,
+        &scan.records,
+        source,
+        &present,
+        &read,
+        seen.started_at_nanos,
+        ledger,
+        now,
+    );
+    let mut receipt = json!({
         "conversations": plan.conversations,
         "transcripts": plan.transcripts,
         "retracted_expired": plan.expired,
         "retracted_removed": plan.removed,
-        "digested": cfg.digest && plan.conversations > 0
+        "stale": plan.stale,
+        "digested": false
     });
     if plan.entries.is_empty() {
         save_ledger(&dir, &plan.ledger)?;
         return Ok(receipt);
     }
+    // Storing the conversations is local to the Personal root; the digest
+    // sends them to a model, so it runs only for an authorized processor.
     ingest(cfg, &root, &dir, &plan.entries)?;
     save_ledger(&dir, &plan.ledger)?;
     if cfg.digest && plan.conversations > 0 {
-        let mut args = vec!["digest".to_owned()];
-        args.extend(common_args(cfg, &root));
-        run(cfg, args)?;
+        match authorize(cfg) {
+            Ok(processors) => {
+                let mut args = vec!["digest".to_owned()];
+                args.extend(common_args(cfg, &root));
+                run(cfg, args)?;
+                receipt["digested"] = json!(true);
+                receipt["processors"] = json!(processors);
+            }
+            Err(refused) => {
+                receipt["digest_refused"] =
+                    crate::output::error_document(&refused)["error"].clone();
+            }
+        }
     }
     Ok(receipt)
 }
@@ -558,6 +663,17 @@ fn purge_expired(
 /// per line, annotated) alongside it. Shared facts may flow into the Personal
 /// side; nothing flows back. Conversations past their retention are retracted
 /// first.
+/// A recall's answer and what was sent for it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Recalled {
+    pub answer: String,
+    /// The off-machine processors the answer could use (empty: local only).
+    pub processors: Vec<String>,
+    /// SHA-256 of what was handed to Kindex for this purpose: the question and
+    /// the team knowledge lines.
+    pub sent_sha256: String,
+}
+
 pub fn recall(
     cfg: &PersonalKindexConfig,
     data_root: &Path,
@@ -565,10 +681,12 @@ pub fn recall(
     as_of: Option<&str>,
     team: &[String],
     now: &str,
-) -> Result<String, ContractError> {
+) -> Result<Recalled, ContractError> {
     let root = protect_root(data_root)?;
     let dir = handoff_dir(&root)?;
+    // Retention is honoured whatever the processor: retractions carry no text.
     purge_expired(cfg, &root, &dir, seconds(now)?)?;
+    let processors = authorize(cfg)?;
     let mut args = vec!["ask".to_owned()];
     args.extend(common_args(cfg, &root));
     if let Some(as_of) = as_of {
@@ -592,7 +710,16 @@ pub fn recall(
     if let Some(path) = &team_file {
         let _ = std::fs::remove_file(path);
     }
-    Ok(String::from_utf8_lossy(&out?).trim().to_owned())
+    let mut sent = question.to_owned();
+    for item in team {
+        sent.push('\n');
+        sent.push_str(item);
+    }
+    Ok(Recalled {
+        answer: String::from_utf8_lossy(&out?).trim().to_owned(),
+        processors,
+        sent_sha256: crate::hash::sha256_text(&sent),
+    })
 }
 
 /// The shared knowledge a projection releases to recall, and what recall
@@ -800,7 +927,16 @@ mod tests {
         }
         let records = vec![record(&a, LINE, NOW, None), record(&b, LINE, NOW, None)];
         let present = [canonical(&a), canonical(&b)].into_iter().collect();
-        let out = plan(86_400, &records, dir.path(), &present, &BTreeSet::new(), Ledger::new(), NOW);
+        let out = plan(
+            86_400,
+            &records,
+            dir.path(),
+            &present,
+            &BTreeSet::new(),
+            0,
+            Ledger::new(),
+            NOW,
+        );
         let ids: BTreeSet<&str> = out
             .entries
             .iter()
@@ -824,6 +960,7 @@ mod tests {
             dir.path(),
             &present,
             &BTreeSet::new(),
+            0,
             Ledger::new(),
             NOW,
         );
@@ -838,6 +975,7 @@ mod tests {
             dir.path(),
             &present,
             &BTreeSet::new(),
+            0,
             Ledger::new(),
             NOW,
         );
@@ -853,6 +991,7 @@ mod tests {
             dir.path(),
             &present,
             &BTreeSet::new(),
+            0,
             fresh.ledger.clone(),
             later,
         );
@@ -869,6 +1008,7 @@ mod tests {
             Path::new("/elsewhere"),
             &BTreeSet::new(),
             &BTreeSet::new(),
+            0,
             fresh.ledger,
             later,
         );
@@ -888,6 +1028,7 @@ mod tests {
             dir.path(),
             &present,
             &BTreeSet::new(),
+            0,
             Ledger::new(),
             NOW,
         );
@@ -898,6 +1039,7 @@ mod tests {
             Path::new("/elsewhere"),
             &BTreeSet::new(),
             &BTreeSet::new(),
+            0,
             first.ledger.clone(),
             NOW,
         );
@@ -909,6 +1051,7 @@ mod tests {
             dir.path(),
             &BTreeSet::new(),
             &BTreeSet::new(),
+            0,
             first.ledger,
             NOW,
         );
@@ -929,6 +1072,7 @@ mod tests {
                 path: canonical(&path).to_string_lossy().into_owned(),
                 deadline: NOW + 86_400 * 30,
                 segments: vec![format!("{base}#2026-09-01"), format!("{base}#2026-10-03")],
+                seen_at: 0,
             },
         );
         let present = [canonical(&path)].into_iter().collect();
@@ -938,6 +1082,7 @@ mod tests {
             dir.path(),
             &present,
             &BTreeSet::new(),
+            0,
             ledger,
             NOW,
         );
@@ -992,6 +1137,7 @@ mod tests {
             dir.path(),
             &present,
             &BTreeSet::new(),
+            0,
             Ledger::new(),
             NOW,
         );
@@ -1157,6 +1303,8 @@ mod tests {
             timeout_seconds: 30,
             digest: true,
             retention_seconds,
+            processors: Vec::new(),
+            team_knowledge: true,
         }
     }
 
@@ -1186,7 +1334,7 @@ mod tests {
         let now = crate::time::now_rfc3339_millis();
         let scan = crate::lifecycle::scan_transcripts("claude_jsonl", &source, &now).unwrap();
 
-        let receipt = hand_off(&cfg, &root, &source, &scan.records, &now).unwrap();
+        let receipt = hand_off(&cfg, &root, &source, &scan, &now).unwrap();
         assert_eq!(receipt["conversations"], 1, "{receipt}");
         assert_eq!(
             std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
@@ -1234,7 +1382,8 @@ mod tests {
             &["[ratified ruling] Use the\nledger.".to_owned()],
             &crate::time::now_rfc3339_millis(),
         )
-        .unwrap();
+        .unwrap()
+        .answer;
         assert_eq!(answer, "[ratified ruling] Use the ledger.");
         // Nothing is left behind but the (empty) ledger lock.
         let leftovers: Vec<_> = std::fs::read_dir(root.join(HANDOFF_DIR))
@@ -1257,17 +1406,36 @@ mod tests {
             dir.path(),
             &present,
             &present,
+            0,
             Ledger::new(),
             NOW,
         );
         // Truncated to nothing: still present, read, and no records.
         std::fs::write(&path, "").unwrap();
-        let emptied = plan(86_400 * 30, &[], dir.path(), &present, &present, first.ledger.clone(), NOW);
+        let emptied = plan(
+            86_400 * 30,
+            &[],
+            dir.path(),
+            &present,
+            &present,
+            0,
+            first.ledger.clone(),
+            NOW,
+        );
         assert_eq!(emptied.removed, 1);
         assert_eq!(emptied.entries[0]["retracted"], true);
         // Grown past the per-file bound: present but not read, so its earlier
         // conversation stands.
-        let oversized = plan(86_400 * 30, &[], dir.path(), &present, &BTreeSet::new(), first.ledger, NOW);
+        let oversized = plan(
+            86_400 * 30,
+            &[],
+            dir.path(),
+            &present,
+            &BTreeSet::new(),
+            0,
+            first.ledger,
+            NOW,
+        );
         assert!(oversized.entries.is_empty() && oversized.ledger.len() == 1);
     }
 
@@ -1280,13 +1448,29 @@ mod tests {
         // Default 24-hour retention, changed 20 hours ago: kept, expiring on
         // its deadline's day.
         let twenty_hours_ago = NOW - 20 * 3600;
-        let out = plan(86_400, &[record(&path, LINE, twenty_hours_ago, None)], dir.path(), &present,
-                       &present, Ledger::new(), NOW);
+        let out = plan(
+            86_400,
+            &[record(&path, LINE, twenty_hours_ago, None)],
+            dir.path(),
+            &present,
+            &present,
+            0,
+            Ledger::new(),
+            NOW,
+        );
         assert_eq!(out.transcripts, 1, "{:?}", out.entries);
         assert_eq!(out.entries[0]["expires"], day_of_seconds(twenty_hours_ago + 86_400));
         // A one-hour retention on a fresh transcript is sent too.
-        let short = plan(3600, &[record(&path, LINE, NOW, None)], dir.path(), &present, &present,
-                         Ledger::new(), NOW);
+        let short = plan(
+            3600,
+            &[record(&path, LINE, NOW, None)],
+            dir.path(),
+            &present,
+            &present,
+            0,
+            Ledger::new(),
+            NOW,
+        );
         assert_eq!(short.transcripts, 1);
     }
 
@@ -1308,12 +1492,213 @@ mod tests {
             for source in &sources {
                 let (cfg, root, now) = (&cfg, &root, &now);
                 scope.spawn(move || {
-                    let scan = crate::lifecycle::scan_transcripts("claude_jsonl", source, now).unwrap();
-                    hand_off(cfg, root, source, &scan.records, now).unwrap();
+                    let scan =
+                        crate::lifecycle::scan_transcripts("claude_jsonl", source, now).unwrap();
+                    hand_off(cfg, root, source, &scan, now).unwrap();
                 });
             }
         });
         let ledger = load_ledger(&root.join(HANDOFF_DIR)).unwrap();
         assert_eq!(ledger.len(), 6, "{:?}", ledger.keys().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn an_older_scan_never_undoes_a_newer_hand_off() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        std::fs::write(&path, LINE).unwrap();
+        let file: BTreeSet<PathBuf> = [canonical(&path)].into_iter().collect();
+        let (older, newer) = (1_000, 2_000);
+        // The newer scan read the transcript with content and handed it over.
+        let handed = plan(
+            86_400 * 30,
+            &[record(&path, LINE, NOW, None)],
+            dir.path(),
+            &file,
+            &file,
+            newer,
+            Ledger::new(),
+            NOW,
+        );
+        assert_eq!(handed.transcripts, 1);
+        // An older scan that read the same file empty runs afterwards: it must not
+        // retract what the newer scan sent.
+        let late_empty = plan(
+            86_400 * 30,
+            &[],
+            dir.path(),
+            &file,
+            &file,
+            older,
+            handed.ledger.clone(),
+            NOW,
+        );
+        assert!(late_empty.entries.is_empty(), "{:?}", late_empty.entries);
+        assert_eq!(late_empty.stale, 1);
+        assert_eq!(late_empty.ledger, handed.ledger);
+        // Nor resend the older content it read.
+        let old_line = LINE.replace("hello", "an earlier version");
+        let late_old = plan(
+            86_400 * 30,
+            &[record(&path, &old_line, NOW, None)],
+            dir.path(),
+            &file,
+            &file,
+            older,
+            handed.ledger.clone(),
+            NOW,
+        );
+        assert!(late_old.entries.is_empty() && late_old.stale == 1);
+        // Nor call it gone because the file was not there yet when it listed.
+        let late_unlisted = plan(
+            86_400 * 30,
+            &[],
+            dir.path(),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            older,
+            handed.ledger.clone(),
+            NOW,
+        );
+        assert!(late_unlisted.entries.is_empty());
+        // A scan at least as recent does retract an emptied transcript.
+        let fresh_empty = plan(
+            86_400 * 30,
+            &[],
+            dir.path(),
+            &file,
+            &file,
+            newer + 1,
+            handed.ledger,
+            NOW,
+        );
+        assert_eq!(fresh_empty.removed, 1);
+    }
+
+    #[test]
+    fn the_hand_off_reconciles_against_what_the_scan_saw() {
+        let base = tempfile::TempDir::new_in(verified_base()).unwrap();
+        let cfg = fake_kindex(base.path(), Some(30 * 86_400));
+        let root = base.path().join("personal");
+        let source = base.path().join("transcripts");
+        std::fs::create_dir(&source).unwrap();
+        let path = source.join("s.jsonl");
+        std::fs::write(&path, "").unwrap();
+        let now = crate::time::now_rfc3339_millis();
+        // An early scan reads the transcript empty...
+        let early = crate::lifecycle::scan_transcripts("claude_jsonl", &source, &now).unwrap();
+        // ...a later scan reads it with content and hands it over first...
+        std::fs::write(&path, LINE).unwrap();
+        let later = crate::lifecycle::scan_transcripts("claude_jsonl", &source, &now).unwrap();
+        hand_off(&cfg, &root, &source, &later, &now).unwrap();
+        // ...then the early scan's hand-off runs: nothing it saw is newer.
+        let receipt = hand_off(&cfg, &root, &source, &early, &now).unwrap();
+        assert_eq!(receipt["retracted_removed"], 0, "{receipt}");
+        assert_eq!(load_ledger(&root.join(HANDOFF_DIR)).unwrap().len(), 1);
+    }
+
+    fn with(
+        cfg: &PersonalKindexConfig,
+        env: &[&str],
+        config: Option<&Path>,
+        processors: &[&str],
+    ) -> PersonalKindexConfig {
+        PersonalKindexConfig {
+            env: env.iter().map(|v| v.to_string()).collect(),
+            config: config.map(Path::to_path_buf),
+            processors: processors.iter().map(|v| v.to_string()).collect(),
+            ..cfg.clone()
+        }
+    }
+
+    #[test]
+    fn the_processors_kindex_would_use_are_read_from_its_config() {
+        let base = tempfile::TempDir::new_in(verified_base()).unwrap();
+        let cfg = fake_kindex(base.path(), None);
+        // No credentials passed: Kindex can reach no provider.
+        assert_eq!(
+            kindex_processors(&with(&cfg, &[], None, &[])).unwrap(),
+            Vec::<String>::new()
+        );
+        let config = base.path().join("kin.json");
+        std::fs::write(&config, r#"{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna"},
+                                    "embedding": {"provider": "openai", "model": "text-embedding-3-small"}}"#).unwrap();
+        assert_eq!(
+            kindex_processors(&with(&cfg, &["OPENAI_API_KEY"], Some(&config), &[])).unwrap(),
+            ["openai:gpt-6-luna", "openai:text-embedding-3-small"]
+        );
+        // Kindex's defaults without a config: no LLM, Voyage embeddings.
+        assert_eq!(
+            kindex_processors(&with(&cfg, &["VOYAGE_API_KEY"], None, &[])).unwrap(),
+            ["voyage:default"]
+        );
+        let local = base.path().join("local.json");
+        std::fs::write(
+            &local,
+            r#"{"llm": {"enabled": false}, "embedding": {"provider": "local"}}"#,
+        )
+        .unwrap();
+        assert!(
+            kindex_processors(&with(&cfg, &["X"], Some(&local), &[]))
+                .unwrap()
+                .is_empty()
+        );
+        let yaml = base.path().join("kin.yaml");
+        std::fs::write(&yaml, "llm:\n  enabled: true\n").unwrap();
+        assert_eq!(
+            kindex_processors(&with(&cfg, &["X"], Some(&yaml), &[]))
+                .unwrap_err()
+                .code,
+            "CONFIG_INVARIANT"
+        );
+    }
+
+    #[test]
+    fn personal_text_reaches_only_an_authorized_processor() {
+        let base = tempfile::TempDir::new_in(verified_base()).unwrap();
+        let fake = fake_kindex(base.path(), Some(30 * 86_400));
+        let config = base.path().join("kin.json");
+        std::fs::write(
+            &config,
+            r#"{"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna"},
+                                    "embedding": {"provider": "local"}}"#,
+        )
+        .unwrap();
+        let unauthorized = with(&fake, &["OPENAI_API_KEY"], Some(&config), &[]);
+        let authorized = with(
+            &fake,
+            &["OPENAI_API_KEY"],
+            Some(&config),
+            &["openai:gpt-6-luna"],
+        );
+        assert_eq!(
+            authorize(&unauthorized).unwrap_err().code,
+            "PROCESSOR_UNAUTHORIZED"
+        );
+        assert_eq!(authorize(&authorized).unwrap(), ["openai:gpt-6-luna"]);
+
+        // Hand-off: the conversations are stored (local); the digest is refused.
+        let root = base.path().join("personal");
+        let source = base.path().join("transcripts");
+        std::fs::create_dir(&source).unwrap();
+        std::fs::write(source.join("s.jsonl"), LINE).unwrap();
+        let now = crate::time::now_rfc3339_millis();
+        let scan = crate::lifecycle::scan_transcripts("claude_jsonl", &source, &now).unwrap();
+        let receipt = hand_off(&unauthorized, &root, &source, &scan, &now).unwrap();
+        assert_eq!(receipt["conversations"], 1);
+        assert_eq!(receipt["digested"], false);
+        assert_eq!(receipt["digest_refused"]["code"], "PROCESSOR_UNAUTHORIZED");
+        assert!(!root.join("digests").exists(), "the digest ran");
+        assert_eq!(received(&root).len(), 1);
+
+        // Recall: refused before the question is handed to Kindex.
+        let refused = recall(&unauthorized, &root, "what did I say?", None, &[], &now).unwrap_err();
+        assert_eq!(refused.code, "PROCESSOR_UNAUTHORIZED");
+        let answered = recall(&authorized, &root, "what did I say?", None, &[], &now).unwrap();
+        assert_eq!(answered.processors, ["openai:gpt-6-luna"]);
+        assert_eq!(
+            answered.sent_sha256,
+            crate::hash::sha256_text("what did I say?")
+        );
     }
 }

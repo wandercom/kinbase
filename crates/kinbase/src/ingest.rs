@@ -825,7 +825,7 @@ pub fn ingest(
         if let Some(user) = &launcher.user {
             if let Some(kindex) = &user.personal.kindex {
                 result["personal_kindex"] =
-                    match crate::personal_kindex::hand_off(kindex, &user.personal.data_root, source, &scan.records, &now) {
+                    match crate::personal_kindex::hand_off(kindex, &user.personal.data_root, source, &scan, &now) {
                         Ok(receipt) => receipt,
                         Err(error) => crate::output::error_document(&error),
                     };

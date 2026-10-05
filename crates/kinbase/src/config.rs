@@ -46,6 +46,15 @@ pub struct PersonalKindexConfig {
     /// overrides it. Past it the conversation, and everything Kindex derived
     /// from it, is removed. `None`: the private raw-session default (24 hours).
     pub retention_seconds: Option<i64>,
+    /// The off-machine processors (`provider:model`, as Kindex's config names
+    /// them) explicitly authorized to receive Personal-store text from Kindex:
+    /// its LLM (digest, recall) and its embedding provider. A host's provider
+    /// relationship does not cover historical Personal recall
+    /// (threat-model.md); empty means Kindex may run only locally.
+    pub processors: Vec<String>,
+    /// Send the team facts a read-only projection releases along with a
+    /// recall question. Off unless named: they go to the same processor.
+    pub team_knowledge: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -326,7 +335,7 @@ fn optional_path(
 
 fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, ContractError> {
     let Some(executable) = optional_path(table, "kindex_executable", "personal")? else {
-        for key in ["kindex_executable_sha256", "kindex_env", "kindex_config", "kindex_timeout_seconds", "kindex_digest", "kindex_retention_seconds"] {
+        for key in ["kindex_executable_sha256", "kindex_env", "kindex_config", "kindex_timeout_seconds", "kindex_digest", "kindex_retention_seconds", "kindex_processors", "kindex_team_knowledge"] {
             if table.contains_key(key) {
                 return Err(config_error(format!("personal.{key} requires personal.kindex_executable")));
             }
@@ -379,6 +388,29 @@ fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, 
                 .ok_or_else(|| config_error("personal.kindex_retention_seconds must be a positive integer"))?,
         ),
     };
+    let processors = match table.get("kindex_processors") {
+        None => Vec::new(),
+        Some(value) => value
+            .as_array()
+            .ok_or_else(|| config_error("personal.kindex_processors must be an array of \"provider:model\" names"))?
+            .iter()
+            .map(|item| {
+                item.as_str()
+                    .filter(|name| {
+                        name.split_once(':').is_some_and(|(provider, model)| !provider.is_empty() && !model.is_empty())
+                            && !name.chars().any(char::is_whitespace)
+                    })
+                    .map(str::to_owned)
+                    .ok_or_else(|| config_error("personal.kindex_processors entries must be \"provider:model\""))
+            })
+            .collect::<Result<_, _>>()?,
+    };
+    let team_knowledge = match table.get("kindex_team_knowledge") {
+        None => false,
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| config_error("personal.kindex_team_knowledge must be true or false"))?,
+    };
     Ok(Some(PersonalKindexConfig {
         executable,
         executable_sha256,
@@ -387,6 +419,8 @@ fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, 
         timeout_seconds,
         digest,
         retention_seconds,
+        processors,
+        team_knowledge,
     }))
 }
 
@@ -466,6 +500,8 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
             "kindex_timeout_seconds",
             "kindex_digest",
             "kindex_retention_seconds",
+            "kindex_processors",
+            "kindex_team_knowledge",
         ],
         "[personal]",
     )?;
