@@ -109,11 +109,10 @@ matches its pin.
   `recall`, or when its transcript is emptied or gone from a source that is
   ingested again. The ledger is locked while a hand-off or purge runs.
 - A hand-off reconciles only against what its own scan listed and read (a
-  source that is gone lists nothing). The ledger records, for each transcript,
-  when the newest scan that settled it began, and keeps that after retracting
-  it: a scan that began earlier neither restores, re-sends nor retracts it. A
-  day after a transcript last held a conversation its record is dropped, and
-  any scan begun before that record changes nothing.
+  source that is gone lists nothing). The ledger records, for each source,
+  when the newest scan of it that was handed off began. That scan settled
+  every transcript under the source, listed or not, so a scan begun earlier
+  neither imports, restores nor retracts any of them.
 - Historical Personal text reaches a model only through a processor the
   principal has authorized, as `spec/threat-model.md` requires:
   - Kinbase resolves the Kindex config itself and passes it to every Kindex

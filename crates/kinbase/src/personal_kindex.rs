@@ -151,26 +151,18 @@ struct LedgerEntry {
     segments: Vec<String>,
 }
 
-/// What earlier hand-offs sent, and which scan settled each transcript.
+/// What earlier hand-offs sent, and which scan settled each source.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct Ledger {
     /// Handed-off transcripts, by conversation base.
     conversations: BTreeMap<String, LedgerEntry>,
-    /// For each transcript path, when the newest scan that settled it began
-    /// (Unix nanoseconds). It outlives the path's conversations, so a scan
-    /// that began earlier saw an older state of the file and can neither
-    /// restore nor retract what the newer one did.
-    scanned: BTreeMap<String, i128>,
-    /// When a settled path is forgotten (a day after its last conversation
-    /// went), this moves to its scan; a scan that began no later changes
-    /// nothing.
-    horizon: i128,
+    /// For each source handed off (canonical), when the newest scan of it
+    /// began (Unix nanoseconds). That scan settled every transcript under it,
+    /// listed or not, so a scan begun earlier saw an older state of any of
+    /// them and neither imports, restores nor retracts one.
+    #[serde(default)]
+    sources: BTreeMap<String, i128>,
 }
-
-/// How long a transcript's last scan is remembered once it holds no
-/// conversation.
-const FORGET_SCANNED_NANOS: i128 =
-    crate::lifecycle::PRIVATE_RAW_RETENTION_SECONDS as i128 * 1_000_000_000;
 
 /// An exclusive lock on the hand-off ledger, held from reading it to writing it
 /// back, so two hand-offs (or a hand-off and a purge) never overwrite each
@@ -268,15 +260,13 @@ fn plan(
     now: i64,
 ) -> Plan {
     let mut out = Plan::default();
-    // A transcript a scan begun after this one has settled is left as that
-    // scan left it: this one read an older state of it.
-    let settled = ledger.scanned.clone();
-    let horizon = ledger.horizon;
-    let newer = |path: &str| {
-        scan_started < horizon
-            || settled
-                .get(path)
-                .is_some_and(|started| *started > scan_started)
+    // A transcript under a source a scan begun after this one has settled is
+    // left as that scan left it, present or not: this one saw an older state.
+    let settled = ledger.sources.clone();
+    let newer = |path: &Path| {
+        settled
+            .iter()
+            .any(|(source, started)| *started > scan_started && path.starts_with(source))
     };
     let mut stale: BTreeSet<String> = BTreeSet::new();
     let mut by_file: BTreeMap<
@@ -313,11 +303,10 @@ fn plan(
         });
         let base = conversation_base(path, session.as_deref());
         handled.insert(base.clone());
-        if newer(&key) {
+        if newer(path) {
             stale.insert(key);
             continue;
         }
-        ledger.scanned.insert(key.clone(), scan_started);
         let retention = origin
             .declared_retention_seconds
             .unwrap_or(default_retention);
@@ -368,13 +357,6 @@ fn plan(
             },
         );
     }
-    // A transcript read in full settles it, even one with no conversation.
-    for path in read {
-        let key = path.to_string_lossy().into_owned();
-        if !newer(&key) {
-            ledger.scanned.insert(key, scan_started);
-        }
-    }
     // Earlier hand-offs: past retention, or their transcript is gone from
     // this source.
     let scope = canonical(source);
@@ -390,7 +372,7 @@ fn plan(
             retract(&mut out.entries, &entry.segments);
         } else if !path.starts_with(&scope) {
             kept.insert(base, entry);
-        } else if newer(&entry.path) {
+        } else if newer(&path) {
             stale.insert(entry.path.clone());
             kept.insert(base, entry);
         } else if !present.contains(&path) || read.contains(&path) {
@@ -398,31 +380,16 @@ fn plan(
             // this conversation (emptied, or now another session).
             out.removed += 1;
             retract(&mut out.entries, &entry.segments);
-            ledger.scanned.insert(entry.path, scan_started);
         } else {
             kept.insert(base, entry);
         }
     }
     ledger.conversations = kept;
-    // A day after a transcript last held a conversation, its scan is
-    // forgotten, and a scan begun before that one changes nothing.
-    let live: BTreeSet<&str> = ledger
-        .conversations
-        .values()
-        .map(|entry| entry.path.as_str())
-        .collect();
-    let cutoff = i128::from(now) * 1_000_000_000 - FORGET_SCANNED_NANOS;
-    let forgotten: Vec<String> = ledger
-        .scanned
-        .iter()
-        .filter(|(path, started)| **started < cutoff && !live.contains(path.as_str()))
-        .map(|(path, _)| path.clone())
-        .collect();
-    for path in forgotten {
-        if let Some(started) = ledger.scanned.remove(&path) {
-            ledger.horizon = ledger.horizon.max(started);
-        }
-    }
+    let generation = ledger
+        .sources
+        .entry(scope.to_string_lossy().into_owned())
+        .or_insert(scan_started);
+    *generation = (*generation).max(scan_started);
     out.stale = stale.len();
     out.ledger = ledger;
     out
@@ -1848,32 +1815,53 @@ mod tests {
         );
         assert!(resurrected.entries.is_empty(), "{:?}", resurrected.entries);
         assert_eq!(resurrected.stale, 1);
-        // A day on, the emptied transcript's scan is forgotten; a scan begun
-        // before it still changes nothing.
-        let day_later = NOW + 86_400 + 1;
-        let forgotten = plan(
+        // A transcript never handed over: a newer scan found the source
+        // without it, so an older scan that read it imports nothing.
+        let other = tempfile::tempdir().unwrap();
+        let sub = other.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        let deleted = sub.join("deleted.jsonl");
+        std::fs::write(&deleted, LINE).unwrap();
+        let read: BTreeSet<PathBuf> = [canonical(&deleted)].into_iter().collect();
+        let absent = plan(
             86_400 * 30,
             &[],
-            dir.path(),
-            &file,
-            &file,
-            newer + 2,
-            fresh_empty.ledger,
-            day_later,
+            other.path(),
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+            newer,
+            Ledger::default(),
+            NOW,
         );
-        assert!(forgotten.ledger.scanned.is_empty());
-        assert_eq!(forgotten.ledger.horizon, newer + 2);
-        let ancient = plan(
+        assert!(absent.entries.is_empty());
+        let first_import = plan(
             86_400 * 30,
-            &[record(&path, LINE, day_later, None)],
-            dir.path(),
-            &file,
-            &file,
-            newer + 1,
-            forgotten.ledger,
-            day_later,
+            &[record(&deleted, LINE, NOW, None)],
+            other.path(),
+            &read,
+            &read,
+            older,
+            absent.ledger.clone(),
+            NOW,
         );
-        assert!(ancient.entries.is_empty() && ancient.stale == 1);
+        assert!(
+            first_import.entries.is_empty(),
+            "{:?}",
+            first_import.entries
+        );
+        assert_eq!(first_import.stale, 1);
+        // A scan of a source inside the newer scan's is older there too.
+        let nested = plan(
+            86_400 * 30,
+            &[record(&deleted, LINE, NOW, None)],
+            &sub,
+            &read,
+            &read,
+            older,
+            absent.ledger,
+            NOW,
+        );
+        assert!(nested.entries.is_empty() && nested.stale == 1);
     }
 
     #[test]
@@ -1924,6 +1912,29 @@ mod tests {
                 .conversations
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn a_transcript_deleted_before_its_first_hand_off_stays_out() {
+        let base = tempfile::TempDir::new_in(verified_base()).unwrap();
+        let cfg = fake_kindex(base.path(), Some(30 * 86_400));
+        let root = base.path().join("personal");
+        let source = base.path().join("transcripts");
+        std::fs::create_dir(&source).unwrap();
+        let path = source.join("s.jsonl");
+        std::fs::write(&path, LINE).unwrap();
+        let now = crate::time::now_rfc3339_millis();
+        // A scans the transcript, never handed over before; it is deleted; B
+        // scans the source without it and hands off first.
+        let a = crate::lifecycle::scan_transcripts("claude_jsonl", &source, &now).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let b = crate::lifecycle::scan_transcripts("claude_jsonl", &source, &now).unwrap();
+        hand_off(&cfg, &root, &source, &b, &now).unwrap();
+        // A's hand-off imports none of the deleted text.
+        let receipt = hand_off(&cfg, &root, &source, &a, &now).unwrap();
+        assert_eq!(receipt["conversations"], 0, "{receipt}");
+        assert_eq!(receipt["stale"], 1, "{receipt}");
+        assert!(received(&root).is_empty());
     }
 
     #[test]
