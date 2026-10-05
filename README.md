@@ -77,10 +77,19 @@ It states what this run proves, what it does not, which gates the instrument its
 fails, and where the independence between the building and certifying seats is real and
 where it is not.
 
-## Personal recall through Kindex (branch addition, not ratified)
+## Personal recall through Kindex (test-only build feature)
 
 The specification makes the Personal store Kindex but the proof of concept never
-wired it. On this branch, with `[personal] kindex_executable` configured, what
+wired it. This does, for testing only: it is compiled only with the
+`personal-recall` Cargo feature (`cargo build --release --features
+personal-recall`), which is off in normal builds. It exists to measure recall on
+the conversational-memory benchmarks (LoCoMo, LongMemEval, BEAM), using
+synthetic or public conversations. It can send historical Personal-store text
+to a model provider, which `spec/threat-model.md` does not allow for real
+Personal data, so a normal build refuses every `kindex_*` key and has no
+`recall` command.
+
+In such a build, with `[personal] kindex_executable` configured, what
 `kinbase ingest codex_jsonl|claude_jsonl` reads of each host transcript is also
 handed to a Kindex graph under the Personal root, and `kinbase recall [--as-of
 DATE]` answers the principal's own question, read from standard input, from it
@@ -141,8 +150,6 @@ matches its pin.
   - The recall receipt lists each processor (provider, model, account digest,
     retention) and the SHA-256 of the question and team statements Kinbase
     handed Kindex.
-  - `spec/amendment-004-personal-recall.md` proposes this boundary for
-    ratification; until it is ratified, it is not authority.
 - A hand-off that fails keeps the journal record and is reported (a warning on
   stderr in text mode, `personal_kindex.error` in JSON).
 - Kindex keeps the graph in `personal-kindex/` under the Personal root, a
@@ -188,10 +195,8 @@ with `kin.json`:
 {"llm": {"enabled": true, "provider": "openai", "model": "gpt-6-luna", "api_key_env": "OPENAI_API_KEY"}}
 ```
 
-These keys and the `recall` command are additions to `spec/cli.md`. They, and
-the processor boundary above, are proposed in
-`spec/amendment-004-personal-recall.md` and are not authority until it is
-ratified.
+These keys and the `recall` command are not part of `spec/cli.md`: they exist
+only in a `personal-recall` build, for testing.
 
 ## Building and running
 

@@ -383,6 +383,16 @@ fn authorized_processor(value: &toml::Value) -> Result<AuthorizedProcessor, Cont
 }
 
 fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, ContractError> {
+    // The Personal Kindex is for testing only: a normal build refuses its keys
+    // rather than ignore them.
+    if !cfg!(feature = "personal-recall") {
+        if let Some(key) = table.keys().find(|key| key.starts_with("kindex_")) {
+            return Err(config_error(format!(
+                "personal.{key} needs a kinbase built with the personal-recall feature, which is for testing only"
+            )));
+        }
+        return Ok(None);
+    }
     let Some(executable) = optional_path(table, "kindex_executable", "personal")? else {
         for key in ["kindex_executable_sha256", "kindex_config", "kindex_timeout_seconds", "kindex_digest", "kindex_retention_seconds", "kindex_processors", "kindex_team_knowledge"] {
             if table.contains_key(key) {
@@ -1205,5 +1215,21 @@ mod host_range_tests {
         ] {
             assert_eq!(hosts(bad).expect_err(bad).code, "CONFIG_INVARIANT", "{bad}");
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "personal-recall")))]
+mod personal_recall_build_tests {
+    use super::*;
+
+    #[test]
+    fn a_normal_build_refuses_the_personal_kindex_keys() {
+        let text = "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\nkindex_executable = \"/opt/example/bin/kin\"\n";
+        let error = parse_user_config(Path::new("/private/example/config.toml"), text)
+            .expect_err("refused");
+        assert!(error.message.contains("personal-recall"), "{}", error.message);
+        let plain = "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n";
+        let config = parse_user_config(Path::new("/private/example/config.toml"), plain).expect("parses");
+        assert!(config.personal.kindex.is_none());
     }
 }

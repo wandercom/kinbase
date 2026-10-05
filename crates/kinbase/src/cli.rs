@@ -239,6 +239,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             )
             .map_err(internal)?;
         }
+        #[cfg(feature = "personal-recall")]
         Command::Recall { as_of } => {
             let Some(user) = &launcher.user else {
                 return Err(ContractError::refused(
@@ -367,6 +368,7 @@ fn internal(error: crate::error::ContractError) -> ContractError {
 
 /// The recall question, from standard input: a private question never goes on
 /// a command line.
+#[cfg(feature = "personal-recall")]
 fn read_question() -> Result<String, ContractError> {
     use std::io::Read;
     const LIMIT: u64 = 64 * 1024;

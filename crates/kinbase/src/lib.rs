@@ -30,6 +30,7 @@ pub mod lifecycle;
 pub mod model;
 pub mod output;
 pub mod paths;
+#[cfg(feature = "personal-recall")]
 pub mod personal_kindex;
 pub mod private;
 pub mod projector;

@@ -825,7 +825,9 @@ pub fn ingest(
     // Personal is Kindex: what this scan read of the host transcripts also
     // goes to the Personal Kindex graph, when one is configured, under the
     // transcripts' retention. A failed hand-off leaves the journal record in
-    // place and is reported, not raised.
+    // place and is reported, not raised. Only in a build with the test-only
+    // `personal-recall` feature.
+    #[cfg(feature = "personal-recall")]
     if matches!(source_kind, "codex_jsonl" | "claude_jsonl") {
         if let Some(user) = &launcher.user {
             if let Some(kindex) = &user.personal.kindex {

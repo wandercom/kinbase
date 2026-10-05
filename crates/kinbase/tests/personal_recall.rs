@@ -1,6 +1,7 @@
 //! `kinbase recall` keeps the principal's question Personal: the projection it
 //! makes for team knowledge raises no question and logs nothing, and a
 //! projection withheld by a blocking Unknown releases no shared statement.
+#![cfg(feature = "personal-recall")]
 
 mod support;
 
