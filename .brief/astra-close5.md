@@ -35,7 +35,7 @@ must stay asserted — do not delete a node to make the count green:
   unrelated to approval.
 
 Run it yourself: from `tests/`,
-`KINBASE_BIN=~/WanderRepos/kinbase-work/target/release/kinbase KINBASE_SPEC_ROOT=~/WanderRepos/kinbase-work ./.venv/bin/python -m pytest -c pytest.ini -q acceptance/<node>`
+`KINBASE_BIN=<workspace>/kinbase-work/target/release/kinbase KINBASE_SPEC_ROOT=<workspace>/kinbase-work ./.venv/bin/python -m pytest -c pytest.ini -q acceptance/<node>`
 
 Do not create Cargo projects; this machine is strictly offline. Commit when the five
 pass and report the final count.

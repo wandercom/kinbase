@@ -33,7 +33,7 @@
     "Write": 1,
     "forbidden_delegation_or_web_calls": 0,
     "absolute_path_tool_inputs": [
-      "/Users/jmcentire/Code/kinbase-proof-lanes-ac8a13d1/tester/tests/acceptance/_harness/debt.py"
+      "<workspace>/kinbase-proof-lanes-ac8a13d1/tester/tests/acceptance/_harness/debt.py"
     ],
     "tool_inputs_naming_coder_validator_detector_control_main_product_or_kindex_paths": 0
   },

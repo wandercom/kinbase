@@ -1,6 +1,6 @@
 {
   "review_id": "20260906T045214-110c640b",
-  "target": "/Users/jmcentire/Code/kinbase/spec/amendment-001-rust-vast.md",
+  "target": "<workspace>/kinbase/spec/amendment-001-rust-vast.md",
   "target_type": "file",
   "started_at": "2026-09-06T04:52:14.238124+00:00",
   "completed_at": "2026-09-06T04:55:55.428931+00:00",
