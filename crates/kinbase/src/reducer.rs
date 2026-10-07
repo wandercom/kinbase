@@ -261,6 +261,10 @@ impl Governance {
         // event's own fact: the earliest such index across the matching paths.
         let mut first: Option<usize> = None;
         for (path, indices) in &self.by_path {
+            // Groups are in order of their first rule, so none after this can win.
+            if first.is_some_and(|seen| indices[0] > seen) {
+                break;
+            }
             if !Self::governs(path, event) {
                 continue;
             }
