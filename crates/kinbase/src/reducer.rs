@@ -206,6 +206,10 @@ pub struct CurrentView {
 pub struct Governance {
     /// (path prefix, standing of the fact that governs it, id of that fact)
     rules: Vec<(String, String, String)>,
+    /// Each distinct path once, with its rules' indices in order. Every version of
+    /// a ruling repeats its paths: 10,971 rules named 94 paths on staging, and
+    /// matching each rule made a snapshot cost 26 s.
+    by_path: Vec<(String, Vec<usize>)>,
 }
 
 impl Governance {
@@ -230,7 +234,16 @@ impl Governance {
                 rules.push((path.clone(), standing.clone(), event.fact_id.clone()));
             }
         }
-        Self { rules }
+        let mut by_path: Vec<(String, Vec<usize>)> = Vec::new();
+        let mut slot: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for (index, (path, _, _)) in rules.iter().enumerate() {
+            let at = *slot.entry(path.as_str()).or_insert_with(|| {
+                by_path.push((path.clone(), Vec::new()));
+                by_path.len() - 1
+            });
+            by_path[at].1.push(index);
+        }
+        Self { rules, by_path }
     }
 
     /// True when this event's evidence sits under a governed path.
@@ -244,27 +257,39 @@ impl Governance {
     /// writes `scope: "repository"` and opaque `observation:` references, so no
     /// ruling about `wandercom/property` could ever reach the facts it governs.
     fn governing_rule(&self, event: &FactEvent) -> Option<&(String, String, String)> {
-        self.rules.iter().find(|(path, _, fact_id)| {
+        // The first rule, in build order, whose path matches and which is not the
+        // event's own fact: the earliest such index across the matching paths.
+        let mut first: Option<usize> = None;
+        for (path, indices) in &self.by_path {
+            if !Self::governs(path, event) {
+                continue;
+            }
             // A ruling never demotes itself, and never demotes a sibling ruling
             // from the same fact.
-            *fact_id != event.fact_id
-                && (event.scope.contains(path.as_str())
+            if let Some(&index) = indices.iter().find(|&&i| self.rules[i].2 != event.fact_id) {
+                first = Some(first.map_or(index, |seen| seen.min(index)));
+            }
+        }
+        first.map(|index| &self.rules[index])
+    }
+
+    fn governs(path: &str, event: &FactEvent) -> bool {
+        event.scope.contains(path)
                     // Repository-wide governance: the ruling names the repository
                     // by the identity the event actually carries. Exact, never a
                     // prefix -- one repository UUID is not a parent of another.
-                    || event.repository_id.as_deref() == Some(path.as_str())
+                    || event.repository_id.as_deref() == Some(path)
                     // A path rule is a prefix of a path, not a substring of one:
                     // `src/pay` governs `src/payment/x.ts` and must not be reached
                     // by a file that merely mentions it.
                     || event
                         .anchors
                         .iter()
-                        .any(|anchor| anchor.path.starts_with(path.as_str()))
+                        .any(|anchor| anchor.path.starts_with(path))
                     || event
                         .evidence_refs
                         .iter()
-                        .any(|reference| reference.contains(path.as_str())))
-        })
+                        .any(|reference| reference.contains(path))
     }
 
     /// The standing this event actually carries once governance is applied.
