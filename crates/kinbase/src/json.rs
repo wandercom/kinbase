@@ -87,6 +87,14 @@ fn canonical_unchecked(value: &Value, out: &mut Vec<u8>) {
         Value::Null => out.extend_from_slice(b"null"),
         Value::Bool(value) => out.extend_from_slice(if *value { b"true" } else { b"false" }),
         Value::Number(value) => out.extend_from_slice(value.to_string().as_bytes()),
+        // Text already in NFC is written as is; normalizing 40 MB of snapshot text
+        // was the next hotspot. The quick check never answers Yes for non-NFC text.
+        Value::String(value)
+            if unicode_normalization::is_nfc_quick(value.chars())
+                == unicode_normalization::IsNormalized::Yes =>
+        {
+            write_string(value, out)
+        }
         Value::String(value) => write_string(&value.nfc().collect::<String>(), out),
         Value::Array(values) => {
             out.push(b'[');
