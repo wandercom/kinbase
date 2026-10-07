@@ -1242,11 +1242,6 @@ fn facts(
             }));
         }
     }
-    let bytes: usize = selected
-        .iter()
-        .map(|fact| crate::json::canonical_bytes(fact).len())
-        .sum();
-    charge_read(db, state, auth, selected.len().max(1), bytes)?;
     // Paged, because a reader that cannot enumerate the whole set cannot tell a
     // fact that does not exist from one it was not shown. Without `after` the
     // response silently stopped at 500 and a client correcting its own
@@ -1272,6 +1267,14 @@ fn facts(
     let truncated = selected.len() > MAX_READ_ITEMS;
     let remaining = selected.len().saturating_sub(MAX_READ_ITEMS);
     let facts: Vec<Value> = selected.into_iter().take(MAX_READ_ITEMS).collect();
+    // Charge the page served, as /events does. Charging the whole selection on
+    // every page made one full read of the 10k-fact corpus cost ~20x its size
+    // and exhaust the hourly budget mid-read.
+    let bytes: usize = facts
+        .iter()
+        .map(|fact| crate::json::canonical_bytes(fact).len())
+        .sum();
+    charge_read(db, state, auth, facts.len().max(1), bytes)?;
     let next_after = if truncated {
         facts
             .last()
