@@ -1059,9 +1059,18 @@ fn session_start(
             .push("launcher configuration unavailable".to_owned());
         return state;
     };
+    // A refusal always speaks. A repository no Company claims speaks only if
+    // it was certified somewhere (it carries `.kin/kinbase.toml`): that is a
+    // configuration that lost its Company. Every other directory a host
+    // opens is simply not company work, and a notice there on every
+    // session would bury the one that matters.
     state.selection_notice = match &launcher.selection {
         crate::selection::Outcome::Refused(_) => Some(crate::selection::HOOK_REFUSED_NOTICE),
-        crate::selection::Outcome::Unselected => Some(crate::selection::HOOK_UNSELECTED_NOTICE),
+        crate::selection::Outcome::Unselected
+            if cwd.join(".kin").join(crate::codebase::CONFIG_FILE).exists() =>
+        {
+            Some(crate::selection::HOOK_UNSELECTED_NOTICE)
+        }
         _ => None,
     };
     if let Some(notice) = state.selection_notice {

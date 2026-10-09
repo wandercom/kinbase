@@ -510,6 +510,18 @@ fn a_repository_no_company_claims_runs_codebase_only_and_says_so() {
         doctor["company_selection"]["evidence"]["origin"],
         "example.com/other/elsewhere"
     );
+    // A directory that is simply not company work stays quiet.
+    let hook = world.hook(&repo, "SessionStart", false);
+    assert!(hook.status.success());
+    assert!(!text(&hook).contains("found no Company"), "{}", text(&hook));
+
+    // One that was certified but no configured Company claims any more says so.
+    fs::create_dir_all(repo.join(".kin")).unwrap();
+    fs::write(
+        repo.join(".kin/kinbase.toml"),
+        "schema_version = \"kinbase-repo/1\"\nrepository_uuid_hint = \"0b1c2d3e-0000-4000-8000-000000000001\"\nsafe_name = \"elsewhere\"\ndomains = []\n",
+    )
+    .unwrap();
     let hook = world.hook(&repo, "SessionStart", false);
     assert!(hook.status.success());
     assert!(text(&hook).contains("found no Company"), "{}", text(&hook));
