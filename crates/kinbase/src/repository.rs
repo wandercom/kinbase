@@ -1602,13 +1602,43 @@ pub fn trust_facts(
     // later arrivals are historical on arrival and reopen nothing.
     if let Ok(private) = launcher.private_store() {
         if let Ok(now_cursor) = private.observation_cursor() {
+            // A revocation cursor is one Company's counter. With several
+            // Companies the key carries the company_id, so one maintainer key
+            // revoked by two of them at the same cursor keeps two first
+            // sightings; the unqualified key a converted single-form config
+            // recorded still answers first, so converting reopens nothing.
+            let scope = launcher.company_key_scope();
             for (revoked_key, cursor, _) in facts.revocations.clone() {
                 let revocation = Revocation::of_key(revoked_key, cursor, String::new());
-                let key = format!(
+                let legacy = format!(
                     "revocation-watermark:{}:{}",
                     revocation.revoked_key, revocation.cursor
                 );
-                let watermark = match private.meta(&key).ok().flatten() {
+                let key = match &scope {
+                    Some(company_id) => format!(
+                        "revocation-watermark:{company_id}:{}:{}",
+                        revocation.revoked_key, revocation.cursor
+                    ),
+                    None => legacy.clone(),
+                };
+                let recorded = private.meta(&key).ok().flatten().or_else(|| {
+                    let company_id = scope.as_deref()?;
+                    let carried = private.meta(&legacy).ok().flatten()?;
+                    // The unqualified sighting belongs to the one Company the
+                    // single form had; whichever Company claims it first keeps
+                    // it, and no second Company inherits it.
+                    let marker = format!("{legacy}:carried-to");
+                    match private.meta(&marker).ok().flatten() {
+                        Some(owner) if owner != company_id => return None,
+                        Some(_) => {}
+                        None => {
+                            let _ = private.set_meta(&marker, company_id);
+                        }
+                    }
+                    let _ = private.set_meta(&key, &carried);
+                    Some(carried)
+                });
+                let watermark = match recorded {
                     Some(text) => text.parse::<u64>().unwrap_or(now_cursor),
                     None => {
                         let _ = private.set_meta(&key, &now_cursor.to_string());
@@ -2136,7 +2166,13 @@ pub fn issue_certificate(
         .company
         .as_ref()
         .is_some_and(|company| company.allow_non_loopback);
-    crate::config::validate_loopback_url(company_url, allow_non_loopback)?;
+    // Under the named form `--company` is a configured Company's name, already
+    // resolved (and refused when unknown or claimed by another Company) by the
+    // launcher; its URL was validated when the config was read.
+    let named = launcher.named_form();
+    if !named {
+        crate::config::validate_loopback_url(company_url, allow_non_loopback)?;
+    }
     if launcher.company_env_present {
         return Err(ContractError::new(
             "PROCESSOR_UNAUTHORIZED",
@@ -2153,7 +2189,7 @@ pub fn issue_certificate(
             "Create the user config with [company] url, facts_token_file, root_public_key_file, cache_root and an admin_token_file.",
         ));
     };
-    if access.url.trim_end_matches('/') != company_url.trim_end_matches('/') {
+    if !named && access.url.trim_end_matches('/') != company_url.trim_end_matches('/') {
         return Err(ContractError::refused(
             "CONFIG_INVARIANT",
             "--company differs from the configured Company endpoint",
@@ -3664,6 +3700,12 @@ pub fn status(
         "company_connect_seconds": context.trust.company_connect_seconds,
         "traces_count": view.traces.len()
     });
+    if let (Some(report), Value::Object(map)) = (
+        context.launcher.selection_report(Some(&context.repo.root)),
+        &mut result,
+    ) {
+        map.insert("company_selection".to_owned(), report);
+    }
     if let Some(company) = &context.launcher.shared.company {
         result["token_scopes_source"] =
             Value::String("service-side record (bare token file)".to_owned());
@@ -4318,6 +4360,11 @@ pub fn doctor(
         "apology_quarantine_count": apology_quarantine,
         "observed_at": now
     });
+    if let (Some(report), Value::Object(map)) =
+        (launcher.selection_report(Some(repo_path)), &mut result)
+    {
+        map.insert("company_selection".to_owned(), report);
+    }
     if apology_quarantine > 0 {
         let error = ContractError::integrity(
             "PERSONAL_TAINT_BLOCKED",

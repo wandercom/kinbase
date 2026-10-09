@@ -68,7 +68,20 @@ fn usage_error(_args: &[String], _detail: String) -> ContractError {
 }
 
 fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
+    if let Some(target) = selection_target(&command) {
+        crate::selection::set_target(target);
+    }
     let launcher = crate::launcher::Launcher::load()?;
+    // A refused Company selection stops the command before any shared work.
+    // `doctor` reports it, hook dispatch degrades without blocking the host,
+    // and the service commands read no user Company at all.
+    let reports_selection = matches!(
+        command,
+        Command::Doctor { .. } | Command::Hooks(_) | Command::Company(_)
+    );
+    if !reports_selection && let Some(refusal) = launcher.selection_refusal() {
+        return Err(refusal);
+    }
     match command {
         Command::Company(CompanyCommand::Init { config }) => {
             crate::company::init(&config, json).map_err(internal)?;
@@ -226,6 +239,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            same_company_evidence(&launcher, &evidence_repos)?;
             let as_of = resolve_as_of(&launcher, &repo, as_of.as_deref())?;
             crate::projector::run(
                 &launcher,
@@ -357,6 +371,82 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         }
         Command::Hooks(command) => {
             crate::hooks::dispatch(command, json).map_err(internal)?;
+        }
+    }
+    Ok(())
+}
+
+/// What a command acts on, for Company selection under the named form
+/// (`crate::selection`). Commands without `--repo` act on the process cwd,
+/// the default target; hook dispatch names its target from the envelope.
+fn selection_target(command: &Command) -> Option<crate::selection::Target> {
+    use crate::selection::Target;
+    let repo = |repo: &Option<PathBuf>| repo.clone().map(Target::Repo);
+    match command {
+        Command::Repo(RepoCommand::Issue { repo, company }) => Some(Target::Named {
+            name: company.clone(),
+            repo: repo.clone(),
+        }),
+        Command::Repo(RepoCommand::Init { repo, certificate }) => {
+            // An unreadable certificate is `repo init`'s own refusal to make.
+            match std::fs::read(certificate)
+                .ok()
+                .and_then(|bytes| crate::json::parse_strict_value(&bytes).ok())
+            {
+                Some(certificate) => Some(Target::Install {
+                    repo: repo.clone(),
+                    certificate,
+                }),
+                None => Some(Target::Repo(repo.clone())),
+            }
+        }
+        Command::Repo(RepoCommand::PublishManifest { repo }) => Some(Target::Repo(repo.clone())),
+        Command::Status { repo: r, .. }
+        | Command::Doctor { repo: r, .. }
+        | Command::Ingest { repo: r, .. }
+        | Command::Fsck { repo: r, .. }
+        | Command::Explain { repo: r, .. }
+        | Command::Project { repo: r, .. }
+        | Command::Session(SessionCommand::Start { repo: r, .. })
+        | Command::Corpus(CorpusCommand::Rebuild { repo: r, .. })
+        | Command::Corpus(CorpusCommand::Admit { repo: r, .. }) => repo(r),
+        _ => None,
+    }
+}
+
+/// A projection holds one Company view (amendment-001), and an evidence
+/// repository is read through this invocation's Company. Under several
+/// Companies an evidence repository that resolves to a different one, or to
+/// none while this one has one, would mix organizations in one projection.
+fn same_company_evidence(
+    launcher: &crate::launcher::Launcher,
+    evidence_repos: &[PathBuf],
+) -> Result<(), ContractError> {
+    let Some(user) = launcher
+        .user
+        .as_ref()
+        .filter(|user| !user.companies.is_empty())
+    else {
+        return Ok(());
+    };
+    let selected = |outcome: &crate::selection::Outcome| match outcome {
+        crate::selection::Outcome::Selected { name, .. } => Some(name.clone()),
+        _ => None,
+    };
+    let here = selected(&launcher.selection);
+    for evidence in evidence_repos {
+        let (outcome, _) =
+            crate::selection::resolve(user, &crate::selection::Target::Repo(evidence.clone()));
+        if selected(&outcome) != here {
+            return Err(ContractError::refused(
+                "CONFIG_INVARIANT",
+                format!(
+                    "evidence repository {} does not resolve to this repository's Company",
+                    evidence.display()
+                ),
+                "Pass evidence repositories that belong to the same Company.",
+            )
+            .with_detail(serde_json::json!({"reason": "company-mismatch"})));
         }
     }
     Ok(())

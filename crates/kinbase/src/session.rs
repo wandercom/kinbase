@@ -519,6 +519,7 @@ pub fn observe(
 
     let repo = std::env::current_dir().map_err(io_error)?;
     let repository_id = crate::repository::repository_id(&repo).ok();
+    let company_destination = company_destination(&launcher, repository_id.as_deref());
     let proof_clock = now_rfc3339_millis();
     let mut records = Vec::new();
     let mut quarantined_observations = Vec::new();
@@ -727,7 +728,7 @@ pub fn observe(
                 let destination = match resolved_destination(
                     destination.as_str(),
                     repository_id.as_deref(),
-                    launcher.shared.company.is_some(),
+                    company_destination.as_deref(),
                 ) {
                     Some(destination) => destination,
                     None => continue,
@@ -741,6 +742,7 @@ pub fn observe(
                     native_id,
                     principal_id,
                     host_instance_id,
+                    repository_id.as_deref(),
                 )? {
                     candidate_records.push(candidate);
                 }
@@ -1792,6 +1794,7 @@ fn build_candidate(
     message_id: &str,
     principal_id: &str,
     host_instance_id: &str,
+    repository_id: Option<&str>,
 ) -> Result<Option<Value>, ContractError> {
     let store = destination_store(destination)?;
     // Shared admissions are minimized and de-identified. Opaque private
@@ -1839,7 +1842,41 @@ fn build_candidate(
         "hard_block_respected": true,
         "deidentified_tokens": removed
     });
+    // A candidate bound to one of several Companies also names the
+    // repository it came from: admission delivers it only from that
+    // repository with that Company selected (see `admit_candidate`).
+    let mut record = record;
+    if company_bound_to_id(destination).is_some()
+        && let (Some(object), Some(uuid)) = (record.as_object_mut(), repository_id)
+    {
+        object.insert("repository_uuid".to_owned(), Value::String(uuid.to_owned()));
+    }
     Ok(Some(record))
+}
+
+/// Where this host sends Company-labelled knowledge from this repository:
+/// the single form's `company:root`; under the named form the selected
+/// Company's id, so the candidate cannot be delivered to another one; and
+/// nowhere when no Company is selected or its id is not yet known.
+fn company_destination(
+    launcher: &crate::launcher::Launcher,
+    repository_id: Option<&str>,
+) -> Option<String> {
+    launcher.shared.company.as_ref()?;
+    if !launcher.named_form() {
+        return Some("company:root".to_owned());
+    }
+    repository_id?;
+    launcher
+        .company_key_scope()
+        .map(|company_id| format!("company:{company_id}"))
+}
+
+/// The company_id a named-form Company destination is bound to.
+fn company_bound_to_id(destination: &str) -> Option<&str> {
+    destination
+        .strip_prefix("company:")
+        .filter(|id| *id != "root" && !id.is_empty())
 }
 
 /// Remove opaque identifiers (long hex, base64-like, or digit-dense tokens)
@@ -2335,21 +2372,24 @@ mod tests {
     fn a_label_becomes_a_candidate_only_where_its_store_exists() {
         // With Company access configured, company work routes as before.
         assert_eq!(
-            resolved_destination("company", None, true).as_deref(),
+            resolved_destination("company", None, Some("company:root")).as_deref(),
             Some("company:root")
         );
         // Without it there is no null-route noise: no candidate is minted,
         // so no checkpoint reports REPO_UNCERTIFIED for it.
-        assert_eq!(resolved_destination("company", None, false), None);
+        assert_eq!(resolved_destination("company", None, None), None);
         // Codebase keeps its existing rule: certified repository or nothing.
         assert_eq!(
-            resolved_destination("codebase", Some("uuid-1"), false).as_deref(),
+            resolved_destination("codebase", Some("uuid-1"), None).as_deref(),
             Some("codebase:uuid-1")
         );
-        assert_eq!(resolved_destination("codebase", None, true), None);
+        assert_eq!(
+            resolved_destination("codebase", None, Some("company:root")),
+            None
+        );
         // Personal is always available; it is this host's own store.
         assert_eq!(
-            resolved_destination("personal", None, false).as_deref(),
+            resolved_destination("personal", None, None).as_deref(),
             Some("personal")
         );
     }
@@ -3864,10 +3904,10 @@ pub fn saga_terminal_event_fields(event_id: &str) -> Option<Value> {
 fn resolved_destination(
     label: &str,
     repository_id: Option<&str>,
-    company_configured: bool,
+    company_destination: Option<&str>,
 ) -> Option<String> {
     match label {
-        "company" => company_configured.then(|| "company:root".to_owned()),
+        "company" => company_destination.map(str::to_owned),
         "codebase" => repository_id.map(|uuid| format!("codebase:{uuid}")),
         other => Some(other.to_owned()),
     }
@@ -3876,7 +3916,10 @@ fn resolved_destination(
 pub fn destination_store(destination: &str) -> Result<crate::StoreKind, ContractError> {
     if destination == "personal" {
         Ok(crate::StoreKind::Personal)
-    } else if destination == "company" || destination == "company:root" {
+    } else if destination == "company"
+        || destination == "company:root"
+        || company_bound_to_id(destination).is_some()
+    {
         Ok(crate::StoreKind::Company)
     } else if destination.starts_with("codebase:") && destination.len() > "codebase:".len() {
         Ok(crate::StoreKind::Codebase)
@@ -4330,6 +4373,45 @@ fn repo() -> Result<std::path::PathBuf, ContractError> {
 
 /// Admit exact candidate bytes without consuming human attention. Destination
 /// signatures, content addresses, durable receipts and replay remain mandatory.
+/// A Company candidate is delivered only where it was minted. Under the
+/// named form a checkpoint runs in whatever repository the host stops in, and
+/// the candidates it collects belong to the whole session; delivering by the
+/// checkpoint's repository would send one organization's knowledge to
+/// another's Company. A candidate that does not match is held for a
+/// checkpoint in its own repository, never failed and never delivered.
+fn company_binding_holds(
+    launcher: &crate::launcher::Launcher,
+    repo: &Path,
+    destination: &str,
+    record: &Value,
+) -> Result<(), ContractError> {
+    let held = |why: &str| {
+        Err(ContractError::user_action(
+            "REPO_UNCERTIFIED",
+            format!("candidate held: {why}"),
+            "It is delivered by a checkpoint in the repository it came from.",
+        ))
+    };
+    match (launcher.named_form(), company_bound_to_id(destination)) {
+        (false, None) => Ok(()),
+        (false, Some(_)) => {
+            held("it is bound to one of several Companies and this configuration names one")
+        }
+        (true, None) => held("it names no Company and several are configured"),
+        (true, Some(bound)) => {
+            if launcher.company_key_scope().as_deref() != Some(bound) {
+                return held("it is bound to a Company other than the one selected here");
+            }
+            let here = crate::repository::repository_id(repo).ok();
+            if here.is_none() || crate::json::get_str(record, "repository_uuid") != here.as_deref()
+            {
+                return held("it came from another repository");
+            }
+            Ok(())
+        }
+    }
+}
+
 fn admit_candidate(
     launcher: &crate::launcher::Launcher,
     repo: &Path,
@@ -4337,6 +4419,9 @@ fn admit_candidate(
 ) -> Result<Value, ContractError> {
     let candidate = crate::json::get_str(record, "candidate_id").unwrap_or_default();
     let destination = crate::json::get_str(record, "destination").unwrap_or_default();
+    if destination.starts_with("company") {
+        company_binding_holds(launcher, repo, destination, record)?;
+    }
     let canonical = crate::json::get_str(record, "canonical").unwrap_or_default();
     let digest = sha256_text(canonical);
     if crate::json::get_str(record, "payload_digest") != Some(digest.as_str()) {

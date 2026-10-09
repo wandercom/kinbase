@@ -25,11 +25,26 @@ pub fn store_root(store: crate::StoreKind, repo: &Path) -> PathBuf {
             .flatten()
             .map(|config| config.personal.data_root)
             .unwrap_or_else(|| crate::private::state_dir().join("codebase-personal")),
-        crate::StoreKind::Company => crate::config::load_user_config()
-            .ok()
-            .flatten()
-            .and_then(|config| config.company.map(|company| company.cache_root))
-            .unwrap_or_else(|| crate::private::state_dir().join("company-cache")),
+        crate::StoreKind::Company => match crate::config::load_user_config().ok().flatten() {
+            Some(config) => match (config.company, config.companies.is_empty()) {
+                (Some(company), _) => company.cache_root,
+                (None, true) => crate::private::state_dir().join("company-cache"),
+                // Several Companies, none selected for this repository: one
+                // shared fallback would carry local Company answers from one
+                // organization's repository into another's.
+                (None, false) => crate::private::state_dir().join("company-unselected").join(
+                    &crate::hash::sha256_text(
+                        &crate::codebase::Repository::discover(repo)
+                            .map(|repository| repository.root)
+                            .unwrap_or_else(|_| repo.to_path_buf())
+                            .canonicalize()
+                            .unwrap_or_else(|_| repo.to_path_buf())
+                            .to_string_lossy(),
+                    )[..16],
+                ),
+            },
+            None => crate::private::state_dir().join("company-cache"),
+        },
         crate::StoreKind::Codebase => repo.join(".kin"),
     }
 }
