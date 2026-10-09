@@ -2215,7 +2215,15 @@ pub fn issue_certificate(
         .map(|remote| normalize_hint(&remote))
         .unwrap_or_default();
     let existing_uuid = repo.uuid_hint().map(str::to_owned);
-    let mut request = json!({"discovery_hint": hint});
+    // An origin-less repository has no discovery hint. Sending "" made the
+    // service treat every such repository as one: it answered the second
+    // with the first one's certificate, so two repositories shared an
+    // identity and each other's facts.
+    let mut request = if hint.is_empty() {
+        json!({})
+    } else {
+        json!({"discovery_hint": hint})
+    };
     if let Some(uuid) = &existing_uuid {
         request["repository_uuid"] = Value::String(uuid.clone());
     }

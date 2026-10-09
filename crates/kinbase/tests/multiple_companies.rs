@@ -721,3 +721,35 @@ fn a_company_candidate_is_delivered_only_from_its_own_repository() {
         "alpha's candidate reached beta's Company store"
     );
 }
+
+#[test]
+fn repositories_without_an_origin_get_distinct_identities() {
+    let world = World::new();
+    let mut uuids = Vec::new();
+    for name in ["no-origin-one", "no-origin-two"] {
+        let repo = world.repo(name, "placeholder");
+        // No origin remote at all, as in a local-only repository.
+        let status = Command::new("git")
+            .args(["remote", "remove", "origin"])
+            .current_dir(&repo)
+            .status_alone()
+            .unwrap();
+        assert!(status.success());
+        let issued = world.kinbase(
+            &repo,
+            &["repo", "issue", "--repo", ".", "--company", ALPHA, "--json"],
+        );
+        assert!(issued.status.success(), "{}", text(&issued));
+        let receipt: Value = serde_json::from_slice(&issued.stdout).unwrap();
+        uuids.push(
+            receipt["certificate"]["repository_uuid"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        );
+    }
+    assert_ne!(
+        uuids[0], uuids[1],
+        "two origin-less repositories share one identity"
+    );
+}
