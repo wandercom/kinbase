@@ -3,6 +3,7 @@ use crate::command_types::*;
 use crate::error::ContractError;
 use clap::Parser;
 use clap::error::ErrorKind;
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 /// Parse the CLI while preserving the process contract.
@@ -68,19 +69,32 @@ fn usage_error(_args: &[String], _detail: String) -> ContractError {
 }
 
 fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
+    // Hook dispatch learns its repository from the host envelope on stdin;
+    // loading the launcher here would select (and read the credentials of)
+    // whatever Company the process cwd resolves to first. `hooks` loads its
+    // own launcher once it knows the target.
+    let command = match command {
+        Command::Hooks(command) => return crate::hooks::dispatch(command, json),
+        command => command,
+    };
     if let Some(target) = selection_target(&command) {
         crate::selection::set_target(target);
     }
     let launcher = crate::launcher::Launcher::load()?;
     // A refused Company selection stops the command before any shared work.
-    // `doctor` reports it, hook dispatch degrades without blocking the host,
-    // and the service commands read no user Company at all.
-    let reports_selection = matches!(
-        command,
-        Command::Doctor { .. } | Command::Hooks(_) | Command::Company(_)
-    );
+    // `doctor` reports it and the service commands read no user Company at
+    // all. The refusal carries the selection report, so `status` shows its
+    // evidence and remediation exactly when they are needed.
+    let reports_selection = matches!(command, Command::Doctor { .. } | Command::Company(_));
     if !reports_selection && let Some(refusal) = launcher.selection_refusal() {
-        return Err(refusal);
+        let mut document = crate::output::error_document(&refusal);
+        if let (Some(report), Value::Object(map)) = (
+            launcher.selection_report(selection_repo(&command).as_deref()),
+            &mut document,
+        ) {
+            map.insert("company_selection".to_owned(), report);
+        }
+        return Err(refusal.with_output_document(document));
     }
     match command {
         Command::Company(CompanyCommand::Init { config }) => {
@@ -369,9 +383,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         Command::Questions(command) => {
             crate::questions::dispatch(command, json).map_err(internal)?;
         }
-        Command::Hooks(command) => {
-            crate::hooks::dispatch(command, json).map_err(internal)?;
-        }
+        Command::Hooks(_) => unreachable!("hook commands return before the launcher loads"),
     }
     Ok(())
 }
@@ -450,6 +462,16 @@ fn same_company_evidence(
         }
     }
     Ok(())
+}
+
+/// The repository a selection report should gather evidence for.
+fn selection_repo(command: &Command) -> Option<PathBuf> {
+    match selection_target(command) {
+        Some(crate::selection::Target::Repo(repo))
+        | Some(crate::selection::Target::Named { repo, .. })
+        | Some(crate::selection::Target::Install { repo, .. }) => Some(repo),
+        None => std::env::current_dir().ok(),
+    }
 }
 
 fn internal(error: crate::error::ContractError) -> ContractError {

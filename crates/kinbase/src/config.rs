@@ -910,6 +910,11 @@ fn named_companies(
         closed_keys(section, &allowed, &format!("[{label}]"))?;
         let key_dir = config_dir.join("companies").join(name);
         let config = company_section(section, &label, &key_dir)?;
+        plain_path(&config.cache_root, &format!("{label}.cache_root"))?;
+        plain_path(
+            &config.root_public_key_file,
+            &format!("{label}.root_public_key_file"),
+        )?;
         let discovery_hints = match section.get("discovery_hints") {
             None => Vec::new(),
             Some(value) => value
@@ -1014,8 +1019,45 @@ pub fn hint_matches(pattern: &str, origin: &str) -> bool {
     go(pattern.as_bytes(), origin.as_bytes())
 }
 
+/// The path a Company's file or directory will resolve to once it exists:
+/// the deepest existing ancestor canonicalized (so symlinks and case are
+/// resolved), then the components not created yet. `..` was refused when the
+/// config was read, so the remainder is plain names.
 fn comparable(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    let mut existing = path.to_path_buf();
+    let mut rest = Vec::new();
+    while !existing.exists() {
+        match (
+            existing.file_name().map(|name| name.to_os_string()),
+            existing.parent(),
+        ) {
+            (Some(name), Some(parent)) => {
+                rest.push(name);
+                existing = parent.to_path_buf();
+            }
+            _ => break,
+        }
+    }
+    let mut resolved = existing.canonicalize().unwrap_or(existing);
+    for name in rest.into_iter().rev() {
+        resolved.push(name);
+    }
+    resolved
+}
+
+/// Company paths are compared for overlap before they exist; a `.` or `..`
+/// component would let two spellings of one directory compare as two.
+fn plain_path(path: &Path, field: &str) -> Result<(), ContractError> {
+    use std::path::Component;
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+    {
+        return Err(config_error(format!(
+            "{field} must not contain `.` or `..` components"
+        )));
+    }
+    Ok(())
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {
@@ -1515,6 +1557,32 @@ mod named_company_tests {
             config.company.is_none(),
             "the named form selects later, per repository"
         );
+    }
+
+    #[test]
+    fn two_spellings_of_one_cache_root_are_refused() {
+        let text = |root_a: &str, root_b: &str| {
+            format!(
+                "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n\n\
+                 [companies.alpha]\nurl = \"http://127.0.0.1:8421\"\nfacts_token_file = \"/private/a/facts\"\n\
+                 root_public_key_file = \"/private/a/root.pub\"\ncache_root = \"{root_a}\"\n\n\
+                 [companies.beta]\nurl = \"http://127.0.0.1:8422\"\nfacts_token_file = \"/private/b/facts\"\n\
+                 root_public_key_file = \"/private/b/root.pub\"\ncache_root = \"{root_b}\"\n"
+            )
+        };
+        let parse =
+            |text: String| parse_user_config(Path::new("/private/example/config.toml"), &text);
+        let aliased = parse(text(
+            "/tmp/kinbase-org/a/../cache",
+            "/tmp/kinbase-org/cache",
+        ));
+        assert!(aliased.is_err_and(|error| error.message.contains("`..`")));
+        let nested = parse(text(
+            "/tmp/kinbase-org/cache",
+            "/tmp/kinbase-org/cache/inner",
+        ));
+        assert!(nested.is_err_and(|error| error.message.contains("share cache_root")));
+        assert!(parse(text("/tmp/kinbase-org/a", "/tmp/kinbase-org/b")).is_ok());
     }
 
     #[test]

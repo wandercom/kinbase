@@ -117,15 +117,27 @@ struct World {
     temp: TempDir,
     alpha: Service,
     beta: Service,
+    alpha_name: String,
+    beta_name: String,
 }
 
 impl World {
     fn new() -> Self {
+        Self::named(ALPHA, BETA)
+    }
+
+    fn named(alpha_name: &str, beta_name: &str) -> Self {
         let temp = TempDir::new().unwrap();
         fs::set_permissions(temp.path(), fs::Permissions::from_mode(0o700)).unwrap();
-        let alpha = start_company(temp.path(), ALPHA);
-        let beta = start_company(temp.path(), BETA);
-        let world = Self { temp, alpha, beta };
+        let alpha = start_company(temp.path(), alpha_name);
+        let beta = start_company(temp.path(), beta_name);
+        let world = Self {
+            temp,
+            alpha,
+            beta,
+            alpha_name: alpha_name.to_owned(),
+            beta_name: beta_name.to_owned(),
+        };
         private_dir(&world.config_dir());
         private_dir(&world.temp.path().join("personal"));
         world.write_config("");
@@ -157,8 +169,16 @@ impl World {
         let body = format!(
             "schema_version = \"1\"\n\n[personal]\ndata_root = \"{personal}\"\n\n{a}{b}{extra}",
             personal = self.temp.path().join("personal").display(),
-            a = self.company_table(ALPHA, &self.alpha, "\"https://github.com/Alpha-Org/*\""),
-            b = self.company_table(BETA, &self.beta, "\"git@github.com:beta-org/**\""),
+            a = self.company_table(
+                &self.alpha_name,
+                &self.alpha,
+                "\"https://github.com/Alpha-Org/*\""
+            ),
+            b = self.company_table(
+                &self.beta_name,
+                &self.beta,
+                "\"git@github.com:beta-org/**\""
+            ),
         );
         write_private(&self.config_dir().join("config.toml"), body.as_bytes());
     }
@@ -243,9 +263,30 @@ impl World {
     /// One hook event as the host runs it: no arguments beyond the event,
     /// the envelope naming the cwd, the process started somewhere else.
     fn hook(&self, repo: &Path, event: &str, json: bool) -> Output {
+        self.hook_from(self.temp.path(), repo, event, json)
+    }
+
+    /// `hook` for a named session.
+    fn hook_session(&self, repo: &Path, event: &str, session: &str) -> Output {
+        self.hook_with(self.temp.path(), repo, event, true, session)
+    }
+
+    /// `hook`, with the host process started in `process_cwd`.
+    fn hook_from(&self, process_cwd: &Path, repo: &Path, event: &str, json: bool) -> Output {
+        self.hook_with(process_cwd, repo, event, json, "multi-company-probe")
+    }
+
+    fn hook_with(
+        &self,
+        process_cwd: &Path,
+        repo: &Path,
+        event: &str,
+        json: bool,
+        session: &str,
+    ) -> Output {
         let mut command = Command::new(env!("CARGO_BIN_EXE_kinbase"));
         command
-            .current_dir(self.temp.path())
+            .current_dir(process_cwd)
             .args(["hooks", "dispatch", "claude", event]);
         if json {
             command.arg("--json");
@@ -258,7 +299,7 @@ impl World {
         let mut child = command.spawn_alone().unwrap();
         let envelope = serde_json::json!({
             "hook_event_name": event,
-            "session_id": "multi-company-probe",
+            "session_id": session,
             "cwd": repo.to_string_lossy()
         });
         child
@@ -273,7 +314,10 @@ impl World {
     /// Strings no hook output may carry while it is not serving `except`.
     fn canaries(&self, except: Option<&str>) -> Vec<String> {
         let mut canaries = Vec::new();
-        for (name, service) in [(ALPHA, &self.alpha), (BETA, &self.beta)] {
+        for (name, service) in [
+            (self.alpha_name.as_str(), &self.alpha),
+            (self.beta_name.as_str(), &self.beta),
+        ] {
             if Some(name) == except {
                 continue;
             }
@@ -283,6 +327,47 @@ impl World {
         }
         canaries
     }
+}
+
+/// One host message observed in `repo` for session `session`.
+fn observe(world: &World, repo: &Path, session: &str, message: &str) {
+    let event = world.temp.path().join(format!("{session}.jsonl"));
+    fs::write(
+        &event,
+        format!(
+            "{}\n",
+            serde_json::json!({"id": "m1", "role": "user", "text": message,
+                "observed_at": kinbase::time::now_rfc3339_millis(), "source_kind": "codex_jsonl"})
+        ),
+    )
+    .unwrap();
+    let observed = world.kinbase(
+        repo,
+        &[
+            "session",
+            "observe",
+            session,
+            "--json",
+            "--event",
+            event.to_str().unwrap(),
+        ],
+    );
+    assert!(observed.status.success(), "observe: {}", text(&observed));
+}
+
+/// The fork of `a_worktree_uuid_cannot_carry_...`: a beta-origin repository
+/// carrying a UUID alpha holds.
+fn fork_of_alpha(world: &World) -> PathBuf {
+    let alpha_repo = world.repo("alpha-src", "git@github.com:alpha-org/src.git");
+    world.certify(&alpha_repo, &world.alpha_name);
+    let fork = world.repo("beta-fork", "git@github.com:beta-org/fork.git");
+    fs::create_dir_all(fork.join(".kin")).unwrap();
+    fs::copy(
+        alpha_repo.join(".kin/kinbase.toml"),
+        fork.join(".kin/kinbase.toml"),
+    )
+    .unwrap();
+    fork
 }
 
 fn text(output: &Output) -> String {
@@ -763,5 +848,184 @@ fn repositories_without_an_origin_get_distinct_identities() {
     assert_ne!(
         uuids[0], uuids[1],
         "two origin-less repositories share one identity"
+    );
+}
+
+// ---- Review findings on PR #30, each reproduced before it was fixed. ----
+
+#[test]
+fn a_refused_status_still_reports_its_selection_evidence() {
+    let world = World::new();
+    let fork = fork_of_alpha(&world);
+    let (code, status) = world.status(&fork);
+    assert_eq!(code, Some(4));
+    assert_eq!(
+        status["company_selection"]["reason"], "company-ambiguous",
+        "the refusal hid the evidence status exists to show: {status}"
+    );
+    assert!(
+        status["company_selection"]["remediation"].is_string(),
+        "{status}"
+    );
+}
+
+#[test]
+fn an_unreadable_cache_is_not_an_empty_one() {
+    let world = World::new();
+    let fork = fork_of_alpha(&world);
+    // Alpha holds the fork's UUID, but its cache cannot be read: treating
+    // that as "alpha holds nothing" would let beta's hint win.
+    let cache = world
+        .temp
+        .path()
+        .join(format!("cache-{}", world.alpha_name));
+    fs::set_permissions(&cache, fs::Permissions::from_mode(0o000)).unwrap();
+    let (code, status) = world.status(&fork);
+    fs::set_permissions(&cache, fs::Permissions::from_mode(0o700)).unwrap();
+    assert_eq!(code, Some(4), "status: {status}");
+    assert_eq!(
+        reason(&status),
+        Some("company-unverifiable"),
+        "status: {status}"
+    );
+}
+
+#[test]
+fn a_hook_selects_from_its_envelope_before_reading_any_credentials() {
+    let world = World::new();
+    let alpha_repo = world.repo("alpha-creds", "git@github.com:alpha-org/creds.git");
+    let beta_repo = world.repo("beta-creds", "git@github.com:beta-org/creds.git");
+    world.certify(&beta_repo, &world.beta_name);
+    // Alpha's credentials are gone; the host started in alpha's repository
+    // but the event is for beta's.
+    fs::remove_file(world.alpha.dir.join("facts.token")).unwrap();
+    let hook = world.hook_from(&alpha_repo, &beta_repo, "SessionStart", true);
+    assert!(
+        hook.status.success(),
+        "a broken Company blocked another's session: {}",
+        text(&hook)
+    );
+    let response: Value = serde_json::from_slice(&hook.stdout).unwrap();
+    assert_eq!(response["status"], "verified", "{response}");
+}
+
+#[test]
+fn a_checkpoint_admits_against_the_repository_the_host_named() {
+    let world = World::new();
+    let alpha_repo = world.repo("alpha-stop", "git@github.com:alpha-org/stop.git");
+    let elsewhere = world.repo("elsewhere-stop", "git@example.com:other/stop.git");
+    world.certify(&alpha_repo, &world.alpha_name);
+    let (code, status) = world.status(&alpha_repo);
+    assert_eq!(code, Some(0), "status: {status}");
+    observe(
+        &world,
+        &alpha_repo,
+        "stop-here",
+        "Company policy: every team must pin base images.",
+    );
+    // The host process started elsewhere; the Stop is for alpha's repository.
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kinbase"));
+    command
+        .current_dir(&elsewhere)
+        .args(["hooks", "dispatch", "claude", "Stop", "--json"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    world.isolate(&mut command);
+    let mut child = command.spawn_alone().unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            serde_json::json!({"hook_event_name": "Stop", "session_id": "stop-here",
+                "cwd": alpha_repo.to_string_lossy()})
+            .to_string()
+            .as_bytes(),
+        )
+        .unwrap();
+    let output = text(&child.wait_with_output().unwrap());
+    assert!(
+        output.contains(&format!("company:{}", world.alpha.company_id)),
+        "the probe minted no alpha candidate: {output}"
+    );
+    assert!(
+        !output.contains("came from another repository"),
+        "a candidate from the named repository was held: {output}"
+    );
+}
+
+#[test]
+fn a_company_named_like_a_json_literal_is_still_scrubbed() {
+    // Alpha is named `true`. Its candidate is held when the session stops in
+    // beta's repository, and the held admission names alpha's company_id.
+    let world = World::named("true", BETA);
+    let alpha_repo = world.repo("alpha-literal", "git@github.com:alpha-org/literal.git");
+    let beta_repo = world.repo("beta-literal", "git@github.com:beta-org/literal.git");
+    world.certify(&alpha_repo, "true");
+    world.certify(&beta_repo, BETA);
+    for repo in [&alpha_repo, &beta_repo] {
+        assert_eq!(world.status(repo).0, Some(0));
+    }
+    observe(
+        &world,
+        &alpha_repo,
+        "literal",
+        "Company policy: every team must pin base images.",
+    );
+    let hook = world.hook_session(&beta_repo, "Stop", "literal");
+    let response: Value = serde_json::from_slice(&hook.stdout)
+        .unwrap_or_else(|error| panic!("hook output is not JSON ({error}): {}", text(&hook)));
+    let rendered = response.to_string();
+    assert!(
+        response["admissions"]
+            .as_array()
+            .is_some_and(|admissions| !admissions.is_empty()),
+        "the probe held no alpha candidate: {rendered}"
+    );
+    assert!(
+        !rendered.contains(&world.alpha.company_id) && !rendered.contains(&world.alpha.url),
+        "alpha's identity reached beta's session: {rendered}"
+    );
+    assert_eq!(
+        response["degraded"].as_bool().is_some(),
+        true,
+        "a JSON literal was rewritten: {rendered}"
+    );
+}
+
+#[test]
+fn scrubbing_happens_before_evidence_is_encoded_or_framed() {
+    // Beta's repository is named like alpha, so alpha's name is in beta's
+    // own repository-identity fact.
+    let world = World::new();
+    let beta_repo = world.repo(ALPHA, "git@github.com:beta-org/x.git");
+    world.certify(&beta_repo, BETA);
+    assert_eq!(world.status(&beta_repo).0, Some(0));
+
+    let hook = world.hook(&beta_repo, "SessionStart", true);
+    let response: Value = serde_json::from_slice(&hook.stdout).unwrap();
+    use base64::Engine as _;
+    let envelope = base64::engine::general_purpose::STANDARD
+        .decode(response["envelope"].as_str().unwrap())
+        .unwrap();
+    assert!(
+        !String::from_utf8_lossy(&envelope).contains(ALPHA),
+        "alpha's name survived in the encoded envelope"
+    );
+
+    let hook = world.hook(&beta_repo, "SessionStart", false);
+    let document: Value = serde_json::from_slice(&hook.stdout).unwrap();
+    let context = document["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(!context.contains(ALPHA), "alpha's name reached the context");
+    // `<label>\n<length>\n<document>`: the length still frames the document.
+    let mut parts = context.splitn(3, '\n');
+    let (_, length, body) = (parts.next(), parts.next().unwrap(), parts.next().unwrap());
+    assert_eq!(
+        length.parse::<usize>().unwrap(),
+        body.len(),
+        "the frame length is stale"
     );
 }

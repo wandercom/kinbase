@@ -114,6 +114,39 @@ impl Launcher {
         }))
     }
 
+    /// `scrub_for_hook` applied to every string inside a JSON value, so a
+    /// Company named like a JSON literal (`true`, `null`) can neither break
+    /// the document nor be skipped.
+    pub fn scrub_value_for_hook(&self, value: &mut Value) {
+        if !self.named_form() {
+            return;
+        }
+        match value {
+            Value::String(text) => *text = self.scrub_for_hook(text),
+            Value::Array(items) => items
+                .iter_mut()
+                .for_each(|item| self.scrub_value_for_hook(item)),
+            Value::Object(map) => map
+                .values_mut()
+                .for_each(|item| self.scrub_value_for_hook(item)),
+            _ => {}
+        }
+    }
+
+    /// Whether a single-form revocation watermark for `(revoked_key, cursor)`
+    /// belongs to the Company selected here: it does only when this
+    /// Company's snapshot is the one configured snapshot carrying that
+    /// revocation (`selection::revocation_holders`).
+    pub fn owns_legacy_watermark(&self, revoked_key: &str, cursor: &str) -> bool {
+        let (Some(user), crate::selection::Outcome::Selected { name, .. }) =
+            (self.user.as_ref(), &self.selection)
+        else {
+            return false;
+        };
+        crate::selection::revocation_holders(&user.companies, revoked_key, cursor)
+            .is_some_and(|holders| holders.len() == 1 && &holders[0] == name)
+    }
+
     /// Several Companies are configured (`[companies.<name>]`).
     pub fn named_form(&self) -> bool {
         self.user

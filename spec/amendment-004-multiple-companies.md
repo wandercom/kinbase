@@ -101,9 +101,12 @@ discovery_hints = ["github.com/acme-corp/*", "gitlab.acme.example/platform/**"]
 
 ## 4. Stores
 
-- `P-01` Revocation watermarks are keyed by company_id under the named form; a
-  missing qualified key carries over the unqualified one to the first Company that
-  asks, and to no second Company.
+- `P-01` Revocation watermarks are keyed by company_id under the named form. A
+  watermark recorded under the single form carries over only to the Company whose
+  verified snapshot is the one configured snapshot carrying that revocation; when
+  several carry it, or any configured Company has no snapshot yet, a fresh watermark
+  starts, which reopens more history rather than less. The attribution is computed
+  from the snapshots, not claimed, so concurrent invocations agree.
 - `P-02` With no Company selected, local Company records go to a per-repository
   directory, never one shared fallback.
 

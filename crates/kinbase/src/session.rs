@@ -1981,7 +1981,7 @@ fn split_sentences_keep(text: &str) -> Vec<String> {
 }
 
 pub fn checkpoint(session: &str, json: bool) -> Result<(), ContractError> {
-    let (record, failure) = checkpoint_internal(session)?;
+    let (record, failure) = checkpoint_internal(session, None)?;
     if let Some(error) = failure {
         // The checkpoint is written; the command still reports the refusal,
         // and a text reader sees every candidate's outcome with it.
@@ -2001,7 +2001,14 @@ pub fn checkpoint(session: &str, json: bool) -> Result<(), ContractError> {
 /// Checkpoint a session, admitting each automatic candidate on its own.
 /// Returns the checkpoint record and the first admission refusal, if any; the
 /// record (with every candidate's outcome) is written either way.
-pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError>), ContractError> {
+/// `repo` is the repository the host named for this event (a hook
+/// envelope's `cwd`); without one the process cwd stands in. Admission
+/// checks a candidate against the same repository the launcher selected the
+/// Company for.
+pub fn checkpoint_internal(
+    session: &str,
+    repo: Option<&Path>,
+) -> Result<(Value, Option<ContractError>), ContractError> {
     // A failed Company delivery or a crash after journaling is retried by the
     // ordinary session lifecycle; there is no proposal command to drain it.
     // The ledgers hold every session's records and one Stop wants one
@@ -2039,7 +2046,10 @@ pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError
     let mut admissions_held = 0usize;
     let mut first_failure: Option<ContractError> = None;
     if !candidates.is_empty() {
-        let repo = std::env::current_dir().map_err(io_error)?;
+        let repo = match repo {
+            Some(repo) => repo.to_path_buf(),
+            None => std::env::current_dir().map_err(io_error)?,
+        };
         let launcher = crate::launcher::Launcher::load();
         for candidate in candidates.values() {
             let admitted = match &launcher {

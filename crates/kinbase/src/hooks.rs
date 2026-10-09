@@ -49,14 +49,18 @@ pub fn dispatch(
 }
 
 fn run(command: crate::command_types::HookCommand, json: bool) -> Result<(), ContractError> {
+    // Dispatch loads its launcher after the envelope names the repository:
+    // under several Companies, loading it first would select by wherever the
+    // host happened to start this process.
+    if let crate::command_types::HookCommand::Dispatch { host, event } = command {
+        return dispatch_event(host, &event, json);
+    }
     let launcher = crate::launcher::Launcher::load()?;
     let ranges = &launcher.shared.hosts;
     match command {
         crate::command_types::HookCommand::Plan { host } => plan(host, ranges, json),
         crate::command_types::HookCommand::Install { host } => install(host, ranges, json),
-        crate::command_types::HookCommand::Dispatch { host, event } => {
-            dispatch_event(host, &event, ranges, json)
-        }
+        crate::command_types::HookCommand::Dispatch { .. } => unreachable!(),
     }
 }
 
@@ -589,7 +593,6 @@ fn supported_event(event: &str) -> bool {
 fn dispatch_event(
     host_arg: crate::command_types::Host,
     event: &str,
-    ranges: &crate::config::SharedHosts,
     json: bool,
 ) -> Result<(), ContractError> {
     let host = host_name(host_arg);
@@ -651,12 +654,19 @@ fn dispatch_event(
     // is chosen from the cwd the host names, not where this process started.
     crate::selection::set_target(crate::selection::Target::Repo(cwd.clone()));
     // Everything this hook prints is scrubbed of other Companies under the
-    // named form; loading the launcher for that is the same load the event
-    // itself performs below.
+    // named form, value by value before anything is encoded or framed. The
+    // launcher is loaded only now, with the envelope's target set.
     let scrubber = crate::launcher::Launcher::load().ok();
     let scrub = |text: &str| match &scrubber {
         Some(launcher) => launcher.scrub_for_hook(text),
         None => text.to_owned(),
+    };
+    let scrub_values = |values: &mut Vec<Value>| {
+        if let Some(launcher) = &scrubber {
+            for value in values.iter_mut() {
+                launcher.scrub_value_for_hook(value);
+            }
+        }
     };
     if event_type == "UserPromptSubmit" {
         // The prompt belongs to the repository the host names, not to
@@ -760,7 +770,8 @@ fn dispatch_event(
                 .get("session_id")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let (checkpoint, failure) = crate::session::checkpoint_internal(session_id)?;
+            let (checkpoint, failure) =
+                crate::session::checkpoint_internal(session_id, Some(&cwd))?;
             let held = checkpoint
                 .get("admissions_held")
                 .and_then(Value::as_u64)
@@ -790,7 +801,8 @@ fn dispatch_event(
                 .get("session_id")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let (checkpoint, failure) = crate::session::checkpoint_internal(session_id)?;
+            let (checkpoint, failure) =
+                crate::session::checkpoint_internal(session_id, Some(&cwd))?;
             let held = checkpoint
                 .get("admissions_held")
                 .and_then(Value::as_u64)
@@ -822,6 +834,9 @@ fn dispatch_event(
             })
             .collect()
     };
+    scrub_values(&mut canonical_facts);
+    scrub_values(&mut unknowns);
+    scrub_values(&mut start.trusted_company_facts);
     let bounded = bound_evidence(&canonical_facts, &unknowns, &start.trusted_company_facts);
     let stream_body = json!({
         "facts": encode(&bounded.facts),
@@ -841,12 +856,10 @@ fn dispatch_event(
         // The host response is a display document (it carries a measured
         // fractional connect time); the durable-record text rule does not
         // apply to it, JCS ordering and escaping do.
-        let response = match &scrubber {
-            Some(launcher) if launcher.named_form() => {
-                serde_json::from_str(&scrub(&crate::json::jcs_text(&response))).unwrap_or(response)
-            }
-            _ => response,
-        };
+        let mut response = response;
+        if let Some(launcher) = &scrubber {
+            launcher.scrub_value_for_hook(&mut response);
+        }
         if let Some(error) = admission_failure {
             return Err(error.with_output_document(response));
         }
@@ -865,7 +878,6 @@ fn dispatch_event(
             // would otherwise be found out from a bad decision.
             start.selection_notice.filter(|_| host == "claude"),
         )
-        .map(|text| scrub(&text))
         .map(String::into_bytes)
         .unwrap_or_default(),
         None => stream,

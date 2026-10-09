@@ -1621,20 +1621,18 @@ pub fn trust_facts(
                     ),
                     None => legacy.clone(),
                 };
+                // A converted single-form watermark carries over only to the
+                // Company it provably belongs to; any doubt starts a fresh one,
+                // which reopens more, never less.
                 let recorded = private.meta(&key).ok().flatten().or_else(|| {
-                    let company_id = scope.as_deref()?;
+                    scope.as_ref()?;
                     let carried = private.meta(&legacy).ok().flatten()?;
-                    // The unqualified sighting belongs to the one Company the
-                    // single form had; whichever Company claims it first keeps
-                    // it, and no second Company inherits it.
-                    let marker = format!("{legacy}:carried-to");
-                    match private.meta(&marker).ok().flatten() {
-                        Some(owner) if owner != company_id => return None,
-                        Some(_) => {}
-                        None => {
-                            let _ = private.set_meta(&marker, company_id);
-                        }
+                    if !launcher.owns_legacy_watermark(&revocation.revoked_key, &revocation.cursor)
+                    {
+                        return None;
                     }
+                    // Idempotent: every process that gets here computed the
+                    // same owner and writes the same value.
                     let _ = private.set_meta(&key, &carried);
                     Some(carried)
                 });
