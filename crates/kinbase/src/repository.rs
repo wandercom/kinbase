@@ -1608,7 +1608,15 @@ pub fn trust_facts(
             // sightings; the unqualified key a converted single-form config
             // recorded still answers first, so converting reopens nothing.
             let scope = launcher.company_key_scope();
-            for (revoked_key, cursor, _) in facts.revocations.clone() {
+            // Under several Companies a missing company_id is not the single
+            // form: the unqualified keys are shared by every Company, so no
+            // watermark is read or written and every warranted trace reopens.
+            let revocations = if launcher.named_form() && scope.is_none() {
+                Vec::new()
+            } else {
+                facts.revocations.clone()
+            };
+            for (revoked_key, cursor, _) in revocations {
                 let revocation = Revocation::of_key(revoked_key, cursor, String::new());
                 let legacy = format!(
                     "revocation-watermark:{}:{}",

@@ -545,6 +545,9 @@ fn cached_snapshot(cache_root: &Path) -> Option<Value> {
 }
 
 /// The verified snapshot's company_id in a Company's cache, read-only.
+/// `store_snapshot` writes the snapshot row before its meta rows, so a crash
+/// between them leaves a verified snapshot with no `company_id` row; the
+/// snapshot itself still names its Company.
 pub fn cached_company_id(cache_root: &Path) -> Option<String> {
     let path = cache_root.join(crate::company::cache::CACHE_FILE);
     if !path.exists() {
@@ -562,6 +565,12 @@ pub fn cached_company_id(cache_root: &Path) -> Option<String> {
             |row| row.get(0),
         )
         .ok()
+        .or_else(|| {
+            cached_snapshot(cache_root)?
+                .get("company_id")?
+                .as_str()
+                .map(str::to_owned)
+        })
         .filter(|value: &String| !value.is_empty())
 }
 
@@ -642,7 +651,7 @@ fn replace_word(text: &str, needle: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{replace_word, revocation_holders};
+    use super::{cached_company_id, replace_word, revocation_holders};
     use crate::config::{CompanyConfig, NamedCompany};
     use std::path::Path;
 
@@ -713,6 +722,31 @@ mod tests {
         // A Company with no snapshot yet makes the answer unknowable.
         let cold = company("c", &temp.path().join("c"), None);
         assert_eq!(revocation_holders(&[a, b, cold], &key, "7"), None);
+    }
+
+    #[test]
+    fn a_snapshot_whose_meta_rows_were_lost_still_names_its_company() {
+        // `store_snapshot` writes the snapshot row before its meta rows; a
+        // crash between them leaves no `company_id` row.
+        let temp = tempfile::TempDir::new().unwrap();
+        let root = temp.path().join("cache");
+        std::fs::create_dir_all(&root).unwrap();
+        let connection =
+            rusqlite::Connection::open(root.join(crate::company::cache::CACHE_FILE)).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE snapshot(id INTEGER PRIMARY KEY, bytes BLOB, digest TEXT, stored_at TEXT);
+                 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);",
+            )
+            .unwrap();
+        let bytes = serde_json::to_vec(&serde_json::json!({"company_id": "cid-a"})).unwrap();
+        connection
+            .execute(
+                "INSERT INTO snapshot(id, bytes, digest, stored_at) VALUES (1, ?1, '', '')",
+                [bytes],
+            )
+            .unwrap();
+        assert_eq!(cached_company_id(&root).as_deref(), Some("cid-a"));
     }
 
     #[test]
