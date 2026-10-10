@@ -217,11 +217,10 @@ impl World {
             ],
             vec!["remote", "add", "origin", origin],
         ] {
-            let status = Command::new("git")
-                .args(&args)
-                .current_dir(&repo)
-                .status_alone()
-                .unwrap();
+            let mut git = Command::new("git");
+            git.args(&args).current_dir(&repo);
+            self.isolate(&mut git);
+            let status = git.status_alone().unwrap();
             assert!(status.success(), "git {args:?}");
         }
         repo
@@ -826,11 +825,10 @@ fn repositories_without_an_origin_get_distinct_identities() {
     for name in ["no-origin-one", "no-origin-two"] {
         let repo = world.repo(name, "placeholder");
         // No origin remote at all, as in a local-only repository.
-        let status = Command::new("git")
-            .args(["remote", "remove", "origin"])
-            .current_dir(&repo)
-            .status_alone()
-            .unwrap();
+        let mut git = Command::new("git");
+        git.args(["remote", "remove", "origin"]).current_dir(&repo);
+        world.isolate(&mut git);
+        let status = git.status_alone().unwrap();
         assert!(status.success());
         let issued = world.kinbase(
             &repo,
