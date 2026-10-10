@@ -1029,3 +1029,43 @@ fn scrubbing_happens_before_evidence_is_encoded_or_framed() {
         "the frame length is stale"
     );
 }
+
+#[test]
+fn service_commands_do_not_need_the_launchers_company_credentials() {
+    let world = World::new();
+    let alpha_repo = world.repo("alpha-service", "git@github.com:alpha-org/service.git");
+    // Alpha is selected here and its credentials are gone; `company init`
+    // reads only its own service config.
+    fs::remove_file(world.alpha.dir.join("facts.token")).unwrap();
+    let dir = world.temp.path().join("service-third");
+    private_dir(&dir);
+    let config = dir.join("kinbased.toml");
+    write_private(
+        &config,
+        format!(
+            "schema_version = \"1\"\n\
+             company_id = \"cid-third\"\n\
+             sqlite_path = \"{dir}/company.sqlite3\"\n\
+             bind = \"127.0.0.1:1\"\n\
+             root_key_file = \"{dir}/company-root.key\"\n\
+             facts_token_file = \"{dir}/facts.token\"\n\
+             admin_token_file = \"{dir}/admin.token\"\n\
+             auth_failures_per_minute = 100\n\
+             default_fact_freshness_seconds = 3600\n\
+             candidate_lifetime_seconds = 900\n\
+             clock_skew_seconds = 300\n\
+             nonce_retention_seconds = 604800\n",
+            dir = dir.display(),
+        )
+        .as_bytes(),
+    );
+    let init = world.kinbase(
+        &alpha_repo,
+        &["company", "init", "--config", config.to_str().unwrap()],
+    );
+    assert!(
+        init.status.success(),
+        "company init failed on the launcher's credentials: {}",
+        text(&init)
+    );
+}

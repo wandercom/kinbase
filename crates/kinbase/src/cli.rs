@@ -72,20 +72,33 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
     // Hook dispatch learns its repository from the host envelope on stdin;
     // loading the launcher here would select (and read the credentials of)
     // whatever Company the process cwd resolves to first. `hooks` loads its
-    // own launcher once it knows the target.
+    // own launcher once it knows the target. The service commands read only
+    // their own `--config`; the launcher would derive this user's Company
+    // access and fail on credentials the service never uses. They keep the
+    // launcher's descriptor attestation.
     let command = match command {
         Command::Hooks(command) => return crate::hooks::dispatch(command, json),
+        Command::Company(command) => {
+            let personal_root =
+                crate::config::load_user_config()?.map(|user| user.personal.data_root);
+            crate::sandbox::attest_descriptors(personal_root.as_deref())?;
+            return match command {
+                CompanyCommand::Init { config } => crate::company::init(&config, json),
+                CompanyCommand::Serve { config } => crate::company::serve(&config, json),
+            }
+            .map_err(internal);
+        }
         command => command,
     };
     if let Some(target) = selection_target(&command) {
         crate::selection::set_target(target);
     }
     let launcher = crate::launcher::Launcher::load()?;
-    // A refused Company selection stops the command before any shared work.
-    // `doctor` reports it and the service commands read no user Company at
-    // all. The refusal carries the selection report, so `status` shows its
-    // evidence and remediation exactly when they are needed.
-    let reports_selection = matches!(command, Command::Doctor { .. } | Command::Company(_));
+    // A refused Company selection stops the command before any shared work;
+    // `doctor` reports it instead. The refusal carries the selection report,
+    // so `status` shows its evidence and remediation exactly when they are
+    // needed.
+    let reports_selection = matches!(command, Command::Doctor { .. });
     if !reports_selection && let Some(refusal) = launcher.selection_refusal() {
         let mut document = crate::output::error_document(&refusal);
         if let (Some(report), Value::Object(map)) = (
@@ -97,11 +110,8 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         return Err(refusal.with_output_document(document));
     }
     match command {
-        Command::Company(CompanyCommand::Init { config }) => {
-            crate::company::init(&config, json).map_err(internal)?;
-        }
-        Command::Company(CompanyCommand::Serve { config }) => {
-            crate::company::serve(&config, json).map_err(internal)?;
+        Command::Company(_) => {
+            unreachable!("service commands return before the launcher loads")
         }
         Command::Repo(RepoCommand::Issue { repo, company }) => {
             crate::repository::issue_certificate(launcher, &repo, &company, json)
