@@ -32,21 +32,34 @@ pub fn store_root(store: crate::StoreKind, repo: &Path) -> PathBuf {
                 // Several Companies, none selected for this repository: one
                 // shared fallback would carry local Company answers from one
                 // organization's repository into another's.
-                (None, false) => crate::private::state_dir().join("company-unselected").join(
-                    &crate::hash::sha256_text(
-                        &crate::codebase::Repository::discover(repo)
-                            .map(|repository| repository.root)
-                            .unwrap_or_else(|_| repo.to_path_buf())
-                            .canonicalize()
-                            .unwrap_or_else(|_| repo.to_path_buf())
-                            .to_string_lossy(),
-                    )[..16],
-                ),
+                (None, false) => crate::private::state_dir()
+                    .join("company-unselected")
+                    .join(unselected_namespace(repo)),
             },
             None => crate::private::state_dir().join("company-cache"),
         },
         crate::StoreKind::Codebase => repo.join(".kin"),
     }
+}
+
+/// The fallback Company store a repository no Company claims writes to. The
+/// path alone is not the repository: a checkout deleted and recloned at the
+/// same path is another one. The certified UUID, when there is one, and the
+/// device and inode of the Git common directory tell them apart, since a
+/// new clone has a new `.git`.
+fn unselected_namespace(repo: &Path) -> String {
+    let (root, identity) = match crate::codebase::Repository::discover(repo) {
+        Ok(repository) => {
+            let git = fs::metadata(&repository.common_dir)
+                .map(|metadata| format!("{}:{}", metadata.dev(), metadata.ino()))
+                .unwrap_or_default();
+            let uuid = repository.uuid_hint().unwrap_or_default().to_owned();
+            (repository.root, format!("{uuid}\0{git}"))
+        }
+        Err(_) => (repo.to_path_buf(), String::new()),
+    };
+    let root = root.canonicalize().unwrap_or(root);
+    sha256_text(&format!("{}\0{identity}", root.to_string_lossy()))[..16].to_owned()
 }
 
 pub fn ensure_store_root(store: crate::StoreKind, repo: &Path) -> Result<PathBuf, ContractError> {
@@ -626,6 +639,41 @@ fn collect_files(path: &Path, output: &mut Vec<PathBuf>) -> Result<(), ContractE
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod unselected_namespace_tests {
+    use super::unselected_namespace;
+    use std::path::Path;
+    use std::process::Command;
+
+    fn git_init(path: &Path) {
+        std::fs::create_dir_all(path).unwrap();
+        let status = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(path)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("HOME", path)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    }
+
+    #[test]
+    fn a_checkout_replaced_at_the_same_path_gets_its_own_store() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path().join("checkout");
+        git_init(&repo);
+        let first = unselected_namespace(&repo);
+        assert_eq!(unselected_namespace(&repo), first, "not stable");
+        std::fs::rename(&repo, temp.path().join("old")).unwrap();
+        git_init(&repo);
+        assert_ne!(
+            unselected_namespace(&repo),
+            first,
+            "the replacement checkout inherited the previous repository's store"
+        );
+    }
 }
 
 #[cfg(test)]
