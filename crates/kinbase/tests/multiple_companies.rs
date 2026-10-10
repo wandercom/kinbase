@@ -1152,6 +1152,29 @@ fn a_held_candidate_keeps_its_company_id_out_of_another_companys_session() {
 }
 
 #[test]
+fn a_company_name_from_the_command_line_is_validated_before_it_is_echoed() {
+    let world = World::new();
+    let repo = world.repo("named-arg", "git@github.com:alpha-org/named-arg.git");
+    let output = world.kinbase(
+        &repo,
+        &[
+            "repo",
+            "issue",
+            "--repo",
+            ".",
+            "--company",
+            "evil\u{1b}[2J\u{202e}",
+        ],
+    );
+    let rendered = text(&output);
+    assert_eq!(output.status.code(), Some(4), "{rendered}");
+    assert!(
+        !rendered.contains('\u{1b}') && !rendered.contains('\u{202e}'),
+        "the raw argument reached the output: {rendered:?}"
+    );
+}
+
+#[test]
 fn a_refused_evidence_repository_is_refused_even_beside_an_unselected_one() {
     let world = World::new();
     let fork = fork_of_alpha(&world);

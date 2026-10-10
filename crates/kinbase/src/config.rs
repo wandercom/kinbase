@@ -969,7 +969,7 @@ fn named_companies(
     Ok(companies)
 }
 
-fn valid_company_name(name: &str) -> bool {
+pub(crate) fn valid_company_name(name: &str) -> bool {
     (1..=32).contains(&name.len())
         && name
             .bytes()

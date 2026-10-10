@@ -182,10 +182,18 @@ pub fn resolve(user: &UserConfig, target: &Target) -> (Outcome, Evidence) {
                     .iter()
                     .map(|company| company.name.as_str())
                     .collect();
+                // `--company` is raw command-line text; only a well-formed
+                // name is echoed, never control or bidi characters.
+                let message = if crate::config::valid_company_name(name) {
+                    format!("no configured Company is named `{name}`")
+                } else {
+                    "`--company` is not a valid Company name (1-32 characters of a-z, 0-9 and '-')"
+                        .to_owned()
+                };
                 return (
                     Outcome::Refused(Refusal {
                         reason: "company-unknown",
-                        message: format!("no configured Company is named `{name}`"),
+                        message,
                         remediation: format!(
                             "Pass one of the configured names: {}.",
                             configured.join(", ")
