@@ -598,31 +598,79 @@ pub const HOOK_UNSELECTED_NOTICE: &str = "Kinbase found no Company for this repo
 /// Replace every other configured Company's name, URL, cache path and cached
 /// company_id in text bound for a hook's output. Hook output reaches the coding session and its
 /// model provider; under the named form a Company's existence is itself
-/// confidential to the other organizations.
-pub fn scrub(user: &UserConfig, selected: Option<&str>, text: &str) -> String {
-    let mut needles: Vec<String> = Vec::new();
-    // The selected Company's own facts may name it; every other Company is
-    // what this session must not learn of.
-    for company in user
-        .companies
-        .iter()
-        .filter(|company| Some(company.name.as_str()) != selected)
-    {
-        needles.push(company.config.url.trim_end_matches('/').to_owned());
-        needles.push(company.config.cache_root.display().to_string());
-        if let Some(id) = cached_company_id(&company.config.cache_root) {
-            needles.push(id);
+/// confidential to the other organizations. Gathered once, so a hook
+/// response is scrubbed value by value without reopening every Company's
+/// cache for each string.
+pub struct Scrubber {
+    needles: Vec<String>,
+    selected_id: Option<String>,
+}
+
+impl Scrubber {
+    pub fn new(user: &UserConfig, selected: Option<&str>) -> Self {
+        let mut needles: Vec<String> = Vec::new();
+        let mut selected_id = None;
+        // The selected Company's own facts may name it; every other Company
+        // is what this session must not learn of.
+        for company in &user.companies {
+            if Some(company.name.as_str()) == selected {
+                selected_id = cached_company_id(&company.config.cache_root);
+                continue;
+            }
+            needles.push(company.config.url.trim_end_matches('/').to_owned());
+            needles.push(company.config.cache_root.display().to_string());
+            if let Some(id) = cached_company_id(&company.config.cache_root) {
+                needles.push(id);
+            }
+            needles.push(company.name.clone());
         }
-        needles.push(company.name.clone());
+        // Longest first, so a URL is replaced before a name inside it.
+        needles.sort_by_key(|needle| std::cmp::Reverse(needle.len()));
+        needles.dedup();
+        Self {
+            needles,
+            selected_id,
+        }
     }
-    // Longest first, so a URL is replaced before a name inside it.
-    needles.sort_by_key(|needle| std::cmp::Reverse(needle.len()));
-    needles.dedup();
-    let mut text = text.to_owned();
-    for needle in &needles {
-        text = replace_word(&text, needle);
+
+    pub fn scrub(&self, text: &str) -> String {
+        let mut text = text.to_owned();
+        for needle in &self.needles {
+            text = replace_word(&text, needle);
+        }
+        replace_bound_destinations(&text, self.selected_id.as_deref())
     }
-    text
+}
+
+/// Replace the company_id in every `company:<id>` destination other than the
+/// selected Company's. A held candidate names the Company it is bound to,
+/// and that Company's cache may be unreadable (`company-unverifiable`), so
+/// its id cannot be known as a needle; the destination's shape is enough.
+fn replace_bound_destinations(text: &str, selected_id: Option<&str>) -> String {
+    const PREFIX: &str = "company:";
+    let ends_id = |c: char| c.is_whitespace() || "\"'`,;()[]{}<>".contains(c);
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(PREFIX) {
+        let before = rest[..at]
+            .chars()
+            .next_back()
+            .or_else(|| out.chars().next_back());
+        out.push_str(&rest[..at + PREFIX.len()]);
+        rest = &rest[at + PREFIX.len()..];
+        if before.is_some_and(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-') {
+            continue;
+        }
+        let length = rest.find(ends_id).unwrap_or(rest.len());
+        let id = &rest[..length];
+        if id.is_empty() || id == "root" || Some(id) == selected_id {
+            continue;
+        }
+        out.push_str("[company]");
+        rest = &rest[length..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Replace `needle` where it stands as a whole token: a Company named `api`
@@ -651,7 +699,7 @@ fn replace_word(text: &str, needle: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{cached_company_id, replace_word, revocation_holders};
+    use super::{cached_company_id, replace_bound_destinations, replace_word, revocation_holders};
     use crate::config::{CompanyConfig, NamedCompany};
     use std::path::Path;
 
@@ -747,6 +795,25 @@ mod tests {
             )
             .unwrap();
         assert_eq!(cached_company_id(&root).as_deref(), Some("cid-a"));
+    }
+
+    #[test]
+    fn scrubbing_replaces_every_bound_destination_but_the_selected_one() {
+        assert_eq!(
+            replace_bound_destinations(
+                "destination: company:cid-a, then company:cid-b",
+                Some("cid-b")
+            ),
+            "destination: company:[company], then company:cid-b"
+        );
+        assert_eq!(
+            replace_bound_destinations("company:root mycompany:cid-a company:", None),
+            "company:root mycompany:cid-a company:"
+        );
+        assert_eq!(
+            replace_bound_destinations("company:cid-a", None),
+            "company:[company]"
+        );
     }
 
     #[test]

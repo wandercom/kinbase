@@ -1117,3 +1117,36 @@ fn choosing_a_target_reads_no_more_of_the_certificate_than_repo_init_would() {
         "target selection read {written} certificate bytes past the 64 KiB ceiling"
     );
 }
+
+#[test]
+fn a_held_candidate_keeps_its_company_id_out_of_another_companys_session() {
+    let world = World::new();
+    let alpha_repo = world.repo("alpha-held", "git@github.com:alpha-org/held.git");
+    let beta_repo = world.repo("beta-held", "git@github.com:beta-org/held.git");
+    world.certify(&alpha_repo, &world.alpha_name);
+    world.certify(&beta_repo, &world.beta_name);
+    observe(
+        &world,
+        &alpha_repo,
+        "held",
+        "Company policy: every team must pin base images.",
+    );
+    // Alpha's cache cannot be read, so its company_id is not known from
+    // there; the held candidate still names it.
+    let cache = world
+        .temp
+        .path()
+        .join(format!("cache-{}", world.alpha_name));
+    fs::set_permissions(&cache, fs::Permissions::from_mode(0o000)).unwrap();
+    let hook = world.hook_session(&beta_repo, "Stop", "held");
+    fs::set_permissions(&cache, fs::Permissions::from_mode(0o700)).unwrap();
+    let output = text(&hook);
+    assert!(
+        output.contains("candidate held"),
+        "the probe held no alpha candidate: {output}"
+    );
+    assert!(
+        !output.contains(&world.alpha.company_id),
+        "alpha's company_id reached beta's session: {output}"
+    );
+}

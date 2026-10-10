@@ -118,18 +118,16 @@ impl Launcher {
     /// Company named like a JSON literal (`true`, `null`) can neither break
     /// the document nor be skipped.
     pub fn scrub_value_for_hook(&self, value: &mut Value) {
-        if !self.named_form() {
-            return;
+        fn walk(scrubber: &crate::selection::Scrubber, value: &mut Value) {
+            match value {
+                Value::String(text) => *text = scrubber.scrub(text),
+                Value::Array(items) => items.iter_mut().for_each(|item| walk(scrubber, item)),
+                Value::Object(map) => map.values_mut().for_each(|item| walk(scrubber, item)),
+                _ => {}
+            }
         }
-        match value {
-            Value::String(text) => *text = self.scrub_for_hook(text),
-            Value::Array(items) => items
-                .iter_mut()
-                .for_each(|item| self.scrub_value_for_hook(item)),
-            Value::Object(map) => map
-                .values_mut()
-                .for_each(|item| self.scrub_value_for_hook(item)),
-            _ => {}
+        if let Some(scrubber) = self.hook_scrubber() {
+            walk(&scrubber, value);
         }
     }
 
@@ -176,16 +174,22 @@ impl Launcher {
     /// Text bound for a hook's output, with every other configured Company's
     /// name, URL, cache path and cached company_id replaced (named form only).
     pub fn scrub_for_hook(&self, text: &str) -> String {
+        match self.hook_scrubber() {
+            Some(scrubber) => scrubber.scrub(text),
+            None => text.to_owned(),
+        }
+    }
+
+    fn hook_scrubber(&self) -> Option<crate::selection::Scrubber> {
+        let user = self
+            .user
+            .as_ref()
+            .filter(|user| !user.companies.is_empty())?;
         let selected = match &self.selection {
             crate::selection::Outcome::Selected { name, .. } => Some(name.as_str()),
             _ => None,
         };
-        match &self.user {
-            Some(user) if !user.companies.is_empty() => {
-                crate::selection::scrub(user, selected, text)
-            }
-            _ => text.to_owned(),
-        }
+        Some(crate::selection::Scrubber::new(user, selected))
     }
 
     pub fn principal_id(&self) -> &str {
