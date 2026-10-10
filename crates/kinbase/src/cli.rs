@@ -3,6 +3,7 @@ use crate::command_types::*;
 use crate::error::ContractError;
 use clap::Parser;
 use clap::error::ErrorKind;
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 
 /// Parse the CLI while preserving the process contract.
@@ -68,13 +69,49 @@ fn usage_error(_args: &[String], _detail: String) -> ContractError {
 }
 
 fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
-    let launcher = crate::launcher::Launcher::load()?;
-    match command {
-        Command::Company(CompanyCommand::Init { config }) => {
-            crate::company::init(&config, json).map_err(internal)?;
+    // Hook dispatch learns its repository from the host envelope on stdin;
+    // loading the launcher here would select (and read the credentials of)
+    // whatever Company the process cwd resolves to first. `hooks` loads its
+    // own launcher once it knows the target. The service commands read only
+    // their own `--config`; the launcher would derive this user's Company
+    // access and fail on credentials the service never uses. They keep the
+    // launcher's descriptor attestation.
+    let command = match command {
+        Command::Hooks(command) => return crate::hooks::dispatch(command, json),
+        Command::Company(command) => {
+            let personal_root =
+                crate::config::load_user_config()?.map(|user| user.personal.data_root);
+            crate::sandbox::attest_descriptors(personal_root.as_deref())?;
+            return match command {
+                CompanyCommand::Init { config } => crate::company::init(&config, json),
+                CompanyCommand::Serve { config } => crate::company::serve(&config, json),
+            }
+            .map_err(internal);
         }
-        Command::Company(CompanyCommand::Serve { config }) => {
-            crate::company::serve(&config, json).map_err(internal)?;
+        command => command,
+    };
+    if let Some(target) = selection_target(&command) {
+        crate::selection::set_target(target);
+    }
+    let launcher = crate::launcher::Launcher::load()?;
+    // A refused Company selection stops the command before any shared work;
+    // `doctor` reports it instead. The refusal carries the selection report,
+    // so `status` shows its evidence and remediation exactly when they are
+    // needed.
+    let reports_selection = matches!(command, Command::Doctor { .. });
+    if !reports_selection && let Some(refusal) = launcher.selection_refusal() {
+        let mut document = crate::output::error_document(&refusal);
+        if let (Some(report), Value::Object(map)) = (
+            launcher.selection_report(selection_repo(&command).as_deref()),
+            &mut document,
+        ) {
+            map.insert("company_selection".to_owned(), report);
+        }
+        return Err(refusal.with_output_document(document));
+    }
+    match command {
+        Command::Company(_) => {
+            unreachable!("service commands return before the launcher loads")
         }
         Command::Repo(RepoCommand::Issue { repo, company }) => {
             crate::repository::issue_certificate(launcher, &repo, &company, json)
@@ -226,6 +263,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         } => {
             let repo = repo
                 .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            same_company_evidence(&launcher, &evidence_repos)?;
             let as_of = resolve_as_of(&launcher, &repo, as_of.as_deref())?;
             crate::projector::run(
                 &launcher,
@@ -355,11 +393,105 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         Command::Questions(command) => {
             crate::questions::dispatch(command, json).map_err(internal)?;
         }
-        Command::Hooks(command) => {
-            crate::hooks::dispatch(command, json).map_err(internal)?;
+        Command::Hooks(_) => unreachable!("hook commands return before the launcher loads"),
+    }
+    Ok(())
+}
+
+/// What a command acts on, for Company selection under the named form
+/// (`crate::selection`). Commands without `--repo` act on the process cwd,
+/// the default target; hook dispatch names its target from the envelope.
+fn selection_target(command: &Command) -> Option<crate::selection::Target> {
+    use crate::selection::Target;
+    let repo = |repo: &Option<PathBuf>| repo.clone().map(Target::Repo);
+    match command {
+        Command::Repo(RepoCommand::Issue { repo, company }) => Some(Target::Named {
+            name: company.clone(),
+            repo: repo.clone(),
+        }),
+        Command::Repo(RepoCommand::Init { repo, certificate }) => {
+            // An unreadable or oversized certificate is `repo init`'s own
+            // refusal to make; this read stops at the same ceiling.
+            match crate::paths::read_bounded(
+                certificate,
+                crate::repository::CERTIFICATE_CEILING,
+                "certificate",
+            )
+            .ok()
+            .and_then(|bytes| crate::json::parse_strict_value(&bytes).ok())
+            {
+                Some(certificate) => Some(Target::Install {
+                    repo: repo.clone(),
+                    certificate,
+                }),
+                None => Some(Target::Repo(repo.clone())),
+            }
+        }
+        Command::Repo(RepoCommand::PublishManifest { repo }) => Some(Target::Repo(repo.clone())),
+        Command::Status { repo: r, .. }
+        | Command::Doctor { repo: r, .. }
+        | Command::Ingest { repo: r, .. }
+        | Command::Fsck { repo: r, .. }
+        | Command::Explain { repo: r, .. }
+        | Command::Project { repo: r, .. }
+        | Command::Session(SessionCommand::Start { repo: r, .. })
+        | Command::Corpus(CorpusCommand::Rebuild { repo: r, .. })
+        | Command::Corpus(CorpusCommand::Admit { repo: r, .. }) => repo(r),
+        _ => None,
+    }
+}
+
+/// A projection holds one Company view (amendment-001), and an evidence
+/// repository is read through this invocation's Company. Under several
+/// Companies an evidence repository that resolves to a different one, or to
+/// none while this one has one, would mix organizations in one projection.
+fn same_company_evidence(
+    launcher: &crate::launcher::Launcher,
+    evidence_repos: &[PathBuf],
+) -> Result<(), ContractError> {
+    let Some(user) = launcher
+        .user
+        .as_ref()
+        .filter(|user| !user.companies.is_empty())
+    else {
+        return Ok(());
+    };
+    let selected = |outcome: &crate::selection::Outcome| match outcome {
+        crate::selection::Outcome::Selected { name, .. } => Some(name.clone()),
+        _ => None,
+    };
+    let here = selected(&launcher.selection);
+    for evidence in evidence_repos {
+        let (outcome, _) =
+            crate::selection::resolve(user, &crate::selection::Target::Repo(evidence.clone()));
+        // A refusal is not "no Company": beside an unselected repository it
+        // would compare equal and let ambiguous evidence into the projection.
+        if let crate::selection::Outcome::Refused(refusal) = &outcome {
+            return Err(refusal.error());
+        }
+        if selected(&outcome) != here {
+            return Err(ContractError::refused(
+                "CONFIG_INVARIANT",
+                format!(
+                    "evidence repository {} does not resolve to this repository's Company",
+                    evidence.display()
+                ),
+                "Pass evidence repositories that belong to the same Company.",
+            )
+            .with_detail(serde_json::json!({"reason": "company-mismatch"})));
         }
     }
     Ok(())
+}
+
+/// The repository a selection report should gather evidence for.
+fn selection_repo(command: &Command) -> Option<PathBuf> {
+    match selection_target(command) {
+        Some(crate::selection::Target::Repo(repo))
+        | Some(crate::selection::Target::Named { repo, .. })
+        | Some(crate::selection::Target::Install { repo, .. }) => Some(repo),
+        None => std::env::current_dir().ok(),
+    }
 }
 
 fn internal(error: crate::error::ContractError) -> ContractError {

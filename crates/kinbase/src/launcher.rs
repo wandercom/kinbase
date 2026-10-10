@@ -20,6 +20,8 @@ pub struct Launcher {
     pub shared: SharedConfig,
     pub fd_attestation: Value,
     pub company_env_present: bool,
+    /// How `shared.company` was chosen (`crate::selection`).
+    pub selection: crate::selection::Outcome,
 }
 
 pub struct CompanyAccess {
@@ -33,7 +35,11 @@ impl Launcher {
     /// Load configuration and attest descriptors. Any inherited Personal or
     /// non-allowlisted descriptor refuses here, before shared work.
     pub fn load() -> Result<Self, ContractError> {
-        let user = crate::config::load_user_config()?;
+        let mut user = crate::config::load_user_config()?;
+        let selection = match user.as_mut() {
+            Some(user) => crate::selection::apply(user),
+            None => crate::selection::Outcome::Single,
+        };
         let personal_root = user.as_ref().map(|user| user.personal.data_root.clone());
         let fd_attestation = crate::sandbox::attest_descriptors(personal_root.as_deref())?;
         let shared = match &user {
@@ -47,7 +53,143 @@ impl Launcher {
             shared,
             fd_attestation,
             company_env_present,
+            selection,
         })
+    }
+
+    /// What `status` and `doctor` say about Company selection under the
+    /// named form (terminal output: it names Companies). `None` under the
+    /// single form, whose output stays as it was.
+    pub fn selection_report(&self, repo: Option<&std::path::Path>) -> Option<Value> {
+        let user = self
+            .user
+            .as_ref()
+            .filter(|user| !user.companies.is_empty())?;
+        let companies: Vec<Value> = user
+            .companies
+            .iter()
+            .map(|company| {
+                let config = &company.config;
+                json!({
+                    "name": company.name,
+                    "url": config.url,
+                    "cache_root": config.cache_root.to_string_lossy(),
+                    "company_id": crate::selection::cached_company_id(&config.cache_root),
+                    "discovery_hints": company.discovery_hints,
+                    "files": {
+                        "root_public_key": config.root_public_key_file.exists(),
+                        "facts_token": config.facts_token_file.exists(),
+                        "admin_token": config.admin_token_file.as_ref().map(|path| path.exists()),
+                        "client_key": config.client_key_file.exists(),
+                        "maintainer_key": config.maintainer_key_file.exists(),
+                        "cache": config.cache_root.join(crate::company::cache::CACHE_FILE).exists()
+                    }
+                })
+            })
+            .collect();
+        let (outcome, reason, remediation) = match &self.selection {
+            crate::selection::Outcome::Selected { name, reason } => {
+                (json!({"selected": name}), *reason, None)
+            }
+            crate::selection::Outcome::Unselected => (
+                Value::String("none".to_owned()),
+                "no-evidence",
+                Some("Add a discovery_hints pattern matching this repository's origin, or run `kinbase repo issue --company <name> --repo .`.".to_owned()),
+            ),
+            crate::selection::Outcome::Refused(refusal) => (
+                Value::String("refused".to_owned()),
+                refusal.reason,
+                Some(refusal.remediation.clone()),
+            ),
+            crate::selection::Outcome::Single => (Value::Null, "single", None),
+        };
+        let evidence = repo.map(|repo| crate::selection::gather(&user.companies, repo).to_value());
+        Some(json!({
+            "form": "named",
+            "companies": companies,
+            "outcome": outcome,
+            "reason": reason,
+            "remediation": remediation,
+            "evidence": evidence
+        }))
+    }
+
+    /// `scrub_for_hook` applied to every string inside a JSON value, so a
+    /// Company named like a JSON literal (`true`, `null`) can neither break
+    /// the document nor be skipped.
+    pub fn scrub_value_for_hook(&self, value: &mut Value) {
+        fn walk(scrubber: &crate::selection::Scrubber, value: &mut Value) {
+            match value {
+                Value::String(text) => *text = scrubber.scrub(text),
+                Value::Array(items) => items.iter_mut().for_each(|item| walk(scrubber, item)),
+                Value::Object(map) => map.values_mut().for_each(|item| walk(scrubber, item)),
+                _ => {}
+            }
+        }
+        if let Some(scrubber) = self.hook_scrubber() {
+            walk(&scrubber, value);
+        }
+    }
+
+    /// Whether a single-form revocation watermark for `(revoked_key, cursor)`
+    /// belongs to the Company selected here: it does only when this
+    /// Company's snapshot is the one configured snapshot carrying that
+    /// revocation (`selection::revocation_holders`).
+    pub fn owns_legacy_watermark(&self, revoked_key: &str, cursor: &str) -> bool {
+        let (Some(user), crate::selection::Outcome::Selected { name, .. }) =
+            (self.user.as_ref(), &self.selection)
+        else {
+            return false;
+        };
+        crate::selection::revocation_holders(&user.companies, revoked_key, cursor)
+            .is_some_and(|holders| holders.len() == 1 && &holders[0] == name)
+    }
+
+    /// Several Companies are configured (`[companies.<name>]`).
+    pub fn named_form(&self) -> bool {
+        self.user
+            .as_ref()
+            .is_some_and(|user| !user.companies.is_empty())
+    }
+
+    /// The refusal this invocation's Company selection ended in, if any.
+    pub fn selection_refusal(&self) -> Option<ContractError> {
+        match &self.selection {
+            crate::selection::Outcome::Refused(refusal) => Some(refusal.error()),
+            _ => None,
+        }
+    }
+
+    /// The namespace for Personal-store keys whose meaning is Company-local
+    /// (revocation watermarks: a cursor is one Company's counter). `None`
+    /// under the single form keeps today's keys byte for byte.
+    pub fn company_key_scope(&self) -> Option<String> {
+        if !self.named_form() {
+            return None;
+        }
+        let access = self.shared.company.as_ref()?;
+        crate::selection::cached_company_id(&access.cache_root)
+    }
+
+    /// Text bound for a hook's output, with every other configured Company's
+    /// name, URL, cache path and cached company_id replaced (named form only).
+    pub fn scrub_for_hook(&self, text: &str) -> String {
+        match self.hook_scrubber() {
+            Some(scrubber) => scrubber.scrub(text),
+            None => text.to_owned(),
+        }
+    }
+
+    fn hook_scrubber(&self) -> Option<crate::selection::Scrubber> {
+        let user = self
+            .user
+            .as_ref()
+            .filter(|user| !user.companies.is_empty())?;
+        let selected = match &self.selection {
+            crate::selection::Outcome::Selected { name, .. } => Some(name.as_str()),
+            _ => None,
+        };
+        Some(crate::selection::Scrubber::new(user, selected))
     }
 
     pub fn principal_id(&self) -> &str {
