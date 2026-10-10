@@ -680,7 +680,7 @@ fn dispatch_event(
     if matches!(event_type.as_str(), "SessionStart" | "session-start") {
         start = session_start(&cwd, &mut canonical_facts, &mut unknowns);
         if let Some(notice) = start.selection_notice {
-            unknowns.push(json!({"kind": "company-selection", "notice": notice}));
+            add_selection_notice(&mut unknowns, notice);
         }
         // A freshly certified repository has no fact events yet, but SessionStart
         // still needs a deterministic, host-independent canonical payload. The
@@ -910,6 +910,13 @@ struct BoundedEvidence {
     unknowns: Vec<Value>,
     company_facts: Vec<Value>,
     omitted: usize,
+}
+
+/// The selection notice goes first: `bound_evidence` keeps unknowns in order
+/// and drops whatever follows the ceiling, and a repository with enough open
+/// unknowns would otherwise lose the one thing this session must be told.
+fn add_selection_notice(unknowns: &mut Vec<Value>, notice: &str) {
+    unknowns.insert(0, json!({"kind": "company-selection", "notice": notice}));
 }
 
 fn bound_evidence(facts: &[Value], unknowns: &[Value], company_facts: &[Value]) -> BoundedEvidence {
@@ -1469,6 +1476,23 @@ mod tests {
             })
             .collect();
         assert_eq!(hook_config_has_entries("codex", &codex), Some(true));
+    }
+
+    #[test]
+    fn the_selection_notice_survives_the_projection_ceiling() {
+        let mut unknowns: Vec<Value> = (0..40)
+            .map(|n| json!({"question": format!("open {n}?")}))
+            .collect();
+        add_selection_notice(&mut unknowns, crate::selection::HOOK_REFUSED_NOTICE);
+        let bounded = bound_evidence(&[], &unknowns, &[]);
+        assert!(bounded.omitted > 0, "the probe did not reach the ceiling");
+        assert!(
+            bounded
+                .unknowns
+                .iter()
+                .any(|unknown| unknown["kind"] == "company-selection"),
+            "bounding dropped the selection notice"
+        );
     }
 
     #[test]
