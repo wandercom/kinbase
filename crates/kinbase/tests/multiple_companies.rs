@@ -1150,3 +1150,32 @@ fn a_held_candidate_keeps_its_company_id_out_of_another_companys_session() {
         "alpha's company_id reached beta's session: {output}"
     );
 }
+
+#[test]
+fn a_refused_evidence_repository_is_refused_even_beside_an_unselected_one() {
+    let world = World::new();
+    let fork = fork_of_alpha(&world);
+    let elsewhere = world.repo("elsewhere-project", "git@example.com:other/project.git");
+    let output = world.kinbase(
+        &elsewhere,
+        &[
+            "project",
+            "--repo",
+            ".",
+            "--task",
+            "t",
+            "--decision",
+            "d",
+            "--evidence-repo",
+            fork.to_str().unwrap(),
+            "--json",
+        ],
+    );
+    let document: Value = serde_json::from_slice(&output.stdout).unwrap_or(Value::Null);
+    assert_eq!(
+        reason(&document),
+        Some("company-ambiguous"),
+        "an ambiguous evidence repository was read: {}",
+        text(&output)
+    );
+}

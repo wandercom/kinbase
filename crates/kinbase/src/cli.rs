@@ -464,6 +464,11 @@ fn same_company_evidence(
     for evidence in evidence_repos {
         let (outcome, _) =
             crate::selection::resolve(user, &crate::selection::Target::Repo(evidence.clone()));
+        // A refusal is not "no Company": beside an unselected repository it
+        // would compare equal and let ambiguous evidence into the projection.
+        if let crate::selection::Outcome::Refused(refusal) = &outcome {
+            return Err(refusal.error());
+        }
         if selected(&outcome) != here {
             return Err(ContractError::refused(
                 "CONFIG_INVARIANT",
