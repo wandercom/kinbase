@@ -1069,3 +1069,51 @@ fn service_commands_do_not_need_the_launchers_company_credentials() {
         text(&init)
     );
 }
+
+#[test]
+fn choosing_a_target_reads_no_more_of_the_certificate_than_repo_init_would() {
+    let temp = TempDir::new().unwrap();
+    let fifo = temp.path().join("certificate");
+    let made = Command::new("mkfifo").arg(&fifo).status_alone().unwrap();
+    assert!(made.success());
+    let (sent, received) = std::sync::mpsc::channel();
+    let path = fifo.clone();
+    std::thread::spawn(move || {
+        let mut file = OpenOptions::new().write(true).open(&path).unwrap();
+        let chunk = vec![b' '; 16 * 1024];
+        let mut written = 0usize;
+        while written < 8 << 20 {
+            match file.write(&chunk) {
+                Ok(count) => written += count,
+                Err(_) => break,
+            }
+        }
+        drop(file);
+        sent.send(written).unwrap();
+        // `repo init` may open the certificate again; it reads end of file.
+        let _ = OpenOptions::new().write(true).open(&path);
+    });
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kinbase"));
+    command
+        .current_dir(temp.path())
+        .args(["repo", "init", "--repo", ".", "--certificate"])
+        .arg(&fifo)
+        .env("HOME", temp.path())
+        .env("XDG_CONFIG_HOME", temp.path().join("config-home"))
+        .env("XDG_STATE_HOME", temp.path().join("state-home"))
+        .env_remove("KINBASE_COMPANY_URL")
+        .env_remove("KINBASE_CLIENT_KEY_FD")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = command.spawn_alone().unwrap();
+    let written = received
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .unwrap_or(usize::MAX);
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(
+        written < 1 << 20,
+        "target selection read {written} certificate bytes past the 64 KiB ceiling"
+    );
+}

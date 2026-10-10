@@ -410,10 +410,15 @@ fn selection_target(command: &Command) -> Option<crate::selection::Target> {
             repo: repo.clone(),
         }),
         Command::Repo(RepoCommand::Init { repo, certificate }) => {
-            // An unreadable certificate is `repo init`'s own refusal to make.
-            match std::fs::read(certificate)
-                .ok()
-                .and_then(|bytes| crate::json::parse_strict_value(&bytes).ok())
+            // An unreadable or oversized certificate is `repo init`'s own
+            // refusal to make; this read stops at the same ceiling.
+            match crate::paths::read_bounded(
+                certificate,
+                crate::repository::CERTIFICATE_CEILING,
+                "certificate",
+            )
+            .ok()
+            .and_then(|bytes| crate::json::parse_strict_value(&bytes).ok())
             {
                 Some(certificate) => Some(Target::Install {
                     repo: repo.clone(),

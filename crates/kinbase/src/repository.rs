@@ -2241,6 +2241,9 @@ pub fn issue_certificate(
     Ok(())
 }
 
+/// The most a steward certificate file may hold.
+pub const CERTIFICATE_CEILING: usize = 64 * 1024;
+
 pub fn init(
     launcher: Launcher,
     repo_path: &Path,
@@ -2262,7 +2265,7 @@ pub fn init(
             "Store the steward certificate outside the worktree and pass that path.",
         ));
     }
-    let bytes = crate::paths::read_bounded(certificate_path, 64 * 1024, "certificate")
+    let bytes = crate::paths::read_bounded(certificate_path, CERTIFICATE_CEILING, "certificate")
         .map_err(|error| if error.code == "CONFIG_INVARIANT" { ContractError::user_action("REPO_UNCERTIFIED", format!("certificate file is unreadable ({})", error.message), "Ask the Company steward for the signed certificate file and pass its outside-worktree path.") } else { error })?;
     let document = crate::json::parse_strict_value(&bytes).map_err(|error| {
         ContractError::integrity(
