@@ -2139,13 +2139,7 @@ pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError
     });
     // A fresh checkpoint_id makes the record unique: skip the whole-ledger
     // duplicate scan, which is what made the SessionEnd hook slow.
-    let repo = std::env::current_dir().map_err(io_error)?;
-    crate::store::append_unique_record(
-        crate::StoreKind::Personal,
-        &repo,
-        "session-checkpoints.jsonl",
-        &record,
-    )?;
+    append_personal_unique("session-checkpoints.jsonl", &record)?;
     Ok((record, first_failure))
 }
 
@@ -2310,6 +2304,11 @@ fn append_personal(name: &str, value: &Value) -> Result<(), ContractError> {
 fn append_personal_durable(name: &str, value: &Value) -> Result<(), ContractError> {
     let repo = std::env::current_dir().map_err(io_error)?;
     crate::store::append_record_durable(crate::StoreKind::Personal, &repo, name, value)
+}
+
+fn append_personal_unique(name: &str, value: &Value) -> Result<(), ContractError> {
+    let repo = std::env::current_dir().map_err(io_error)?;
+    crate::store::append_unique_record(crate::StoreKind::Personal, &repo, name, value)
 }
 
 fn host_name(host: crate::HostKind) -> &'static str {

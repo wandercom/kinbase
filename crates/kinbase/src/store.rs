@@ -60,7 +60,7 @@ pub fn append_record_durable(
     value: &Value,
 ) -> Result<(), ContractError> {
     let root = ensure_store_root(store, repo)?;
-    append_jsonl_with(&root.join(filename), value, true, true)
+    append_jsonl_with(&root.join(filename), value, Append::DeduplicatedDurable)
 }
 
 /// `append_record` for a record that is unique by construction (it carries a
@@ -74,7 +74,7 @@ pub fn append_unique_record(
     value: &Value,
 ) -> Result<(), ContractError> {
     let root = ensure_store_root(store, repo)?;
-    append_jsonl_with(&root.join(filename), value, false, false)
+    append_jsonl_with(&root.join(filename), value, Append::Unique)
 }
 
 /// Every readable record of `filename`. An unreadable line is skipped and
@@ -380,15 +380,23 @@ fn line_appended(file: &fs::File, path: &Path, canonical: &[u8]) {
 }
 
 pub fn append_jsonl(path: &Path, value: &Value) -> Result<(), ContractError> {
-    append_jsonl_with(path, value, false, true)
+    append_jsonl_with(path, value, Append::Deduplicated)
 }
 
-fn append_jsonl_with(
-    path: &Path,
-    value: &Value,
-    durable: bool,
-    deduplicate: bool,
-) -> Result<(), ContractError> {
+/// How a ledger append treats an existing identical line and the disk.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Append {
+    /// Skip a line already present.
+    Deduplicated,
+    /// Skip a line already present; sync before returning.
+    DeduplicatedDurable,
+    /// The record is unique by construction: no duplicate scan.
+    Unique,
+}
+
+fn append_jsonl_with(path: &Path, value: &Value, mode: Append) -> Result<(), ContractError> {
+    let durable = mode == Append::DeduplicatedDurable;
+    let deduplicate = mode != Append::Unique;
     if let Some(parent) = path.parent() {
         crate::paths::ensure_private_dir(parent, "record directory")?;
     }
