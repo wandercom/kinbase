@@ -835,3 +835,76 @@ fn plan_refuses_a_host_outside_the_configured_range() {
         String::from_utf8_lossy(&planned.stderr)
     );
 }
+
+#[test]
+fn session_end_does_not_read_the_checkpoint_ledger() {
+    use std::io::{Read as _, Seek as _};
+    let temp = TempDir::new().expect("tempdir");
+    let world = host_world(&temp);
+    // A sparse 64 GiB ledger costs no disk, but reading it through takes far
+    // longer than the host's 1.5 s SessionEnd budget. Only a checkpoint that
+    // never scans the ledger finishes in time.
+    fs::create_dir_all(&world.personal).expect("personal root");
+    let ledger_path = world.personal.join("session-checkpoints.jsonl");
+    let ledger = fs::File::create(&ledger_path).expect("ledger");
+    fs::set_permissions(&ledger_path, fs::Permissions::from_mode(0o600)).expect("chmod ledger");
+    let size = 64u64 << 30;
+    ledger.set_len(size).expect("sparse ledger");
+    // A complete last line, so the checkpoint takes the plain append path
+    // rather than the torn-tail repair.
+    {
+        use std::os::unix::fs::FileExt as _;
+        ledger.write_at(b"\n", size - 1).expect("terminate ledger");
+    }
+    drop(ledger);
+    let envelope = json!({
+        "session_id": "host-session-end",
+        "hook_event_name": "SessionEnd",
+        "reason": "exit",
+        "transcript_path": "/nonexistent/transcript.jsonl",
+        "cwd": world.repo.display().to_string()
+    });
+    let started = std::time::Instant::now();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kinbase"))
+        .current_dir(&world.repo)
+        .args(["hooks", "dispatch", "claude", "SessionEnd", "--json"])
+        .env("HOME", &world.home)
+        .env("XDG_CONFIG_HOME", &world.config_home)
+        .env("XDG_STATE_HOME", world.home.join(".state"))
+        .env_remove("KINBASE_COMPANY_URL")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn_alone()
+        .expect("spawn dispatch");
+    {
+        use std::io::Write as _;
+        let mut stdin = child.stdin.take().expect("stdin");
+        stdin
+            .write_all(envelope.to_string().as_bytes())
+            .expect("write stdin");
+    }
+    let budget = std::time::Duration::from_millis(1500);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("wait") {
+            break status;
+        }
+        if started.elapsed() > budget {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("SessionEnd still running after {budget:?}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert!(status.success(), "SessionEnd refused: {status}");
+    // The checkpoint still landed at the end of the ledger, as its own line.
+    let mut file = fs::File::open(&ledger_path).expect("reopen ledger");
+    file.seek(std::io::SeekFrom::Start(size)).expect("seek");
+    let mut tail = String::new();
+    file.read_to_string(&mut tail).expect("tail");
+    assert!(tail.starts_with('{'), "{tail}");
+    assert!(
+        tail.contains("\"session_id\":\"host-session-end\""),
+        "{tail}"
+    );
+}
