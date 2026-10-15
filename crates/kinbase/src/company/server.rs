@@ -2106,6 +2106,21 @@ fn revocations(db: &CompanyDb, auth: &AuthContext) -> Handled {
     ))
 }
 
+/// Whether a snapshot asked for by `repository` carries a fact. Ownership
+/// rulings say where work lands: a ticket in one repository that edits paths in
+/// another needs the other's rulings, so they are delivered to every repository
+/// whatever they govern; there are few and the brief matches them by path.
+/// Repository rules (`rules/<repo>/...`) travel the same way, so a ticket asked
+/// from one checkout that names another repository is reviewed against that
+/// repository's rules.
+fn sent_to_repository(logical_key: &str, governs_paths: &[String], repository: &str) -> bool {
+    repository.is_empty()
+        || governs_paths.is_empty()
+        || logical_key.starts_with("ownership/")
+        || logical_key.starts_with("rules/")
+        || governs_paths.iter().any(|path| path == repository)
+}
+
 fn snapshot(
     db: &CompanyDb,
     state: &ServiceState,
@@ -2131,16 +2146,8 @@ fn snapshot(
     // the meantime it filled every projection with other services' rulings. A
     // fact that governs nothing in particular is company-wide and always sent.
     let repository = request.query.get("repository").cloned().unwrap_or_default();
-    // Ownership rulings say where work lands. A ticket in one repository
-    // that edits paths in another needs the other's rulings, so they are
-    // delivered to every repository whatever they govern; there are few and
-    // the brief matches them by path.
-    let governs_this_repository = |fact: &CurrentFact| -> bool {
-        repository.is_empty()
-            || fact.governs_paths.is_empty()
-            || fact.logical_key.starts_with("ownership/")
-            || fact.governs_paths.iter().any(|path| path == &repository)
-    };
+    let governs_this_repository =
+        |fact: &CurrentFact| sent_to_repository(&fact.logical_key, &fact.governs_paths, &repository);
     let readable_facts: Vec<&CurrentFact> = view
         .facts
         .iter()
@@ -4946,5 +4953,22 @@ nonce_retention_seconds = 1300
         .unwrap();
         assert_eq!(historical["status"], "committed");
         assert_eq!(historical["historical_receipt"], true);
+    }
+}
+
+#[cfg(test)]
+mod snapshot_scope_tests {
+    use super::sent_to_repository;
+
+    #[test]
+    fn repository_rules_reach_every_repository_like_ownership() {
+        let elsewhere = vec!["uuid-sync".to_owned(), "example/sync".to_owned()];
+        assert!(sent_to_repository("rules/sync/14-failures-stay-failures", &elsewhere, "uuid-booking"));
+        assert!(sent_to_repository("ownership/repo/sync", &elsewhere, "uuid-booking"));
+        assert!(sent_to_repository("architecture/x", &elsewhere, "uuid-sync"));
+        assert!(sent_to_repository("architecture/x", &[], "uuid-booking"));
+        // Control: another repository's ordinary ruling stays withheld.
+        assert!(!sent_to_repository("architecture/x", &elsewhere, "uuid-booking"));
+        assert!(!sent_to_repository("rulesets/x", &elsewhere, "uuid-booking"));
     }
 }

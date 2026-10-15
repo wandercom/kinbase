@@ -6,6 +6,14 @@ Notable changes to Kinbase. Dates are UTC.
 
 ### Added
 
+- Repository rules. A Company fact keyed `rules/<repo>/...` is a rule a
+  repository's owning team enforces on its own pull requests. The snapshot sends
+  them to every repository, as it does ownership rulings, and the projection brief
+  carries `repository_rules`: every rule of the repository being worked in (by its
+  `ownership/repo/` ruling's names, or a rule governing its uuid) and of any
+  repository the task or decision names as a whole word, in key order. They are not
+  repeated in `governing_direction`.
+
 - Known-secret masking. A `[secret_mask]` table in the user config names env files
   (`files`), optional name selectors (`keys`) and a shortest value (`min_length`,
   default 8). Every selected value becomes `$NAME` before Kinbase digests, stores or

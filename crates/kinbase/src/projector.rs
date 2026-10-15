@@ -2067,6 +2067,23 @@ fn ruling_repository_names(fact: &CurrentFact) -> Vec<String> {
     names
 }
 
+/// The repository a rule belongs to: the segment after `rules/`.
+fn rule_repository(key: &str) -> Option<&str> {
+    key.strip_prefix("rules/")?.split('/').next().filter(|name| !name.is_empty())
+}
+
+/// Whether `text` names `name` as a whole word, ignoring case: `sync` is named
+/// by "the sync worker" and "example/sync", not by "async" or "sync-gateway".
+fn names_word(text: &str, name: &str) -> bool {
+    let text = text.to_lowercase();
+    let name = name.to_lowercase();
+    let boundary = |c: Option<char>| c.is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '-'));
+    !name.is_empty()
+        && text.match_indices(&name).any(|(at, _)| {
+            boundary(text[..at].chars().next_back()) && boundary(text[at + name.len()..].chars().next())
+        })
+}
+
 /// The repository a per-path ruling governs, as the ticket names it: the first
 /// segment of the governing prefix the ticket path matched (`legacy/src/x`
 /// names `legacy`). The ticket path's own leaf is a file name, never a
@@ -2296,12 +2313,40 @@ fn direction_brief(
     let standing_keys: BTreeSet<&str> = standing_facts.iter().map(|f| f.logical_key.as_str()).collect();
     let standing: Vec<Value> = standing_facts.iter().map(|f| direction_row(f, as_of)).collect();
 
+    // Repository rules (`rules/<repo>/...`): what a repository's owning team
+    // enforces on its own pull requests. Like the standing block they are a
+    // bounded set delivered whole, to the repository they govern and to any
+    // question that names it, so a ticket asked from another checkout still
+    // carries the rules its change will be reviewed against.
+    let checkout_names: Vec<String> = repository_owner_fact
+        .map(ruling_repository_names)
+        .unwrap_or_default();
+    let mut rule_facts: Vec<&CurrentFact> = company
+        .iter()
+        .copied()
+        .filter(|f| {
+            rule_repository(&f.logical_key).is_some_and(|repository| {
+                checkout_names.iter().any(|name| name.eq_ignore_ascii_case(repository))
+                    || names_word(&question, repository)
+                    || (!repository_uuid.is_empty()
+                        && f.governs_paths.iter().any(|g| g == repository_uuid))
+            })
+        })
+        .collect();
+    rule_facts.sort_by(|a, b| a.logical_key.cmp(&b.logical_key));
+    let rule_keys: BTreeSet<&str> = rule_facts.iter().map(|f| f.logical_key.as_str()).collect();
+    let repository_rules: Vec<Value> = rule_facts.iter().map(|f| direction_row(f, as_of)).collect();
+
     // Governing direction: the company facts the selection chose, as rows
     // with owner and age, so the caller never has to look them up. Rows the
     // standing block already carries are not repeated here.
     let governing: Vec<Value> = selected
         .iter()
-        .filter(|f| f.store_kind == "company" && !standing_keys.contains(f.logical_key.as_str()))
+        .filter(|f| {
+            f.store_kind == "company"
+                && !standing_keys.contains(f.logical_key.as_str())
+                && !rule_keys.contains(f.logical_key.as_str())
+        })
         .map(|f| direction_row(f, as_of))
         .collect();
 
@@ -2331,6 +2376,7 @@ fn direction_brief(
         "direction_index": index,
         "governing_direction": governing,
         "standing_direction": standing,
+        "repository_rules": repository_rules,
         "stale_after_days": DIRECTION_STALE_AFTER_DAYS,
     })
 }
@@ -2504,6 +2550,60 @@ mod brief_tests {
             .filter(|q| q["kind"] == "not_yet_built").map(|q| q["row"].as_str().unwrap()).collect();
         assert_eq!(asks.len(), 2);
         assert!(asks.contains(&user.logical_key.as_str()));
+    }
+
+    /// A repository's enforced rules reach a ticket in that checkout whatever
+    /// its words, and a ticket from another checkout that names the repository;
+    /// another repository's rules, and a near-miss name, do not.
+    #[test]
+    fn repository_rules_reach_their_checkout_and_any_question_naming_it() {
+        let owner = company_fact(
+            "ownership/repo/sync",
+            "Target-state owner of example/sync: the Sync Service.",
+            &["uuid-sync", "example/sync"],
+            &[],
+        );
+        let failures = company_fact(
+            "rules/sync/14-failures-stay-failures",
+            "example/sync rule 14: Failures stay failures, never business data, never silence.",
+            &["example/sync"],
+            &[],
+        );
+        let money = company_fact(
+            "rules/sync/11-sync-carries-money-facts",
+            "example/sync rule 11: Sync carries money facts; it does not compute them.",
+            &["example/sync"],
+            &[],
+        );
+        let booking = company_fact(
+            "rules/booking/01-no-direct-db",
+            "example/booking rule 1: no direct database access from handlers.",
+            &["uuid-booking", "example/booking"],
+            &[],
+        );
+        let facts = vec![owner, failures, money, booking];
+        let keys = |brief: &Value| -> Vec<String> {
+            brief["repository_rules"].as_array().unwrap().iter()
+                .map(|r| r["logical_key"].as_str().unwrap().to_owned()).collect()
+        };
+        let at = "2026-09-13T00:00:00.000Z";
+
+        let in_checkout = direction_brief(&facts, &facts, "Fix a null check", "", at, "uuid-sync");
+        assert_eq!(keys(&in_checkout), ["rules/sync/11-sync-carries-money-facts", "rules/sync/14-failures-stay-failures"]);
+        // Delivered whole, so not repeated as governing direction; another
+        // repository's rule the selection chose still is.
+        let governing: Vec<&str> = in_checkout["governing_direction"].as_array().unwrap().iter()
+            .map(|r| r["logical_key"].as_str().unwrap()).collect();
+        assert!(!governing.iter().any(|k| k.starts_with("rules/sync/")), "{governing:?}");
+        assert!(governing.contains(&"rules/booking/01-no-direct-db"), "{governing:?}");
+
+        let named = direction_brief(&facts, &facts, "Retry the Sync webhook on 503", "", at, "uuid-monorepo");
+        assert_eq!(keys(&named).len(), 2);
+        let by_uuid = direction_brief(&facts, &facts, "Fix a null check", "", at, "uuid-booking");
+        assert_eq!(keys(&by_uuid), ["rules/booking/01-no-direct-db"]);
+        // Controls: no repository named, and a word that only contains the name.
+        assert!(keys(&direction_brief(&facts, &facts, "Fix a null check", "", at, "uuid-monorepo")).is_empty());
+        assert!(keys(&direction_brief(&facts, &facts, "Make the async handler cancel", "", at, "")).is_empty());
     }
 
     fn company_fact(key: &str, statement: &str, governs: &[&str], refs: &[&str]) -> CurrentFact {
