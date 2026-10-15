@@ -1602,19 +1602,29 @@ pub fn trust_facts(
     // later arrivals are historical on arrival and reopen nothing.
     if let Ok(private) = launcher.private_store() {
         if let Ok(now_cursor) = private.observation_cursor() {
-            for (revoked_key, cursor, _) in facts.revocations.clone() {
+            // A revocation cursor is one Company's counter. With several
+            // Companies the key carries the company_id, so one maintainer key
+            // revoked by two of them at the same cursor keeps two first
+            // sightings. Converting a single-form config starts fresh ones
+            // (`revocation_watermark`).
+            let scope = launcher.company_key_scope();
+            // Under several Companies a missing company_id is not the single
+            // form: the unqualified keys are shared by every Company, so no
+            // watermark is read or written and every warranted trace reopens.
+            let revocations = if launcher.named_form() && scope.is_none() {
+                Vec::new()
+            } else {
+                facts.revocations.clone()
+            };
+            for (revoked_key, cursor, _) in revocations {
                 let revocation = Revocation::of_key(revoked_key, cursor, String::new());
-                let key = format!(
-                    "revocation-watermark:{}:{}",
-                    revocation.revoked_key, revocation.cursor
+                let watermark = revocation_watermark(
+                    &private,
+                    scope.as_deref(),
+                    &revocation.revoked_key,
+                    &revocation.cursor,
+                    now_cursor,
                 );
-                let watermark = match private.meta(&key).ok().flatten() {
-                    Some(text) => text.parse::<u64>().unwrap_or(now_cursor),
-                    None => {
-                        let _ = private.set_meta(&key, &now_cursor.to_string());
-                        now_cursor
-                    }
-                };
                 let entry = facts
                     .revocation_watermarks
                     .entry(revocation.revoked_key.clone())
@@ -1628,6 +1638,34 @@ pub fn trust_facts(
         }
     }
     facts
+}
+
+/// The ledger cursor at which this client first observed the revocation
+/// `(revoked_key, cursor)`, recording `now_cursor` the first time. `scope` is
+/// the selected Company's company_id under the named form.
+///
+/// A watermark the single form recorded names no Company, and nothing on
+/// this machine proves which Company recorded it: a cached snapshot that
+/// lacks the revocation may just be stale. So no Company adopts it. Each
+/// starts a fresh watermark, which reopens more history, never less.
+fn revocation_watermark(
+    private: &crate::private::PrivateStore,
+    scope: Option<&str>,
+    revoked_key: &str,
+    cursor: &str,
+    now_cursor: u64,
+) -> u64 {
+    let key = match scope {
+        Some(company_id) => format!("revocation-watermark:{company_id}:{revoked_key}:{cursor}"),
+        None => format!("revocation-watermark:{revoked_key}:{cursor}"),
+    };
+    match private.meta(&key).ok().flatten() {
+        Some(text) => text.parse::<u64>().unwrap_or(now_cursor),
+        None => {
+            let _ = private.set_meta(&key, &now_cursor.to_string());
+            now_cursor
+        }
+    }
 }
 
 /// Replay the proof clock recorded at repository creation, advanced by this
@@ -2136,7 +2174,13 @@ pub fn issue_certificate(
         .company
         .as_ref()
         .is_some_and(|company| company.allow_non_loopback);
-    crate::config::validate_loopback_url(company_url, allow_non_loopback)?;
+    // Under the named form `--company` is a configured Company's name, already
+    // resolved (and refused when unknown or claimed by another Company) by the
+    // launcher; its URL was validated when the config was read.
+    let named = launcher.named_form();
+    if !named {
+        crate::config::validate_loopback_url(company_url, allow_non_loopback)?;
+    }
     if launcher.company_env_present {
         return Err(ContractError::new(
             "PROCESSOR_UNAUTHORIZED",
@@ -2153,7 +2197,7 @@ pub fn issue_certificate(
             "Create the user config with [company] url, facts_token_file, root_public_key_file, cache_root and an admin_token_file.",
         ));
     };
-    if access.url.trim_end_matches('/') != company_url.trim_end_matches('/') {
+    if !named && access.url.trim_end_matches('/') != company_url.trim_end_matches('/') {
         return Err(ContractError::refused(
             "CONFIG_INVARIANT",
             "--company differs from the configured Company endpoint",
@@ -2179,7 +2223,15 @@ pub fn issue_certificate(
         .map(|remote| normalize_hint(&remote))
         .unwrap_or_default();
     let existing_uuid = repo.uuid_hint().map(str::to_owned);
-    let mut request = json!({"discovery_hint": hint});
+    // An origin-less repository has no discovery hint. Sending "" made the
+    // service treat every such repository as one: it answered the second
+    // with the first one's certificate, so two repositories shared an
+    // identity and each other's facts.
+    let mut request = if hint.is_empty() {
+        json!({})
+    } else {
+        json!({"discovery_hint": hint})
+    };
     if let Some(uuid) = &existing_uuid {
         request["repository_uuid"] = Value::String(uuid.clone());
     }
@@ -2198,6 +2250,9 @@ pub fn issue_certificate(
     crate::output::emit(&result, json_output);
     Ok(())
 }
+
+/// The most a steward certificate file may hold.
+pub const CERTIFICATE_CEILING: usize = 64 * 1024;
 
 pub fn init(
     launcher: Launcher,
@@ -2220,7 +2275,7 @@ pub fn init(
             "Store the steward certificate outside the worktree and pass that path.",
         ));
     }
-    let bytes = crate::paths::read_bounded(certificate_path, 64 * 1024, "certificate")
+    let bytes = crate::paths::read_bounded(certificate_path, CERTIFICATE_CEILING, "certificate")
         .map_err(|error| if error.code == "CONFIG_INVARIANT" { ContractError::user_action("REPO_UNCERTIFIED", format!("certificate file is unreadable ({})", error.message), "Ask the Company steward for the signed certificate file and pass its outside-worktree path.") } else { error })?;
     let document = crate::json::parse_strict_value(&bytes).map_err(|error| {
         ContractError::integrity(
@@ -3664,6 +3719,12 @@ pub fn status(
         "company_connect_seconds": context.trust.company_connect_seconds,
         "traces_count": view.traces.len()
     });
+    if let (Some(report), Value::Object(map)) = (
+        context.launcher.selection_report(Some(&context.repo.root)),
+        &mut result,
+    ) {
+        map.insert("company_selection".to_owned(), report);
+    }
     if let Some(company) = &context.launcher.shared.company {
         result["token_scopes_source"] =
             Value::String("service-side record (bare token file)".to_owned());
@@ -4318,6 +4379,11 @@ pub fn doctor(
         "apology_quarantine_count": apology_quarantine,
         "observed_at": now
     });
+    if let (Some(report), Value::Object(map)) =
+        (launcher.selection_report(Some(repo_path)), &mut result)
+    {
+        map.insert("company_selection".to_owned(), report);
+    }
     if apology_quarantine > 0 {
         let error = ContractError::integrity(
             "PERSONAL_TAINT_BLOCKED",
@@ -4792,6 +4858,39 @@ mod packet10_repository_tests {
         assert_eq!(
             event_path_origin_class(Path::new("."), relative, &tracked, &dirty, "merged-default"),
             "uncommitted-worktree"
+        );
+    }
+}
+
+#[cfg(test)]
+mod revocation_watermark_tests {
+    use super::revocation_watermark;
+    use crate::private::PrivateStore;
+
+    #[test]
+    fn a_single_form_watermark_is_never_adopted_by_a_company() {
+        // The single form's watermark names no Company, and a cached snapshot
+        // can be stale, so no evidence here proves which Company recorded it.
+        // Adopting it lowers that Company's first sighting, and observations
+        // admitted in between would not reopen.
+        let temp = tempfile::TempDir::new().unwrap();
+        let private = PrivateStore::open_personal(&temp.path().join("personal")).unwrap();
+        private
+            .set_meta("revocation-watermark:key:1001", "42")
+            .unwrap();
+        assert_eq!(
+            revocation_watermark(&private, Some("cid-a"), "key", "1001", 50),
+            50
+        );
+        // The first sighting is recorded once, then kept.
+        assert_eq!(
+            revocation_watermark(&private, Some("cid-a"), "key", "1001", 60),
+            50
+        );
+        // The single form still reads its own watermark.
+        assert_eq!(
+            revocation_watermark(&private, None, "key", "1001", 60),
+            42
         );
     }
 }

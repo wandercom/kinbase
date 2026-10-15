@@ -3413,7 +3413,11 @@ fn issue_certificate(
             ContractError::invariant("a certificate request is required"),
         )
     })?;
-    let hint = crate::json::get_str(&request, "discovery_hint").map(str::to_owned);
+    // An empty hint names no repository; matching on it would hand one
+    // origin-less repository another's certificate.
+    let hint = crate::json::get_str(&request, "discovery_hint")
+        .filter(|hint| !hint.trim().is_empty())
+        .map(str::to_owned);
     let repository_uuid = crate::json::get_str(&request, "repository_uuid")
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());

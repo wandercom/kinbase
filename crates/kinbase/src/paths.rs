@@ -211,13 +211,27 @@ pub fn read_bounded(path: &Path, limit: usize, role: &str) -> Result<Vec<u8>, Co
             "Supply a regular file.",
         ));
     }
-    if metadata.len() as usize > limit {
-        return Err(ContractError::limit(
+    let over = |bytes: u64| {
+        ContractError::limit(
             format!("{role} exceeds the {limit}-byte ceiling"),
-            serde_json::json!({"bytes": metadata.len(), "ceiling_bytes": limit, "refused_count": 1, "omitted_count": 1}),
-        ));
+            serde_json::json!({"bytes": bytes, "ceiling_bytes": limit, "refused_count": 1, "omitted_count": 1}),
+        )
+    };
+    if metadata.len() as usize > limit {
+        return Err(over(metadata.len()));
     }
-    fs::read(path).map_err(|error| ContractError::unreadable(role, &error))
+    // The length is only what the file said when asked: a FIFO or a device
+    // reports 0, and a file can grow. The read itself stops one byte past
+    // the ceiling.
+    use std::io::Read as _;
+    let mut bytes = Vec::new();
+    fs::File::open(path)
+        .and_then(|file| file.take(limit as u64 + 1).read_to_end(&mut bytes))
+        .map_err(|error| ContractError::unreadable(role, &error))?;
+    if bytes.len() > limit {
+        return Err(over(bytes.len() as u64));
+    }
+    Ok(bytes)
 }
 
 /// Recursively list regular files under a directory in sorted order,
