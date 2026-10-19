@@ -13,6 +13,15 @@ use std::time::Duration;
 
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// A snapshot is a reduction over the whole Company event log, so it costs
+/// what the log costs: 2.5 s against one deployment's 2,720 events and rising.
+/// At 1,500 ms -- a bound sized for proof fixtures -- every repository in the
+/// estate reported COMPANY_UNREACHABLE against a service that was answering
+/// perfectly well, which reads as an outage rather than as the ceiling it is.
+/// At ~12k facts a snapshot outgrew 20 s as well, so `[company]
+/// read_timeout_seconds` overrides this default instead of a rebuild.
+pub const DEFAULT_READ_TIMEOUT_SECONDS: u64 = 20;
+
 pub struct Client {
     pub host: String,
     pub port: u16,
@@ -43,15 +52,15 @@ impl Client {
             key,
             root,
             cache_root,
-            // A snapshot is a reduction over the whole Company event log, so it
-            // costs what the log costs: 2.5 s against one deployment's 2,720 events and
-            // rising. At 1,500 ms -- a bound sized for proof fixtures -- every
-            // repository in the estate reported COMPANY_UNREACHABLE against a
-            // service that was answering perfectly well, which reads as an
-            // outage rather than as the ceiling it is.
-            read_timeout: Duration::from_secs(20),
+            read_timeout: Duration::from_secs(DEFAULT_READ_TIMEOUT_SECONDS),
             bytes_sent: std::cell::Cell::new(0),
         })
+    }
+
+    /// The configured read budget, for clients built from a user config.
+    pub fn with_read_timeout_seconds(mut self, seconds: u64) -> Self {
+        self.read_timeout = Duration::from_secs(seconds);
+        self
     }
 
     fn nonce(&self) -> String {
@@ -377,5 +386,52 @@ mod nonce_tests {
         let suffix = |nonce: &str| nonce.split_once('-').map(|(_, rest)| rest.to_owned());
         assert_ne!(suffix(&left), suffix(&right));
         assert!(left.len() <= 128);
+    }
+}
+
+#[cfg(test)]
+mod read_timeout_tests {
+    use super::Client;
+    use crate::config::TokenRecord;
+    use crate::crypto::PrivateKey;
+    use std::time::{Duration, Instant};
+
+    /// A Service that accepts and then reduces for longer than the client
+    /// waits is the failure a growing store produces: the client must give up
+    /// at its configured budget, not at a bound compiled into the binary.
+    #[test]
+    fn a_client_waits_for_its_configured_budget_and_no_longer() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let holder = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            std::thread::sleep(Duration::from_secs(4));
+            drop(stream);
+        });
+        let cache = std::env::temp_dir().join(format!("kinbase-read-timeout-{port}"));
+        let client = Client::new(
+            &format!("http://127.0.0.1:{port}"),
+            TokenRecord {
+                token: "facts".to_owned(),
+            },
+            PrivateKey::generate(),
+            None,
+            cache,
+            false,
+        )
+        .expect("client")
+        .with_read_timeout_seconds(1);
+        assert_eq!(client.read_timeout, Duration::from_secs(1));
+        let started = Instant::now();
+        let Err(error) = client.get("/status") else {
+            panic!("no answer within the budget must be an error");
+        };
+        let waited = started.elapsed();
+        assert_eq!(error.code, "COMPANY_UNREACHABLE");
+        assert!(
+            waited >= Duration::from_millis(900) && waited < Duration::from_secs(3),
+            "waited {waited:?}"
+        );
+        holder.join().expect("holder");
     }
 }
