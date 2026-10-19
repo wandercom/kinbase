@@ -8,6 +8,7 @@ pub mod client;
 pub mod db;
 pub mod server;
 pub mod trust;
+pub mod view_cache;
 
 use crate::config::{ServiceConfig, load_service_config};
 use crate::crypto::PrivateKey;

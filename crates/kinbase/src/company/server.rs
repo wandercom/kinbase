@@ -64,6 +64,8 @@ pub struct ServiceState {
     pub config: ServiceConfig,
     pub root: PrivateKey,
     pub started_at: String,
+    /// The reduced Company view, shared across connections.
+    pub views: super::view_cache::ViewCache,
 }
 
 type Handled = Result<(u16, Value), (u16, ContractError)>;
@@ -229,6 +231,7 @@ pub fn serve(
         config,
         root,
         started_at: crate::time::now_rfc3339_millis(),
+        views: Default::default(),
     });
     let banner = json!({
         "status": "company-serving",
@@ -807,6 +810,21 @@ pub fn current_view(
     trust_state: &TrustState,
     as_of: &str,
 ) -> Result<crate::reducer::CurrentView, ContractError> {
+    Ok(crate::reducer::reduce(&company_reducer_input(
+        db,
+        trust_state,
+        as_of,
+    )?))
+}
+
+/// The reducer's input for the Company log: the admitted fact events with
+/// their recorded verification, lifecycle tombstones, unknowns and the trust
+/// state. The view cache reads its validity window from these events.
+pub(crate) fn company_reducer_input(
+    db: &CompanyDb,
+    trust_state: &TrustState,
+    as_of: &str,
+) -> Result<ReducerInput, ContractError> {
     let mut admitted = Vec::new();
     let mut tombstones = Vec::new();
     for (cursor, payload, verification) in db.events_of_kind("fact-event")? {
@@ -867,7 +885,7 @@ pub fn current_view(
         authority_owner_by_scope: trust_state.authority_owner_by_scope(),
         steward_authority_id: trust_state.steward_authority_id(),
     };
-    Ok(crate::reducer::reduce(&input))
+    Ok(input)
 }
 
 /// Resolve the events a lifecycle action names (parents and supersedes) to
@@ -931,14 +949,10 @@ fn lifecycle_authorized(
     (owns_scope, target_scope)
 }
 
-/// Lifecycle admissions and refusals as the Company records them: admitted
-/// withdrawal events (with the authority outcome the reducer applied) plus
-/// audited refusals, so a client can report who was allowed to withdraw what.
-fn lifecycle_admissions(
-    db: &CompanyDb,
-    trust_state: &TrustState,
-    readable: &BTreeSet<String>,
-) -> Vec<Value> {
+/// Lifecycle admissions derived from the admitted log, before any reader's
+/// scope filter. Each one resolves its targets against the whole log, so the
+/// view cache builds them once per change of the log, not once per read.
+pub(crate) fn lifecycle_event_rows(db: &CompanyDb, trust_state: &TrustState) -> Vec<Value> {
     let mut rows = Vec::new();
     for (cursor, payload, verification) in db.events_of_kind("fact-event").unwrap_or_default() {
         let Ok(event) = FactEvent::from_value(&payload) else {
@@ -953,13 +967,6 @@ fn lifecycle_admissions(
         let targets = lifecycle_targets(db, &event);
         let (authorized, target_scope) =
             lifecycle_authorized(trust_state, &event, action, &targets);
-        if !readable.contains(&event.authority_scope)
-            && !target_scope
-                .as_deref()
-                .is_some_and(|scope| readable.contains(scope))
-        {
-            continue;
-        }
         let accepted = verification == "verified" && authorized;
         rows.push(json!({
             "action": action,
@@ -976,6 +983,28 @@ fn lifecycle_admissions(
             "reason_code": event.statement
         }));
     }
+    rows
+}
+
+/// Lifecycle admissions and refusals as the Company records them: admitted
+/// withdrawal events (with the authority outcome the reducer applied) plus
+/// audited refusals, so a client can report who was allowed to withdraw what.
+/// A reader sees a row when it may read the withdrawing event's scope or the
+/// scope of the fact it withdrew.
+fn lifecycle_admissions(
+    db: &CompanyDb,
+    event_rows: &[Value],
+    readable: &BTreeSet<String>,
+) -> Vec<Value> {
+    let mut rows: Vec<Value> = event_rows
+        .iter()
+        .filter(|row| {
+            ["authority_scope", "target_scope"].iter().any(|key| {
+                crate::json::get_str(row, key).is_some_and(|scope| readable.contains(scope))
+            })
+        })
+        .cloned()
+        .collect();
     for record in db.audit_records("lifecycle-refusal").unwrap_or_default() {
         let visible = ["authority_scope", "target_scope"].iter().any(|key| {
             crate::json::get_str(&record, key).is_some_and(|scope| readable.contains(scope))
@@ -1116,7 +1145,11 @@ fn facts(
         .get("as_of")
         .cloned()
         .unwrap_or_else(|| now.to_owned());
-    let view = current_view(db, trust_state, &as_of).map_err(|error| refuse(500, error))?;
+    let cached = state
+        .views
+        .read(db, trust_state, &as_of)
+        .map_err(|error| refuse(500, error))?;
+    let view = &cached.view;
     let selected: Vec<Value> = view
         .facts
         .iter()
@@ -1163,12 +1196,7 @@ fn facts(
         .iter()
         .map(|fact| fact.event_id.clone())
         .collect();
-    let mut payloads: BTreeMap<String, Value> = BTreeMap::new();
-    for (_, payload, _) in db.events_of_kind("fact-event").unwrap_or_default() {
-        if let Some(event_id) = crate::json::get_str(&payload, "event_id") {
-            payloads.insert(event_id.to_owned(), payload);
-        }
-    }
+    let payloads = &cached.payloads;
     for trace in &view.traces {
         let mut evaluated: Vec<(String, &str, String)> = Vec::new();
         for event_id in &trace.admitted_event_ids {
@@ -1355,7 +1383,11 @@ fn fact_detail(
             }),
         ));
     }
-    let view = current_view(db, trust_state, now).map_err(|error| refuse(500, error))?;
+    let cached = state
+        .views
+        .read(db, trust_state, now)
+        .map_err(|error| refuse(500, error))?;
+    let view = &cached.view;
     let Some(fact) = view.facts.iter().find(|fact| fact.fact_id == fact_id) else {
         return Err(refuse(
             404,
@@ -2123,7 +2155,11 @@ fn snapshot(
         ));
     }
     let readable = readable_scopes(auth, trust_state);
-    let view = current_view(db, trust_state, now).map_err(|error| refuse(500, error))?;
+    let cached = state
+        .views
+        .read(db, trust_state, now)
+        .map_err(|error| refuse(500, error))?;
+    let view = &cached.view;
     // A repository asks for its own direction, not the company's entire corpus.
     // A ruling that governs `example/sync` is not direction for `booking`:
     // shipping it anyway made the snapshot grow with the estate until it passed
@@ -2260,7 +2296,7 @@ fn snapshot(
         "relaxations": db.relaxations().map_err(|error| refuse(500, error))?,
         "certificates": db.all_certificates().map_err(|error| refuse(500, error))?,
         "fact_versions": fact_versions,
-        "lifecycle_admissions": lifecycle_admissions(db, trust_state, &readable),
+        "lifecycle_admissions": lifecycle_admissions(db, &cached.lifecycle_rows, &readable),
         // Every revocation ever recorded, including keys the steward later
         // republished: a later epoch authorizes new events, but facts asserted
         // before the revocation remain historical (architecture §3).
@@ -2327,8 +2363,7 @@ fn snapshot_events(
     readable: &BTreeSet<String>,
     since: i64,
 ) -> Result<(Vec<Value>, usize, String), ContractError> {
-    let mut selected: Vec<(i64, Value, usize)> = Vec::new();
-    let mut omitted = 0usize;
+    let mut candidates: Vec<(i64, &str, Value, String)> = Vec::new();
     for kind in ["fact-event", "unknown-event"] {
         for (cursor, payload, verification) in db.events_of_kind(kind)? {
             let scope = crate::json::get_str(&payload, "authority_scope").unwrap_or_default();
@@ -2339,50 +2374,45 @@ fn snapshot_events(
                 // Already sealed by this client at an earlier refresh.
                 continue;
             }
-            let record = json!({
-                "cursor": cursor.to_string(),
-                "kind": kind,
-                "verification": verification,
-                "document": payload
-            });
-            // Size it once, here. Measuring in a second pass re-serialized every
-            // record on every snapshot request, which a soak test that polls the
-            // endpoint feels immediately.
-            let size = crate::json::canonical_bytes(&record).len();
-            selected.push((cursor, record, size));
+            candidates.push((cursor, kind, payload, verification));
         }
     }
     // Newest first, so a truncated window carries the most recent history
     // rather than whichever kind sorted first.
-    selected.sort_by(|left, right| right.0.cmp(&left.0));
-    if selected.len() > SNAPSHOT_EVENT_LIMIT {
-        omitted = selected.len() - SNAPSHOT_EVENT_LIMIT;
-        selected.truncate(SNAPSHOT_EVENT_LIMIT);
-    }
+    candidates.sort_by(|left, right| right.0.cmp(&left.0));
+    let readable_count = candidates.len();
+    // Build and size only the window that is sent. Building a record for every
+    // readable event to keep at most SNAPSHOT_EVENT_LIMIT of them serialized
+    // the whole log on each snapshot: half a second at 22k events, for a
+    // window the caller then discards when anything was omitted.
+    let mut selected: Vec<(i64, Value)> = Vec::new();
     let mut spent = 0usize;
-    let mut kept = 0usize;
-    for (_, _, size) in &selected {
-        if kept > 0 && spent + size > SNAPSHOT_EVENT_BYTES {
+    for (cursor, kind, payload, verification) in candidates.into_iter().take(SNAPSHOT_EVENT_LIMIT) {
+        let record = json!({
+            "cursor": cursor.to_string(),
+            "kind": kind,
+            "verification": verification,
+            "document": payload
+        });
+        let size = crate::json::canonical_bytes(&record).len();
+        if !selected.is_empty() && spent + size > SNAPSHOT_EVENT_BYTES {
             break;
         }
         spent += size;
-        kept += 1;
+        selected.push((cursor, record));
     }
-    if kept < selected.len() {
-        omitted += selected.len() - kept;
-        selected.truncate(kept);
-    }
+    let omitted = readable_count - selected.len();
     // The client may seal up to the oldest event it actually received; anything
     // older was omitted and must still be reachable from `/events`.
     let sealed = selected
         .iter()
-        .map(|(cursor, _, _)| *cursor)
+        .map(|(cursor, _)| *cursor)
         .min()
         .map(|cursor| (cursor - 1).max(since))
         .unwrap_or(since);
-    selected.sort_by_key(|(cursor, _, _)| *cursor);
+    selected.sort_by_key(|(cursor, _)| *cursor);
     Ok((
-        selected.into_iter().map(|(_, value, _)| value).collect(),
+        selected.into_iter().map(|(_, value)| value).collect(),
         omitted,
         sealed.to_string(),
     ))
@@ -3956,6 +3986,7 @@ nonce_retention_seconds = 1300
             config,
             root: root_key.clone(),
             started_at: crate::time::now_rfc3339_millis(),
+            views: Default::default(),
         };
         let now = crate::time::now_rfc3339_millis();
         let trust = trust::load(&db, &root_key.public()).unwrap();
@@ -4243,6 +4274,7 @@ mod packet11_tests {
             config,
             root: root_key,
             started_at: crate::time::now_rfc3339_millis(),
+            views: Default::default(),
         };
         let now = crate::time::now_rfc3339_millis();
         let expires_at = crate::time::plus_seconds(&now, 60).unwrap();
@@ -4321,6 +4353,7 @@ mod auth_subject_tests {
             config,
             root: PrivateKey::generate(),
             started_at: crate::time::now_rfc3339_millis(),
+            views: Default::default(),
         };
         (db, state)
     }
@@ -4455,6 +4488,7 @@ nonce_retention_seconds = 1300
             config,
             root: root.clone(),
             started_at: crate::time::now_rfc3339_millis(),
+            views: Default::default(),
         };
         Service {
             temp,
@@ -4861,6 +4895,105 @@ nonce_retention_seconds = 1300
             snapshot.to_string().contains("scheduling/queue-wait"),
             "the conflict key's trace was dropped"
         );
+    }
+
+    #[test]
+    fn a_cached_view_is_the_reduction_at_every_cursor_and_instant() {
+        let service = service("facts_token_scopes = [\"architecture:scheduling\"]");
+        let steward = auth(&service, "facts-one");
+        let architect = PrivateKey::generate();
+        let now = crate::time::now_rfc3339_millis();
+        let later = crate::time::plus_seconds(&now, 3600).unwrap();
+        let after_later = crate::time::plus_seconds(&now, 7200).unwrap();
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let registry = service
+            .root
+            .sign_document(
+                "authority-registry-entry",
+                &json!({
+                    "schema": crate::model::REGISTRY_SCHEMA,
+                    "authority_cursor": "1000",
+                    "entries": [
+                        {"authority_id": "scheduling-architect", "scope": "architecture:scheduling",
+                         "public_key": architect.public().to_hex(), "channel": "process:architecture-answer",
+                         "capabilities": ["answer"]}
+                    ]
+                }),
+            )
+            .unwrap();
+        publish_registry(&service.db, &steward, &trust, Some(registry), &now).unwrap();
+        // Reads through the cache, and proves each one equals a fresh reduction.
+        let read = |as_of: &str| {
+            let trust = trust::load(&service.db, &service.root.public()).unwrap();
+            let cached = service
+                .state
+                .views
+                .read(&service.db, &trust, as_of)
+                .unwrap();
+            let mut fresh = current_view(&service.db, &trust, as_of).unwrap();
+            fresh.as_of = cached.view.as_of.clone();
+            assert_eq!(
+                serde_json::to_value(&cached.view).unwrap(),
+                serde_json::to_value(&fresh).unwrap(),
+                "the cached view at {as_of} is not the reduction at {as_of}"
+            );
+            cached
+        };
+        let statements = |view: &super::super::view_cache::CompanyView| -> Vec<String> {
+            view.view
+                .facts
+                .iter()
+                .map(|fact| fact.statement.clone())
+                .collect()
+        };
+        let ruling = |id: &str, key: &str, statement: &str, effective_from: &str| {
+            let mut document = fact(
+                &architect,
+                id,
+                "scheduling-architect",
+                "architecture:scheduling",
+                statement,
+            );
+            let map = document.as_object_mut().unwrap();
+            map.insert("logical_key".to_owned(), json!(key));
+            map.insert("effective_from".to_owned(), json!(effective_from));
+            let unsigned = Value::Object(map.clone());
+            append(
+                &service,
+                &architect.sign_document("fact-event", &unsigned).unwrap(),
+            );
+        };
+
+        let empty = read(&now);
+        assert!(statements(&empty).is_empty());
+        // Inside one validity window a reader shares the reduction.
+        assert!(Arc::ptr_eq(&empty, &read(&now)));
+
+        // A new event moves the cursor: the next read reduces again.
+        ruling(
+            "now",
+            "scheduling/queue-wait",
+            "Queue wait is bounded at five seconds.",
+            "2025-01-01T00:00:00.000Z",
+        );
+        assert_eq!(
+            statements(&read(&now)),
+            ["Queue wait is bounded at five seconds."]
+        );
+
+        // An event that becomes effective later is a boundary: crossing it in
+        // either direction is a different reduction, not the cached one.
+        ruling(
+            "later",
+            "scheduling/retries",
+            "Retries back off exponentially.",
+            &later,
+        );
+        assert!(!statements(&read(&now)).contains(&"Retries back off exponentially.".to_owned()));
+        assert!(
+            statements(&read(&after_later)).contains(&"Retries back off exponentially.".to_owned())
+        );
+        assert!(!statements(&read(&now)).contains(&"Retries back off exponentially.".to_owned()));
     }
 
     #[test]

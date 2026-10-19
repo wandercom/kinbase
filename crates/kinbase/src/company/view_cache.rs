@@ -1,0 +1,247 @@
+//! One reduced Company view shared by every read, rebuilt only when its inputs
+//! change.
+//!
+//! `/snapshot`, `/facts` and `/facts/<id>` each re-reduced the whole fact log
+//! on every request. At ~12k facts on staging one snapshot cost ~300 MiB and
+//! 40-60 s of service time; a client that gave up at its read budget did not
+//! cancel that work, nothing capped how many ran at once, and a handful of
+//! overlapping refreshes plus an ingest paging `/facts` OOM-killed the store.
+//!
+//! The reduction is a pure function of the admitted event log, the trust state
+//! and `as_of` (architecture §6). The log is append-only (its rows are
+//! immutable and every write appends), so the service cursor plus a digest of
+//! the trust state names the first two exactly. `as_of` reaches the reducer
+//! only through step 4 -- an event not yet effective, or past its declared
+//! validity -- so a view reduced at one instant is the view at any other
+//! instant no event's `effective_from` or expiry falls between. Readers inside
+//! that window share the cached reduction; a reader outside it, or at a newer
+//! cursor, rebuilds. Rebuilds are serialized: concurrent readers that miss wait
+//! for the one rebuild in flight instead of each starting their own.
+
+use super::db::CompanyDb;
+use super::trust::TrustState;
+use crate::error::ContractError;
+use crate::reducer::CurrentView;
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex, MutexGuard};
+
+/// What a reduction was computed from, apart from `as_of`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ViewKey {
+    cursor: i64,
+    trust_digest: String,
+}
+
+impl ViewKey {
+    fn of(trust_state: &TrustState) -> Self {
+        // The registry table is updated in place when an authority is revoked,
+        // so the cursor alone does not name the trust a reduction used.
+        let trust = json!({
+            "steward_keys": trust_state.steward_keys,
+            "revocations": trust_state.revocations,
+            "scope_revocations": trust_state.scope_revocations,
+            "registry": trust_state.registry,
+            "authority_cursor": trust_state.authority_cursor,
+        });
+        Self {
+            cursor: trust_state.cursor,
+            trust_digest: crate::hash::sha256_bytes(&crate::json::canonical_bytes(&trust)),
+        }
+    }
+}
+
+/// A reduction and the log-derived indexes the read endpoints build beside it.
+pub struct CompanyView {
+    key: ViewKey,
+    /// The `as_of` the view was reduced at. `view.as_of` carries it too; it is
+    /// the reduction instant, and the view is identical for every `as_of` in
+    /// this entry's window, so readers use their own `as_of`, never this one.
+    reduced_at: String,
+    /// Every `effective_from` and expiry instant in the admitted log, sorted.
+    boundaries: Vec<String>,
+    pub view: CurrentView,
+    /// The fields `/facts` publishes for a non-current event, by event id.
+    /// Only these: the whole parsed log held resident would cost more than the
+    /// per-request copies this cache exists to remove.
+    pub payloads: BTreeMap<String, Value>,
+    /// Lifecycle admissions derived from the log, before any reader's scope
+    /// filter; audited refusals are read per request.
+    pub lifecycle_rows: Vec<Value>,
+}
+
+impl CompanyView {
+    /// Whether this reduction is the reduction at `as_of`: no boundary lies in
+    /// the half-open interval between the two instants, in either direction.
+    fn holds_at(&self, as_of: &str) -> bool {
+        let (low, high) = if as_of < self.reduced_at.as_str() {
+            (as_of, self.reduced_at.as_str())
+        } else {
+            (self.reduced_at.as_str(), as_of)
+        };
+        let first_after_low = self
+            .boundaries
+            .partition_point(|boundary| boundary.as_str() <= low);
+        self.boundaries
+            .get(first_after_low)
+            .is_none_or(|boundary| boundary.as_str() > high)
+    }
+}
+
+/// What `/facts` reads from a non-current event's payload.
+const PUBLISHED_EVENT_FIELDS: [&str; 8] = [
+    "fact_id",
+    "statement",
+    "disposition",
+    "atom_kind",
+    "authority_id",
+    "authority_scope",
+    "asserted_at",
+    "effective_until",
+];
+
+#[derive(Default)]
+pub struct ViewCache {
+    current: Mutex<Option<Arc<CompanyView>>>,
+    rebuild: Mutex<()>,
+}
+
+impl ViewCache {
+    /// The Company view at `as_of` for this trust state, reduced at most once
+    /// per change of its inputs.
+    pub fn read(
+        &self,
+        db: &CompanyDb,
+        trust_state: &TrustState,
+        as_of: &str,
+    ) -> Result<Arc<CompanyView>, ContractError> {
+        let key = ViewKey::of(trust_state);
+        if let Some(hit) = self.lookup(&key, as_of) {
+            return Ok(hit);
+        }
+        let _turn = lock(&self.rebuild);
+        // Another reader may have rebuilt it while this one waited its turn.
+        if let Some(hit) = self.lookup(&key, as_of) {
+            return Ok(hit);
+        }
+        let built = Arc::new(build(db, trust_state, key, as_of)?);
+        *lock(&self.current) = Some(Arc::clone(&built));
+        Ok(built)
+    }
+
+    fn lookup(&self, key: &ViewKey, as_of: &str) -> Option<Arc<CompanyView>> {
+        lock(&self.current)
+            .as_ref()
+            .filter(|entry| entry.key == *key && entry.holds_at(as_of))
+            .map(Arc::clone)
+    }
+}
+
+/// A panic while holding either lock leaves nothing half-written: the entry is
+/// replaced whole, and the rebuild lock guards no data. Keep serving.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+fn build(
+    db: &CompanyDb,
+    trust_state: &TrustState,
+    key: ViewKey,
+    as_of: &str,
+) -> Result<CompanyView, ContractError> {
+    let input = super::server::company_reducer_input(db, trust_state, as_of)?;
+    let mut boundaries: Vec<String> = input
+        .events
+        .iter()
+        .flat_map(|admitted| {
+            [
+                Some(admitted.event.effective_from.clone()),
+                crate::reducer::expiry_of(&admitted.event),
+            ]
+        })
+        .flatten()
+        .collect();
+    boundaries.sort();
+    boundaries.dedup();
+    let view = crate::reducer::reduce(&input);
+    let mut payloads = BTreeMap::new();
+    for (_, payload, _) in db.events_of_kind("fact-event")? {
+        let Some(event_id) = crate::json::get_str(&payload, "event_id") else {
+            continue;
+        };
+        let published: serde_json::Map<String, Value> = PUBLISHED_EVENT_FIELDS
+            .iter()
+            .filter_map(|field| {
+                payload
+                    .get(*field)
+                    .map(|value| ((*field).to_owned(), value.clone()))
+            })
+            .collect();
+        payloads.insert(event_id.to_owned(), Value::Object(published));
+    }
+    let lifecycle_rows = super::server::lifecycle_event_rows(db, trust_state);
+    Ok(CompanyView {
+        key,
+        reduced_at: as_of.to_owned(),
+        boundaries,
+        view,
+        payloads,
+        lifecycle_rows,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(reduced_at: &str, boundaries: &[&str]) -> CompanyView {
+        CompanyView {
+            key: ViewKey {
+                cursor: 1,
+                trust_digest: String::new(),
+            },
+            reduced_at: reduced_at.to_owned(),
+            boundaries: boundaries.iter().map(|b| (*b).to_owned()).collect(),
+            view: crate::reducer::reduce(&crate::reducer::ReducerInput {
+                store_kind: "company".to_owned(),
+                events: Vec::new(),
+                unknowns: Vec::new(),
+                tombstones: Vec::new(),
+                revocations: Vec::new(),
+                as_of: reduced_at.to_owned(),
+                authority_cursor: "1".to_owned(),
+                revocation_fresh: true,
+                fact_valid_until: None,
+                certificate_valid: true,
+                authority_owner_by_scope: BTreeMap::new(),
+                steward_authority_id: None,
+            }),
+            payloads: BTreeMap::new(),
+            lifecycle_rows: Vec::new(),
+        }
+    }
+
+    const T0: &str = "2026-10-19T10:00:00.000Z";
+    const T1: &str = "2026-10-19T11:00:00.000Z";
+    const T2: &str = "2026-10-19T12:00:00.000Z";
+    const T3: &str = "2026-10-19T13:00:00.000Z";
+
+    #[test]
+    fn a_view_holds_until_an_event_becomes_effective_or_expires() {
+        let cached = entry(T1, &[T0, T2]);
+        // Same window either side of the reduction instant.
+        assert!(cached.holds_at(T1));
+        assert!(cached.holds_at("2026-10-19T11:59:59.999Z"));
+        assert!(cached.holds_at(T0));
+        // Reaching a boundary flips `effective_from > as_of` and
+        // `until <= as_of`: the reduction at T2 differs from the one at T1.
+        assert!(!cached.holds_at(T2));
+        assert!(!cached.holds_at(T3));
+        // Earlier than T0 crosses T0 going back.
+        assert!(!cached.holds_at("2026-10-19T09:59:59.999Z"));
+        // A log with no boundaries holds at every instant.
+        assert!(entry(T1, &[]).holds_at(T3));
+    }
+}
