@@ -16,7 +16,10 @@
 //! instant no event's `effective_from` or expiry falls between. Readers inside
 //! that window share the cached reduction; a reader outside it, or at a newer
 //! cursor, rebuilds. Rebuilds are serialized: concurrent readers that miss wait
-//! for the one rebuild in flight instead of each starting their own.
+//! for the one rebuild in flight instead of each starting their own, while
+//! readers that hit never wait. Two reductions are kept, and the one that holds
+//! at the service's own clock is never the one evicted, so a reader asking for
+//! a historical `as_of` cannot push `/snapshot` into the rebuild queue.
 
 use super::db::CompanyDb;
 use super::trust::TrustState;
@@ -100,20 +103,26 @@ const PUBLISHED_EVENT_FIELDS: [&str; 8] = [
     "effective_until",
 ];
 
+/// Reductions kept at once: the one at the service's clock, and one for a
+/// reader asking about another instant.
+const SLOTS: usize = 2;
+
 #[derive(Default)]
 pub struct ViewCache {
-    current: Mutex<Option<Arc<CompanyView>>>,
+    entries: Mutex<Vec<Arc<CompanyView>>>,
     rebuild: Mutex<()>,
 }
 
 impl ViewCache {
     /// The Company view at `as_of` for this trust state, reduced at most once
-    /// per change of its inputs.
+    /// per change of its inputs. `now` is the service's clock, which decides
+    /// what to keep when a reader asks about another instant.
     pub fn read(
         &self,
         db: &CompanyDb,
         trust_state: &TrustState,
         as_of: &str,
+        now: &str,
     ) -> Result<Arc<CompanyView>, ContractError> {
         let key = ViewKey::of(trust_state);
         if let Some(hit) = self.lookup(&key, as_of) {
@@ -125,15 +134,29 @@ impl ViewCache {
             return Ok(hit);
         }
         let built = Arc::new(build(db, trust_state, key, as_of)?);
-        *lock(&self.current) = Some(Arc::clone(&built));
+        self.remember(Arc::clone(&built), now);
         Ok(built)
     }
 
     fn lookup(&self, key: &ViewKey, as_of: &str) -> Option<Arc<CompanyView>> {
-        lock(&self.current)
-            .as_ref()
-            .filter(|entry| entry.key == *key && entry.holds_at(as_of))
+        lock(&self.entries)
+            .iter()
+            .find(|entry| entry.key == *key && entry.holds_at(as_of))
             .map(Arc::clone)
+    }
+
+    fn remember(&self, built: Arc<CompanyView>, now: &str) {
+        let mut entries = lock(&self.entries);
+        // A reduction of an older log or trust state is never read again.
+        entries.retain(|entry| entry.key == built.key);
+        if entries.len() >= SLOTS {
+            let victim = entries
+                .iter()
+                .position(|entry| !entry.holds_at(now))
+                .unwrap_or(0);
+            entries.remove(victim);
+        }
+        entries.push(built);
     }
 }
 
@@ -151,7 +174,7 @@ fn build(
     key: ViewKey,
     as_of: &str,
 ) -> Result<CompanyView, ContractError> {
-    let input = super::server::company_reducer_input(db, trust_state, as_of)?;
+    let input = super::reduction::company_reducer_input(db, trust_state, as_of)?;
     let mut boundaries: Vec<String> = input
         .events
         .iter()
@@ -166,6 +189,9 @@ fn build(
     boundaries.sort();
     boundaries.dedup();
     let view = crate::reducer::reduce(&input);
+    // The parsed log is the largest thing a rebuild holds; release it before
+    // the passes below parse the log again.
+    drop(input);
     let mut payloads = BTreeMap::new();
     for (_, payload, _) in db.events_of_kind("fact-event")? {
         let Some(event_id) = crate::json::get_str(&payload, "event_id") else {
@@ -181,7 +207,7 @@ fn build(
             .collect();
         payloads.insert(event_id.to_owned(), Value::Object(published));
     }
-    let lifecycle_rows = super::server::lifecycle_event_rows(db, trust_state);
+    let lifecycle_rows = super::reduction::lifecycle_event_rows(db, trust_state);
     Ok(CompanyView {
         key,
         reduced_at: as_of.to_owned(),
@@ -243,5 +269,27 @@ mod tests {
         assert!(!cached.holds_at("2026-10-19T09:59:59.999Z"));
         // A log with no boundaries holds at every instant.
         assert!(entry(T1, &[]).holds_at(T3));
+    }
+
+    #[test]
+    fn a_historical_reader_never_evicts_the_reduction_at_the_clock() {
+        let cache = ViewCache::default();
+        let key = entry(T1, &[]).key;
+        // The service's clock is T1; the live reduction holds between T0 and T2.
+        let live = Arc::new(entry(T1, &[T0, T2]));
+        cache.remember(Arc::clone(&live), T1);
+        // Readers asking about other instants come and go.
+        for instant in [T3, "2026-10-19T09:00:00.000Z", T3] {
+            cache.remember(Arc::new(entry(instant, &[T0, T2])), T1);
+            let hit = cache.lookup(&key, T1).expect("the live reduction is kept");
+            assert!(Arc::ptr_eq(&hit, &live));
+        }
+        assert_eq!(lock(&cache.entries).len(), SLOTS);
+        // A newer log replaces everything built from the old one.
+        let mut newer = entry(T1, &[]);
+        newer.key.cursor = 2;
+        cache.remember(Arc::new(newer), T1);
+        assert_eq!(lock(&cache.entries).len(), 1);
+        assert!(cache.lookup(&key, T1).is_none());
     }
 }
