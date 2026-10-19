@@ -48,8 +48,10 @@ impl Client {
             // rising. At 1,500 ms -- a bound sized for proof fixtures -- every
             // repository in the estate reported COMPANY_UNREACHABLE against a
             // service that was answering perfectly well, which reads as an
-            // outage rather than as the ceiling it is.
-            read_timeout: Duration::from_secs(20),
+            // outage rather than as the ceiling it is. At 20 s the same thing
+            // recurred on 2026-10-19: a 48.7 MB snapshot took 23.2 s, so every
+            // refresh fell back to a five-day-old cache without saying so.
+            read_timeout: Duration::from_secs(120),
             bytes_sent: std::cell::Cell::new(0),
         })
     }
