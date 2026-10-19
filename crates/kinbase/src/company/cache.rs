@@ -314,7 +314,7 @@ impl Cache {
 
     /// The content digest a refresh may offer as `known`: only for a warm
     /// cache whose snapshot was filtered to the scope being asked for and
-    /// carries a digest Company signed.
+    /// carries a well-formed digest Company signed.
     pub fn known_content_digest(&self, facts_scope: &str) -> Option<String> {
         if self.state != CacheState::Warm
             || self.meta("facts_scope").as_deref() != Some(facts_scope)
@@ -322,7 +322,7 @@ impl Cache {
             return None;
         }
         self.meta("content_digest")
-            .filter(|digest| !digest.is_empty())
+            .filter(|digest| is_content_digest(digest))
     }
 
     /// Take a signed receipt that the cached snapshot is still Company's
@@ -356,25 +356,76 @@ impl Cache {
                 "Refresh again without a known digest to fetch the full snapshot.",
             ));
         }
-        for key in [
-            "cursor",
-            "authority_cursor",
-            "revocation_cursor",
-            "revocation_valid_until",
-            "fact_valid_until",
-            "issued_at",
-        ] {
-            if let Some(value) = crate::json::get_str(receipt, key) {
-                self.set_meta(key, value)?;
+        let record = crate::json::record_text(receipt)?;
+        // All or nothing: a crash between these writes must not leave the
+        // clocks renewed with the high-water mark behind them.
+        let connection = self.connection()?;
+        connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(sqlite_error("begin unchanged receipt"))?;
+        let written = (|| {
+            for key in [
+                "cursor",
+                "authority_cursor",
+                "revocation_cursor",
+                "revocation_valid_until",
+                "fact_valid_until",
+                "issued_at",
+            ] {
+                if let Some(value) = crate::json::get_str(receipt, key) {
+                    self.set_meta(key, value)?;
+                }
+            }
+            self.set_meta(
+                "high_water_cursor",
+                crate::json::get_str(receipt, "cursor").unwrap_or("0"),
+            )?;
+            self.set_meta("freshness_receipt", &record)?;
+            self.set_meta("refreshed_at", now)
+        })();
+        match written {
+            Ok(()) => connection
+                .execute_batch("COMMIT")
+                .map_err(sqlite_error("commit unchanged receipt")),
+            Err(error) => {
+                let _ = connection.execute_batch("ROLLBACK");
+                Err(error)
             }
         }
-        self.set_meta(
-            "high_water_cursor",
-            crate::json::get_str(receipt, "cursor").unwrap_or("0"),
-        )?;
-        self.set_meta("freshness_receipt", &crate::json::record_text(receipt)?)?;
-        self.set_meta("refreshed_at", now)?;
-        Ok(())
+    }
+
+    /// Where the cached freshness came from, re-verified: the snapshot that
+    /// carried the content, or the latest unchanged receipt, checked against
+    /// the root and against the clocks this cache is using.
+    pub fn freshness_record(&self, root: &PublicKey) -> Value {
+        let content_digest = self.meta("content_digest").unwrap_or_default();
+        let Some(text) = self
+            .meta("freshness_receipt")
+            .filter(|text| !text.is_empty())
+        else {
+            return json!({"source": "snapshot", "content_digest": content_digest});
+        };
+        let receipt = crate::json::parse_strict_value(text.as_bytes()).ok();
+        let signed = receipt
+            .as_ref()
+            .and_then(|receipt| PublicKey::verify_document("receipt", receipt))
+            .is_some_and(|signer| signer == *root);
+        let matches = receipt.as_ref().is_some_and(|receipt| {
+            [
+                "cursor",
+                "revocation_valid_until",
+                "fact_valid_until",
+                "content_digest",
+            ]
+            .iter()
+            .all(|key| crate::json::get_str(receipt, key) == self.meta(key).as_deref())
+        });
+        json!({
+            "source": "unchanged-receipt",
+            "verified": signed && matches,
+            "content_digest": content_digest,
+            "issued_at": self.meta("issued_at"),
+        })
     }
 
     /// The scope the cached snapshot was filtered to: `repository:<uuid>`
@@ -777,6 +828,15 @@ impl Cache {
             })
             .unwrap_or_default()
     }
+}
+
+/// A SHA-256 content digest as Company signs it: 64 lowercase hex characters.
+/// Anything else is never offered, so it can never reach a request path.
+pub fn is_content_digest(digest: &str) -> bool {
+    digest.len() == 64
+        && digest
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// Proxy every fact of a signed snapshot into a FactEvent-shaped document.
@@ -1217,6 +1277,8 @@ mod unchanged_receipt_tests {
     use serde_json::json;
 
     const ISSUED: &str = "2026-10-19T12:00:00.000Z";
+    const ONE: &str = "1111111111111111111111111111111111111111111111111111111111111111";
+    const TWO: &str = "2222222222222222222222222222222222222222222222222222222222222222";
     const LATER: &str = "2026-10-19T13:00:00.000Z";
 
     fn snapshot(root: &PrivateKey, cursor: &str, digest: Option<&str>) -> Value {
@@ -1266,11 +1328,7 @@ mod unchanged_receipt_tests {
     fn warm(root: &PrivateKey, temp: &tempfile::TempDir) -> Cache {
         let mut cache = Cache::open(&temp.path().join("cache")).unwrap();
         cache
-            .store_snapshot(
-                &snapshot(root, "5", Some("digest-one")),
-                &root.public(),
-                ISSUED,
-            )
+            .store_snapshot(&snapshot(root, "5", Some(ONE)), &root.public(), ISSUED)
             .unwrap();
         cache
     }
@@ -1280,21 +1338,14 @@ mod unchanged_receipt_tests {
         let temp = tempfile::tempdir().unwrap();
         let root = PrivateKey::generate();
         let mut cache = warm(&root, &temp);
-        assert_eq!(
-            cache.known_content_digest("").as_deref(),
-            Some("digest-one")
-        );
+        assert_eq!(cache.known_content_digest("").as_deref(), Some(ONE));
         assert_eq!(cache.known_content_digest("repository:booking"), None);
         let bytes_digest = cache.meta("snapshot_digest");
         let stale = cache.freshness("2026-10-19T12:30:00.000Z");
         assert!(!stale.revocation_fresh);
 
         cache
-            .store_unchanged(
-                &receipt(&root, "7", "digest-one", ""),
-                &root.public(),
-                LATER,
-            )
+            .store_unchanged(&receipt(&root, "7", ONE, ""), &root.public(), LATER)
             .unwrap();
         // The content is still the bytes Company signed.
         assert_eq!(cache.meta("snapshot_digest"), bytes_digest);
@@ -1311,10 +1362,7 @@ mod unchanged_receipt_tests {
                 .is_empty()
         );
         // The same content stays on offer for the next refresh.
-        assert_eq!(
-            cache.known_content_digest("").as_deref(),
-            Some("digest-one")
-        );
+        assert_eq!(cache.known_content_digest("").as_deref(), Some(ONE));
     }
 
     #[test]
@@ -1323,24 +1371,20 @@ mod unchanged_receipt_tests {
         let root = PrivateKey::generate();
         let mut cache = warm(&root, &temp);
         cache
-            .store_unchanged(
-                &receipt(&root, "7", "digest-one", ""),
-                &root.public(),
-                LATER,
-            )
+            .store_unchanged(&receipt(&root, "7", ONE, ""), &root.public(), LATER)
             .unwrap();
         let refused = [
-            (receipt(&root, "8", "digest-two", ""), "DIGEST_MISMATCH"),
+            (receipt(&root, "8", TWO, ""), "DIGEST_MISMATCH"),
             (
-                receipt(&root, "8", "digest-one", "repository:booking"),
+                receipt(&root, "8", ONE, "repository:booking"),
                 "DIGEST_MISMATCH",
             ),
-            (receipt(&root, "6", "digest-one", ""), "REVOCATION_STALE"),
+            (receipt(&root, "6", ONE, ""), "REVOCATION_STALE"),
             (
-                receipt(&PrivateKey::generate(), "8", "digest-one", ""),
+                receipt(&PrivateKey::generate(), "8", ONE, ""),
                 "SIGNATURE_INVALID",
             ),
-            (snapshot(&root, "8", Some("digest-one")), "DIGEST_MISMATCH"),
+            (snapshot(&root, "8", Some(ONE)), "DIGEST_MISMATCH"),
         ];
         for (answer, code) in refused {
             let error = cache
@@ -1361,11 +1405,7 @@ mod unchanged_receipt_tests {
         let root = PrivateKey::generate();
         let mut cache = warm(&root, &temp);
         cache
-            .store_unchanged(
-                &receipt(&root, "7", "digest-one", ""),
-                &root.public(),
-                LATER,
-            )
+            .store_unchanged(&receipt(&root, "7", ONE, ""), &root.public(), LATER)
             .unwrap();
         // A snapshot from a service that signs no digest replaces the content
         // and the receipt that renewed it; nothing is offered until a digest is.
@@ -1380,5 +1420,41 @@ mod unchanged_receipt_tests {
                 .known_content_digest("")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_malformed_digest_is_never_offered() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = PrivateKey::generate();
+        let mut cache = Cache::open(&temp.path().join("cache")).unwrap();
+        for digest in ["digest-one", &"A".repeat(64), &format!("{ONE}&x=1")] {
+            cache
+                .store_snapshot(&snapshot(&root, "5", Some(digest)), &root.public(), ISSUED)
+                .unwrap();
+            assert_eq!(cache.known_content_digest(""), None, "{digest}");
+        }
+    }
+
+    #[test]
+    fn the_freshness_record_is_reverified_against_the_clocks_in_use() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = PrivateKey::generate();
+        let mut cache = warm(&root, &temp);
+        assert_eq!(cache.freshness_record(&root.public())["source"], "snapshot");
+        cache
+            .store_unchanged(&receipt(&root, "7", ONE, ""), &root.public(), LATER)
+            .unwrap();
+        let record = cache.freshness_record(&root.public());
+        assert_eq!(record["source"], "unchanged-receipt");
+        assert_eq!(record["verified"], true);
+        // Under another root, or with clocks no receipt signed, it is not.
+        assert_eq!(
+            cache.freshness_record(&PrivateKey::generate().public())["verified"],
+            false
+        );
+        cache
+            .set_meta("fact_valid_until", "2027-01-01T00:00:00.000Z")
+            .unwrap();
+        assert_eq!(cache.freshness_record(&root.public())["verified"], false);
     }
 }

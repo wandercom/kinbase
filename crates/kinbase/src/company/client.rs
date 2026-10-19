@@ -142,28 +142,12 @@ impl Client {
         self.get_ok("/status")
     }
 
-    /// Fetch and verify a signed snapshot bound to a fresh client nonce.
-    pub fn snapshot(&self) -> Result<Value, ContractError> {
-        self.snapshot_for("")
-    }
-
-    /// The snapshot a repository needs: company-wide direction plus the rulings
-    /// that govern this repository. Asking for everything is how the response
-    /// outgrew the body ceiling and froze every cache in the estate.
-    pub fn snapshot_for(&self, repository_uuid: &str) -> Result<Value, ContractError> {
-        match self.refresh_for(repository_uuid, None)? {
-            SnapshotRefresh::Snapshot(snapshot) => Ok(snapshot),
-            SnapshotRefresh::Unchanged(_) => Err(ContractError::integrity(
-                "DIGEST_MISMATCH",
-                "Company answered a request that offered no snapshot with an unchanged receipt",
-                "Refresh again; a receipt for content this client never offered is refused.",
-            )),
-        }
-    }
-
-    /// Refresh, offering the content digest of the snapshot already held.
+    /// Refresh the snapshot a repository needs: company-wide direction plus
+    /// the rulings that govern this repository. Asking for everything is how
+    /// the response outgrew the body ceiling and froze every cache in the
+    /// estate. `known` offers the content digest of the snapshot already held;
     /// Company answers with the whole snapshot, or with a signed receipt that
-    /// the offered content is still its answer; both are root-verified and
+    /// the offered content is still its answer. Both are root-verified and
     /// must echo this request's fresh nonce.
     pub fn refresh_for(
         &self,
@@ -176,6 +160,8 @@ impl Client {
         } else {
             format!("/snapshot?nonce={nonce}&repository={repository_uuid}")
         };
+        // Only a well-formed digest reaches the query string.
+        let known = known.filter(|digest| super::cache::is_content_digest(digest));
         if let Some(known) = known {
             path.push_str(&format!("&known={known}"));
         }

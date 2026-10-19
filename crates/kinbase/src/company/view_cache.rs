@@ -83,8 +83,14 @@ impl CompanyView {
         lock(&self.content_digests).get(key).cloned()
     }
 
+    /// Clients choose part of the key (`repository`, `events_since`), so the
+    /// memo is capped: past the cap a new key replaces the first one held.
     pub fn remember_content_digest(&self, key: String, digest: String) {
-        lock(&self.content_digests).insert(key, digest);
+        let mut digests = lock(&self.content_digests);
+        if digests.len() >= MAX_CONTENT_DIGESTS && !digests.contains_key(&key) {
+            digests.pop_first();
+        }
+        digests.insert(key, digest);
     }
 
     /// Whether this reduction is the reduction at `as_of`: no boundary lies in
@@ -103,6 +109,10 @@ impl CompanyView {
             .is_none_or(|boundary| boundary.as_str() > high)
     }
 }
+
+/// Content digests remembered per reduction: one per scope set, repository and
+/// `events_since` a client asked for, which is a few dozen for a whole estate.
+const MAX_CONTENT_DIGESTS: usize = 256;
 
 /// What `/facts` reads from a non-current event's payload.
 const PUBLISHED_EVENT_FIELDS: [&str; 8] = [
@@ -284,6 +294,23 @@ mod tests {
         assert!(!cached.holds_at("2026-10-19T09:59:59.999Z"));
         // A log with no boundaries holds at every instant.
         assert!(entry(T1, &[]).holds_at(T3));
+    }
+
+    #[test]
+    fn client_chosen_memo_keys_are_capped() {
+        let cached = entry(T1, &[]);
+        for index in 0..=MAX_CONTENT_DIGESTS {
+            cached.remember_content_digest(format!("key-{index:04}"), format!("digest-{index}"));
+        }
+        assert_eq!(lock(&cached.content_digests).len(), MAX_CONTENT_DIGESTS);
+        let newest = format!("key-{MAX_CONTENT_DIGESTS:04}");
+        assert_eq!(
+            cached.content_digest(&newest),
+            Some(format!("digest-{MAX_CONTENT_DIGESTS}"))
+        );
+        // Re-recording a held key never evicts another.
+        cached.remember_content_digest(newest, "again".to_owned());
+        assert_eq!(lock(&cached.content_digests).len(), MAX_CONTENT_DIGESTS);
     }
 
     #[test]

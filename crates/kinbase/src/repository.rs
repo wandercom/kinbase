@@ -4308,10 +4308,23 @@ pub fn doctor(
             }
         }
     }
-    let cache_clocks = launcher
+    let (cache_clocks, cache_freshness_record) = launcher
         .company_cache()?
-        .map(|(cache, _root)| cache.freshness(&now).to_value())
-        .unwrap_or(Value::Null);
+        .map(|(cache, root)| {
+            (
+                cache.freshness(&now).to_value(),
+                cache.freshness_record(&root),
+            )
+        })
+        .unwrap_or((Value::Null, Value::Null));
+    // Stated, never silent: clocks the cache is using that no signed document
+    // vouches for are a cache to refresh, not a fresh cache.
+    if cache_freshness_record.get("verified") == Some(&Value::Bool(false)) {
+        crate::output::diagnostic(
+            "cache-freshness-record-unverified",
+            cache_freshness_record.clone(),
+        );
+    }
     let kindex = crate::adapters::kindex_seam_conformance();
     let mut boundaries = Vec::new();
     if let Some(repo) = &repo {
@@ -4344,6 +4357,7 @@ pub fn doctor(
         "sweep": sweep,
         "sandbox": sandbox,
         "cache_clocks": cache_clocks,
+        "cache_freshness_record": cache_freshness_record,
         "classifier": classifier,
         "classifier_pinned": classifier_pinned,
         "kindex_seams": kindex,

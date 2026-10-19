@@ -2223,23 +2223,28 @@ fn snapshot_freshness(
     client_nonce: &str,
     now: &str,
 ) -> Result<serde_json::Map<String, Value>, (u16, ContractError)> {
-    let fields = json!({
-        "cursor": trust_state.cursor.to_string(),
-        "authority_cursor": trust_state.authority_cursor.clone(),
-        "service_cursor": trust_state.cursor.to_string(),
-        "revocation_cursor": db.revocation_cursor().map_err(|error| refuse(500, error))?,
-        "client_nonce": client_nonce,
-        "issued_at": now,
-        "revocation_valid_until": crate::time::plus_seconds(now, state.config.revocation_freshness_seconds).unwrap_or_default(),
-        "fact_valid_until": crate::time::plus_seconds(now, state.config.default_fact_freshness_seconds).unwrap_or_default(),
-    });
-    match fields {
-        Value::Object(map) => Ok(map),
-        _ => Err(refuse(
-            500,
-            ContractError::internal("snapshot freshness is not an object"),
-        )),
+    let revocation_cursor = db.revocation_cursor().map_err(|error| refuse(500, error))?;
+    let valid_until = |seconds| crate::time::plus_seconds(now, seconds).unwrap_or_default();
+    let mut fields = serde_json::Map::new();
+    for (key, value) in [
+        ("cursor", trust_state.cursor.to_string()),
+        ("authority_cursor", trust_state.authority_cursor.clone()),
+        ("service_cursor", trust_state.cursor.to_string()),
+        ("revocation_cursor", revocation_cursor),
+        ("client_nonce", client_nonce.to_owned()),
+        ("issued_at", now.to_owned()),
+        (
+            "revocation_valid_until",
+            valid_until(state.config.revocation_freshness_seconds),
+        ),
+        (
+            "fact_valid_until",
+            valid_until(state.config.default_fact_freshness_seconds),
+        ),
+    ] {
+        fields.insert(key.to_owned(), Value::String(value));
     }
+    Ok(fields)
 }
 
 /// A signed statement that the snapshot whose content digest the client
