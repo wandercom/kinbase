@@ -121,7 +121,7 @@ impl Launcher {
             access.cache_root.clone(),
             access.allow_non_loopback,
         )?
-        .with_read_timeout_seconds(access.read_timeout_seconds);
+        .with_snapshot_timeout_seconds(access.snapshot_timeout_seconds);
         Ok(Some(CompanyAccess {
             client,
             cache,

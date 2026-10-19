@@ -2174,8 +2174,7 @@ pub fn issue_certificate(
         Some(access.root_key()?),
         access.cache_root.clone(),
         access.allow_non_loopback,
-    )?
-    .with_read_timeout_seconds(access.read_timeout_seconds);
+    )?;
     let hint = crate::codebase::git(&repo.root, &["remote", "get-url", "origin"])
         .map(|remote| normalize_hint(&remote))
         .unwrap_or_default();

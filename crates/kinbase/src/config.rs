@@ -84,10 +84,11 @@ pub struct CompanyConfig {
     /// Mirrors the service flag: set only where the endpoint is reached over a
     /// network whose isolation is enforced somewhere other than the interface.
     pub allow_non_loopback: bool,
-    /// How long a request waits for the service to answer. A snapshot costs
-    /// what the Company log costs, so a growing store outgrows any fixed
-    /// bound; a deployment raises this instead of shipping a new binary.
-    pub read_timeout_seconds: u64,
+    /// How long a snapshot read waits for the service to answer. A snapshot
+    /// costs what the Company log costs, so a growing store outgrows any fixed
+    /// bound; a deployment raises this instead of shipping a new binary. Other
+    /// requests keep the default: hooks post through the same client.
+    pub snapshot_timeout_seconds: u64,
 }
 
 /// The processors a `[classifier]` may send session text to: `local` (the
@@ -203,13 +204,13 @@ pub struct SharedCompanyAccess {
     /// Carried through so a shared process applies the same endpoint rule the
     /// launcher was configured with, rather than re-deciding it.
     pub allow_non_loopback: bool,
-    /// Carried through for the same reason: the shared process makes the
-    /// requests, so it must wait as long as the launcher was configured to.
-    #[serde(default = "default_read_timeout_seconds")]
-    pub read_timeout_seconds: u64,
+    /// Carried through for the same reason: the shared process reads the
+    /// snapshots, so it must wait as long as the launcher was configured to.
+    #[serde(default = "default_snapshot_timeout_seconds")]
+    pub snapshot_timeout_seconds: u64,
 }
 
-fn default_read_timeout_seconds() -> u64 {
+fn default_snapshot_timeout_seconds() -> u64 {
     crate::company::client::DEFAULT_READ_TIMEOUT_SECONDS
 }
 
@@ -589,29 +590,29 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                     "client_key_file",
                     "maintainer_key_file",
                     "allow_non_loopback",
-                    "read_timeout_seconds",
+                    "snapshot_timeout_seconds",
                 ],
                 "[company]",
             )?;
             let url = required_str(section, "url", "company")?.to_owned();
             let allow_non_loopback = optional_bool(section, "allow_non_loopback", "company")?;
             validate_loopback_url(&url, allow_non_loopback)?;
-            let read_timeout_seconds = match section.get("read_timeout_seconds") {
-                None => default_read_timeout_seconds(),
+            let snapshot_timeout_seconds = match section.get("snapshot_timeout_seconds") {
+                None => default_snapshot_timeout_seconds(),
                 Some(value) => value
                     .as_integer()
                     .filter(|seconds| (1..=600).contains(seconds))
                     .and_then(|seconds| u64::try_from(seconds).ok())
                     .ok_or_else(|| {
                         config_error(
-                            "company.read_timeout_seconds must be an integer within 1..=600",
+                            "company.snapshot_timeout_seconds must be an integer within 1..=600",
                         )
                     })?,
             };
             Some(CompanyConfig {
                 url,
                 allow_non_loopback,
-                read_timeout_seconds,
+                snapshot_timeout_seconds,
                 facts_token_file: absolute(
                     required_str(section, "facts_token_file", "company")?,
                     "company.facts_token_file",
@@ -986,7 +987,7 @@ impl UserConfig {
                 Some(SharedCompanyAccess {
                     url: company.url.clone(),
                     allow_non_loopback: company.allow_non_loopback,
-                    read_timeout_seconds: company.read_timeout_seconds,
+                    snapshot_timeout_seconds: company.snapshot_timeout_seconds,
                     facts_token,
                     admin_token,
                     directory_token,
@@ -1382,7 +1383,7 @@ mod secret_mask_config_tests {
 }
 
 #[cfg(test)]
-mod company_read_timeout_tests {
+mod company_snapshot_timeout_tests {
     use super::*;
 
     fn company(extra: &str) -> Result<UserConfig, ContractError> {
@@ -1401,27 +1402,27 @@ mod company_read_timeout_tests {
             .expect("config parses")
             .company
             .expect("company section")
-            .read_timeout_seconds
+            .snapshot_timeout_seconds
     }
 
     #[test]
-    fn the_read_budget_defaults_and_a_deployment_can_raise_it() {
+    fn the_snapshot_budget_defaults_and_a_deployment_can_raise_it() {
         assert_eq!(
             timeout_of(""),
             crate::company::client::DEFAULT_READ_TIMEOUT_SECONDS
         );
-        assert_eq!(timeout_of("read_timeout_seconds = 90"), 90);
-        assert_eq!(timeout_of("read_timeout_seconds = 600"), 600);
+        assert_eq!(timeout_of("snapshot_timeout_seconds = 90"), 90);
+        assert_eq!(timeout_of("snapshot_timeout_seconds = 600"), 600);
     }
 
     #[test]
-    fn a_read_budget_outside_its_range_is_refused() {
+    fn a_snapshot_budget_outside_its_range_is_refused() {
         for bad in [
-            "read_timeout_seconds = 0",
-            "read_timeout_seconds = -5",
-            "read_timeout_seconds = 601",
-            "read_timeout_seconds = \"90\"",
-            "read_timeout_seconds = 1.5",
+            "snapshot_timeout_seconds = 0",
+            "snapshot_timeout_seconds = -5",
+            "snapshot_timeout_seconds = 601",
+            "snapshot_timeout_seconds = \"90\"",
+            "snapshot_timeout_seconds = 1.5",
         ] {
             assert_eq!(
                 company(bad).expect_err(bad).code,
@@ -1448,17 +1449,17 @@ mod company_read_timeout_tests {
             client_key_file: PathBuf::from("/private/example/kinbase/client.key"),
             maintainer_key_file: PathBuf::from("/private/example/kinbase/maintainer.key"),
             allow_non_loopback: false,
-            read_timeout_seconds: 90,
+            snapshot_timeout_seconds: 90,
         };
         let mut value = serde_json::to_value(&access).expect("serializes");
-        assert_eq!(value["read_timeout_seconds"], 90);
+        assert_eq!(value["snapshot_timeout_seconds"], 90);
         value
             .as_object_mut()
             .expect("object")
-            .remove("read_timeout_seconds");
+            .remove("snapshot_timeout_seconds");
         let older: SharedCompanyAccess = serde_json::from_value(value).expect("deserializes");
         assert_eq!(
-            older.read_timeout_seconds,
+            older.snapshot_timeout_seconds,
             crate::company::client::DEFAULT_READ_TIMEOUT_SECONDS
         );
     }
