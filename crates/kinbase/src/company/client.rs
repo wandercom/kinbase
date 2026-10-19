@@ -13,6 +13,14 @@ use std::time::Duration;
 
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// A root-verified answer to a snapshot refresh.
+pub enum SnapshotRefresh {
+    /// The whole snapshot, to store in place of the cached one.
+    Snapshot(Value),
+    /// A signed receipt that the offered content is still Company's answer.
+    Unchanged(Value),
+}
+
 pub struct Client {
     pub host: String,
     pub port: u16,
@@ -143,12 +151,34 @@ impl Client {
     /// that govern this repository. Asking for everything is how the response
     /// outgrew the body ceiling and froze every cache in the estate.
     pub fn snapshot_for(&self, repository_uuid: &str) -> Result<Value, ContractError> {
+        match self.refresh_for(repository_uuid, None)? {
+            SnapshotRefresh::Snapshot(snapshot) => Ok(snapshot),
+            SnapshotRefresh::Unchanged(_) => Err(ContractError::integrity(
+                "DIGEST_MISMATCH",
+                "Company answered a request that offered no snapshot with an unchanged receipt",
+                "Refresh again; a receipt for content this client never offered is refused.",
+            )),
+        }
+    }
+
+    /// Refresh, offering the content digest of the snapshot already held.
+    /// Company answers with the whole snapshot, or with a signed receipt that
+    /// the offered content is still its answer; both are root-verified and
+    /// must echo this request's fresh nonce.
+    pub fn refresh_for(
+        &self,
+        repository_uuid: &str,
+        known: Option<&str>,
+    ) -> Result<SnapshotRefresh, ContractError> {
         let nonce = crate::crypto::random_token();
-        let path = if repository_uuid.is_empty() {
+        let mut path = if repository_uuid.is_empty() {
             format!("/snapshot?nonce={nonce}")
         } else {
             format!("/snapshot?nonce={nonce}&repository={repository_uuid}")
         };
+        if let Some(known) = known {
+            path.push_str(&format!("&known={known}"));
+        }
         let snapshot = self.get_ok(&path)?;
         let root = self.root.as_ref().ok_or_else(|| {
             ContractError::invariant("a Company root public key is required to verify snapshots")
@@ -174,7 +204,19 @@ impl Client {
                 "Refresh again; a replayed snapshot cannot rebuild trust.",
             ));
         }
-        Ok(snapshot)
+        if crate::json::get_str(&snapshot, "schema")
+            == Some(super::server::SNAPSHOT_UNCHANGED_SCHEMA)
+        {
+            if known.is_none() || crate::json::get_str(&snapshot, "content_digest") != known {
+                return Err(ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    "Company's unchanged receipt names content this client did not offer",
+                    "Refresh again without a known digest to fetch the full snapshot.",
+                ));
+            }
+            return Ok(SnapshotRefresh::Unchanged(snapshot));
+        }
+        Ok(SnapshotRefresh::Snapshot(snapshot))
     }
 
     /// Fetch and root-verify the latest steward-signed authority registry.

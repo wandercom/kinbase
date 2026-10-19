@@ -1110,6 +1110,31 @@ impl CompanyDb {
         Ok(next)
     }
 
+    /// Row count and newest cursor of the fact-version index. The index is
+    /// insert-only and written after its event is appended, so the event
+    /// cursor alone does not say whether a version row has landed.
+    pub fn fact_versions_mark(&self) -> Result<(i64, i64), ContractError> {
+        self.connection
+            .query_row(
+                "SELECT COUNT(*), COALESCE(MAX(cursor), 0) FROM fact_versions",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(sqlite_error("fact versions mark"))
+    }
+
+    /// Row count and newest id of one kind of audit record. Audit rows are
+    /// insert-only and append no event.
+    pub fn audit_mark(&self, kind: &str) -> Result<(i64, i64), ContractError> {
+        self.connection
+            .query_row(
+                "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM audit WHERE kind=?1",
+                params![kind],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(sqlite_error("audit mark"))
+    }
+
     pub fn fact_versions(&self, fact_id: &str) -> Result<Vec<Value>, ContractError> {
         let mut statement = self
             .connection

@@ -6,6 +6,7 @@
 
 use crate::codebase::{ParsedEvent, Repository, StoredFile, parse_stored};
 use crate::company::cache::Freshness;
+use crate::company::client::SnapshotRefresh;
 use crate::crypto::PublicKey;
 use crate::error::ContractError;
 use crate::launcher::Launcher;
@@ -1756,16 +1757,29 @@ pub fn build_trust(
             .clone()
             .or_else(|| repo.uuid_hint().map(str::to_owned))
             .unwrap_or_default();
+        let known = cache.known_content_digest(&if asking_as.is_empty() {
+            String::new()
+        } else {
+            format!("repository:{asking_as}")
+        });
         let snapshot = match client.as_ref() {
-            Some(client) => client.snapshot_for(&asking_as),
+            Some(client) => client.refresh_for(&asking_as, known.as_deref()),
             None => Err(ContractError::internal(
                 "an online read has a Company client",
             )),
         };
         match snapshot {
-            Ok(snapshot) => {
+            Ok(refresh) => {
                 trust.company_reachable = Some(true);
-                if let Err(error) = cache.store_snapshot(&snapshot, &company_root, &now) {
+                let stored = match &refresh {
+                    SnapshotRefresh::Snapshot(snapshot) => {
+                        cache.store_snapshot(snapshot, &company_root, &now)
+                    }
+                    SnapshotRefresh::Unchanged(receipt) => {
+                        cache.store_unchanged(receipt, &company_root, &now)
+                    }
+                };
+                if let Err(error) = stored {
                     crate::output::diagnostic("snapshot-refused", serde_json::to_value(&error).unwrap_or_else(|_| json!({"code": "RUN_INTEGRITY_FAILED", "message": "snapshot refusal detail was unreadable", "remediation": "Preserve the receipt.", "retryable": false, "evidence_id": "err_snapshot_refused"})));
                 }
             }
@@ -1842,9 +1856,13 @@ pub fn build_trust(
                 );
             }
         }
-        trust.authority_cursor = crate::json::get_str(&snapshot, "authority_cursor")
-            .unwrap_or("0")
-            .to_owned();
+        // The newest verified authority cursor: an unchanged receipt moves it
+        // past the one the stored snapshot names.
+        trust.authority_cursor = cache.meta("authority_cursor").unwrap_or_else(|| {
+            crate::json::get_str(&snapshot, "authority_cursor")
+                .unwrap_or("0")
+                .to_owned()
+        });
     }
     // Certificate: only from the cache, keyed by the config hint.
     if let Some(uuid) = hint_uuid {
@@ -2033,12 +2051,27 @@ pub fn ensure_authority_snapshot_for(
     {
         return Ok((cached_cursor, "cache"));
     }
-    match company.client.snapshot_for(repository_uuid) {
-        Ok(snapshot) => {
-            company
-                .cache
-                .store_snapshot(&snapshot, &company.root, &now)?;
-            let cursor = crate::json::get_str(&snapshot, "authority_cursor")
+    let known = company.cache.known_content_digest(&wanted_scope);
+    match company
+        .client
+        .refresh_for(repository_uuid, known.as_deref())
+    {
+        Ok(refresh) => {
+            let answer = match &refresh {
+                SnapshotRefresh::Snapshot(snapshot) => {
+                    company
+                        .cache
+                        .store_snapshot(snapshot, &company.root, &now)?;
+                    snapshot
+                }
+                SnapshotRefresh::Unchanged(receipt) => {
+                    company
+                        .cache
+                        .store_unchanged(receipt, &company.root, &now)?;
+                    receipt
+                }
+            };
+            let cursor = crate::json::get_str(answer, "authority_cursor")
                 .map(str::to_owned)
                 .unwrap_or_else(|| "0".to_owned());
             if requested_cursor.is_some() {

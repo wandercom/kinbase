@@ -166,51 +166,10 @@ impl Cache {
         root: &PublicKey,
         now: &str,
     ) -> Result<(), ContractError> {
-        let signer = PublicKey::verify_document("receipt", snapshot).ok_or_else(|| {
-            ContractError::integrity(
-                "SIGNATURE_INVALID",
-                "snapshot signature failed",
-                "Quarantine the snapshot and contact the Company steward.",
-            )
-        })?;
-        if signer != *root {
-            return Err(ContractError::integrity(
-                "SIGNATURE_INVALID",
-                "snapshot is not signed by the configured root",
-                "Verify the root public key.",
-            ));
-        }
+        self.admit_company_answer(snapshot, root, "snapshot")?;
         let cursor = crate::json::get_str(snapshot, "cursor")
             .unwrap_or("0")
             .to_owned();
-        // One cache belongs to one Company: a snapshot naming another is
-        // refused before its cursor is compared with this one's.
-        if let (Some(cached), Some(offered)) = (
-            self.meta("company_id"),
-            crate::json::get_str(snapshot, "company_id"),
-        ) && !cached.is_empty()
-            && cached != offered
-        {
-            return Err(ContractError::refused(
-                "CONFIG_INVARIANT",
-                format!("snapshot is from Company {offered}; this cache holds Company {cached}"),
-                "Point the configuration at the Company this cache belongs to, or move the cache root aside to start a new one.",
-            ));
-        }
-        let high_water = self.high_water();
-        if crate::reducer::cursor_order(&cursor, &high_water) == std::cmp::Ordering::Less {
-            // The signature is good; the authority state is older than state
-            // already sealed here (a restored or replaying service). The
-            // sealed state stays in use; refreshing again cannot help until
-            // the Company catches up.
-            return Err(ContractError::degraded(
-                "REVOCATION_STALE",
-                format!(
-                    "the Company answered at cursor {cursor}, older than the sealed high-water mark {high_water}; the older snapshot was not stored"
-                ),
-                "Keep using the sealed cache; ask the Company steward why the service is behind the state this machine already verified.",
-            ));
-        }
         let bytes = crate::json::record_bytes(snapshot)?;
         let digest = crate::hash::sha256_bytes(&bytes);
         let connection = self.connection()?;
@@ -243,6 +202,15 @@ impl Cache {
         )?;
         self.set_meta("high_water_cursor", &cursor)?;
         self.set_meta("snapshot_digest", &digest)?;
+        // What a later refresh offers back as `known`. A snapshot from a
+        // service that does not sign one leaves it empty, and the next
+        // refresh asks for the whole snapshot as before.
+        self.set_meta(
+            "content_digest",
+            crate::json::get_str(snapshot, "content_digest").unwrap_or_default(),
+        )?;
+        // This snapshot is now the signed record of its own freshness.
+        self.set_meta("freshness_receipt", "")?;
         self.set_meta("refreshed_at", now)?;
         for certificate in crate::json::get_array(snapshot, "certificates")
             .cloned()
@@ -289,6 +257,126 @@ impl Cache {
         Ok(())
     }
 
+    /// The checks every signed Company answer passes before it may change
+    /// this cache: root signature, the Company this cache belongs to, and a
+    /// cursor no older than the sealed high-water mark.
+    fn admit_company_answer(
+        &self,
+        document: &Value,
+        root: &PublicKey,
+        noun: &str,
+    ) -> Result<(), ContractError> {
+        let signer = PublicKey::verify_document("receipt", document).ok_or_else(|| {
+            ContractError::integrity(
+                "SIGNATURE_INVALID",
+                format!("{noun} signature failed"),
+                "Quarantine the snapshot and contact the Company steward.",
+            )
+        })?;
+        if signer != *root {
+            return Err(ContractError::integrity(
+                "SIGNATURE_INVALID",
+                format!("{noun} is not signed by the configured root"),
+                "Verify the root public key.",
+            ));
+        }
+        let cursor = crate::json::get_str(document, "cursor").unwrap_or("0");
+        // One cache belongs to one Company: a snapshot naming another is
+        // refused before its cursor is compared with this one's.
+        if let (Some(cached), Some(offered)) = (
+            self.meta("company_id"),
+            crate::json::get_str(document, "company_id"),
+        ) && !cached.is_empty()
+            && cached != offered
+        {
+            return Err(ContractError::refused(
+                "CONFIG_INVARIANT",
+                format!("{noun} is from Company {offered}; this cache holds Company {cached}"),
+                "Point the configuration at the Company this cache belongs to, or move the cache root aside to start a new one.",
+            ));
+        }
+        let high_water = self.high_water();
+        if crate::reducer::cursor_order(cursor, &high_water) == std::cmp::Ordering::Less {
+            // The signature is good; the authority state is older than state
+            // already sealed here (a restored or replaying service). The
+            // sealed state stays in use; refreshing again cannot help until
+            // the Company catches up.
+            return Err(ContractError::degraded(
+                "REVOCATION_STALE",
+                format!(
+                    "the Company answered at cursor {cursor}, older than the sealed high-water mark {high_water}; the older {noun} was not stored"
+                ),
+                "Keep using the sealed cache; ask the Company steward why the service is behind the state this machine already verified.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// The content digest a refresh may offer as `known`: only for a warm
+    /// cache whose snapshot was filtered to the scope being asked for and
+    /// carries a digest Company signed.
+    pub fn known_content_digest(&self, facts_scope: &str) -> Option<String> {
+        if self.state != CacheState::Warm
+            || self.meta("facts_scope").as_deref() != Some(facts_scope)
+        {
+            return None;
+        }
+        self.meta("content_digest")
+            .filter(|digest| !digest.is_empty())
+    }
+
+    /// Take a signed receipt that the cached snapshot is still Company's
+    /// answer. The snapshot keeps the bytes Company signed; the receipt
+    /// supplies the cursors and both validity clocks, and is kept as the
+    /// signed record of them (architecture §2, §6: the cache record is
+    /// Company-signed with authority cursor and expiry). A receipt for
+    /// content or a scope this cache does not hold changes nothing.
+    pub fn store_unchanged(
+        &mut self,
+        receipt: &Value,
+        root: &PublicKey,
+        now: &str,
+    ) -> Result<(), ContractError> {
+        if crate::json::get_str(receipt, "schema")
+            != Some(crate::company::server::SNAPSHOT_UNCHANGED_SCHEMA)
+        {
+            return Err(ContractError::integrity(
+                "DIGEST_MISMATCH",
+                "the Company answer is not an unchanged-snapshot receipt",
+                "Refresh again; the full snapshot replaces whatever was offered.",
+            ));
+        }
+        self.admit_company_answer(receipt, root, "unchanged receipt")?;
+        let held = self
+            .known_content_digest(crate::json::get_str(receipt, "facts_scope").unwrap_or_default());
+        if held.is_none() || held.as_deref() != crate::json::get_str(receipt, "content_digest") {
+            return Err(ContractError::integrity(
+                "DIGEST_MISMATCH",
+                "the unchanged receipt vouches for content or a scope this cache does not hold",
+                "Refresh again without a known digest to fetch the full snapshot.",
+            ));
+        }
+        for key in [
+            "cursor",
+            "authority_cursor",
+            "revocation_cursor",
+            "revocation_valid_until",
+            "fact_valid_until",
+            "issued_at",
+        ] {
+            if let Some(value) = crate::json::get_str(receipt, key) {
+                self.set_meta(key, value)?;
+            }
+        }
+        self.set_meta(
+            "high_water_cursor",
+            crate::json::get_str(receipt, "cursor").unwrap_or("0"),
+        )?;
+        self.set_meta("freshness_receipt", &crate::json::record_text(receipt)?)?;
+        self.set_meta("refreshed_at", now)?;
+        Ok(())
+    }
+
     /// The scope the cached snapshot was filtered to: `repository:<uuid>`
     /// when a repository asked for its own direction, empty for a company-wide
     /// snapshot, and `None` when no snapshot has recorded one.
@@ -332,10 +420,19 @@ impl Cache {
     /// signature. A snapshot that already publishes full signed events is
     /// passed through unchanged.
     pub fn snapshot_fact_documents(&self) -> Result<Vec<Value>, ContractError> {
+        // The cursor the facts were last verified at: an unchanged receipt
+        // re-verifies them at a newer one than the stored snapshot names.
         Ok(self
             .snapshot()?
             .as_ref()
-            .map(snapshot_fact_documents)
+            .map(|snapshot| {
+                let cursor = self.meta("cursor").unwrap_or_else(|| {
+                    crate::json::get_str(snapshot, "cursor")
+                        .unwrap_or("0")
+                        .to_owned()
+                });
+                snapshot_fact_documents_at(snapshot, &cursor)
+            })
             .unwrap_or_default())
     }
 
@@ -684,7 +781,13 @@ impl Cache {
 
 /// Proxy every fact of a signed snapshot into a FactEvent-shaped document.
 pub fn snapshot_fact_documents(snapshot: &Value) -> Vec<Value> {
-    let cursor = crate::json::get_str(snapshot, "cursor").unwrap_or("0");
+    snapshot_fact_documents_at(
+        snapshot,
+        crate::json::get_str(snapshot, "cursor").unwrap_or("0"),
+    )
+}
+
+fn snapshot_fact_documents_at(snapshot: &Value, cursor: &str) -> Vec<Value> {
     crate::json::get_array(snapshot, "facts")
         .into_iter()
         .flatten()
@@ -1104,5 +1207,178 @@ mod snapshot_guard_tests {
             .collect();
         assert_eq!(digests.len(), 2, "{claims:?}");
         assert!(claims.iter().any(|claim| claim["source"] == "snapshot"));
+    }
+}
+
+#[cfg(test)]
+mod unchanged_receipt_tests {
+    use super::*;
+    use crate::crypto::PrivateKey;
+    use serde_json::json;
+
+    const ISSUED: &str = "2026-10-19T12:00:00.000Z";
+    const LATER: &str = "2026-10-19T13:00:00.000Z";
+
+    fn snapshot(root: &PrivateKey, cursor: &str, digest: Option<&str>) -> Value {
+        let mut document = json!({
+            "schema": "kinbase-snapshot/1",
+            "company_id": "wander",
+            "cursor": cursor,
+            "authority_cursor": "1000",
+            "service_cursor": cursor,
+            "revocation_cursor": "0",
+            "client_nonce": "first",
+            "issued_at": ISSUED,
+            "revocation_valid_until": "2026-10-19T12:15:00.000Z",
+            "fact_valid_until": "2026-10-19T13:00:00.000Z",
+            "facts": [],
+            "facts_scope": "",
+            "certificates": []
+        });
+        if let Some(digest) = digest {
+            document["content_digest"] = json!(digest);
+        }
+        root.sign_document("receipt", &document).unwrap()
+    }
+
+    fn receipt(signer: &PrivateKey, cursor: &str, digest: &str, scope: &str) -> Value {
+        signer
+            .sign_document(
+                "receipt",
+                &json!({
+                    "schema": crate::company::server::SNAPSHOT_UNCHANGED_SCHEMA,
+                    "company_id": "wander",
+                    "cursor": cursor,
+                    "authority_cursor": "1001",
+                    "service_cursor": cursor,
+                    "revocation_cursor": "0",
+                    "client_nonce": "second",
+                    "issued_at": LATER,
+                    "revocation_valid_until": "2026-10-19T13:15:00.000Z",
+                    "fact_valid_until": "2026-10-19T14:00:00.000Z",
+                    "facts_scope": scope,
+                    "content_digest": digest
+                }),
+            )
+            .unwrap()
+    }
+
+    fn warm(root: &PrivateKey, temp: &tempfile::TempDir) -> Cache {
+        let mut cache = Cache::open(&temp.path().join("cache")).unwrap();
+        cache
+            .store_snapshot(
+                &snapshot(root, "5", Some("digest-one")),
+                &root.public(),
+                ISSUED,
+            )
+            .unwrap();
+        cache
+    }
+
+    #[test]
+    fn a_receipt_renews_the_cached_snapshot_without_touching_its_bytes() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = PrivateKey::generate();
+        let mut cache = warm(&root, &temp);
+        assert_eq!(
+            cache.known_content_digest("").as_deref(),
+            Some("digest-one")
+        );
+        assert_eq!(cache.known_content_digest("repository:booking"), None);
+        let bytes_digest = cache.meta("snapshot_digest");
+        let stale = cache.freshness("2026-10-19T12:30:00.000Z");
+        assert!(!stale.revocation_fresh);
+
+        cache
+            .store_unchanged(
+                &receipt(&root, "7", "digest-one", ""),
+                &root.public(),
+                LATER,
+            )
+            .unwrap();
+        // The content is still the bytes Company signed.
+        assert_eq!(cache.meta("snapshot_digest"), bytes_digest);
+        // Freshness, cursors and the signed record of them come from the receipt.
+        assert_eq!(cache.high_water(), "7");
+        assert_eq!(cache.meta("cursor").as_deref(), Some("7"));
+        assert_eq!(cache.meta("authority_cursor").as_deref(), Some("1001"));
+        assert_eq!(cache.meta("issued_at").as_deref(), Some(LATER));
+        assert!(cache.freshness("2026-10-19T12:30:00.000Z").revocation_fresh);
+        assert!(
+            !cache
+                .meta("freshness_receipt")
+                .unwrap_or_default()
+                .is_empty()
+        );
+        // The same content stays on offer for the next refresh.
+        assert_eq!(
+            cache.known_content_digest("").as_deref(),
+            Some("digest-one")
+        );
+    }
+
+    #[test]
+    fn a_receipt_for_other_content_scope_cursor_or_signer_changes_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = PrivateKey::generate();
+        let mut cache = warm(&root, &temp);
+        cache
+            .store_unchanged(
+                &receipt(&root, "7", "digest-one", ""),
+                &root.public(),
+                LATER,
+            )
+            .unwrap();
+        let refused = [
+            (receipt(&root, "8", "digest-two", ""), "DIGEST_MISMATCH"),
+            (
+                receipt(&root, "8", "digest-one", "repository:booking"),
+                "DIGEST_MISMATCH",
+            ),
+            (receipt(&root, "6", "digest-one", ""), "REVOCATION_STALE"),
+            (
+                receipt(&PrivateKey::generate(), "8", "digest-one", ""),
+                "SIGNATURE_INVALID",
+            ),
+            (snapshot(&root, "8", Some("digest-one")), "DIGEST_MISMATCH"),
+        ];
+        for (answer, code) in refused {
+            let error = cache
+                .store_unchanged(&answer, &root.public(), LATER)
+                .expect_err(code);
+            assert_eq!(error.code, code);
+            assert_eq!(
+                cache.high_water(),
+                "7",
+                "a refused answer moved the high-water mark"
+            );
+        }
+    }
+
+    #[test]
+    fn content_without_a_signed_digest_is_never_offered() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = PrivateKey::generate();
+        let mut cache = warm(&root, &temp);
+        cache
+            .store_unchanged(
+                &receipt(&root, "7", "digest-one", ""),
+                &root.public(),
+                LATER,
+            )
+            .unwrap();
+        // A snapshot from a service that signs no digest replaces the content
+        // and the receipt that renewed it; nothing is offered until a digest is.
+        cache
+            .store_snapshot(&snapshot(&root, "9", None), &root.public(), LATER)
+            .unwrap();
+        assert_eq!(cache.known_content_digest(""), None);
+        assert_eq!(cache.meta("freshness_receipt").as_deref(), Some(""));
+        assert!(
+            Cache::open(&temp.path().join("cold"))
+                .unwrap()
+                .known_content_digest("")
+                .is_none()
+        );
     }
 }

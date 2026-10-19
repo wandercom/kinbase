@@ -68,9 +68,22 @@ pub struct CompanyView {
     /// Lifecycle admissions derived from the log, before any reader's scope
     /// filter; audited refusals are read per request.
     pub lifecycle_rows: Vec<Value>,
+    /// Snapshot content digests already computed against this reduction, by
+    /// what else the content depends on (scopes, repository, side tables).
+    /// Dropped with the entry, so a digest never outlives its inputs.
+    content_digests: Mutex<BTreeMap<String, String>>,
 }
 
 impl CompanyView {
+    /// The snapshot content digest recorded for `key` against this reduction.
+    pub fn content_digest(&self, key: &str) -> Option<String> {
+        lock(&self.content_digests).get(key).cloned()
+    }
+
+    pub fn remember_content_digest(&self, key: String, digest: String) {
+        lock(&self.content_digests).insert(key, digest);
+    }
+
     /// Whether this reduction is the reduction at `as_of`: no boundary lies in
     /// the half-open interval between the two instants, in either direction.
     fn holds_at(&self, as_of: &str) -> bool {
@@ -189,6 +202,7 @@ fn build(
         view,
         payloads,
         lifecycle_rows,
+        content_digests: Mutex::default(),
     })
 }
 
@@ -220,6 +234,7 @@ mod tests {
             }),
             payloads: BTreeMap::new(),
             lifecycle_rows: Vec::new(),
+            content_digests: Mutex::default(),
         }
     }
 

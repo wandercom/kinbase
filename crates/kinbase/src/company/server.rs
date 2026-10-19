@@ -2154,6 +2154,14 @@ fn snapshot(
             ContractError::invariant("a fresh client nonce is required for a signed snapshot"),
         ));
     }
+    // The content digest of the snapshot the client already holds, if any.
+    let known = request.query.get("known").cloned().unwrap_or_default();
+    if known.len() > 128 {
+        return Err(refuse(
+            400,
+            ContractError::invariant("a known content digest is at most 128 bytes"),
+        ));
+    }
     let readable = readable_scopes(auth, trust_state);
     let cached = state
         .views
@@ -2167,6 +2175,41 @@ fn snapshot(
     // the meantime it filled every projection with other services' rulings. A
     // fact that governs nothing in particular is company-wide and always sent.
     let repository = request.query.get("repository").cloned().unwrap_or_default();
+    let events_since = request
+        .query
+        .get("events_since")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0);
+    // Everything the content depends on besides the reduction the cache entry
+    // already names. Relaxations are replaced in place, and fact versions and
+    // lifecycle refusals land without an event, so they are read, not assumed.
+    let relaxations = db.relaxations().map_err(|error| refuse(500, error))?;
+    let certificates = db.all_certificates().map_err(|error| refuse(500, error))?;
+    let content_key = crate::hash::sha256_bytes(&crate::json::canonical_bytes(&json!({
+        "readable": readable,
+        "repository": repository,
+        "events_since": events_since,
+        "relaxations": relaxations,
+        "certificates": certificates,
+        "fact_versions": db.fact_versions_mark().map_err(|error| refuse(500, error))?,
+        "lifecycle_refusals": db.audit_mark("lifecycle-refusal").map_err(|error| refuse(500, error))?,
+    })));
+    // A client whose snapshot is still the content is answered with a signed
+    // receipt instead of the content again: between ingests nearly every
+    // refresh is this, and resending tens of megabytes to say "no change" is
+    // what made refreshes expensive for both ends.
+    if !known.is_empty() && cached.content_digest(&content_key).as_deref() == Some(known.as_str()) {
+        return unchanged_receipt(
+            db,
+            state,
+            auth,
+            trust_state,
+            &client_nonce,
+            &repository,
+            &known,
+            now,
+        );
+    }
     // Ownership rulings say where work lands. A ticket in one repository
     // that edits paths in another needs the other's rulings, so they are
     // delivered to every repository whatever they govern; there are few and
@@ -2210,11 +2253,6 @@ fn snapshot(
     // signed events (architecture §6: the reducer is a pure function of the
     // admitted event set). Company remains the authority for its own current
     // view; the events are the inputs it reduced, not a second opinion.
-    let events_since = request
-        .query
-        .get("events_since")
-        .and_then(|value| value.parse::<i64>().ok())
-        .unwrap_or(0);
     let (mut events, events_omitted_count, events_sealed_cursor) =
         snapshot_events(db, &readable, events_since).map_err(|error| refuse(500, error))?;
     // A partial window is one the client must not reduce over -- it would drop
@@ -2267,18 +2305,9 @@ fn snapshot(
         .chain(events.iter())
         .map(|item| crate::json::canonical_bytes(item).len())
         .sum();
-    charge_read(db, state, auth, facts.len().max(1), bytes)?;
-    let snapshot = json!({
+    let mut snapshot = json!({
         "schema": "kinbase-snapshot/1",
         "company_id": state.config.company_id,
-        "cursor": trust_state.cursor.to_string(),
-        "authority_cursor": trust_state.authority_cursor.clone(),
-        "service_cursor": trust_state.cursor.to_string(),
-        "revocation_cursor": db.revocation_cursor().map_err(|error| refuse(500, error))?,
-        "client_nonce": client_nonce,
-        "issued_at": now,
-        "revocation_valid_until": crate::time::plus_seconds(now, state.config.revocation_freshness_seconds).unwrap_or_default(),
-        "fact_valid_until": crate::time::plus_seconds(now, state.config.default_fact_freshness_seconds).unwrap_or_default(),
         "facts": facts,
         "facts_scope": if repository.is_empty() { String::new() } else { format!("repository:{repository}") },
         "facts_governing_elsewhere_count": facts_elsewhere_count,
@@ -2293,8 +2322,8 @@ fn snapshot(
         "registry": trust_state.public_registry(),
         "revocations": trust_state.revocations,
         "scope_revocations": trust_state.scope_revocations,
-        "relaxations": db.relaxations().map_err(|error| refuse(500, error))?,
-        "certificates": db.all_certificates().map_err(|error| refuse(500, error))?,
+        "relaxations": relaxations,
+        "certificates": certificates,
         "fact_versions": fact_versions,
         "lifecycle_admissions": lifecycle_admissions(db, &cached.lifecycle_rows, &readable),
         // Every revocation ever recorded, including keys the steward later
@@ -2327,11 +2356,123 @@ fn snapshot(
             "unknown_id": trace.unknown_id
         })).collect::<Vec<_>>()
     });
+    // The digest names what the snapshot holds, without when or for whom it
+    // was answered; it is signed inside the snapshot, so a client can later
+    // offer it back as `known`.
+    let content_digest = crate::hash::sha256_bytes(&crate::json::canonical_bytes(&snapshot));
+    cached.remember_content_digest(content_key, content_digest.clone());
+    if !known.is_empty() && known == content_digest {
+        return unchanged_receipt(
+            db,
+            state,
+            auth,
+            trust_state,
+            &client_nonce,
+            &repository,
+            &known,
+            now,
+        );
+    }
+    charge_read(db, state, auth, facts.len().max(1), bytes)?;
+    if let Value::Object(map) = &mut snapshot {
+        map.extend(snapshot_freshness(
+            db,
+            state,
+            trust_state,
+            &client_nonce,
+            now,
+        )?);
+        map.insert("content_digest".to_owned(), Value::String(content_digest));
+    }
     let signed = state
         .root
         .sign_document("receipt", &snapshot)
         .map_err(|error| refuse(500, error))?;
     db.bump("snapshots").map_err(|error| refuse(500, error))?;
+    Ok((200, signed))
+}
+
+/// When and for whom a snapshot was answered, as opposed to what it holds:
+/// the cursors, the client's nonce, and both validity clocks. These sit
+/// outside the content digest, and they are what an unchanged receipt signs
+/// afresh (architecture §2: every refresh signs the client's nonce and a
+/// cursor no older than the current revocation cursor).
+fn snapshot_freshness(
+    db: &CompanyDb,
+    state: &ServiceState,
+    trust_state: &TrustState,
+    client_nonce: &str,
+    now: &str,
+) -> Result<serde_json::Map<String, Value>, (u16, ContractError)> {
+    let fields = json!({
+        "cursor": trust_state.cursor.to_string(),
+        "authority_cursor": trust_state.authority_cursor.clone(),
+        "service_cursor": trust_state.cursor.to_string(),
+        "revocation_cursor": db.revocation_cursor().map_err(|error| refuse(500, error))?,
+        "client_nonce": client_nonce,
+        "issued_at": now,
+        "revocation_valid_until": crate::time::plus_seconds(now, state.config.revocation_freshness_seconds).unwrap_or_default(),
+        "fact_valid_until": crate::time::plus_seconds(now, state.config.default_fact_freshness_seconds).unwrap_or_default(),
+    });
+    match fields {
+        Value::Object(map) => Ok(map),
+        _ => Err(refuse(
+            500,
+            ContractError::internal("snapshot freshness is not an object"),
+        )),
+    }
+}
+
+/// A signed statement that the snapshot whose content digest the client
+/// offered is still Company's answer for its scopes and repository, with
+/// fresh cursors, nonce and validity clocks. The client keeps the content it
+/// already verified and takes its freshness from this receipt.
+#[allow(clippy::too_many_arguments)]
+fn unchanged_receipt(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+    trust_state: &TrustState,
+    client_nonce: &str,
+    repository: &str,
+    content_digest: &str,
+    now: &str,
+) -> Handled {
+    let mut receipt = snapshot_freshness(db, state, trust_state, client_nonce, now)?;
+    receipt.insert(
+        "schema".to_owned(),
+        Value::String(SNAPSHOT_UNCHANGED_SCHEMA.to_owned()),
+    );
+    receipt.insert(
+        "company_id".to_owned(),
+        Value::String(state.config.company_id.clone()),
+    );
+    receipt.insert(
+        "facts_scope".to_owned(),
+        Value::String(if repository.is_empty() {
+            String::new()
+        } else {
+            format!("repository:{repository}")
+        }),
+    );
+    receipt.insert(
+        "content_digest".to_owned(),
+        Value::String(content_digest.to_owned()),
+    );
+    let receipt = Value::Object(receipt);
+    charge_read(
+        db,
+        state,
+        auth,
+        1,
+        crate::json::canonical_bytes(&receipt).len(),
+    )?;
+    let signed = state
+        .root
+        .sign_document("receipt", &receipt)
+        .map_err(|error| refuse(500, error))?;
+    db.bump("snapshots_unchanged")
+        .map_err(|error| refuse(500, error))?;
     Ok((200, signed))
 }
 
@@ -2347,6 +2488,8 @@ fn snapshot(
 /// possible failure because it looks like nothing is wrong. Older events stay
 /// reachable through `GET /events?since=`, which has always paged.
 const SNAPSHOT_EVENT_LIMIT: usize = 400;
+/// The schema of a signed "your snapshot is still current" receipt.
+pub const SNAPSHOT_UNCHANGED_SCHEMA: &str = "kinbase-snapshot-unchanged/1";
 /// And a byte budget, which is the ceiling that actually binds. The client
 /// refuses a response over `MAX_BODY_BYTES * 4` (1 MiB); the rest of the
 /// snapshot -- the current view, certificates, registry, revocation history --
@@ -4994,6 +5137,299 @@ nonce_retention_seconds = 1300
             statements(&read(&after_later)).contains(&"Retries back off exponentially.".to_owned())
         );
         assert!(!statements(&read(&now)).contains(&"Retries back off exponentially.".to_owned()));
+    }
+
+    /// A service with one architect registered for `architecture:scheduling`
+    /// and one ruling admitted, for the snapshot receipt tests.
+    fn service_with_a_ruling() -> (Service, PrivateKey) {
+        let service = service("facts_token_scopes = [\"architecture:scheduling\"]");
+        let steward = auth(&service, "facts-one");
+        let architect = PrivateKey::generate();
+        let now = crate::time::now_rfc3339_millis();
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let registry = service
+            .root
+            .sign_document(
+                "authority-registry-entry",
+                &json!({
+                    "schema": crate::model::REGISTRY_SCHEMA,
+                    "authority_cursor": "1000",
+                    "entries": [
+                        {"authority_id": "scheduling-architect", "scope": "architecture:scheduling",
+                         "public_key": architect.public().to_hex(), "channel": "process:architecture-answer",
+                         "capabilities": ["answer"]}
+                    ]
+                }),
+            )
+            .unwrap();
+        publish_registry(&service.db, &steward, &trust, Some(registry), &now).unwrap();
+        append(
+            &service,
+            &fact(
+                &architect,
+                "wait",
+                "scheduling-architect",
+                "architecture:scheduling",
+                "Queue wait is bounded at five seconds.",
+            ),
+        );
+        (service, architect)
+    }
+
+    fn snapshot_with(service: &Service, state: &ServiceState, query: &[(&str, &str)]) -> Value {
+        let reader = auth(service, "facts-one");
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let now = crate::time::now_rfc3339_millis();
+        let (status, document) = super::snapshot(
+            &service.db,
+            state,
+            &reader,
+            &trust,
+            &get("/snapshot", query),
+            &now,
+        )
+        .unwrap();
+        assert_eq!(status, 200);
+        assert_eq!(
+            PublicKey::verify_document("receipt", &document),
+            Some(service.root.public()),
+            "every answer is root-signed"
+        );
+        document
+    }
+
+    #[test]
+    fn a_client_holding_the_current_content_gets_a_signed_receipt() {
+        let (service, architect) = service_with_a_ruling();
+        let full = snapshot_with(&service, &service.state, &[("nonce", "first")]);
+        assert_eq!(full["schema"], "kinbase-snapshot/1");
+        let digest = full["content_digest"].as_str().unwrap().to_owned();
+
+        // Offered back, the digest is answered with a receipt that signs this
+        // request's nonce and the current cursors, and carries no content.
+        let receipt = snapshot_with(
+            &service,
+            &service.state,
+            &[("nonce", "second"), ("known", digest.as_str())],
+        );
+        assert_eq!(receipt["schema"], SNAPSHOT_UNCHANGED_SCHEMA);
+        assert_eq!(receipt["client_nonce"], "second");
+        assert_eq!(receipt["content_digest"], digest.as_str());
+        assert_eq!(receipt["cursor"], full["cursor"]);
+        assert_eq!(receipt["facts_scope"], "");
+        assert!(receipt.get("facts").is_none());
+        assert!(crate::json::canonical_bytes(&receipt).len() < 2048);
+
+        // A restarted service has no memo: it rebuilds the content once and
+        // still answers the unchanged client with a receipt.
+        let restarted = ServiceState {
+            config: service.state.config.clone(),
+            root: service.state.root.clone(),
+            started_at: crate::time::now_rfc3339_millis(),
+            views: Default::default(),
+        };
+        let after_restart = snapshot_with(
+            &service,
+            &restarted,
+            &[("nonce", "third"), ("known", digest.as_str())],
+        );
+        assert_eq!(after_restart["schema"], SNAPSHOT_UNCHANGED_SCHEMA);
+
+        // A digest of other content, or another repository's direction, is
+        // answered with the whole snapshot.
+        let stranger = snapshot_with(
+            &service,
+            &service.state,
+            &[("nonce", "fourth"), ("known", "0".repeat(64).as_str())],
+        );
+        assert_eq!(stranger["schema"], "kinbase-snapshot/1");
+        let elsewhere = snapshot_with(
+            &service,
+            &service.state,
+            &[
+                ("nonce", "fifth"),
+                ("known", digest.as_str()),
+                ("repository", "booking"),
+            ],
+        );
+        assert_eq!(elsewhere["schema"], "kinbase-snapshot/1");
+        assert_eq!(elsewhere["facts_scope"], "repository:booking");
+
+        // New content is never vouched for: the next answer is the whole
+        // snapshot, under a new digest.
+        append(
+            &service,
+            &fact(
+                &architect,
+                "retries",
+                "scheduling-architect",
+                "architecture:scheduling",
+                "Retries back off exponentially.",
+            ),
+        );
+        let changed = snapshot_with(
+            &service,
+            &service.state,
+            &[("nonce", "sixth"), ("known", digest.as_str())],
+        );
+        assert_eq!(changed["schema"], "kinbase-snapshot/1");
+        assert_ne!(changed["content_digest"], digest.as_str());
+    }
+
+    #[test]
+    fn a_refresh_over_the_wire_renews_the_cached_snapshot_with_a_receipt() {
+        use crate::company::client::{Client, SnapshotRefresh};
+        let (service, architect) = service_with_a_ruling();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut config = service.state.config.clone();
+        config.bind = address;
+        let state = Arc::new(ServiceState {
+            config,
+            root: service.root.clone(),
+            started_at: crate::time::now_rfc3339_millis(),
+            views: Default::default(),
+        });
+        // The connection path `serve` runs, without its liveness watcher,
+        // which exits the process once a test's temporary store is gone.
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let state = Arc::clone(&state);
+                std::thread::spawn(move || handle_connection(stream, state));
+            }
+        });
+        let cache_root = service.temp.path().join("client-cache");
+        let client = Client::new(
+            &format!("http://{address}"),
+            crate::config::TokenRecord {
+                token: "facts-one".to_owned(),
+            },
+            PrivateKey::generate(),
+            Some(service.root.public()),
+            cache_root.clone(),
+            false,
+        )
+        .unwrap();
+        let mut cache = crate::company::cache::Cache::open(&cache_root).unwrap();
+        let now = crate::time::now_rfc3339_millis();
+
+        // A cold cache offers nothing and receives the whole snapshot.
+        assert_eq!(cache.known_content_digest(""), None);
+        let SnapshotRefresh::Snapshot(snapshot) = client.refresh_for("", None).unwrap() else {
+            panic!("a refresh that offered nothing was answered with a receipt");
+        };
+        cache
+            .store_snapshot(&snapshot, &service.root.public(), &now)
+            .unwrap();
+
+        // A warm cache offers its digest and is renewed by a receipt.
+        let known = cache
+            .known_content_digest("")
+            .expect("a signed digest is cached");
+        let SnapshotRefresh::Unchanged(receipt) = client.refresh_for("", Some(&known)).unwrap()
+        else {
+            panic!("an unchanged store answered with the whole snapshot");
+        };
+        cache
+            .store_unchanged(&receipt, &service.root.public(), &now)
+            .unwrap();
+
+        // New content is fetched whole, never vouched for.
+        append(
+            &service,
+            &fact(
+                &architect,
+                "retries",
+                "scheduling-architect",
+                "architecture:scheduling",
+                "Retries back off exponentially.",
+            ),
+        );
+        let SnapshotRefresh::Snapshot(changed) = client.refresh_for("", Some(&known)).unwrap()
+        else {
+            panic!("changed content was answered with a receipt");
+        };
+        cache
+            .store_snapshot(&changed, &service.root.public(), &now)
+            .unwrap();
+        assert_ne!(cache.known_content_digest(""), Some(known));
+    }
+
+    /// The memo answers "unchanged" without building the content, so it is
+    /// only as sound as its key: everything the content depends on must be in
+    /// the cached reduction or in the key. A field added to the snapshot fails
+    /// here until it is classified, and a content field is classified only by
+    /// naming what covers it.
+    #[test]
+    fn every_snapshot_field_is_freshness_or_covered_by_the_memo_key() {
+        const CONTENT: [(&str, &str); 22] = [
+            ("schema", "constant"),
+            ("company_id", "service config"),
+            ("facts", "reduction + readable + repository"),
+            ("facts_scope", "repository"),
+            (
+                "facts_governing_elsewhere_count",
+                "reduction + readable + repository",
+            ),
+            ("denied_count", "reduction + readable"),
+            ("unknowns", "reduction + readable"),
+            ("traces", "reduction + readable + repository"),
+            ("fact_parents", "event log (cursor) + reduction"),
+            ("fact_versions", "fact_versions mark + reduction"),
+            ("events", "event log (cursor) + readable + events_since"),
+            (
+                "events_omitted_count",
+                "event log (cursor) + readable + events_since",
+            ),
+            ("events_since", "events_since"),
+            (
+                "events_sealed_cursor",
+                "event log (cursor) + readable + events_since",
+            ),
+            ("registry", "trust digest"),
+            ("revocations", "trust digest"),
+            ("scope_revocations", "trust digest"),
+            ("revocation_history", "event log (cursor) + trust digest"),
+            (
+                "lifecycle_admissions",
+                "event log (cursor) + trust digest + readable + lifecycle-refusal mark",
+            ),
+            ("relaxations", "relaxations rows in the key"),
+            ("certificates", "certificate rows in the key"),
+            ("content_digest", "the digest itself"),
+        ];
+        let (service, _) = service_with_a_ruling();
+        let full = snapshot_with(&service, &service.state, &[("nonce", "guard")]);
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let freshness: BTreeSet<String> = snapshot_freshness(
+            &service.db,
+            &service.state,
+            &trust,
+            "guard",
+            &crate::time::now_rfc3339_millis(),
+        )
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+        let classified: BTreeSet<String> = CONTENT
+            .iter()
+            .map(|(field, _)| (*field).to_owned())
+            .chain(freshness.iter().cloned())
+            .chain(["signer".to_owned(), "signature".to_owned()])
+            .collect();
+        let fields: BTreeSet<String> = full.as_object().unwrap().keys().cloned().collect();
+        assert_eq!(
+            fields.difference(&classified).collect::<Vec<_>>(),
+            Vec::<&String>::new(),
+            "a snapshot field is neither freshness nor covered by the content memo key; \
+             add what it depends on to the key in snapshot(), then classify it here"
+        );
+        assert_eq!(
+            classified.difference(&fields).collect::<Vec<_>>(),
+            Vec::<&String>::new(),
+            "a classified field is no longer in the snapshot; drop it from this list"
+        );
     }
 
     #[test]
