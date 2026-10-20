@@ -6,6 +6,14 @@ Notable changes to Kinbase. Dates are UTC.
 
 ### Added
 
+- `[company] snapshot_timeout_seconds` in the user config: how long a snapshot
+  read waits for the Company service (integer 1..=600, default 20, the previous
+  fixed bound). A snapshot costs what the whole Company log costs, and on
+  staging at ~12k facts it outgrew 20 s, so every refresh reported
+  `COMPANY_UNREACHABLE`; a deployment can now raise the ceiling without a new
+  build. Only snapshot reads use it: checkpoint and Unknown posts from host hooks
+  keep the 20 s default.
+
 - Known-secret masking. A `[secret_mask]` table in the user config names env files
   (`files`), optional name selectors (`keys`) and a shortest value (`min_length`,
   default 8). Every selected value becomes `$NAME` before Kinbase digests, stores or

@@ -120,7 +120,8 @@ impl Launcher {
             Some(root.clone()),
             access.cache_root.clone(),
             access.allow_non_loopback,
-        )?;
+        )?
+        .with_snapshot_timeout_seconds(access.snapshot_timeout_seconds);
         Ok(Some(CompanyAccess {
             client,
             cache,
