@@ -17,6 +17,16 @@ Notable changes to Kinbase. Dates are UTC.
   against the hourly budget instead of the whole snapshot. `kinbase doctor` reports
   `cache_freshness_record`: which signed document the cache's clocks came from,
   re-verified.
+- `kinbase auth login` signs in through a browser with any OIDC provider: it
+  prints the sign-in URL, listens for the callback on loopback, and stores the
+  session in a mode-0600 `oidc.json` beside `config.toml`. The three optional
+  `[company]` keys are `oidc_issuer`, `oidc_client_id`, and
+  `oidc_client_secret_file`; the issuer and client ID must be set together, and
+  a partial configuration is refused. With OIDC configured, Company requests
+  use an `https://` gateway, carry the ID token in `Authorization` and the facts
+  token in `X-Kinbase-Token`, and automatically refresh the ID token before it
+  expires; a plaintext routable URL is refused. Without OIDC, existing behavior
+  is unchanged.
 
 - `[company] snapshot_timeout_seconds` in the user config: how long a snapshot
   read waits for the Company service (integer 1..=600, default 20, the previous

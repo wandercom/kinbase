@@ -2,7 +2,7 @@
 //! connection budget, typed `COMPANY_UNREACHABLE`, and helpers for every
 //! endpoint the CLI uses.
 
-use crate::config::TokenRecord;
+use crate::config::{TokenRecord, UserConfig};
 use crate::crypto::{PrivateKey, PublicKey};
 use crate::error::ContractError;
 use crate::http::{self, Response};
@@ -32,6 +32,7 @@ pub enum SnapshotRefresh {
 }
 
 pub struct Client {
+    pub scheme: http::Scheme,
     pub host: String,
     pub port: u16,
     pub base_path: String,
@@ -43,6 +44,7 @@ pub struct Client {
     /// How long a snapshot read waits. Only snapshots cost what the whole log
     /// costs, so only they get a deployment's raised budget.
     pub snapshot_timeout: Duration,
+    pub oidc: Option<crate::oidc::Config>,
     pub bytes_sent: std::cell::Cell<u64>,
 }
 
@@ -55,8 +57,9 @@ impl Client {
         cache_root: PathBuf,
         allow_non_loopback: bool,
     ) -> Result<Self, ContractError> {
-        let (host, port, base_path) = http::parse_url(url, allow_non_loopback)?;
+        let (scheme, host, port, base_path) = http::parse_url(url, allow_non_loopback)?;
         Ok(Self {
+            scheme,
             host,
             port,
             base_path,
@@ -66,6 +69,7 @@ impl Client {
             cache_root,
             read_timeout: Duration::from_secs(DEFAULT_READ_TIMEOUT_SECONDS),
             snapshot_timeout: Duration::from_secs(DEFAULT_READ_TIMEOUT_SECONDS),
+            oidc: None,
             bytes_sent: std::cell::Cell::new(0),
         })
     }
@@ -76,6 +80,11 @@ impl Client {
     pub fn with_snapshot_timeout_seconds(mut self, seconds: u64) -> Self {
         self.snapshot_timeout = Duration::from_secs(seconds);
         self
+    }
+
+    pub fn with_oidc(mut self, user: Option<&UserConfig>) -> Result<Self, ContractError> {
+        self.oidc = user.map(UserConfig::oidc).transpose()?.flatten();
+        Ok(self)
     }
 
     fn nonce(&self) -> String {
@@ -98,6 +107,12 @@ impl Client {
         body: Option<&Value>,
         read_timeout: Duration,
     ) -> Result<Response, ContractError> {
+        let id_token = self
+            .oidc
+            .as_ref()
+            .map(crate::oidc::fresh_id_token)
+            .transpose()
+            .map_err(ContractError::with_oidc_token_failure)?;
         let full_path = format!("{}{}", self.base_path, path);
         let body_bytes = body.map(crate::json::canonical_bytes).unwrap_or_default();
         let nonce = self.nonce();
@@ -113,11 +128,9 @@ impl Client {
         let signature = self
             .key
             .sign("receipt", &crate::json::canonical_bytes(&signed))?;
-        let headers = vec![
-            (
-                "Authorization".to_owned(),
-                format!("Bearer {}", self.token.token),
-            ),
+        let bearer = id_token.as_deref().unwrap_or(&self.token.token);
+        let mut headers = vec![
+            ("Authorization".to_owned(), format!("Bearer {bearer}")),
             ("X-Kinbase-Nonce".to_owned(), nonce),
             ("X-Kinbase-Expires-At".to_owned(), expires_at),
             (
@@ -126,9 +139,13 @@ impl Client {
             ),
             ("X-Kinbase-Signature".to_owned(), signature),
         ];
+        if self.oidc.is_some() {
+            headers.insert(1, ("X-Kinbase-Token".to_owned(), self.token.token.clone()));
+        }
         self.bytes_sent
             .set(self.bytes_sent.get() + body_bytes.len() as u64 + 256);
         http::request(
+            self.scheme,
             &self.host,
             self.port,
             method,
@@ -151,7 +168,7 @@ impl Client {
     pub fn get_ok(&self, path: &str) -> Result<Value, ContractError> {
         let response = self.get(path)?;
         if response.status >= 300 {
-            return Err(error_from_response(&response));
+            return Err(error_from_response(&response, self.oidc.is_some()));
         }
         Ok(response.body)
     }
@@ -159,7 +176,7 @@ impl Client {
     pub fn post_ok(&self, path: &str, body: &Value) -> Result<Value, ContractError> {
         let response = self.post(path, body)?;
         if response.status >= 300 {
-            return Err(error_from_response(&response));
+            return Err(error_from_response(&response, self.oidc.is_some()));
         }
         Ok(response.body)
     }
@@ -193,7 +210,7 @@ impl Client {
         }
         let response = self.request_within("GET", &path, None, self.snapshot_timeout)?;
         if response.status >= 300 {
-            return Err(error_from_response(&response));
+            return Err(error_from_response(&response, self.oidc.is_some()));
         }
         let snapshot = response.body;
         let root = self.root.as_ref().ok_or_else(|| {
@@ -348,14 +365,25 @@ impl Client {
 
 /// Map a non-2xx response to the typed error it carried (or a bounded
 /// substitute when the body was not a taxonomy error).
-pub fn error_from_response(response: &Response) -> ContractError {
+pub fn error_from_response(response: &Response, oidc: bool) -> ContractError {
     if let Some(error) = response.body.get("error") {
         if let Ok(mut parsed) = serde_json::from_value::<ContractError>(error.clone()) {
             if crate::error::CODES.contains(&parsed.code.as_str()) {
                 parsed.exit_override = None;
+                if oidc && response.status == 401 && parsed.code == "AUTHORITY_SCOPE_DENIED" {
+                    return parsed.with_oidc_token_failure();
+                }
                 return parsed;
             }
         }
+    }
+    if oidc && response.status == 401 {
+        return ContractError::refused(
+            "AUTHORITY_SCOPE_DENIED",
+            "OIDC gateway refused the session",
+            "Run `kinbase auth login`",
+        )
+        .with_oidc_token_failure();
     }
     match response.status {
         401 | 403 => ContractError::refused(
@@ -387,7 +415,12 @@ pub fn deliver_to_channel(
     body: &Value,
     key: &PrivateKey,
 ) -> Result<Response, ContractError> {
-    let (host, port, path) = http::parse_url(channel, false)?;
+    let (scheme, host, port, path) = http::parse_url(channel, false)?;
+    if scheme != http::Scheme::Http {
+        return Err(ContractError::invariant(
+            "authority channel must use loopback http://",
+        ));
+    }
     let bytes = crate::json::canonical_bytes(body);
     let signature = key.sign("question", &bytes)?;
     let headers = vec![
@@ -400,6 +433,7 @@ pub fn deliver_to_channel(
         path
     };
     http::request(
+        scheme,
         &host,
         port,
         "POST",

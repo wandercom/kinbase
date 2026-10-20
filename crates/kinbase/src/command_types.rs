@@ -4,6 +4,8 @@ use std::path::PathBuf;
 #[derive(Debug, Subcommand)]
 pub enum Command {
     #[command(subcommand)]
+    Auth(AuthCommand),
+    #[command(subcommand)]
     Company(CompanyCommand),
     #[command(subcommand)]
     Repo(RepoCommand),
@@ -104,6 +106,11 @@ pub enum Command {
     Questions(QuestionCommand),
     #[command(subcommand)]
     Hooks(HookCommand),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuthCommand {
+    Login,
 }
 
 #[derive(Debug, Subcommand)]

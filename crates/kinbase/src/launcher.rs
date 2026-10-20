@@ -121,6 +121,7 @@ impl Launcher {
             access.cache_root.clone(),
             access.allow_non_loopback,
         )?
+        .with_oidc(self.user.as_ref())?
         .with_snapshot_timeout_seconds(access.snapshot_timeout_seconds);
         Ok(Some(CompanyAccess {
             client,
@@ -154,10 +155,8 @@ impl Launcher {
         self.shared
             .company
             .as_ref()
-            .and_then(|access| {
-                crate::http::parse_url(&access.url, access.allow_non_loopback).ok()
-            })
-            .map(|(_, port, _)| port)
+            .and_then(|access| crate::http::parse_url(&access.url, access.allow_non_loopback).ok())
+            .map(|(_, _, port, _)| port)
     }
 
     /// Capability report for `doctor` (cli.md: every process reports its
