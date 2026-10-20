@@ -36,6 +36,16 @@ Notable changes to Kinbase. Dates are UTC.
 
 ### Changed
 
+- The Company service reduces its log once per change instead of on every
+  `/snapshot`, `/facts` page and `/facts/<id>`, keeping two reductions (the one at
+  its own clock is never evicted) and rebuilding one at a time. A snapshot window
+  loads only the events it sends. Responses are byte-identical; on a 22k-event store
+  a cached `/snapshot` takes 0.44 s instead of 2.81 s and a `/facts` page 0.14 s
+  instead of 1.31 s.
+- At most two snapshots are assembled at once; a request beyond that gets a 503
+  `LIMIT_EXCEEDED` naming the ceiling, and the client keeps its cached snapshot.
+  Eight concurrent warm snapshots on that store went from +2 GB to +134 MB.
+
 - A checkpoint that decided nothing (no admission, hold, failure, Personal fact
   or swept state) is no longer recorded; its counters are already in the ledgers.
   A checkpoint's id is now the digest of what it decided, so one that decided what
