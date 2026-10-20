@@ -13,6 +13,16 @@ use std::time::Duration;
 
 static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// A snapshot is a reduction over the whole Company event log, so it costs
+/// what the log costs: 2.5 s against one deployment's 2,720 events and rising.
+/// At 1,500 ms -- a bound sized for proof fixtures -- every repository in the
+/// estate reported COMPANY_UNREACHABLE against a service that was answering
+/// perfectly well, which reads as an outage rather than as the ceiling it is.
+/// At ~12k facts a snapshot outgrew 20 s as well, so `[company]
+/// snapshot_timeout_seconds` overrides this default for snapshot reads instead
+/// of a rebuild.
+pub const DEFAULT_READ_TIMEOUT_SECONDS: u64 = 20;
+
 /// A root-verified answer to a snapshot refresh.
 pub enum SnapshotRefresh {
     /// The whole snapshot, to store in place of the cached one.
@@ -30,6 +40,9 @@ pub struct Client {
     pub root: Option<PublicKey>,
     pub cache_root: PathBuf,
     pub read_timeout: Duration,
+    /// How long a snapshot read waits. Only snapshots cost what the whole log
+    /// costs, so only they get a deployment's raised budget.
+    pub snapshot_timeout: Duration,
     pub bytes_sent: std::cell::Cell<u64>,
 }
 
@@ -51,15 +64,18 @@ impl Client {
             key,
             root,
             cache_root,
-            // A snapshot is a reduction over the whole Company event log, so it
-            // costs what the log costs: 2.5 s against one deployment's 2,720 events and
-            // rising. At 1,500 ms -- a bound sized for proof fixtures -- every
-            // repository in the estate reported COMPANY_UNREACHABLE against a
-            // service that was answering perfectly well, which reads as an
-            // outage rather than as the ceiling it is.
-            read_timeout: Duration::from_secs(20),
+            read_timeout: Duration::from_secs(DEFAULT_READ_TIMEOUT_SECONDS),
+            snapshot_timeout: Duration::from_secs(DEFAULT_READ_TIMEOUT_SECONDS),
             bytes_sent: std::cell::Cell::new(0),
         })
+    }
+
+    /// The configured snapshot budget, for clients built from a user config.
+    /// Every other request keeps the default: the same client posts checkpoint
+    /// facts and Unknowns from host hooks, and a hook pays its wait every turn.
+    pub fn with_snapshot_timeout_seconds(mut self, seconds: u64) -> Self {
+        self.snapshot_timeout = Duration::from_secs(seconds);
+        self
     }
 
     fn nonce(&self) -> String {
@@ -71,6 +87,16 @@ impl Client {
         method: &str,
         path: &str,
         body: Option<&Value>,
+    ) -> Result<Response, ContractError> {
+        self.request_within(method, path, body, self.read_timeout)
+    }
+
+    fn request_within(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&Value>,
+        read_timeout: Duration,
     ) -> Result<Response, ContractError> {
         let full_path = format!("{}{}", self.base_path, path);
         let body_bytes = body.map(crate::json::canonical_bytes).unwrap_or_default();
@@ -109,7 +135,7 @@ impl Client {
             &full_path,
             &headers,
             &body_bytes,
-            self.read_timeout,
+            read_timeout,
         )
     }
 
@@ -165,7 +191,11 @@ impl Client {
         if let Some(known) = known {
             path.push_str(&format!("&known={known}"));
         }
-        let snapshot = self.get_ok(&path)?;
+        let response = self.request_within("GET", &path, None, self.snapshot_timeout)?;
+        if response.status >= 300 {
+            return Err(error_from_response(&response));
+        }
+        let snapshot = response.body;
         let root = self.root.as_ref().ok_or_else(|| {
             ContractError::invariant("a Company root public key is required to verify snapshots")
         })?;
@@ -405,5 +435,60 @@ mod nonce_tests {
         let suffix = |nonce: &str| nonce.split_once('-').map(|(_, rest)| rest.to_owned());
         assert_ne!(suffix(&left), suffix(&right));
         assert!(left.len() <= 128);
+    }
+}
+
+#[cfg(test)]
+mod snapshot_timeout_tests {
+    use super::{Client, DEFAULT_READ_TIMEOUT_SECONDS};
+    use crate::config::TokenRecord;
+    use crate::crypto::PrivateKey;
+    use std::time::{Duration, Instant};
+
+    /// A Service that accepts and then reduces for longer than the client
+    /// waits is the failure a growing store produces: a snapshot read gives up
+    /// at its configured budget, not at a bound compiled into the binary, and
+    /// no other request inherits that budget.
+    #[test]
+    fn a_snapshot_waits_for_its_configured_budget_and_nothing_else_does() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let (done, finished) = std::sync::mpsc::channel::<()>();
+        let holder = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().expect("accept");
+            // Answer nothing until the client has given up.
+            let _ = finished.recv_timeout(Duration::from_secs(10));
+            drop(stream);
+        });
+        let cache = std::env::temp_dir().join(format!("kinbase-snapshot-timeout-{port}"));
+        let client = Client::new(
+            &format!("http://127.0.0.1:{port}"),
+            TokenRecord {
+                token: "facts".to_owned(),
+            },
+            PrivateKey::generate(),
+            None,
+            cache,
+            false,
+        )
+        .expect("client")
+        .with_snapshot_timeout_seconds(1);
+        assert_eq!(client.snapshot_timeout, Duration::from_secs(1));
+        assert_eq!(
+            client.read_timeout,
+            Duration::from_secs(DEFAULT_READ_TIMEOUT_SECONDS)
+        );
+        let started = Instant::now();
+        let Err(error) = client.refresh_for("", None) else {
+            panic!("no answer within the budget must be an error");
+        };
+        let waited = started.elapsed();
+        assert_eq!(error.code, "COMPANY_UNREACHABLE");
+        assert!(
+            waited >= Duration::from_millis(900) && waited < Duration::from_secs(3),
+            "waited {waited:?}"
+        );
+        let _ = done.send(());
+        holder.join().expect("holder");
     }
 }

@@ -75,6 +75,19 @@ pub struct CompanyView {
     /// what else the content depends on (scopes, repository, side tables).
     /// Dropped with the entry, so a digest never outlives its inputs.
     content_digests: Mutex<BTreeMap<String, String>>,
+    /// Every fact and unknown event by cursor, newest first: what a snapshot's
+    /// event window is chosen from. Only the rows a window sends are loaded.
+    pub event_index: Vec<EventRef>,
+    /// Parent bindings of each current fact that has parents, resolved to the
+    /// parents' logical keys, in the reduction's fact order.
+    pub fact_parents: BTreeMap<String, Value>,
+}
+
+/// Where an admitted event sits in the log, without its document.
+pub struct EventRef {
+    pub cursor: i64,
+    pub kind: &'static str,
+    pub authority_scope: String,
 }
 
 impl CompanyView {
@@ -216,10 +229,37 @@ fn build(
     // the passes below parse the log again.
     drop(input);
     let mut payloads = BTreeMap::new();
-    for (_, payload, _) in db.events_of_kind("fact-event")? {
-        let Some(event_id) = crate::json::get_str(&payload, "event_id") else {
+    let mut event_index = Vec::new();
+    let mut parents_of: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
+    for (cursor, payload, _) in db.events_of_kind("fact-event")? {
+        event_index.push(EventRef {
+            cursor,
+            kind: "fact-event",
+            authority_scope: crate::json::get_str(&payload, "authority_scope")
+                .unwrap_or_default()
+                .to_owned(),
+        });
+        let event_id = crate::json::get_str(&payload, "event_id").unwrap_or_default();
+        parents_of.insert(
+            event_id.to_owned(),
+            (
+                crate::json::get_str(&payload, "logical_key")
+                    .unwrap_or_default()
+                    .to_owned(),
+                crate::json::get_array(&payload, "parents")
+                    .map(|items| {
+                        items
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            ),
+        );
+        if crate::json::get_str(&payload, "event_id").is_none() {
             continue;
-        };
+        }
         let published: serde_json::Map<String, Value> = PUBLISHED_EVENT_FIELDS
             .iter()
             .filter_map(|field| {
@@ -230,6 +270,36 @@ fn build(
             .collect();
         payloads.insert(event_id.to_owned(), Value::Object(published));
     }
+    for (cursor, payload, _) in db.events_of_kind("unknown-event")? {
+        event_index.push(EventRef {
+            cursor,
+            kind: "unknown-event",
+            authority_scope: crate::json::get_str(&payload, "authority_scope")
+                .unwrap_or_default()
+                .to_owned(),
+        });
+    }
+    event_index.sort_by(|left, right| right.cursor.cmp(&left.cursor));
+    let mut fact_parents = BTreeMap::new();
+    for fact in &view.facts {
+        let Some((_, parents)) = parents_of.get(&fact.event_id) else {
+            continue;
+        };
+        if parents.is_empty() {
+            continue;
+        }
+        let resolved: Vec<Value> = parents
+            .iter()
+            .map(|parent| {
+                json!({
+                    "event_id": parent,
+                    "logical_key": parents_of.get(parent).map(|(key, _)| key.clone()).unwrap_or_default()
+                })
+            })
+            .collect();
+        fact_parents.insert(fact.fact_id.clone(), Value::Array(resolved));
+    }
+    drop(parents_of);
     let lifecycle_rows = super::reduction::lifecycle_event_rows(db, trust_state);
     Ok(CompanyView {
         key,
@@ -239,6 +309,8 @@ fn build(
         payloads,
         lifecycle_rows,
         content_digests: Mutex::default(),
+        event_index,
+        fact_parents,
     })
 }
 
@@ -271,6 +343,8 @@ mod tests {
             payloads: BTreeMap::new(),
             lifecycle_rows: Vec::new(),
             content_digests: Mutex::default(),
+            event_index: Vec::new(),
+            fact_parents: BTreeMap::new(),
         }
     }
 

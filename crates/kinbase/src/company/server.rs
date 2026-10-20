@@ -61,12 +61,47 @@ impl Drop for ConnectionSlot {
     }
 }
 
+/// Snapshots assembled at once. A warm snapshot still materializes the facts,
+/// their JSON and a signed copy (a few hundred MiB at a large store), and the
+/// connection ceiling alone let eight overlapping refreshes take one service to
+/// 3 GiB. Beyond this a refresh is refused, not queued: it keeps its cached
+/// snapshot and asks again rather than holding memory in line.
+pub const MAX_CONCURRENT_SNAPSHOTS: usize = 2;
+
+/// The places under [`MAX_CONCURRENT_SNAPSHOTS`].
+#[derive(Default)]
+pub struct SnapshotSlots(AtomicUsize);
+
+/// One place, given back on drop so an early return or panic cannot leak it.
+pub struct SnapshotSlot<'a>(&'a AtomicUsize);
+
+impl SnapshotSlots {
+    /// `None` when every place is taken; the count rises in one
+    /// compare-and-set, so two requests cannot both claim the last place.
+    pub fn acquire(&self) -> Option<SnapshotSlot<'_>> {
+        self.0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |live| {
+                (live < MAX_CONCURRENT_SNAPSHOTS).then_some(live + 1)
+            })
+            .ok()
+            .map(|_| SnapshotSlot(&self.0))
+    }
+}
+
+impl Drop for SnapshotSlot<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 pub struct ServiceState {
     pub config: ServiceConfig,
     pub root: PrivateKey,
     pub started_at: String,
     /// The reduced Company view, shared across connections.
     pub views: super::view_cache::ViewCache,
+    /// Snapshot assemblies in flight.
+    pub snapshots: SnapshotSlots,
 }
 
 type Handled = Result<(u16, Value), (u16, ContractError)>;
@@ -233,6 +268,7 @@ pub fn serve(
         root,
         started_at: crate::time::now_rfc3339_millis(),
         views: Default::default(),
+        snapshots: Default::default(),
     });
     let banner = json!({
         "status": "company-serving",
@@ -841,51 +877,24 @@ fn lifecycle_admissions(
     rows
 }
 
-/// Parent bindings of every current fact, resolved to the parent's logical
-/// key, so a client holding other stores can reopen dependent decisions when
-/// a parent fact loses its last support anywhere.
+/// Parent bindings of every current fact sent, resolved to the parent's
+/// logical key, so a client holding other stores can reopen dependent decisions
+/// when a parent fact loses its last support anywhere. Resolved once per
+/// reduction; a snapshot only picks the facts it sends.
 fn fact_parents(
-    db: &CompanyDb,
+    resolved: &BTreeMap<String, Value>,
     view: &crate::reducer::CurrentView,
     sent_ids: &BTreeSet<String>,
 ) -> Value {
-    let mut by_event: BTreeMap<String, (String, Vec<String>)> = BTreeMap::new();
-    for (_, payload, _) in db.events_of_kind("fact-event").unwrap_or_default() {
-        let event_id = crate::json::get_str(&payload, "event_id").unwrap_or_default();
-        let logical_key = crate::json::get_str(&payload, "logical_key").unwrap_or_default();
-        let parents = crate::json::get_array(&payload, "parents")
-            .map(|items| {
-                items
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        by_event.insert(event_id.to_owned(), (logical_key.to_owned(), parents));
-    }
     let mut map = serde_json::Map::new();
     for fact in view
         .facts
         .iter()
         .filter(|fact| sent_ids.contains(&fact.fact_id))
     {
-        let Some((_, parents)) = by_event.get(&fact.event_id) else {
-            continue;
-        };
-        if parents.is_empty() {
-            continue;
+        if let Some(parents) = resolved.get(&fact.fact_id) {
+            map.insert(fact.fact_id.clone(), parents.clone());
         }
-        let resolved: Vec<Value> = parents
-            .iter()
-            .map(|parent| {
-                json!({
-                    "event_id": parent,
-                    "logical_key": by_event.get(parent).map(|(key, _)| key.clone()).unwrap_or_default()
-                })
-            })
-            .collect();
-        map.insert(fact.fact_id.clone(), Value::Array(resolved));
     }
     Value::Object(map)
 }
@@ -2029,6 +2038,16 @@ fn snapshot(
             now,
         );
     }
+    // Only assembly is bounded: a receipt costs a signature, not the content.
+    let Some(_assembly) = state.snapshots.acquire() else {
+        return Err(refuse(
+            503,
+            ContractError::limit(
+                "the service is already assembling its ceiling of concurrent snapshots",
+                json!({"refused_count": 1, "omitted_count": 1, "ceiling": MAX_CONCURRENT_SNAPSHOTS}),
+            ),
+        ));
+    };
     // Ownership rulings say where work lands. A ticket in one repository
     // that edits paths in another needs the other's rulings, so they are
     // delivered to every repository whatever they govern; there are few and
@@ -2073,7 +2092,8 @@ fn snapshot(
     // admitted event set). Company remains the authority for its own current
     // view; the events are the inputs it reduced, not a second opinion.
     let (mut events, events_omitted_count, events_sealed_cursor) =
-        snapshot_events(db, &readable, events_since).map_err(|error| refuse(500, error))?;
+        snapshot_events(db, &cached.event_index, &readable, events_since)
+            .map_err(|error| refuse(500, error))?;
     // A partial window is one the client must not reduce over -- it would drop
     // the supersession that retired a head -- so it falls back to the derived
     // `facts`. Sending it anyway is a third of a megabyte the reader is
@@ -2166,7 +2186,7 @@ fn snapshot(
                 }))
             })
             .collect::<Vec<_>>(),
-        "fact_parents": fact_parents(db, &view, &sent_ids),
+        "fact_parents": fact_parents(&cached.fact_parents, view, &sent_ids),
         "traces": view.traces.iter().filter(|trace| sent_keys.contains(trace.logical_key.as_str())).map(|trace| json!({
             "logical_key": trace.logical_key,
             "state": trace.state,
@@ -2327,37 +2347,39 @@ const FACT_VERSIONS_KEPT: usize = 3;
 
 fn snapshot_events(
     db: &CompanyDb,
+    index: &[super::view_cache::EventRef],
     readable: &BTreeSet<String>,
     since: i64,
 ) -> Result<(Vec<Value>, usize, String), ContractError> {
-    let mut candidates: Vec<(i64, &str, Value, String)> = Vec::new();
-    for kind in ["fact-event", "unknown-event"] {
-        for (cursor, payload, verification) in db.events_of_kind(kind)? {
-            let scope = crate::json::get_str(&payload, "authority_scope").unwrap_or_default();
-            if !readable.contains(scope) {
-                continue;
-            }
-            if cursor <= since {
-                // Already sealed by this client at an earlier refresh.
-                continue;
-            }
-            candidates.push((cursor, kind, payload, verification));
-        }
-    }
     // Newest first, so a truncated window carries the most recent history
-    // rather than whichever kind sorted first.
-    candidates.sort_by(|left, right| right.0.cmp(&left.0));
+    // rather than whichever kind sorted first. The cached index already holds
+    // that order; already-sealed and unreadable events are skipped here.
+    let candidates: Vec<&super::view_cache::EventRef> = index
+        .iter()
+        .filter(|event| event.cursor > since && readable.contains(&event.authority_scope))
+        .collect();
     let readable_count = candidates.len();
-    // Build and size only the window that is sent. Building a record for every
-    // readable event to keep at most SNAPSHOT_EVENT_LIMIT of them serialized
-    // the whole log on each snapshot: half a second at 22k events, for a
-    // window the caller then discards when anything was omitted.
+    // Load and size only the window that can be sent. Parsing the whole log to
+    // keep at most SNAPSHOT_EVENT_LIMIT of it cost every snapshot the log's
+    // size in memory, for a window the caller then discards when anything was
+    // omitted.
+    let window: Vec<&super::view_cache::EventRef> =
+        candidates.into_iter().take(SNAPSHOT_EVENT_LIMIT).collect();
+    let cursors: Vec<i64> = window.iter().map(|event| event.cursor).collect();
+    let mut rows: BTreeMap<i64, (Value, String)> = db
+        .events_at(&cursors)?
+        .into_iter()
+        .map(|(cursor, payload, verification)| (cursor, (payload, verification)))
+        .collect();
     let mut selected: Vec<(i64, Value)> = Vec::new();
     let mut spent = 0usize;
-    for (cursor, kind, payload, verification) in candidates.into_iter().take(SNAPSHOT_EVENT_LIMIT) {
+    for event in window {
+        let Some((payload, verification)) = rows.remove(&event.cursor) else {
+            continue;
+        };
         let record = json!({
-            "cursor": cursor.to_string(),
-            "kind": kind,
+            "cursor": event.cursor.to_string(),
+            "kind": event.kind,
             "verification": verification,
             "document": payload
         });
@@ -2366,7 +2388,7 @@ fn snapshot_events(
             break;
         }
         spent += size;
-        selected.push((cursor, record));
+        selected.push((event.cursor, record));
     }
     let omitted = readable_count - selected.len();
     // The client may seal up to the oldest event it actually received; anything
@@ -3954,6 +3976,7 @@ nonce_retention_seconds = 1300
             root: root_key.clone(),
             started_at: crate::time::now_rfc3339_millis(),
             views: Default::default(),
+            snapshots: Default::default(),
         };
         let now = crate::time::now_rfc3339_millis();
         let trust = trust::load(&db, &root_key.public()).unwrap();
@@ -4242,6 +4265,7 @@ mod packet11_tests {
             root: root_key,
             started_at: crate::time::now_rfc3339_millis(),
             views: Default::default(),
+            snapshots: Default::default(),
         };
         let now = crate::time::now_rfc3339_millis();
         let expires_at = crate::time::plus_seconds(&now, 60).unwrap();
@@ -4321,6 +4345,7 @@ mod auth_subject_tests {
             root: PrivateKey::generate(),
             started_at: crate::time::now_rfc3339_millis(),
             views: Default::default(),
+            snapshots: Default::default(),
         };
         (db, state)
     }
@@ -4457,6 +4482,7 @@ nonce_retention_seconds = 1300
             root: root.clone(),
             started_at: crate::time::now_rfc3339_millis(),
             views: Default::default(),
+            snapshots: Default::default(),
         };
         Service {
             temp,
@@ -4866,6 +4892,38 @@ nonce_retention_seconds = 1300
     }
 
     #[test]
+    fn a_snapshot_beyond_the_assembly_ceiling_is_refused_not_queued() {
+        let service = service("");
+        let reader = auth(&service, "facts-one");
+        let trust = trust::load(&service.db, &service.root.public()).unwrap();
+        let now = crate::time::now_rfc3339_millis();
+        let ask = || {
+            super::snapshot(
+                &service.db,
+                &service.state,
+                &reader,
+                &trust,
+                &get("/snapshot", &[("nonce", "ceiling")]),
+                &now,
+            )
+        };
+        let held: Vec<_> = (0..MAX_CONCURRENT_SNAPSHOTS)
+            .map(|_| service.state.snapshots.acquire().expect("a free place"))
+            .collect();
+        let Err((status, error)) = ask() else {
+            panic!("a snapshot past the ceiling was assembled");
+        };
+        assert_eq!((status, error.code.as_str()), (503, "LIMIT_EXCEEDED"));
+        drop(held);
+        assert_eq!(ask().map(|(status, _)| status).ok(), Some(200));
+        // Every place came back: a full set can be claimed again.
+        let again: Vec<_> = (0..MAX_CONCURRENT_SNAPSHOTS)
+            .filter_map(|_| service.state.snapshots.acquire())
+            .collect();
+        assert_eq!(again.len(), MAX_CONCURRENT_SNAPSHOTS);
+    }
+
+    #[test]
     fn a_cached_view_is_the_reduction_at_every_cursor_and_instant() {
         let service = service("facts_token_scopes = [\"architecture:scheduling\"]");
         let steward = auth(&service, "facts-one");
@@ -5052,6 +5110,7 @@ nonce_retention_seconds = 1300
             root: service.state.root.clone(),
             started_at: crate::time::now_rfc3339_millis(),
             views: Default::default(),
+            snapshots: Default::default(),
         };
         let after_restart = snapshot_with(
             &service,
@@ -5114,6 +5173,7 @@ nonce_retention_seconds = 1300
             root: service.root.clone(),
             started_at: crate::time::now_rfc3339_millis(),
             views: Default::default(),
+            snapshots: Default::default(),
         });
         // The connection path `serve` runs, without its liveness watcher,
         // which exits the process once a test's temporary store is gone.

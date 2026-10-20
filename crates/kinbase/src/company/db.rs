@@ -294,6 +294,38 @@ impl CompanyDb {
         Ok(output)
     }
 
+    /// The events at these cursors, parsed as `events_of_kind` parses them:
+    /// a snapshot window loads only the rows it sends.
+    pub fn events_at(&self, cursors: &[i64]) -> Result<Vec<(i64, Value, String)>, ContractError> {
+        if cursors.is_empty() {
+            return Ok(Vec::new());
+        }
+        let placeholders = vec!["?"; cursors.len()].join(",");
+        let mut statement = self
+            .connection
+            .prepare(&format!(
+                "SELECT cursor, payload, verification FROM events WHERE cursor IN ({placeholders})"
+            ))
+            .map_err(sqlite_error("prepare"))?;
+        let rows = statement
+            .query_map(rusqlite::params_from_iter(cursors.iter()), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(sqlite_error("query"))?;
+        let mut output = Vec::new();
+        for row in rows {
+            let (cursor, payload, verification) = row.map_err(sqlite_error("row"))?;
+            let value: Value = serde_json::from_str(&payload)
+                .map_err(|error| ContractError::internal(error.to_string()))?;
+            output.push((cursor, value, verification));
+        }
+        Ok(output)
+    }
+
     pub fn events_of_message_type(
         &self,
         message_type: &str,
