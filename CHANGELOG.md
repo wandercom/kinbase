@@ -8,8 +8,8 @@ Notable changes to Kinbase. Dates are UTC.
 
 - `[company] snapshot_timeout_seconds` in the user config: how long a snapshot
   read waits for the Company service (integer 1..=600, default 20, the previous
-  fixed bound). A snapshot costs what the whole Company log costs, and on
-  staging at ~12k facts it outgrew 20 s, so every refresh reported
+  fixed bound). A snapshot costs what the whole Company log costs, and in
+  one deployment at ~12k facts it outgrew 20 s, so every refresh reported
   `COMPANY_UNREACHABLE`; a deployment can now raise the ceiling without a new
   build. Only snapshot reads use it: checkpoint and Unknown posts from host hooks
   keep the 20 s default.
