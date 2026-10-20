@@ -2,10 +2,11 @@
 //! change.
 //!
 //! `/snapshot`, `/facts` and `/facts/<id>` each re-reduced the whole fact log
-//! on every request. At ~12k facts on staging one snapshot cost ~300 MiB and
-//! 40-60 s of service time; a client that gave up at its read budget did not
+//! on every request. At ~12k facts in one deployment one snapshot cost ~300 MiB
+//! and 40-60 s of service time; a client that gave up at its read budget did not
 //! cancel that work, nothing capped how many ran at once, and a handful of
-//! overlapping refreshes plus an ingest paging `/facts` OOM-killed the store.
+//! overlapping refreshes plus an ingest paging `/facts` ran the service out of
+//! memory.
 //!
 //! The reduction is a pure function of the admitted event log, the trust state
 //! and `as_of` (architecture §6). The log is append-only (its rows are

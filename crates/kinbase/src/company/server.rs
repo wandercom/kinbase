@@ -68,6 +68,21 @@ impl Drop for ConnectionSlot {
 /// snapshot and asks again rather than holding memory in line.
 pub const MAX_CONCURRENT_SNAPSHOTS: usize = 2;
 
+/// The refusal past [`MAX_CONCURRENT_SNAPSHOTS`]. `LIMIT_EXCEEDED` is ratified
+/// as conditionally retryable (spec/cli.md error contract), and this ceiling
+/// clears as soon as an assembly finishes, so it is marked retryable: the
+/// client keeps its cached snapshot and asks again shortly.
+fn snapshot_ceiling_refusal() -> ContractError {
+    ContractError::new(
+        "LIMIT_EXCEEDED",
+        "the service is already assembling its ceiling of concurrent snapshots",
+        "Retry shortly; the cached snapshot stays in use meanwhile and nothing was truncated silently.",
+        true,
+        crate::error::ExitCode::Refused,
+    )
+    .with_detail(json!({"refused_count": 1, "omitted_count": 1, "ceiling": MAX_CONCURRENT_SNAPSHOTS}))
+}
+
 /// The places under [`MAX_CONCURRENT_SNAPSHOTS`].
 #[derive(Default)]
 pub struct SnapshotSlots(AtomicUsize);
@@ -2040,13 +2055,7 @@ fn snapshot(
     }
     // Only assembly is bounded: a receipt costs a signature, not the content.
     let Some(_assembly) = state.snapshots.acquire() else {
-        return Err(refuse(
-            503,
-            ContractError::limit(
-                "the service is already assembling its ceiling of concurrent snapshots",
-                json!({"refused_count": 1, "omitted_count": 1, "ceiling": MAX_CONCURRENT_SNAPSHOTS}),
-            ),
-        ));
+        return Err(refuse(503, snapshot_ceiling_refusal()));
     };
     // Ownership rulings say where work lands. A ticket in one repository
     // that edits paths in another needs the other's rulings, so they are
@@ -4914,6 +4923,7 @@ nonce_retention_seconds = 1300
             panic!("a snapshot past the ceiling was assembled");
         };
         assert_eq!((status, error.code.as_str()), (503, "LIMIT_EXCEEDED"));
+        assert!(error.retryable, "a busy ceiling clears on its own");
         drop(held);
         assert_eq!(ask().map(|(status, _)| status).ok(), Some(200));
         // Every place came back: a full set can be claimed again.
