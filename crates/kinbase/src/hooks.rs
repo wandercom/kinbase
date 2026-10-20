@@ -55,7 +55,7 @@ fn run(command: crate::command_types::HookCommand, json: bool) -> Result<(), Con
         crate::command_types::HookCommand::Plan { host } => plan(host, ranges, json),
         crate::command_types::HookCommand::Install { host } => install(host, ranges, json),
         crate::command_types::HookCommand::Dispatch { host, event } => {
-            dispatch_event(host, &event, ranges, json)
+            dispatch_event(host, &event, json)
         }
     }
 }
@@ -589,7 +589,6 @@ fn supported_event(event: &str) -> bool {
 fn dispatch_event(
     host_arg: crate::command_types::Host,
     event: &str,
-    ranges: &crate::config::SharedHosts,
     json: bool,
 ) -> Result<(), ContractError> {
     let host = host_name(host_arg);
@@ -1290,14 +1289,6 @@ fn io_error(error: std::io::Error) -> ContractError {
         false,
         ExitCode::InternalFailure,
     )
-}
-
-fn host_arg(host: &str) -> crate::command_types::Host {
-    if host == "claude" {
-        crate::command_types::Host::Claude
-    } else {
-        crate::command_types::Host::Codex
-    }
 }
 
 /// The host's hook state from its user-level config alone: a diagnostic

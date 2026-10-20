@@ -963,14 +963,6 @@ pub fn store_name(store: crate::StoreKind) -> &'static str {
     }
 }
 
-fn store_kind(name: &str) -> crate::StoreKind {
-    match name {
-        "personal" => crate::StoreKind::Personal,
-        "company" => crate::StoreKind::Company,
-        _ => crate::StoreKind::Codebase,
-    }
-}
-
 #[allow(dead_code)]
 fn retained_type_marker(_: Option<CurrentFact>) {}
 
