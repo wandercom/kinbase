@@ -26,7 +26,7 @@ use super::trust::TrustState;
 use crate::error::ContractError;
 use crate::reducer::CurrentView;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 /// What a reduction was computed from, apart from `as_of`.
@@ -74,7 +74,7 @@ pub struct CompanyView {
     /// Snapshot content digests already computed against this reduction, by
     /// what else the content depends on (scopes, repository, side tables).
     /// Dropped with the entry, so a digest never outlives its inputs.
-    content_digests: Mutex<BTreeMap<String, String>>,
+    content_digests: Mutex<DigestMemo>,
     /// Every fact and unknown event by cursor, newest first: what a snapshot's
     /// event window is chosen from. Only the rows a window sends are loaded.
     pub event_index: Vec<EventRef>,
@@ -93,17 +93,24 @@ pub struct EventRef {
 impl CompanyView {
     /// The snapshot content digest recorded for `key` against this reduction.
     pub fn content_digest(&self, key: &str) -> Option<String> {
-        lock(&self.content_digests).get(key).cloned()
+        lock(&self.content_digests).digests.get(key).cloned()
     }
 
     /// Clients choose part of the key (`repository`, `events_since`), so the
-    /// memo is capped: past the cap a new key replaces the first one held.
+    /// memo is capped: past the cap a new key replaces the oldest one held,
+    /// never whichever sorts first, so a flood of keys cannot keep evicting
+    /// real ones that happen to sort early.
     pub fn remember_content_digest(&self, key: String, digest: String) {
-        let mut digests = lock(&self.content_digests);
-        if digests.len() >= MAX_CONTENT_DIGESTS && !digests.contains_key(&key) {
-            digests.pop_first();
+        let mut memo = lock(&self.content_digests);
+        if !memo.digests.contains_key(&key) {
+            if memo.digests.len() >= MAX_CONTENT_DIGESTS
+                && let Some(oldest) = memo.order.pop_front()
+            {
+                memo.digests.remove(&oldest);
+            }
+            memo.order.push_back(key.clone());
         }
-        digests.insert(key, digest);
+        memo.digests.insert(key, digest);
     }
 
     /// Whether this reduction is the reduction at `as_of`: no boundary lies in
@@ -121,6 +128,13 @@ impl CompanyView {
             .get(first_after_low)
             .is_none_or(|boundary| boundary.as_str() > high)
     }
+}
+
+/// Content digests in the order they were first remembered.
+#[derive(Default)]
+struct DigestMemo {
+    digests: BTreeMap<String, String>,
+    order: VecDeque<String>,
 }
 
 /// Content digests remembered per reduction: one per scope set, repository and
@@ -371,20 +385,33 @@ mod tests {
     }
 
     #[test]
-    fn client_chosen_memo_keys_are_capped() {
+    fn client_chosen_memo_keys_are_capped_oldest_first() {
         let cached = entry(T1, &[]);
-        for index in 0..=MAX_CONTENT_DIGESTS {
+        // The first key remembered sorts last; the keys after it sort first.
+        cached.remember_content_digest("zz-oldest".to_owned(), "oldest".to_owned());
+        for index in 0..MAX_CONTENT_DIGESTS {
             cached.remember_content_digest(format!("key-{index:04}"), format!("digest-{index}"));
         }
-        assert_eq!(lock(&cached.content_digests).len(), MAX_CONTENT_DIGESTS);
-        let newest = format!("key-{MAX_CONTENT_DIGESTS:04}");
         assert_eq!(
-            cached.content_digest(&newest),
-            Some(format!("digest-{MAX_CONTENT_DIGESTS}"))
+            lock(&cached.content_digests).digests.len(),
+            MAX_CONTENT_DIGESTS
+        );
+        // The oldest went, not the key that sorts first.
+        assert_eq!(cached.content_digest("zz-oldest"), None);
+        assert_eq!(
+            cached.content_digest("key-0000"),
+            Some("digest-0".to_owned())
         );
         // Re-recording a held key never evicts another.
-        cached.remember_content_digest(newest, "again".to_owned());
-        assert_eq!(lock(&cached.content_digests).len(), MAX_CONTENT_DIGESTS);
+        cached.remember_content_digest("key-0000".to_owned(), "again".to_owned());
+        assert_eq!(
+            lock(&cached.content_digests).digests.len(),
+            MAX_CONTENT_DIGESTS
+        );
+        assert_eq!(
+            cached.content_digest("key-0001"),
+            Some("digest-1".to_owned())
+        );
     }
 
     #[test]

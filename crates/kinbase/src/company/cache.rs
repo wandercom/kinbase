@@ -166,6 +166,22 @@ impl Cache {
         root: &PublicKey,
         now: &str,
     ) -> Result<(), ContractError> {
+        // One transaction: a crash between the snapshot row and the scope and
+        // digest beside it would let a later receipt renew another
+        // repository's snapshot.
+        self.in_write_transaction("store snapshot", |cache| {
+            cache.write_snapshot(snapshot, root, now)
+        })?;
+        self.state = CacheState::Warm;
+        Ok(())
+    }
+
+    fn write_snapshot(
+        &self,
+        snapshot: &Value,
+        root: &PublicKey,
+        now: &str,
+    ) -> Result<(), ContractError> {
         self.admit_company_answer(snapshot, root, "snapshot")?;
         let cursor = crate::json::get_str(snapshot, "cursor")
             .unwrap_or("0")
@@ -253,8 +269,34 @@ impl Cache {
                 }
             }
         }
-        self.state = CacheState::Warm;
         Ok(())
+    }
+
+    /// Run `work` as one write transaction. `BEGIN IMMEDIATE` takes the write
+    /// lock before anything is read, so the checks inside see exactly the
+    /// state their writes replace: two refreshes cannot interleave between a
+    /// check and its write, and a crash leaves all of it or none.
+    fn in_write_transaction<T>(
+        &self,
+        label: &str,
+        work: impl FnOnce(&Self) -> Result<T, ContractError>,
+    ) -> Result<T, ContractError> {
+        let connection = self.connection()?;
+        connection
+            .execute_batch("BEGIN IMMEDIATE")
+            .map_err(sqlite_error(label))?;
+        match work(self) {
+            Ok(value) => {
+                connection
+                    .execute_batch("COMMIT")
+                    .map_err(sqlite_error(label))?;
+                Ok(value)
+            }
+            Err(error) => {
+                let _ = connection.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
     }
 
     /// The checks every signed Company answer passes before it may change
@@ -346,24 +388,24 @@ impl Cache {
                 "Refresh again; the full snapshot replaces whatever was offered.",
             ));
         }
-        self.admit_company_answer(receipt, root, "unchanged receipt")?;
-        let held = self
-            .known_content_digest(crate::json::get_str(receipt, "facts_scope").unwrap_or_default());
-        if held.is_none() || held.as_deref() != crate::json::get_str(receipt, "content_digest") {
-            return Err(ContractError::integrity(
-                "DIGEST_MISMATCH",
-                "the unchanged receipt vouches for content or a scope this cache does not hold",
-                "Refresh again without a known digest to fetch the full snapshot.",
-            ));
-        }
         let record = crate::json::record_text(receipt)?;
-        // All or nothing: a crash between these writes must not leave the
-        // clocks renewed with the high-water mark behind them.
-        let connection = self.connection()?;
-        connection
-            .execute_batch("BEGIN IMMEDIATE")
-            .map_err(sqlite_error("begin unchanged receipt"))?;
-        let written = (|| {
+        self.in_write_transaction("store unchanged receipt", |cache| {
+            // Checked under the write lock: a refresh that replaced the content
+            // or sealed a newer cursor meanwhile is seen here, so a receipt can
+            // neither renew content this cache no longer holds nor move the
+            // high-water mark backwards.
+            cache.admit_company_answer(receipt, root, "unchanged receipt")?;
+            let held = cache.known_content_digest(
+                crate::json::get_str(receipt, "facts_scope").unwrap_or_default(),
+            );
+            if held.is_none() || held.as_deref() != crate::json::get_str(receipt, "content_digest")
+            {
+                return Err(ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    "the unchanged receipt vouches for content or a scope this cache does not hold",
+                    "Refresh again without a known digest to fetch the full snapshot.",
+                ));
+            }
             for key in [
                 "cursor",
                 "authority_cursor",
@@ -373,25 +415,16 @@ impl Cache {
                 "issued_at",
             ] {
                 if let Some(value) = crate::json::get_str(receipt, key) {
-                    self.set_meta(key, value)?;
+                    cache.set_meta(key, value)?;
                 }
             }
-            self.set_meta(
+            cache.set_meta(
                 "high_water_cursor",
                 crate::json::get_str(receipt, "cursor").unwrap_or("0"),
             )?;
-            self.set_meta("freshness_receipt", &record)?;
-            self.set_meta("refreshed_at", now)
-        })();
-        match written {
-            Ok(()) => connection
-                .execute_batch("COMMIT")
-                .map_err(sqlite_error("commit unchanged receipt")),
-            Err(error) => {
-                let _ = connection.execute_batch("ROLLBACK");
-                Err(error)
-            }
-        }
+            cache.set_meta("freshness_receipt", &record)?;
+            cache.set_meta("refreshed_at", now)
+        })
     }
 
     /// Where the cached freshness came from, re-verified: the snapshot that
@@ -1284,7 +1317,7 @@ mod unchanged_receipt_tests {
     fn snapshot(root: &PrivateKey, cursor: &str, digest: Option<&str>) -> Value {
         let mut document = json!({
             "schema": "kinbase-snapshot/1",
-            "company_id": "wander",
+            "company_id": "subject",
             "cursor": cursor,
             "authority_cursor": "1000",
             "service_cursor": cursor,
@@ -1309,7 +1342,7 @@ mod unchanged_receipt_tests {
                 "receipt",
                 &json!({
                     "schema": crate::company::server::SNAPSHOT_UNCHANGED_SCHEMA,
-                    "company_id": "wander",
+                    "company_id": "subject",
                     "cursor": cursor,
                     "authority_cursor": "1001",
                     "service_cursor": cursor,
@@ -1456,5 +1489,76 @@ mod unchanged_receipt_tests {
             .set_meta("fact_valid_until", "2027-01-01T00:00:00.000Z")
             .unwrap();
         assert_eq!(cache.freshness_record(&root.public())["verified"], false);
+    }
+
+    #[test]
+    fn a_snapshot_that_fails_midway_leaves_the_previous_one_whole() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = PrivateKey::generate();
+        let mut cache = warm(&root, &temp);
+        let before: Vec<Option<String>> = [
+            "snapshot_digest",
+            "content_digest",
+            "facts_scope",
+            "high_water_cursor",
+        ]
+        .iter()
+        .map(|key| cache.meta(key))
+        .collect();
+        // The snapshot row is written before its certificates; make the
+        // certificate step fail after it.
+        cache
+            .connection
+            .as_ref()
+            .unwrap()
+            .execute_batch("DROP TABLE certificates")
+            .unwrap();
+        let mut newer = snapshot(&root, "9", Some(TWO));
+        newer["facts_scope"] = json!("repository:other");
+        newer["certificates"] = json!([{"repository_uuid": "repository-one"}]);
+        let newer = root.sign_document("receipt", &newer).unwrap();
+        assert!(cache.store_snapshot(&newer, &root.public(), LATER).is_err());
+        let after: Vec<Option<String>> = [
+            "snapshot_digest",
+            "content_digest",
+            "facts_scope",
+            "high_water_cursor",
+        ]
+        .iter()
+        .map(|key| cache.meta(key))
+        .collect();
+        assert_eq!(
+            before, after,
+            "a failed snapshot left part of itself behind"
+        );
+        assert_eq!(cache.known_content_digest("").as_deref(), Some(ONE));
+    }
+
+    #[test]
+    fn a_receipt_raced_by_another_refresh_is_refused_and_never_rewinds() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = PrivateKey::generate();
+        let mut offered = warm(&root, &temp);
+        // A second process refreshes for another repository at a newer cursor
+        // after this one offered its digest.
+        let mut other = Cache::open(&temp.path().join("cache")).unwrap();
+        let mut elsewhere = snapshot(&root, "9", Some(TWO));
+        elsewhere["facts_scope"] = json!("repository:other");
+        let elsewhere = root.sign_document("receipt", &elsewhere).unwrap();
+        other
+            .store_snapshot(&elsewhere, &root.public(), LATER)
+            .unwrap();
+        // The receipt for the content this process offered arrives after.
+        for (answer, code) in [
+            (receipt(&root, "10", ONE, ""), "DIGEST_MISMATCH"),
+            (receipt(&root, "7", ONE, ""), "REVOCATION_STALE"),
+        ] {
+            let error = offered
+                .store_unchanged(&answer, &root.public(), LATER)
+                .expect_err(code);
+            assert_eq!(error.code, code);
+            assert_eq!(offered.high_water(), "9", "the high-water mark moved");
+            assert_eq!(offered.meta("content_digest").as_deref(), Some(TWO));
+        }
     }
 }

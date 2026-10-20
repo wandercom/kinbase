@@ -1771,13 +1771,14 @@ pub fn build_trust(
         match snapshot {
             Ok(refresh) => {
                 trust.company_reachable = Some(true);
-                let stored = match &refresh {
-                    SnapshotRefresh::Snapshot(snapshot) => {
-                        cache.store_snapshot(snapshot, &company_root, &now)
+                let stored = match client.as_ref() {
+                    Some(client) => {
+                        store_refresh(client, &mut cache, &asking_as, refresh, &company_root, &now)
+                            .map(|_| ())
                     }
-                    SnapshotRefresh::Unchanged(receipt) => {
-                        cache.store_unchanged(receipt, &company_root, &now)
-                    }
+                    None => Err(ContractError::internal(
+                        "an online read has a Company client",
+                    )),
                 };
                 if let Err(error) = stored {
                     crate::output::diagnostic("snapshot-refused", serde_json::to_value(&error).unwrap_or_else(|_| json!({"code": "RUN_INTEGRITY_FAILED", "message": "snapshot refusal detail was unreadable", "remediation": "Preserve the receipt.", "retryable": false, "evidence_id": "err_snapshot_refused"})));
@@ -2003,6 +2004,43 @@ pub fn ensure_authority_snapshot(
     ensure_authority_snapshot_for(launcher, "", requested_cursor, as_of)
 }
 
+/// Store what a refresh answered and return the signed document stored. A
+/// receipt the cache can no longer take -- another refresh replaced the
+/// content after this one offered its digest -- is followed by exactly one
+/// full refresh: the client ends up current rather than refused, and nothing
+/// loops.
+pub(crate) fn store_refresh(
+    client: &crate::company::client::Client,
+    cache: &mut crate::company::cache::Cache,
+    repository_uuid: &str,
+    refresh: SnapshotRefresh,
+    root: &PublicKey,
+    now: &str,
+) -> Result<Value, ContractError> {
+    let receipt = match refresh {
+        SnapshotRefresh::Snapshot(snapshot) => {
+            cache.store_snapshot(&snapshot, root, now)?;
+            return Ok(snapshot);
+        }
+        SnapshotRefresh::Unchanged(receipt) => receipt,
+    };
+    match cache.store_unchanged(&receipt, root, now) {
+        Ok(()) => Ok(receipt),
+        Err(error) if error.code == "DIGEST_MISMATCH" => {
+            match client.refresh_for(repository_uuid, None)? {
+                SnapshotRefresh::Snapshot(snapshot) => {
+                    cache.store_snapshot(&snapshot, root, now)?;
+                    Ok(snapshot)
+                }
+                // refresh_for refuses a receipt to a request that offered no
+                // digest; reaching here would mean it did not.
+                SnapshotRefresh::Unchanged(_) => Err(error),
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Ensure the cached snapshot is fresh *and* was selected for this repository.
 /// The service filters a snapshot to the rulings that govern the asking
 /// repository plus company-wide direction; the cache holds one snapshot for
@@ -2057,21 +2095,15 @@ pub fn ensure_authority_snapshot_for(
         .refresh_for(repository_uuid, known.as_deref())
     {
         Ok(refresh) => {
-            let answer = match &refresh {
-                SnapshotRefresh::Snapshot(snapshot) => {
-                    company
-                        .cache
-                        .store_snapshot(snapshot, &company.root, &now)?;
-                    snapshot
-                }
-                SnapshotRefresh::Unchanged(receipt) => {
-                    company
-                        .cache
-                        .store_unchanged(receipt, &company.root, &now)?;
-                    receipt
-                }
-            };
-            let cursor = crate::json::get_str(answer, "authority_cursor")
+            let answer = store_refresh(
+                &company.client,
+                &mut company.cache,
+                repository_uuid,
+                refresh,
+                &company.root,
+                &now,
+            )?;
+            let cursor = crate::json::get_str(&answer, "authority_cursor")
                 .map(str::to_owned)
                 .unwrap_or_else(|| "0".to_owned());
             if requested_cursor.is_some() {

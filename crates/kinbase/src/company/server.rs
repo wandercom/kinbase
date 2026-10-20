@@ -5240,6 +5240,85 @@ nonce_retention_seconds = 1300
         assert_ne!(cache.known_content_digest(""), Some(known));
     }
 
+    #[test]
+    fn a_receipt_for_content_replaced_meanwhile_is_followed_by_one_full_refresh() {
+        use crate::company::client::{Client, SnapshotRefresh};
+        let (service, _) = service_with_a_ruling();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let mut config = service.state.config.clone();
+        config.bind = address;
+        let state = Arc::new(ServiceState {
+            config,
+            root: service.root.clone(),
+            started_at: crate::time::now_rfc3339_millis(),
+            views: Default::default(),
+            snapshots: Default::default(),
+        });
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let state = Arc::clone(&state);
+                std::thread::spawn(move || handle_connection(stream, state));
+            }
+        });
+        let cache_root = service.temp.path().join("client-cache");
+        let client = Client::new(
+            &format!("http://{address}"),
+            crate::config::TokenRecord {
+                token: "facts-one".to_owned(),
+            },
+            PrivateKey::generate(),
+            Some(service.root.public()),
+            cache_root.clone(),
+            false,
+        )
+        .unwrap();
+        let mut cache = crate::company::cache::Cache::open(&cache_root).unwrap();
+        let now = crate::time::now_rfc3339_millis();
+        let SnapshotRefresh::Snapshot(snapshot) = client.refresh_for("", None).unwrap() else {
+            panic!("a cold refresh was answered with a receipt");
+        };
+        cache
+            .store_snapshot(&snapshot, &service.root.public(), &now)
+            .unwrap();
+        let known = cache.known_content_digest("").unwrap();
+        let receipt = client.refresh_for("", Some(&known)).unwrap();
+        assert!(matches!(receipt, SnapshotRefresh::Unchanged(_)));
+        // Another refresh replaces the cached content before the receipt lands.
+        let replaced = service
+            .root
+            .sign_document(
+                "receipt",
+                &json!({
+                    "schema": "kinbase-snapshot/1",
+                    "company_id": snapshot["company_id"],
+                    "cursor": snapshot["cursor"],
+                    "facts": [],
+                    "facts_scope": "",
+                    "certificates": [],
+                    "content_digest": "e".repeat(64),
+                }),
+            )
+            .unwrap();
+        cache
+            .store_snapshot(&replaced, &service.root.public(), &now)
+            .unwrap();
+        let stored = crate::repository::store_refresh(
+            &client,
+            &mut cache,
+            "",
+            receipt,
+            &service.root.public(),
+            &now,
+        )
+        .expect("one full refresh follows the refused receipt");
+        assert_eq!(stored["schema"], "kinbase-snapshot/1");
+        assert_eq!(
+            cache.known_content_digest("").as_deref(),
+            Some(known.as_str())
+        );
+    }
+
     /// The memo answers "unchanged" without building the content, so it is
     /// only as sound as its key: everything the content depends on must be in
     /// the cached reduction or in the key. A field added to the snapshot fails
