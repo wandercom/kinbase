@@ -23,6 +23,14 @@ static SEQUENCE: AtomicU64 = AtomicU64::new(0);
 /// of a rebuild.
 pub const DEFAULT_READ_TIMEOUT_SECONDS: u64 = 20;
 
+/// A root-verified answer to a snapshot refresh.
+pub enum SnapshotRefresh {
+    /// The whole snapshot, to store in place of the cached one.
+    Snapshot(Value),
+    /// A signed receipt that the offered content is still Company's answer.
+    Unchanged(Value),
+}
+
 pub struct Client {
     pub host: String,
     pub port: u16,
@@ -160,21 +168,29 @@ impl Client {
         self.get_ok("/status")
     }
 
-    /// Fetch and verify a signed snapshot bound to a fresh client nonce.
-    pub fn snapshot(&self) -> Result<Value, ContractError> {
-        self.snapshot_for("")
-    }
-
-    /// The snapshot a repository needs: company-wide direction plus the rulings
-    /// that govern this repository. Asking for everything is how the response
-    /// outgrew the body ceiling and froze every cache in the estate.
-    pub fn snapshot_for(&self, repository_uuid: &str) -> Result<Value, ContractError> {
+    /// Refresh the snapshot a repository needs: company-wide direction plus
+    /// the rulings that govern this repository. Asking for everything is how
+    /// the response outgrew the body ceiling and froze every cache in the
+    /// estate. `known` offers the content digest of the snapshot already held;
+    /// Company answers with the whole snapshot, or with a signed receipt that
+    /// the offered content is still its answer. Both are root-verified and
+    /// must echo this request's fresh nonce.
+    pub fn refresh_for(
+        &self,
+        repository_uuid: &str,
+        known: Option<&str>,
+    ) -> Result<SnapshotRefresh, ContractError> {
         let nonce = crate::crypto::random_token();
-        let path = if repository_uuid.is_empty() {
+        let mut path = if repository_uuid.is_empty() {
             format!("/snapshot?nonce={nonce}")
         } else {
             format!("/snapshot?nonce={nonce}&repository={repository_uuid}")
         };
+        // Only a well-formed digest reaches the query string.
+        let known = known.filter(|digest| super::cache::is_content_digest(digest));
+        if let Some(known) = known {
+            path.push_str(&format!("&known={known}"));
+        }
         let response = self.request_within("GET", &path, None, self.snapshot_timeout)?;
         if response.status >= 300 {
             return Err(error_from_response(&response));
@@ -204,7 +220,19 @@ impl Client {
                 "Refresh again; a replayed snapshot cannot rebuild trust.",
             ));
         }
-        Ok(snapshot)
+        if crate::json::get_str(&snapshot, "schema")
+            == Some(super::server::SNAPSHOT_UNCHANGED_SCHEMA)
+        {
+            if known.is_none() || crate::json::get_str(&snapshot, "content_digest") != known {
+                return Err(ContractError::integrity(
+                    "DIGEST_MISMATCH",
+                    "Company's unchanged receipt names content this client did not offer",
+                    "Refresh again without a known digest to fetch the full snapshot.",
+                ));
+            }
+            return Ok(SnapshotRefresh::Unchanged(snapshot));
+        }
+        Ok(SnapshotRefresh::Snapshot(snapshot))
     }
 
     /// Fetch and root-verify the latest steward-signed authority registry.
@@ -451,7 +479,7 @@ mod snapshot_timeout_tests {
             Duration::from_secs(DEFAULT_READ_TIMEOUT_SECONDS)
         );
         let started = Instant::now();
-        let Err(error) = client.snapshot_for("") else {
+        let Err(error) = client.refresh_for("", None) else {
             panic!("no answer within the budget must be an error");
         };
         let waited = started.elapsed();

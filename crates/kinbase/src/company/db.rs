@@ -1142,6 +1142,32 @@ impl CompanyDb {
         Ok(next)
     }
 
+    /// Row count, newest cursor and retained count of the fact-version index.
+    /// Rows are written after their event is appended, so the event cursor
+    /// alone does not say whether a version row has landed; `retained` is
+    /// published in snapshots, so a change to it must change the mark too.
+    pub fn fact_versions_mark(&self) -> Result<(i64, i64, i64), ContractError> {
+        self.connection
+            .query_row(
+                "SELECT COUNT(*), COALESCE(MAX(cursor), 0), COALESCE(SUM(retained), 0) FROM fact_versions",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .map_err(sqlite_error("fact versions mark"))
+    }
+
+    /// Row count and newest id of one kind of audit record. Audit rows are
+    /// insert-only and append no event.
+    pub fn audit_mark(&self, kind: &str) -> Result<(i64, i64), ContractError> {
+        self.connection
+            .query_row(
+                "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM audit WHERE kind=?1",
+                params![kind],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(sqlite_error("audit mark"))
+    }
+
     pub fn fact_versions(&self, fact_id: &str) -> Result<Vec<Value>, ContractError> {
         let mut statement = self
             .connection

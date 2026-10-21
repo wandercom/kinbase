@@ -6,6 +6,18 @@ Notable changes to Kinbase. Dates are UTC.
 
 ### Added
 
+- Unchanged snapshot receipts. A full `/snapshot` now carries a signed `content_digest`;
+  a client offers it back as `known`, and when its content is still Company's answer
+  for that client's scopes and repository the service replies with a ~600-byte
+  root-signed `kinbase-snapshot-unchanged/1` receipt (fresh nonce, cursors and
+  validity clocks) instead of the snapshot. The cache keeps the content it verified,
+  takes freshness from the receipt in one transaction, and falls back to one full
+  refresh if another refresh replaced the content meanwhile. On a 22k-event store an
+  unchanged refresh costs ~23 ms and 627 B instead of 443 ms and 12.1 MB, and one read
+  against the hourly budget instead of the whole snapshot. `kinbase doctor` reports
+  `cache_freshness_record`: which signed document the cache's clocks came from,
+  re-verified.
+
 - `[company] snapshot_timeout_seconds` in the user config: how long a snapshot
   read waits for the Company service (integer 1..=600, default 20, the previous
   fixed bound). A snapshot costs what the whole Company log costs, and in
