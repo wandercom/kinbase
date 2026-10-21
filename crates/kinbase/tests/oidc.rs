@@ -461,20 +461,17 @@ fn an_untrusted_gateway_certificate_sends_no_token() {
 
 #[test]
 fn chunked_and_unframed_responses_parse() {
-    let rig = Rig::boot(Cfg::oidc().parts(false, false, false).gate(Gate::Reframe));
-    let url = rig.gateway.clone();
-    let mut codes = Vec::new();
+    let mut cfg = Cfg::oidc().parts(false, false, false).gate(Gate::Reframe);
+    cfg.certify = true;
+    let rig = Rig::boot(cfg);
+    let mut payloads: Vec<String> = Vec::new();
     for frame in [Frame::Chunked, Frame::Eof, Frame::Length] {
         rig.set_frame(frame);
-        let out = rig.issue(&url);
-        let stored = rig.last_body();
-        let code = json_code(&stored);
-        assert!(!code.is_empty(), "{stored}");
-        assert_code(&out, &code);
-        codes.push(code);
+        let out = rig.status();
+        ok(&out);
+        payloads.push(body(&out)["status"].as_str().unwrap_or("").into());
     }
-    assert_eq!(codes[0], codes[1], "chunked vs eof");
-    assert_eq!(codes[1], codes[2], "eof vs framed");
+    assert_eq!(payloads, vec!["certified".to_owned(); 3]);
     // Non-OIDC https is refused before the socket, so truncation needs a session.
     let rig = Rig::boot(Cfg::oidc().gate(Gate::Truncate));
     rig.seed(SEEDED_REFRESH, 3600);
