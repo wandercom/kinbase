@@ -40,6 +40,7 @@ fn assert_authorize(url: &str, scope: &str) {
         ("code_challenge_method", "S256"),
         ("access_type", "offline"),
         ("prompt", "consent"),
+        ("tenant", "t"),
     ] {
         assert_eq!(q.get(key).map(String::as_str), Some(value), "{url}");
     }
@@ -95,6 +96,8 @@ fn edit_failure(tag: &str, script: &mut Script) {
     match tag {
         "down" => script.token_endpoint = Some("http://127.0.0.1:1/token".into()),
         "502" => script.http_status = Some(502),
+        "429" => script.http_status = Some(429),
+        "busy" => script.oauth_error = Some("temporarily_unavailable".into()),
         "text" => script.non_json = true,
         "open" => script.token_endpoint = Some("http://10.1.2.3/token".into()),
         "mismatch" => script.discovery_issuer = Some("https://not-the-issuer.example".into()),
@@ -315,6 +318,8 @@ fn refresh_failures_keep_the_session_and_send_nothing() {
     for (tag, code, echo, hidden) in [
         ("down", DOWN, "", ""),
         ("502", DOWN, "", ""),
+        ("429", DOWN, "", ""),
+        ("busy", DOWN, "", ""),
         ("text", DOWN, "", ""),
         ("open", BAD, "", ""),
         ("mismatch", BAD, "", ""),
@@ -503,5 +508,5 @@ fn session_start_without_a_session_asks_for_login() {
     let value = body(&out);
     assert_eq!(value["background_verification_started"], true);
     assert_eq!(value["company_refresh"]["started"], true);
-    assert_ne!(value["company_state"], "unreachable");
+    assert_eq!(value["company_state"], "unprobed");
 }

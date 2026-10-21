@@ -1230,6 +1230,8 @@ fn session_start(
     });
     state.company_state = if !state.certified {
         "unverified"
+    } else if reachable && connect_seconds.is_none() {
+        "unprobed"
     } else if state.cache_state == "warm" && revocation_fresh && fact_fresh {
         if reachable {
             "verified-cache"

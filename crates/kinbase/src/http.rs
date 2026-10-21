@@ -523,7 +523,7 @@ pub fn probe_connect(host: &str, port: u16) -> Result<(), ContractError> {
         })
 }
 
-/// One client request with the 250 ms connection budget and bounded
+/// One client request with the 250 ms (HTTPS: 2 s) connection budget and bounded
 /// read/write timeouts. Any failure to connect or answer within budget is
 /// `COMPANY_UNREACHABLE`.
 #[allow(clippy::too_many_arguments)]
@@ -573,9 +573,9 @@ pub fn request(
             let connection = rustls::ClientConnection::new(Arc::clone(config), name)
                 .map_err(|_| ContractError::unreachable("TLS setup failed"))?;
             tls = rustls::StreamOwned::new(connection, tcp);
-            tls.conn
-                .complete_io(&mut tls.sock)
-                .map_err(|_| ContractError::unreachable("TLS handshake failed"))?;
+            tls.conn.complete_io(&mut tls.sock).map_err(|error| {
+                ContractError::unreachable(format!("TLS handshake failed ({error})"))
+            })?;
             &mut tls
         }
     };

@@ -602,14 +602,14 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
             )?;
             let url = required_str(section, "url", "company")?.to_owned();
             let allow_non_loopback = optional_bool(section, "allow_non_loopback", "company")?;
-            let text = |key: &str| {
+            let optional_text = |key: &str| {
                 section
                     .get(key)
                     .map(|_| required_str(section, key, "company").map(str::to_owned))
                     .transpose()
             };
-            let oidc_issuer = text("oidc_issuer")?;
-            let oidc_client_id = text("oidc_client_id")?;
+            let oidc_issuer = optional_text("oidc_issuer")?;
+            let oidc_client_id = optional_text("oidc_client_id")?;
             let oidc_client_secret_file =
                 optional_path(section, "oidc_client_secret_file", "company")?;
             if oidc_issuer.is_some() != oidc_client_id.is_some()

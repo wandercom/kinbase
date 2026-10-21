@@ -647,7 +647,7 @@ fn discovery(tcp: &mut TcpStream, base: &str, inner: &Inner) {
     if script.offline_access {
         scopes.push("offline_access".to_owned());
     }
-    let body = json!({"issuer": issuer, "authorization_endpoint": format!("{base}/authorize"), "token_endpoint": token, "scopes_supported": scopes}).to_string();
+    let body = json!({"issuer": issuer, "authorization_endpoint": format!("{base}/authorize?tenant=t"), "token_endpoint": token, "scopes_supported": scopes}).to_string();
     let _ = write_http(tcp, 200, "application/json", &body);
 }
 
@@ -693,7 +693,7 @@ fn token_endpoint(tcp: &mut TcpStream, req: &[u8], inner: &Inner) {
 
 #[rustfmt::skip]
 fn fault_response(tcp: &mut TcpStream, script: &Script) -> bool {
-    if let Some(status) = script.http_status && status >= 500 {
+    if let Some(status) = script.http_status && (status >= 500 || status == 429) {
         let _ = write_http(tcp, status, "application/json", r#"{"error":"server_error"}"#);
         return true;
     }
@@ -1079,35 +1079,43 @@ fn serve_company(root: &Path, root_key: &PrivateKey) -> (Child, u16) {
         .save_new(&root_path, "Company root key")
         .expect("root key");
     kinbase::crypto::write_0600(&token_path, FACTS.as_bytes(), "facts token").expect("token");
-    let port = TcpListener::bind("127.0.0.1:0")
-        .and_then(|l| l.local_addr())
-        .expect("port")
-        .port();
-    let config = format!(
-        "schema_version = \"1\"\ncompany_id = \"company-demo\"\nsqlite_path = \"{}\"\nbind = \"127.0.0.1:{port}\"\nroot_key_file = \"{}\"\nfacts_token_file = \"{}\"\nauth_failures_per_minute = 1000\ndefault_fact_freshness_seconds = 900\ncandidate_lifetime_seconds = 900\nclock_skew_seconds = 300\nnonce_retention_seconds = 1300\n",
-        root.join("company.sqlite").display(),
-        root_path.display(),
-        token_path.display(),
-    );
-    kinbase::crypto::write_0600(&config_path, config.as_bytes(), "service config").expect("cfg");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_kinbase"))
-        .args(["company", "serve", "--config"])
-        .arg(&config_path)
-        .arg("--json")
-        .env("HOME", root)
-        .env("XDG_CONFIG_HOME", root.join("svc-config"))
-        .env("XDG_STATE_HOME", root.join("svc-state"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn_alone()
-        .expect("serve");
-    let mut banner = String::new();
-    std::io::BufReader::new(child.stdout.take().expect("stdout"))
-        .read_line(&mut banner)
-        .expect("banner");
-    assert!(banner.contains("company-serving"), "banner: {banner}");
-    (child, port)
+    // The picked port can be taken before the service binds it; pick again.
+    for _ in 0..5 {
+        let port = TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .expect("port")
+            .port();
+        let config = format!(
+            "schema_version = \"1\"\ncompany_id = \"company-demo\"\nsqlite_path = \"{}\"\nbind = \"127.0.0.1:{port}\"\nroot_key_file = \"{}\"\nfacts_token_file = \"{}\"\nauth_failures_per_minute = 1000\ndefault_fact_freshness_seconds = 900\ncandidate_lifetime_seconds = 900\nclock_skew_seconds = 300\nnonce_retention_seconds = 1300\n",
+            root.join("company.sqlite").display(),
+            root_path.display(),
+            token_path.display(),
+        );
+        kinbase::crypto::write_0600(&config_path, config.as_bytes(), "service config")
+            .expect("cfg");
+        let mut child = Command::new(env!("CARGO_BIN_EXE_kinbase"))
+            .args(["company", "serve", "--config"])
+            .arg(&config_path)
+            .arg("--json")
+            .env("HOME", root)
+            .env("XDG_CONFIG_HOME", root.join("svc-config"))
+            .env("XDG_STATE_HOME", root.join("svc-state"))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn_alone()
+            .expect("serve");
+        let mut banner = String::new();
+        std::io::BufReader::new(child.stdout.take().expect("stdout"))
+            .read_line(&mut banner)
+            .expect("banner");
+        if banner.contains("company-serving") {
+            return (child, port);
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    panic!("company serve never bound a port");
 }
 
 fn clean(needles: &BTreeSet<String>, hay: &str) -> bool {

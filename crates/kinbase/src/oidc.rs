@@ -52,7 +52,8 @@ fn discovery(config: &Config) -> Result<Discovery, ContractError> {
         &[],
         &[],
         Duration::from_secs(20),
-    )?;
+    )
+    .map_err(provider)?;
     if !(200..300).contains(&response.status) || !response.body.is_object() {
         return Err(ContractError::unreachable("OIDC discovery failed"));
     }
@@ -66,6 +67,11 @@ fn discovery(config: &Config) -> Result<Discovery, ContractError> {
     validate_provider_url(&discovered.authorization_endpoint)?;
     validate_provider_url(&discovered.token_endpoint)?;
     Ok(discovered)
+}
+
+fn provider(mut error: ContractError) -> ContractError {
+    error.message = error.message.replacen("Company", "OIDC provider", 1);
+    error
 }
 
 fn encode(text: &str) -> String {
@@ -111,15 +117,16 @@ fn token<'a>(
         )],
         body.as_bytes(),
         Duration::from_secs(20),
-    )?;
+    )
+    .map_err(provider)?;
     if (200..300).contains(&response.status) {
         return serde_json::from_slice(&response.raw)
             .map_err(|_| ContractError::unreachable("OIDC token response was not JSON"));
     }
-    if response.status >= 500 {
+    let code = response.body.get("error").and_then(Value::as_str);
+    if response.status >= 500 || response.status == 429 || code == Some("temporarily_unavailable") {
         return Err(ContractError::unreachable("OIDC token endpoint failed"));
     }
-    let code = response.body.get("error").and_then(Value::as_str);
     if code == Some("invalid_grant") {
         return Err(denied("OIDC session is no longer valid"));
     }
@@ -273,7 +280,12 @@ pub fn login(config: &Config, json: bool) -> Result<String, ContractError> {
         ("access_type", "offline"),
         ("prompt", "consent"),
     ]);
-    let url = format!("{}?{}", discovered.authorization_endpoint, query);
+    let joiner = if discovered.authorization_endpoint.contains('?') {
+        '&'
+    } else {
+        '?'
+    };
+    let url = format!("{}{joiner}{query}", discovered.authorization_endpoint);
     if json {
         crate::output::diagnostic("login_url", serde_json::json!({"url": url}));
     } else {
@@ -335,7 +347,8 @@ pub fn login(config: &Config, json: bool) -> Result<String, ContractError> {
             let _ = http::respond(&mut stream, 400, &json!({"error":"login refused"}));
             return Err(denied("OIDC provider refused the login callback"));
         };
-        let _ = http::respond(&mut stream, 200, &json!({"status":"signed in"}));
+        let received = json!({"status":"sign-in received; return to the terminal"});
+        let _ = http::respond(&mut stream, 200, &received);
         break code.clone();
     };
     let fields = vec![
