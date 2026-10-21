@@ -34,7 +34,7 @@ struct Discovery {
 }
 
 pub fn validate_provider_url(url: &str) -> Result<(Scheme, String, u16, String), ContractError> {
-    http::parse_url(url, !url.starts_with("http://"))
+    http::parse_url(url, !url.starts_with("http://"), true)
 }
 
 fn discovery(config: &Config) -> Result<Discovery, ContractError> {
@@ -158,6 +158,27 @@ fn valid_for(token: &str, seconds: i64) -> bool {
             })
 }
 
+fn response_id_token<'a>(response: &'a Value, operation: &str) -> Result<&'a str, ContractError> {
+    let token = response
+        .get("id_token")
+        .and_then(Value::as_str)
+        .ok_or_else(|| denied(&format!("OIDC {operation} returned no usable ID token")))?;
+    if claims(token)
+        .and_then(|claims| claims.get("exp").and_then(Value::as_f64))
+        .is_none()
+    {
+        return Err(denied(&format!(
+            "OIDC {operation} returned no usable ID token"
+        )));
+    }
+    if !valid_for(token, 0) {
+        return Err(ContractError::unreachable(format!(
+            "OIDC {operation} returned a stale or unusable ID token"
+        )));
+    }
+    Ok(token)
+}
+
 fn load(path: &Path) -> Result<Session, ContractError> {
     match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -194,11 +215,7 @@ pub fn fresh_id_token(config: &Config) -> Result<String, ContractError> {
         ("refresh_token", current.refresh_token.as_str()),
     ];
     let result = token(config, &discovered.token_endpoint, fields).and_then(|response| {
-        let id_token = response
-            .get("id_token")
-            .and_then(Value::as_str)
-            .filter(|token| valid_for(token, 0))
-            .ok_or_else(|| denied("OIDC refresh returned no usable ID token"))?;
+        let id_token = response_id_token(&response, "refresh")?;
         let refresh_token = response
             .get("refresh_token")
             .and_then(Value::as_str)
@@ -328,11 +345,7 @@ pub fn login(config: &Config, json: bool) -> Result<String, ContractError> {
         ("code_verifier", verifier.as_str()),
     ];
     let response = token(config, &discovered.token_endpoint, fields)?;
-    let id_token = response
-        .get("id_token")
-        .and_then(Value::as_str)
-        .filter(|token| valid_for(token, 0))
-        .ok_or_else(|| denied("OIDC login returned no usable ID token"))?;
+    let id_token = response_id_token(&response, "login")?;
     let refresh_token = response
         .get("refresh_token")
         .and_then(Value::as_str)

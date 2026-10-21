@@ -57,7 +57,21 @@ impl Client {
         cache_root: PathBuf,
         allow_non_loopback: bool,
     ) -> Result<Self, ContractError> {
-        let (scheme, host, port, base_path) = http::parse_url(url, allow_non_loopback)?;
+        Self::from_user_config(url, token, key, root, cache_root, allow_non_loopback, None)
+    }
+
+    pub(crate) fn from_user_config(
+        url: &str,
+        token: TokenRecord,
+        key: PrivateKey,
+        root: Option<PublicKey>,
+        cache_root: PathBuf,
+        allow_non_loopback: bool,
+        user: Option<&UserConfig>,
+    ) -> Result<Self, ContractError> {
+        let oidc = user.map(UserConfig::oidc).transpose()?.flatten();
+        let (scheme, host, port, base_path) =
+            http::parse_url(url, allow_non_loopback, oidc.is_some())?;
         Ok(Self {
             scheme,
             host,
@@ -69,7 +83,7 @@ impl Client {
             cache_root,
             read_timeout: Duration::from_secs(DEFAULT_READ_TIMEOUT_SECONDS),
             snapshot_timeout: Duration::from_secs(DEFAULT_READ_TIMEOUT_SECONDS),
-            oidc: None,
+            oidc,
             bytes_sent: std::cell::Cell::new(0),
         })
     }
@@ -80,11 +94,6 @@ impl Client {
     pub fn with_snapshot_timeout_seconds(mut self, seconds: u64) -> Self {
         self.snapshot_timeout = Duration::from_secs(seconds);
         self
-    }
-
-    pub fn with_oidc(mut self, user: Option<&UserConfig>) -> Result<Self, ContractError> {
-        self.oidc = user.map(UserConfig::oidc).transpose()?.flatten();
-        Ok(self)
     }
 
     fn nonce(&self) -> String {
@@ -415,7 +424,7 @@ pub fn deliver_to_channel(
     body: &Value,
     key: &PrivateKey,
 ) -> Result<Response, ContractError> {
-    let (scheme, host, port, path) = http::parse_url(channel, false)?;
+    let (scheme, host, port, path) = http::parse_url(channel, false, false)?;
     if scheme != http::Scheme::Http {
         return Err(ContractError::invariant(
             "authority channel must use loopback http://",

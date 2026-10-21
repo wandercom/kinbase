@@ -2219,7 +2219,11 @@ pub fn issue_certificate(
         .company
         .as_ref()
         .is_some_and(|company| company.allow_non_loopback);
-    crate::config::validate_loopback_url(company_url, allow_non_loopback)?;
+    let oidc = launcher
+        .user
+        .as_ref()
+        .is_some_and(crate::config::UserConfig::oidc_configured);
+    crate::config::validate_loopback_url(company_url, allow_non_loopback, oidc)?;
     if launcher.company_env_present {
         return Err(ContractError::new(
             "PROCESSOR_UNAUTHORIZED",
@@ -2250,15 +2254,15 @@ pub fn issue_certificate(
             "Ask the Company steward to issue the certificate, or configure admin_token_file.",
         ));
     };
-    let client = crate::company::client::Client::new(
+    let client = crate::company::client::Client::from_user_config(
         &access.url,
         admin,
         access.client_key()?,
         Some(access.root_key()?),
         access.cache_root.clone(),
         access.allow_non_loopback,
-    )?
-    .with_oidc(launcher.user.as_ref())?;
+        launcher.user.as_ref(),
+    )?;
     let hint = crate::codebase::git(&repo.root, &["remote", "get-url", "origin"])
         .map(|remote| normalize_hint(&remote))
         .unwrap_or_default();

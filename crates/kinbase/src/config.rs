@@ -602,7 +602,6 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
             )?;
             let url = required_str(section, "url", "company")?.to_owned();
             let allow_non_loopback = optional_bool(section, "allow_non_loopback", "company")?;
-            validate_loopback_url(&url, allow_non_loopback)?;
             let text = |key: &str| {
                 section
                     .get(key)
@@ -620,6 +619,7 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                     "company OIDC needs both oidc_issuer and oidc_client_id",
                 ));
             }
+            validate_loopback_url(&url, allow_non_loopback, oidc_issuer.is_some())?;
             if let Some(issuer) = &oidc_issuer {
                 crate::oidc::validate_provider_url(issuer)?;
                 crate::oidc::validate_provider_url(&url)?;
@@ -949,11 +949,20 @@ fn default_host_instance() -> String {
     })
 }
 
-pub fn validate_loopback_url(url: &str, allow_non_loopback: bool) -> Result<(), ContractError> {
+pub fn validate_loopback_url(
+    url: &str,
+    allow_non_loopback: bool,
+    oidc: bool,
+) -> Result<(), ContractError> {
+    let scheme = if oidc {
+        "http:// or https://"
+    } else {
+        "http://"
+    };
     let rest = url
         .strip_prefix("http://")
-        .or_else(|| url.strip_prefix("https://"))
-        .ok_or_else(|| config_error("company.url must be an http:// or https:// URL"))?;
+        .or_else(|| url.strip_prefix("https://").filter(|_| oidc))
+        .ok_or_else(|| config_error(format!("company.url must be an {scheme} URL")))?;
     let authority = rest.split('/').next().unwrap_or_default();
     let host = authority
         .rsplit_once(':')
@@ -973,6 +982,12 @@ pub fn validate_loopback_url(url: &str, allow_non_loopback: bool) -> Result<(), 
 }
 
 impl UserConfig {
+    pub fn oidc_configured(&self) -> bool {
+        self.company
+            .as_ref()
+            .is_some_and(|company| company.oidc_issuer.is_some())
+    }
+
     pub fn oidc(&self) -> Result<Option<crate::oidc::Config>, ContractError> {
         let Some(company) = &self.company else {
             return Ok(None);

@@ -71,7 +71,10 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
     let launcher = crate::launcher::Launcher::load()?;
     match command {
         Command::Auth(AuthCommand::Login) => {
-            let config = launcher.user.as_ref().map_or(Ok(None), crate::config::UserConfig::oidc)?
+            let config = launcher
+                .user
+                .as_ref()
+                .map_or(Ok(None), crate::config::UserConfig::oidc)?
                 .ok_or_else(|| ContractError::invariant("OIDC is not configured"))?;
             let email = crate::oidc::login(&config, json)?;
             if json {

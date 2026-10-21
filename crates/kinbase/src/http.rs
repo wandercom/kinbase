@@ -314,15 +314,20 @@ pub fn error_body(error: &ContractError) -> Value {
 pub fn parse_url(
     url: &str,
     allow_non_loopback: bool,
+    oidc: bool,
 ) -> Result<(Scheme, String, u16, String), ContractError> {
     let (scheme, rest, default_port) = if let Some(rest) = url.strip_prefix("http://") {
         (Scheme::Http, rest, "80")
-    } else if let Some(rest) = url.strip_prefix("https://") {
+    } else if let Some(rest) = url.strip_prefix("https://").filter(|_| oidc) {
         (Scheme::Https, rest, "443")
+    } else if !oidc {
+        return Err(ContractError::invariant(
+            "Company URL must use http:// over loopback",
+        ));
     } else {
         return Err(ContractError::invariant("URL must use http:// or https://"));
     };
-    if url.bytes().any(|byte| byte <= b' ' || byte == 127) {
+    if oidc && url.bytes().any(|byte| byte <= b' ' || byte == 127) {
         return Err(ContractError::invariant(
             "URL contains whitespace or a control byte",
         ));
@@ -975,8 +980,8 @@ mod endpoint_url_tests {
     /// COMPANY_UNREACHABLE, which points at a healthy network.
     #[test]
     fn a_company_url_with_no_host_is_refused_as_configuration() {
-        let error =
-            parse_url("http://:8421/base", true).expect_err("a URL naming no host was accepted");
+        let error = parse_url("http://:8421/base", true, false)
+            .expect_err("a URL naming no host was accepted");
         assert_eq!(error.code, "CONFIG_INVARIANT");
     }
 }

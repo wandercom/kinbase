@@ -113,15 +113,15 @@ impl Launcher {
         };
         let root = access.root_key()?;
         let cache = Cache::open(&access.cache_root)?;
-        let client = Client::new(
+        let client = Client::from_user_config(
             &access.url,
             access.facts_token.clone(),
             access.client_key()?,
             Some(root.clone()),
             access.cache_root.clone(),
             access.allow_non_loopback,
+            self.user.as_ref(),
         )?
-        .with_oidc(self.user.as_ref())?
         .with_snapshot_timeout_seconds(access.snapshot_timeout_seconds);
         Ok(Some(CompanyAccess {
             client,
@@ -155,7 +155,14 @@ impl Launcher {
         self.shared
             .company
             .as_ref()
-            .and_then(|access| crate::http::parse_url(&access.url, access.allow_non_loopback).ok())
+            .and_then(|access| {
+                crate::http::parse_url(
+                    &access.url,
+                    access.allow_non_loopback,
+                    self.user.as_ref().is_some_and(UserConfig::oidc_configured),
+                )
+                .ok()
+            })
             .map(|(_, _, port, _)| port)
     }
 
