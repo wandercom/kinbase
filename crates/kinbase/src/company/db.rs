@@ -2,11 +2,12 @@
 //! append-only event table with a monotonic cursor, authority registry,
 //! directory, questions/answers/Unknowns, consumed nonces, tokens with
 //! first-use client-key binding, throttles, certificates, manifest
-//! observations, and fact version history.
+//! observations, fact version history, and append-only usage rows.
 
 use crate::error::ContractError;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
+use std::collections::BTreeMap;
 use std::path::Path;
 
 pub const COMPANY_SCHEMA_VERSION: i64 = 2;
@@ -172,7 +173,17 @@ impl CompanyDb {
                  CREATE TABLE IF NOT EXISTS metrics(name TEXT PRIMARY KEY, count INTEGER NOT NULL);
                  CREATE TABLE IF NOT EXISTS authority_calls(
                     task_id TEXT NOT NULL, arm TEXT NOT NULL, seed TEXT NOT NULL, count INTEGER NOT NULL,
-                    PRIMARY KEY(task_id, arm, seed));",
+                    PRIMARY KEY(task_id, arm, seed));
+                 CREATE TABLE IF NOT EXISTS usage_events(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at TEXT NOT NULL,
+                    principal_id TEXT NOT NULL, client TEXT NOT NULL, token_role TEXT NOT NULL,
+                    action TEXT NOT NULL, target TEXT NOT NULL, status INTEGER NOT NULL,
+                    error_code TEXT, duration_ms INTEGER NOT NULL);
+                 CREATE INDEX IF NOT EXISTS usage_events_recorded_at ON usage_events(recorded_at);
+                 CREATE TRIGGER IF NOT EXISTS usage_events_immutable_update BEFORE UPDATE ON usage_events
+                    BEGIN SELECT RAISE(ABORT, 'usage records are append-only'); END;
+                 CREATE TRIGGER IF NOT EXISTS usage_events_immutable_delete BEFORE DELETE ON usage_events
+                    BEGIN SELECT RAISE(ABORT, 'usage records are append-only'); END;",
             )
             .map_err(sqlite_error("company schema"))?;
         self.connection
@@ -1271,6 +1282,240 @@ impl CompanyDb {
             map.insert(name, Value::from(count));
         }
         Ok(Value::Object(map))
+    }
+
+    // ----- usage -----
+
+    /// Append one usage row (`crate::usage`). Every string is refused unless
+    /// it meets the canonical text rule; a writer never stores a folded or
+    /// empty stand-in.
+    ///
+    /// The row commits with `synchronous=NORMAL`: in WAL mode that is a page
+    /// write rather than a disk flush, and a request already pays three FULL
+    /// commits for its nonce, client pair and rate counter. A usage row lost
+    /// to a power cut costs a count, never an authority or a receipt, so it
+    /// does not get to double the request's flush cost.
+    pub fn append_usage(&self, event: &crate::usage::UsageEvent) -> Result<(), ContractError> {
+        for (field, value) in [
+            ("recorded_at", event.recorded_at.as_str()),
+            ("principal_id", event.principal_id.as_str()),
+            ("client", event.client.as_str()),
+            ("token_role", event.token_role.as_str()),
+            ("action", event.action),
+            ("target", event.target),
+            (
+                "error_code",
+                event.error_code.as_deref().unwrap_or_default(),
+            ),
+        ] {
+            crate::json::validate_text(value).map_err(|reason| {
+                ContractError::invariant(format!("usage {field} breaks the text rule ({reason})"))
+            })?;
+        }
+        self.connection
+            .execute_batch("PRAGMA synchronous=NORMAL")
+            .map_err(sqlite_error("usage synchronous"))?;
+        let inserted = self
+            .connection
+            .execute(
+                "INSERT INTO usage_events(recorded_at, principal_id, client, token_role, action, target, status, error_code, duration_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    event.recorded_at,
+                    event.principal_id,
+                    event.client,
+                    event.token_role,
+                    event.action,
+                    event.target,
+                    event.status,
+                    event.error_code,
+                    i64::try_from(event.duration_ms).unwrap_or(i64::MAX)
+                ],
+            )
+            .map(|_| ())
+            .map_err(sqlite_error("usage"));
+        // The connection may serve another write; it goes back to FULL even
+        // when the insert failed.
+        let restored = self
+            .connection
+            .execute_batch("PRAGMA synchronous=FULL")
+            .map_err(sqlite_error("usage synchronous"));
+        inserted.and(restored)
+    }
+
+    /// Aggregates over the usage rows inside `window`, one query per
+    /// breakdown so the counting happens in SQLite rather than in memory.
+    pub fn usage_summary(
+        &self,
+        window: &crate::usage::Window,
+        bucket: crate::usage::Bucket,
+    ) -> Result<crate::usage::Summary, ContractError> {
+        const WINDOW: &str =
+            "(?1 IS NULL OR recorded_at >= ?1) AND (?2 IS NULL OR recorded_at < ?2)";
+        let since = window.since.as_deref();
+        let until = window.until.as_deref();
+        let totals = self
+            .connection
+            .query_row(
+                &format!(
+                    "SELECT COUNT(*), COALESCE(SUM(status < 400), 0), COUNT(DISTINCT principal_id),
+                            COUNT(DISTINCT principal_id || ' ' || client), MIN(recorded_at), MAX(recorded_at)
+                     FROM usage_events WHERE {WINDOW}"
+                ),
+                params![since, until],
+                |row| {
+                    let requests: i64 = row.get(0)?;
+                    let succeeded: i64 = row.get(1)?;
+                    Ok(json!({
+                        "requests": requests,
+                        "succeeded": succeeded,
+                        "refused": requests - succeeded,
+                        "principals": row.get::<_, i64>(2)?,
+                        "clients": row.get::<_, i64>(3)?,
+                        "first_at": row.get::<_, Option<String>>(4)?,
+                        "last_at": row.get::<_, Option<String>>(5)?
+                    }))
+                },
+            )
+            .map_err(sqlite_error("usage totals"))?;
+
+        let mut actions_by_principal: BTreeMap<String, serde_json::Map<String, Value>> =
+            BTreeMap::new();
+        for (principal, action, count) in self.usage_rows(
+            &format!(
+                "SELECT principal_id, action, COUNT(*) FROM usage_events WHERE {WINDOW}
+                 GROUP BY principal_id, action"
+            ),
+            params![since, until],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )? {
+            actions_by_principal
+                .entry(principal)
+                .or_default()
+                .insert(action, Value::from(count));
+        }
+        let by_principal = self.usage_rows(
+            &format!(
+                "SELECT principal_id, COUNT(*), COALESCE(SUM(status < 400), 0), COUNT(DISTINCT client),
+                        MIN(recorded_at), MAX(recorded_at)
+                 FROM usage_events WHERE {WINDOW}
+                 GROUP BY principal_id ORDER BY COUNT(*) DESC, principal_id"
+            ),
+            params![since, until],
+            |row| {
+                let principal: String = row.get(0)?;
+                let requests: i64 = row.get(1)?;
+                let succeeded: i64 = row.get(2)?;
+                Ok(json!({
+                    "principal_id": principal,
+                    "requests": requests,
+                    "succeeded": succeeded,
+                    "refused": requests - succeeded,
+                    "clients": row.get::<_, i64>(3)?,
+                    "first_at": row.get::<_, String>(4)?,
+                    "last_at": row.get::<_, String>(5)?
+                }))
+            },
+        )?
+        .into_iter()
+        .map(|mut row| {
+            let principal = row["principal_id"].as_str().unwrap_or_default().to_owned();
+            row["actions"] = Value::Object(
+                actions_by_principal
+                    .remove(&principal)
+                    .unwrap_or_default(),
+            );
+            row
+        })
+        .collect();
+        let by_client = self.usage_rows(
+            &format!(
+                "SELECT principal_id, client, token_role, COUNT(*), MAX(recorded_at)
+                 FROM usage_events WHERE {WINDOW}
+                 GROUP BY principal_id, client, token_role ORDER BY COUNT(*) DESC, principal_id, client"
+            ),
+            params![since, until],
+            |row| {
+                Ok(json!({
+                    "principal_id": row.get::<_, String>(0)?,
+                    "client": row.get::<_, String>(1)?,
+                    "token_role": row.get::<_, String>(2)?,
+                    "requests": row.get::<_, i64>(3)?,
+                    "last_at": row.get::<_, String>(4)?
+                }))
+            },
+        )?;
+        let by_action = self.usage_rows(
+            &format!(
+                "SELECT action, COUNT(*), COALESCE(SUM(status < 400), 0), COUNT(DISTINCT principal_id),
+                        SUM(duration_ms) / COUNT(*)
+                 FROM usage_events WHERE {WINDOW}
+                 GROUP BY action ORDER BY COUNT(*) DESC, action"
+            ),
+            params![since, until],
+            |row| {
+                let requests: i64 = row.get(1)?;
+                let succeeded: i64 = row.get(2)?;
+                Ok(json!({
+                    "action": row.get::<_, String>(0)?,
+                    "requests": requests,
+                    "succeeded": succeeded,
+                    "refused": requests - succeeded,
+                    "principals": row.get::<_, i64>(3)?,
+                    "mean_duration_ms": row.get::<_, i64>(4)?
+                }))
+            },
+        )?;
+        let by_window = self.usage_rows(
+            &format!(
+                "SELECT substr(recorded_at, 1, ?3) AS bucket, COUNT(*), COALESCE(SUM(status < 400), 0),
+                        COUNT(DISTINCT principal_id)
+                 FROM usage_events WHERE {WINDOW}
+                 GROUP BY bucket ORDER BY bucket"
+            ),
+            params![since, until, bucket.prefix_len() as i64],
+            |row| {
+                let requests: i64 = row.get(1)?;
+                let succeeded: i64 = row.get(2)?;
+                Ok(json!({
+                    "window": row.get::<_, String>(0)?,
+                    "requests": requests,
+                    "succeeded": succeeded,
+                    "refused": requests - succeeded,
+                    "principals": row.get::<_, i64>(3)?
+                }))
+            },
+        )?;
+        Ok(crate::usage::Summary {
+            totals,
+            by_principal,
+            by_client,
+            by_action,
+            by_window,
+        })
+    }
+
+    fn usage_rows<T>(
+        &self,
+        sql: &str,
+        parameters: impl rusqlite::Params,
+        map: impl FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<T>,
+    ) -> Result<Vec<T>, ContractError> {
+        let mut statement = self
+            .connection
+            .prepare(sql)
+            .map_err(sqlite_error("prepare usage"))?;
+        let rows = statement
+            .query_map(parameters, map)
+            .map_err(sqlite_error("query usage"))?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(sqlite_error("usage rows"))
     }
 
     pub fn authority_call_count(

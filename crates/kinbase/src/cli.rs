@@ -76,6 +76,19 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
         Command::Company(CompanyCommand::Serve { config }) => {
             crate::company::serve(&config, json).map_err(internal)?;
         }
+        Command::Company(CompanyCommand::Usage {
+            config,
+            since,
+            until,
+            bucket,
+        }) => {
+            let bucket = match bucket {
+                UsageBucket::Day => crate::usage::Bucket::Day,
+                UsageBucket::Hour => crate::usage::Bucket::Hour,
+            };
+            crate::company::usage(&config, since.as_deref(), until.as_deref(), bucket, json)
+                .map_err(internal)?;
+        }
         Command::Repo(RepoCommand::Issue { repo, company }) => {
             crate::repository::issue_certificate(launcher, &repo, &company, json)
                 .map_err(internal)?;

@@ -41,6 +41,7 @@ pub mod score;
 pub mod session;
 pub mod store;
 pub mod time;
+pub mod usage;
 
 pub use crate::command_types::*;
 pub use clap::Parser;

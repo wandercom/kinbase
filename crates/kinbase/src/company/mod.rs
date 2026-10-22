@@ -115,6 +115,42 @@ pub fn serve(config_path: &Path, json_output: bool) -> Result<(), ContractError>
     server::serve(config, root, json_output)
 }
 
+/// Steward report over the service's usage rows. It runs beside the store
+/// rather than over HTTP: who used the service is not a fact any client
+/// token is scoped to read.
+pub fn usage(
+    config_path: &Path,
+    since: Option<&str>,
+    until: Option<&str>,
+    bucket: crate::usage::Bucket,
+    json_output: bool,
+) -> Result<(), ContractError> {
+    let config = load_service_config(config_path)?;
+    let window = crate::usage::Window::parse(since, until)?;
+    // A report must not be the thing that creates the store it reports on.
+    if !config.sqlite_path.exists() {
+        return Err(ContractError::refused(
+            "CONFIG_INVARIANT",
+            "the Company store named by sqlite_path does not exist",
+            format!(
+                "Run `kinbase company init --config {}` first; no store was created.",
+                config_path.display()
+            ),
+        ));
+    }
+    // `open` brings a store created before usage rows existed up to date.
+    let db = db::CompanyDb::open(&config.sqlite_path)?;
+    let mut report = crate::usage::report(&db, &window, bucket)?;
+    report["status"] = json!("company-usage");
+    report["company_id"] = json!(config.company_id);
+    if json_output {
+        crate::output::emit(&report, true);
+    } else {
+        print!("{}", crate::usage::render_human(&report));
+    }
+    Ok(())
+}
+
 /// Steward helper: sign a JSON document with the Company root key as one of
 /// the closed message types and print it.
 pub fn sign(

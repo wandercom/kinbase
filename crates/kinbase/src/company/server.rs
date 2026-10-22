@@ -328,6 +328,7 @@ fn handle_connection(mut stream: TcpStream, state: Arc<ServiceState>) {
 }
 
 fn handle(state: &ServiceState, request: &Request) -> Handled {
+    let started = std::time::Instant::now();
     let host = request.header("host").unwrap_or_default();
     // A Host that must be loopback is a DNS-rebinding guard for a service on the
     // operator's own machine. On a non-loopback bind the Host is the Service
@@ -385,6 +386,44 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
         return Err(auth_refusal());
     }
     let auth = authenticate(&db, state, request, &now)?;
+    // Usage is recorded for authenticated requests only. A refusal before
+    // that point has no principal to attribute it to and is already counted
+    // per subject by the auth-failure throttle; writing a row for it would
+    // hand every peer that can reach the port one SQLite write per connect.
+    let mut action = crate::usage::classify(&request.method, &route, None);
+    let answer = handle_authenticated(&db, state, request, &auth, &route, &now, &mut action);
+    let (status, error_code) = match &answer {
+        Ok((status, _)) => (*status, None),
+        Err((status, error)) => (*status, Some(error.code.clone())),
+    };
+    crate::usage::record(
+        &db,
+        &crate::usage::UsageEvent {
+            recorded_at: now.clone(),
+            principal_id: auth.token.principal_id.clone(),
+            client: auth.client_key.chars().take(16).collect(),
+            token_role: auth.token.role.clone(),
+            action: action.name,
+            target: action.target,
+            status,
+            error_code,
+            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        },
+    );
+    answer
+}
+
+/// Everything an authenticated request does. `action` starts as the route's
+/// classification and is refined once the body is parsed.
+fn handle_authenticated(
+    db: &CompanyDb,
+    state: &ServiceState,
+    request: &Request,
+    auth: &AuthContext,
+    route: &str,
+    now: &str,
+    action: &mut crate::usage::Action,
+) -> Handled {
     // Periodic obligations run behind authentication, never in front of it.
     // They prune nonces, retire lapsed manifest observations and sign
     // fact-events with the Company root key; running them on arrival meant an
@@ -405,8 +444,9 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
             })?,
         )
     };
+    *action = crate::usage::classify(&request.method, route, parsed_body.as_ref());
     let trust_state = trust::load(&db, &state.root.public()).map_err(|error| refuse(500, error))?;
-    match (request.method.as_str(), route.as_str()) {
+    match (request.method.as_str(), route) {
         ("GET", "/status") => status(&db, state, &auth, &trust_state),
         ("GET", "/facts") => facts(&db, state, &auth, &trust_state, request, &now),
         ("POST", "/facts") => admit_fact(&db, state, &auth, &trust_state, parsed_body, &now),
@@ -4943,5 +4983,245 @@ nonce_retention_seconds = 1300
         .unwrap();
         assert_eq!(historical["status"], "committed");
         assert_eq!(historical["historical_receipt"], true);
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+    use crate::crypto::PrivateKey;
+
+    const TOKEN: &str = "facts-usage";
+    /// Planted in a path identifier and a query value: neither may reach a
+    /// usage row.
+    const CANARY: &str = "Wilhelmina0xCANARY";
+
+    fn service(temp: &std::path::Path) -> ServiceState {
+        let token_path = temp.join("facts.token");
+        crate::crypto::write_0600(&token_path, TOKEN.as_bytes(), "facts token").unwrap();
+        let config = ServiceConfig {
+            allow_non_loopback: false,
+            path: temp.join("kinbased.toml"),
+            company_id: "usage".to_owned(),
+            sqlite_path: temp.join("company.sqlite"),
+            bind: "127.0.0.1:0".parse().unwrap(),
+            root_key_file: temp.join("root.key"),
+            facts_token_file: token_path,
+            directory_token_file: None,
+            admin_token_file: None,
+            authority_token_file: None,
+            auth_failures_per_minute: 50,
+            default_fact_freshness_seconds: 900,
+            candidate_lifetime_seconds: 900,
+            clock_skew_seconds: 300,
+            nonce_retention_seconds: 1300,
+            read_volume_per_hour: 2_000,
+            read_bytes_per_hour: 64 * 1024 * 1024,
+            requests_per_minute: 600,
+            revocation_freshness_seconds: 900,
+            directory_retention_seconds: 365 * 24 * 3600,
+            facts_token_scopes: Vec::new(),
+        };
+        let db = CompanyDb::open(&config.sqlite_path).unwrap();
+        register_tokens(&db, &config).unwrap();
+        ServiceState {
+            config,
+            root: PrivateKey::generate(),
+            started_at: crate::time::now_rfc3339_millis(),
+        }
+    }
+
+    /// A request as `http::read_request` would hand it over, signed by `key`
+    /// when `bearer` is given.
+    fn request(
+        method: &str,
+        target: &str,
+        body: &[u8],
+        bearer: Option<&str>,
+        key: &PrivateKey,
+    ) -> Request {
+        let (route, query_text) = target.split_once('?').unwrap_or((target, ""));
+        let query = query_text
+            .split('&')
+            .filter(|pair| !pair.is_empty())
+            .map(|pair| {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                (key.to_owned(), value.to_owned())
+            })
+            .collect();
+        let mut headers = vec![("host".to_owned(), "127.0.0.1:8421".to_owned())];
+        if !body.is_empty() {
+            headers.push(("content-type".to_owned(), "application/json".to_owned()));
+        }
+        if let Some(bearer) = bearer {
+            let nonce = crate::crypto::random_token();
+            let expires_at =
+                crate::time::plus_seconds(&crate::time::now_rfc3339_millis(), 60).unwrap();
+            let signed = json!({
+                "method": method,
+                "path": target,
+                "body_sha256": crate::hash::sha256_bytes(body),
+                "nonce": nonce,
+                "expires_at": expires_at
+            });
+            let signature = key
+                .sign("receipt", &crate::json::canonical_bytes(&signed))
+                .unwrap();
+            headers.extend([
+                ("authorization".to_owned(), format!("Bearer {bearer}")),
+                ("x-kinbase-nonce".to_owned(), nonce),
+                ("x-kinbase-expires-at".to_owned(), expires_at),
+                ("x-kinbase-client-key".to_owned(), key.public().to_hex()),
+                ("x-kinbase-signature".to_owned(), signature),
+            ]);
+        }
+        Request {
+            method: method.to_owned(),
+            path: target.to_owned(),
+            route: route.to_owned(),
+            query,
+            headers,
+            body: body.to_vec(),
+            peer: None,
+        }
+    }
+
+    /// Every usage row as (principal, client, role, action, target, status,
+    /// error code), oldest first.
+    fn rows(
+        state: &ServiceState,
+    ) -> Vec<(String, String, String, String, String, u16, Option<String>)> {
+        let db = CompanyDb::connect(&state.config.sqlite_path).unwrap();
+        let mut statement = db
+            .connection
+            .prepare("SELECT principal_id, client, token_role, action, target, status, error_code FROM usage_events ORDER BY id")
+            .unwrap();
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn an_authenticated_request_leaves_one_row_naming_its_principal_and_outcome() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = service(temp.path());
+        let key = PrivateKey::generate();
+        let (status, _) =
+            handle(&state, &request("GET", "/status", b"", Some(TOKEN), &key)).unwrap();
+        assert_eq!(status, 200);
+        let client: String = key.public().to_hex().chars().take(16).collect();
+        assert_eq!(
+            rows(&state),
+            [(
+                "facts-principal".to_owned(),
+                client,
+                "facts".to_owned(),
+                "info.status".to_owned(),
+                "/status".to_owned(),
+                200,
+                None
+            )]
+        );
+    }
+
+    #[test]
+    fn a_refused_request_is_recorded_with_its_closed_error_code() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = service(temp.path());
+        let key = PrivateKey::generate();
+        // The facts token holds no admin:issue scope.
+        let body = br#"{"principal_id":"someone","scopes":["facts:read"]}"#;
+        let (status, error) =
+            handle(&state, &request("POST", "/tokens", body, Some(TOKEN), &key)).unwrap_err();
+        let recorded = rows(&state);
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].3, "token.issue");
+        assert_eq!(recorded[0].5, status);
+        assert_eq!(recorded[0].6.as_deref(), Some(error.code.as_str()));
+
+        // A body that does not parse is still the action its route names.
+        let (status, _) = handle(
+            &state,
+            &request("POST", "/facts", b"{not json", Some(TOKEN), &key),
+        )
+        .unwrap_err();
+        assert_eq!(status, 400);
+        let recorded = rows(&state);
+        assert_eq!(
+            (recorded[1].3.as_str(), recorded[1].5),
+            ("fact.create", 400)
+        );
+    }
+
+    #[test]
+    fn an_unauthenticated_request_leaves_no_row() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = service(temp.path());
+        let key = PrivateKey::generate();
+        for (target, bearer) in [
+            ("/facts", None),
+            ("/status", None),
+            ("/facts", Some("guess")),
+        ] {
+            assert!(handle(&state, &request("GET", target, b"", bearer, &key)).is_err());
+        }
+        assert!(
+            rows(&state).is_empty(),
+            "a refused peer drove a usage write"
+        );
+    }
+
+    #[test]
+    fn path_identifiers_and_query_text_never_reach_a_row() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = service(temp.path());
+        let key = PrivateKey::generate();
+        for target in [
+            format!("/facts/{CANARY}?decision={CANARY}"),
+            format!("/questions/{CANARY}"),
+            format!("/{CANARY}"),
+            format!("/facts?authority_scope={CANARY}"),
+        ] {
+            let _ = handle(&state, &request("GET", &target, b"", Some(TOKEN), &key));
+        }
+        let recorded = rows(&state);
+        let actions: Vec<_> = recorded
+            .iter()
+            .map(|row| (row.3.as_str(), row.4.as_str()))
+            .collect();
+        assert_eq!(
+            actions,
+            [
+                ("fact.read", "/facts/{fact_id}"),
+                ("question.read", "/questions/{question_id}"),
+                ("request.unrouted", "unrouted"),
+                ("fact.list", "/facts"),
+            ]
+        );
+        let db = CompanyDb::connect(&state.config.sqlite_path).unwrap();
+        let leaked: i64 = db
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM usage_events WHERE instr(principal_id || client || token_role || action || target || COALESCE(error_code, ''), ?1) > 0",
+                rusqlite::params![CANARY],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            leaked, 0,
+            "a caller's path or query text reached a usage row"
+        );
     }
 }
