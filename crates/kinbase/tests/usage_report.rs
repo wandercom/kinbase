@@ -310,4 +310,13 @@ fn a_malformed_window_is_refused_before_the_store_is_read() {
     assert_eq!(output.status.code(), Some(4));
     let error: Value = serde_json::from_slice(&output.stdout).expect("typed error document");
     assert_eq!(error["error"]["code"], "CONFIG_INVARIANT");
+    // The store does not exist either, and that refusal has the same code
+    // and exit; only the message shows the window was what was refused.
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("--since"),
+        "{error}"
+    );
 }

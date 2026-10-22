@@ -424,6 +424,7 @@ fn handle_authenticated(
     now: &str,
     action: &mut crate::usage::Action,
 ) -> Handled {
+    enforce_request_rate(db, state, auth)?;
     // Periodic obligations run behind authentication, never in front of it.
     // They prune nonces, retire lapsed manifest observations and sign
     // fact-events with the Company root key; running them on arrival meant an
@@ -756,8 +757,25 @@ fn authenticate(
     }
     db.record_token_client_pair(&token.digest, &client_hex, now)
         .map_err(|error| refuse(500, error))?;
+    Ok(AuthContext {
+        principal_key: format!("{}:{}", token.principal_id, &client_hex[..16]),
+        token,
+        client_key: client_hex,
+    })
+}
+
+/// The per-client-key request ceiling. It is checked after authentication,
+/// inside the region `handle` records usage for: inside `authenticate` a
+/// correctly signed request refused at the ceiling left no row, so a
+/// principal pressing its limit was invisible to the usage report. The row
+/// is one write after the three the request has already paid.
+fn enforce_request_rate(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+) -> Result<(), (u16, ContractError)> {
     let rate = db
-        .bump_request_rate(&client_hex, minute)
+        .bump_request_rate(&auth.client_key, now_minute())
         .map_err(|error| refuse(500, error))?;
     if rate > state.config.requests_per_minute {
         return Err(refuse(
@@ -768,11 +786,7 @@ fn authenticate(
             ),
         ));
     }
-    Ok(AuthContext {
-        principal_key: format!("{}:{}", token.principal_id, &client_hex[..16]),
-        token,
-        client_key: client_hex,
-    })
+    Ok(())
 }
 
 fn require_scope(auth: &AuthContext, scope: &str) -> Result<(), (u16, ContractError)> {
@@ -5162,6 +5176,35 @@ mod usage_tests {
         assert_eq!(
             (recorded[1].3.as_str(), recorded[1].5),
             ("fact.create", 400)
+        );
+    }
+
+    #[test]
+    fn a_request_refused_at_the_rate_ceiling_is_still_recorded() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = service(temp.path());
+        state.config.requests_per_minute = 1;
+        let key = PrivateKey::generate();
+        // Both requests land in one minute unless the clock rolls over
+        // between them, in which case neither is refused; skip that run.
+        let minute = now_minute();
+        let first = handle(&state, &request("GET", "/status", b"", Some(TOKEN), &key));
+        let second = handle(&state, &request("GET", "/status", b"", Some(TOKEN), &key));
+        if now_minute() != minute {
+            return;
+        }
+        assert!(first.is_ok());
+        let (status, error) = second.unwrap_err();
+        assert_eq!(status, 429);
+        let recorded = rows(&state);
+        assert_eq!(recorded.len(), 2, "the refused request left no row");
+        assert_eq!(
+            (
+                recorded[1].3.as_str(),
+                recorded[1].5,
+                recorded[1].6.as_deref()
+            ),
+            ("info.status", 429, Some(error.code.as_str()))
         );
     }
 

@@ -109,9 +109,17 @@ pub fn classify(method: &str, route: &str, body: Option<&Value>) -> Action {
     UNROUTED
 }
 
-/// A posted fact-event that supersedes another or carries a negative
-/// disposition (retracted, withdrawn, ...) changes a fact that already
-/// exists. The event may arrive bare or wrapped with its approval.
+/// The lifecycle actions the service turns into tombstones on the events
+/// they name (`current_view`). `never_true` is also a negative disposition;
+/// `misextraction` and `support_withdrawn` are not, and were counted as new
+/// facts.
+const WITHDRAWALS: [&str; 3] = ["misextraction", "never_true", "support_withdrawn"];
+
+/// A posted fact-event that supersedes another, carries a negative
+/// disposition (retracted, withdrawn, ...) or is a lifecycle withdrawal
+/// changes a fact that already exists. The event may arrive bare or wrapped
+/// with its approval. A lifecycle action is named by its disposition or its
+/// atom kind, as `model::action_of` reads it.
 fn changes_an_existing_fact(body: &Value) -> bool {
     let event = body.get("event").unwrap_or(body);
     let supersedes = event
@@ -120,7 +128,10 @@ fn changes_an_existing_fact(body: &Value) -> bool {
         .is_some_and(|items| !items.is_empty());
     let negative = crate::json::get_str(event, "disposition")
         .is_some_and(crate::model::disposition_is_negative);
-    supersedes || negative
+    let withdrawal = ["disposition", "atom_kind"].into_iter().any(|field| {
+        crate::json::get_str(event, field).is_some_and(|value| WITHDRAWALS.contains(&value))
+    });
+    supersedes || negative || withdrawal
 }
 
 /// One authenticated request, as stored.
@@ -310,12 +321,16 @@ pub fn render_human(report: &Value) -> String {
             actions,
         ));
     }
+    // A row is a principal, client and token role: one principal can hold
+    // two roles from one installation, and without the role those two rows
+    // printed as identical lines.
     out.push_str("\nby client:\n");
     for row in rows("by_client") {
         out.push_str(&format!(
-            "  {:<24} {:<16} {:>8} req  last {}\n",
+            "  {:<24} {:<16} {:<9} {:>8} req  last {}\n",
             text(&row["principal_id"]),
             text(&row["client"]),
+            text(&row["token_role"]),
             text(&row["requests"]),
             text(&row["last_at"]),
         ));
@@ -423,6 +438,20 @@ mod tests {
         );
         assert_eq!(
             classify("POST", "/facts", Some(&retracting)).name,
+            "fact.update"
+        );
+        // Lifecycle withdrawals name their target in `parents`, not
+        // `supersedes`, and by disposition or by atom kind.
+        let withdrawing =
+            json!({"disposition": "support_withdrawn", "parents": ["evt-1"], "supersedes": []});
+        let misextracted =
+            json!({"disposition": "notice", "atom_kind": "misextraction", "parents": ["evt-1"]});
+        assert_eq!(
+            classify("POST", "/facts", Some(&withdrawing)).name,
+            "fact.update"
+        );
+        assert_eq!(
+            classify("POST", "/facts", Some(&misextracted)).name,
             "fact.update"
         );
         // A body the service never parsed is still a fact write attempt.
@@ -553,6 +582,23 @@ mod tests {
         assert_eq!(empty["totals"]["first_at"], Value::Null);
         assert!(empty["by_principal"].as_array().unwrap().is_empty());
         assert!(render_human(&empty).contains("requests: 0"));
+    }
+
+    #[test]
+    fn one_installation_holding_two_tokens_is_one_client() {
+        let (_temp, db) = store();
+        let status = classify("GET", "/status", None);
+        for principal in ["steward", "facts-principal"] {
+            let row = event("2026-10-01T09:00:00.000Z", principal, "aaaa", status, 200);
+            db.append_usage(&row).unwrap();
+        }
+        let all = report(&db, &Window::default(), Bucket::Day).unwrap();
+        assert_eq!(all["totals"]["principals"], 2);
+        assert_eq!(all["totals"]["clients"], 1);
+        assert_eq!(all["by_client"].as_array().unwrap().len(), 2);
+        let text = render_human(&all);
+        assert!(text.contains("on 1 client(s)"), "{text}");
+        assert!(text.contains("aaaa             issued"), "{text}");
     }
 
     #[test]

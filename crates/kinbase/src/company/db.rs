@@ -1345,7 +1345,34 @@ impl CompanyDb {
 
     /// Aggregates over the usage rows inside `window`, one query per
     /// breakdown so the counting happens in SQLite rather than in memory.
+    ///
+    /// The queries share one read transaction. The service keeps appending
+    /// while a report runs, and without a shared WAL snapshot a row committed
+    /// between the totals and a breakdown showed up in one and not the other.
     pub fn usage_summary(
+        &self,
+        window: &crate::usage::Window,
+        bucket: crate::usage::Bucket,
+    ) -> Result<crate::usage::Summary, ContractError> {
+        self.connection
+            .execute_batch("BEGIN")
+            .map_err(sqlite_error("usage snapshot"))?;
+        let summary = self.usage_summary_in_snapshot(window, bucket);
+        // Nothing was written, so ending the snapshot either way is the same.
+        let ended = self
+            .connection
+            .execute_batch(if summary.is_ok() {
+                "COMMIT"
+            } else {
+                "ROLLBACK"
+            })
+            .map_err(sqlite_error("usage snapshot"));
+        let summary = summary?;
+        ended?;
+        Ok(summary)
+    }
+
+    fn usage_summary_in_snapshot(
         &self,
         window: &crate::usage::Window,
         bucket: crate::usage::Bucket,
@@ -1359,7 +1386,7 @@ impl CompanyDb {
             .query_row(
                 &format!(
                     "SELECT COUNT(*), COALESCE(SUM(status < 400), 0), COUNT(DISTINCT principal_id),
-                            COUNT(DISTINCT principal_id || ' ' || client), MIN(recorded_at), MAX(recorded_at)
+                            COUNT(DISTINCT client), MIN(recorded_at), MAX(recorded_at)
                      FROM usage_events WHERE {WINDOW}"
                 ),
                 params![since, until],
