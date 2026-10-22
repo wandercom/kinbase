@@ -173,7 +173,7 @@ pub fn publish(
         result["error"] = response.body.get("error").cloned().unwrap_or(Value::Null);
     }
     if response.status >= 400 {
-        return Err(client::error_from_response(&response).with_output_document(result));
+        return Err(client::error_from_response(&response, false).with_output_document(result));
     }
     crate::output::emit(&result, json_output);
     Ok(())

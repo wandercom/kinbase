@@ -73,6 +73,9 @@ pub struct PersonalKindexConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompanyConfig {
     pub url: String,
+    pub oidc_issuer: Option<String>,
+    pub oidc_client_id: Option<String>,
+    pub oidc_client_secret_file: Option<PathBuf>,
     pub facts_token_file: PathBuf,
     pub root_public_key_file: PathBuf,
     pub cache_root: PathBuf,
@@ -591,12 +594,36 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                     "maintainer_key_file",
                     "allow_non_loopback",
                     "snapshot_timeout_seconds",
+                    "oidc_issuer",
+                    "oidc_client_id",
+                    "oidc_client_secret_file",
                 ],
                 "[company]",
             )?;
             let url = required_str(section, "url", "company")?.to_owned();
             let allow_non_loopback = optional_bool(section, "allow_non_loopback", "company")?;
-            validate_loopback_url(&url, allow_non_loopback)?;
+            let optional_text = |key: &str| {
+                section
+                    .get(key)
+                    .map(|_| required_str(section, key, "company").map(str::to_owned))
+                    .transpose()
+            };
+            let oidc_issuer = optional_text("oidc_issuer")?;
+            let oidc_client_id = optional_text("oidc_client_id")?;
+            let oidc_client_secret_file =
+                optional_path(section, "oidc_client_secret_file", "company")?;
+            if oidc_issuer.is_some() != oidc_client_id.is_some()
+                || (oidc_issuer.is_none() && oidc_client_secret_file.is_some())
+            {
+                return Err(config_error(
+                    "company OIDC needs both oidc_issuer and oidc_client_id",
+                ));
+            }
+            validate_loopback_url(&url, allow_non_loopback, oidc_issuer.is_some())?;
+            if let Some(issuer) = &oidc_issuer {
+                crate::oidc::validate_provider_url(issuer)?;
+                crate::oidc::validate_provider_url(&url)?;
+            }
             let snapshot_timeout_seconds = match section.get("snapshot_timeout_seconds") {
                 None => default_snapshot_timeout_seconds(),
                 Some(value) => value
@@ -611,6 +638,9 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
             };
             Some(CompanyConfig {
                 url,
+                oidc_issuer,
+                oidc_client_id,
+                oidc_client_secret_file,
                 allow_non_loopback,
                 snapshot_timeout_seconds,
                 facts_token_file: absolute(
@@ -919,10 +949,20 @@ fn default_host_instance() -> String {
     })
 }
 
-pub fn validate_loopback_url(url: &str, allow_non_loopback: bool) -> Result<(), ContractError> {
+pub fn validate_loopback_url(
+    url: &str,
+    allow_non_loopback: bool,
+    oidc: bool,
+) -> Result<(), ContractError> {
+    let scheme = if oidc {
+        "http:// or https://"
+    } else {
+        "http://"
+    };
     let rest = url
         .strip_prefix("http://")
-        .ok_or_else(|| config_error("company.url must be an http:// URL"))?;
+        .or_else(|| url.strip_prefix("https://").filter(|_| oidc))
+        .ok_or_else(|| config_error(format!("company.url must be an {scheme} URL")))?;
     let authority = rest.split('/').next().unwrap_or_default();
     let host = authority
         .rsplit_once(':')
@@ -942,10 +982,39 @@ pub fn validate_loopback_url(url: &str, allow_non_loopback: bool) -> Result<(), 
 }
 
 impl UserConfig {
+    pub fn oidc_configured(&self) -> bool {
+        self.company
+            .as_ref()
+            .is_some_and(|company| company.oidc_issuer.is_some())
+    }
+
+    pub fn oidc(&self) -> Result<Option<crate::oidc::Config>, ContractError> {
+        let Some(company) = &self.company else {
+            return Ok(None);
+        };
+        let (Some(issuer), Some(client_id)) = (&company.oidc_issuer, &company.oidc_client_id)
+        else {
+            return Ok(None);
+        };
+        let client_secret = company
+            .oidc_client_secret_file
+            .as_ref()
+            .map(|path| crate::crypto::read_private_text(path, "OIDC client secret"))
+            .transpose()?
+            .map(|secret| secret.trim().to_owned());
+        Ok(Some(crate::oidc::Config {
+            issuer: issuer.clone(),
+            client_id: client_id.clone(),
+            client_secret,
+            session_path: self.path.with_file_name("oidc.json"),
+        }))
+    }
+
     /// Derive the immutable shared-process configuration. Reads every token
     /// and key file under the cli.md file rules; contents are held in memory
     /// only. The Personal data root is deliberately not representable here.
     pub fn shared(&self) -> Result<SharedConfig, ContractError> {
+        let _ = self.oidc()?;
         let company = match &self.company {
             None => None,
             Some(company) => {

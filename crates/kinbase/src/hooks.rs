@@ -1064,6 +1064,13 @@ fn session_start(
             .push("launcher configuration unavailable".to_owned());
         return state;
     };
+    let oidc = launcher.user.as_ref().filter(|user| user.oidc_configured());
+    let login_required = oidc.is_some_and(|user| !user.path.with_file_name("oidc.json").is_file());
+    if login_required {
+        state
+            .notices
+            .push("run kinbase auth login before Company access".to_owned());
+    }
     let Ok(repository) = crate::codebase::Repository::discover(cwd) else {
         state
             .degraded_reasons
@@ -1176,9 +1183,16 @@ fn session_start(
     }
     // Bounded probe of the configured endpoint: the connection budget only.
     let (connect_seconds, reachable) = match launcher.shared.company.as_ref() {
+        Some(_) if login_required => (None, false),
         Some(access) if !launcher.company_env_present => {
-            match crate::http::parse_url(&access.url, access.allow_non_loopback) {
-                Ok((host, port, _)) => {
+            match crate::http::parse_url(&access.url, access.allow_non_loopback, oidc.is_some()) {
+                Ok(_)
+                    if oidc.is_some()
+                        && crate::http::parse_url(&access.url, false, true).is_err() =>
+                {
+                    (None, true)
+                }
+                Ok((_, host, port, _)) => {
                     let started = std::time::Instant::now();
                     let outcome = crate::http::probe_connect(&host, port);
                     let elapsed = started.elapsed().as_secs_f64();
@@ -1208,7 +1222,7 @@ fn session_start(
         worker.is_some_and(|worker| spawn_background_verification(worker, &repository.root));
     state.refresh = json!({
         "endpoint_probed": connect_seconds.is_some(),
-        "connected_within_budget": reachable,
+        "connected_within_budget": reachable && connect_seconds.is_some(),
         "connect_budget_seconds": 0.25,
         "probe_timeout_seconds": 0.2,
         "worker": worker,
@@ -1216,6 +1230,8 @@ fn session_start(
     });
     state.company_state = if !state.certified {
         "unverified"
+    } else if reachable && connect_seconds.is_none() {
+        "unprobed"
     } else if state.cache_state == "warm" && revocation_fresh && fact_fresh {
         if reachable {
             "verified-cache"

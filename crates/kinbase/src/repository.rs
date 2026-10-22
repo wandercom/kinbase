@@ -1784,6 +1784,15 @@ pub fn build_trust(
                     crate::output::diagnostic("snapshot-refused", serde_json::to_value(&error).unwrap_or_else(|_| json!({"code": "RUN_INTEGRITY_FAILED", "message": "snapshot refusal detail was unreadable", "remediation": "Preserve the receipt.", "retryable": false, "evidence_id": "err_snapshot_refused"})));
                 }
             }
+            Err(error)
+                if error.is_oidc_token_failure()
+                    && matches!(
+                        error.code.as_str(),
+                        "AUTHORITY_SCOPE_DENIED" | "CONFIG_INVARIANT"
+                    ) =>
+            {
+                return Err(error);
+            }
             Err(error) => {
                 trust.company_reachable = Some(false);
                 crate::output::diagnostic("company-refresh-failed", serde_json::to_value(&error).unwrap_or_else(|_| json!({"code": "RUN_INTEGRITY_FAILED", "message": "refresh failure detail was unreadable", "remediation": "Preserve the receipt.", "retryable": false, "evidence_id": "err_refresh_failed"})));
@@ -2120,6 +2129,15 @@ pub fn ensure_authority_snapshot_for(
             }
             Ok((cursor, "fetched"))
         }
+        Err(error)
+            if error.is_oidc_token_failure()
+                && matches!(
+                    error.code.as_str(),
+                    "AUTHORITY_SCOPE_DENIED" | "CONFIG_INVARIANT"
+                ) =>
+        {
+            Err(error)
+        }
         Err(error) => {
             if cache_fresh
                 && crate::reducer::cursor_order(&cached_cursor, requested)
@@ -2201,7 +2219,11 @@ pub fn issue_certificate(
         .company
         .as_ref()
         .is_some_and(|company| company.allow_non_loopback);
-    crate::config::validate_loopback_url(company_url, allow_non_loopback)?;
+    let oidc = launcher
+        .user
+        .as_ref()
+        .is_some_and(crate::config::UserConfig::oidc_configured);
+    crate::config::validate_loopback_url(company_url, allow_non_loopback, oidc)?;
     if launcher.company_env_present {
         return Err(ContractError::new(
             "PROCESSOR_UNAUTHORIZED",
@@ -2232,13 +2254,14 @@ pub fn issue_certificate(
             "Ask the Company steward to issue the certificate, or configure admin_token_file.",
         ));
     };
-    let client = crate::company::client::Client::new(
+    let client = crate::company::client::Client::from_user_config(
         &access.url,
         admin,
         access.client_key()?,
         Some(access.root_key()?),
         access.cache_root.clone(),
         access.allow_non_loopback,
+        launcher.user.as_ref(),
     )?;
     let hint = crate::codebase::git(&repo.root, &["remote", "get-url", "origin"])
         .map(|remote| normalize_hint(&remote))
@@ -2725,7 +2748,10 @@ pub(crate) fn publish_manifest_value(
                 result["company_receipt"] = response.body;
             }
             Ok(response) => {
-                let error = crate::company::client::error_from_response(&response);
+                let error = crate::company::client::error_from_response(
+                    &response,
+                    company.client.oidc.is_some(),
+                );
                 if error.code == "MANIFEST_HEAD_REGRESSION" {
                     return Err(error);
                 }

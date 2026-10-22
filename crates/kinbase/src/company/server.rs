@@ -432,6 +432,7 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
     if route == "/status"
         && request.method == "GET"
         && request.header("authorization").is_none()
+        && request.header("x-kinbase-token").is_none()
         && request.header("x-kinbase-signature").is_none()
     {
         // Unauthenticated status is refused like every other read.
@@ -646,11 +647,13 @@ fn authenticate(
 ) -> Result<AuthContext, (u16, ContractError)> {
     let minute = now_minute();
     let bearer = request
-        .header("authorization")
-        .and_then(|value| {
-            value
-                .strip_prefix("Bearer ")
-                .or_else(|| value.strip_prefix("bearer "))
+        .header("x-kinbase-token")
+        .or_else(|| {
+            request.header("authorization").and_then(|value| {
+                value
+                    .strip_prefix("Bearer ")
+                    .or_else(|| value.strip_prefix("bearer "))
+            })
         })
         .map(str::trim)
         .filter(|token| !token.is_empty());

@@ -70,6 +70,19 @@ fn usage_error(_args: &[String], _detail: String) -> ContractError {
 fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
     let launcher = crate::launcher::Launcher::load()?;
     match command {
+        Command::Auth(AuthCommand::Login) => {
+            let config = launcher
+                .user
+                .as_ref()
+                .map_or(Ok(None), crate::config::UserConfig::oidc)?
+                .ok_or_else(|| ContractError::invariant("OIDC is not configured"))?;
+            let email = crate::oidc::login(&config, json)?;
+            if json {
+                crate::output::emit(&serde_json::json!({"signed_in_as": email}), true);
+            } else {
+                println!("signed in as {email}");
+            }
+        }
         Command::Company(CompanyCommand::Init { config }) => {
             crate::company::init(&config, json).map_err(internal)?;
         }
