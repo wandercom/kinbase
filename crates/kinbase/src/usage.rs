@@ -28,13 +28,6 @@ impl Action {
     const fn new(name: &'static str, target: &'static str) -> Self {
         Self { name, target }
     }
-
-    /// The family an action belongs to (`fact`, `recall`, ...).
-    pub fn family(&self) -> &'static str {
-        self.name
-            .split_once('.')
-            .map_or(self.name, |(family, _)| family)
-    }
 }
 
 /// A route the service does not serve. The path is the caller's text, so it
@@ -154,12 +147,6 @@ pub struct UsageEvent {
     pub duration_ms: u64,
 }
 
-impl UsageEvent {
-    pub fn succeeded(&self) -> bool {
-        self.status < 400
-    }
-}
-
 /// Append one usage row. Recording never changes the answer the caller gets:
 /// a row that cannot be written is reported on stderr, with only the closed
 /// fields, and the request's own outcome stands.
@@ -226,14 +213,14 @@ impl Window {
             since: since.map(|value| instant("since", value)).transpose()?,
             until: until.map(|value| instant("until", value)).transpose()?,
         };
-        if let (Some(since), Some(until)) = (&window.since, &window.until) {
-            if since >= until {
-                return Err(ContractError::refused(
-                    "CONFIG_INVARIANT",
-                    "--since must be earlier than --until",
-                    "Pass a window whose start precedes its end.",
-                ));
-            }
+        if let (Some(since), Some(until)) = (&window.since, &window.until)
+            && since >= until
+        {
+            return Err(ContractError::refused(
+                "CONFIG_INVARIANT",
+                "--since must be earlier than --until",
+                "Pass a window whose start precedes its end.",
+            ));
         }
         Ok(window)
     }
@@ -422,7 +409,10 @@ mod tests {
             ("GET", "/steward-queue", "steward.queue", "steward"),
         ] {
             let action = classify(method, route, None);
-            assert_eq!((action.name, action.family()), (name, family));
+            // An action is `family.verb`; the report groups nothing by
+            // family, so only the naming is pinned here.
+            let (action_family, _) = action.name.split_once('.').unwrap();
+            assert_eq!((action.name, action_family), (name, family));
         }
     }
 

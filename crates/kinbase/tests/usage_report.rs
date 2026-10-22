@@ -298,6 +298,41 @@ fn a_report_on_a_store_that_does_not_exist_refuses_and_creates_nothing() {
 }
 
 #[test]
+fn a_file_that_was_never_initialized_is_refused_and_an_older_store_gains_the_table() {
+    let temp = TempDir::new().expect("temporary root");
+    let (config, sqlite) = write_config(temp.path(), 8421);
+    let usage = || {
+        isolated(temp.path())
+            .args(["company", "usage", "--config"])
+            .arg(&config)
+            .arg("--json")
+            .output_alone()
+            .expect("run company usage")
+    };
+
+    // A file exists at sqlite_path, but `company init` never made it a store.
+    std::fs::write(&sqlite, b"").expect("empty file");
+    let output = usage();
+    assert_eq!(output.status.code(), Some(4));
+    let error: Value = serde_json::from_slice(&output.stdout).expect("typed error document");
+    assert_eq!(error["error"]["code"], "CONFIG_INVARIANT");
+    std::fs::remove_file(&sqlite).expect("remove empty file");
+
+    // A store migrated before usage rows existed has no usage_events table;
+    // the report adds it rather than failing on the missing table.
+    let db = kinbase::company::db::CompanyDb::open(&sqlite).expect("initialize store");
+    db.connection
+        .execute_batch("DROP TABLE usage_events")
+        .expect("drop usage table");
+    assert!(!db.has_table("usage_events").unwrap());
+    drop(db);
+    let older = report(&usage());
+    assert_eq!(older["totals"]["requests"], 0);
+    let db = kinbase::company::db::CompanyDb::connect(&sqlite).expect("reopen store");
+    assert!(db.has_table("usage_events").unwrap());
+}
+
+#[test]
 fn a_malformed_window_is_refused_before_the_store_is_read() {
     let temp = TempDir::new().expect("temporary root");
     let (config, _) = write_config(temp.path(), 8421);

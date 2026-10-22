@@ -430,7 +430,7 @@ fn handle_authenticated(
     // fact-events with the Company root key; running them on arrival meant an
     // unauthenticated peer drove SQLite writes and root-key signatures by
     // connecting, which on a routable bind is anyone who can reach the port.
-    maintenance(&db, state, &now).map_err(|error| refuse(500, error))?;
+    maintenance(db, state, now).map_err(|error| refuse(500, error))?;
     let parsed_body: Option<Value> = if request.body.is_empty() {
         None
     } else {
@@ -446,23 +446,21 @@ fn handle_authenticated(
         )
     };
     *action = crate::usage::classify(&request.method, route, parsed_body.as_ref());
-    let trust_state = trust::load(&db, &state.root.public()).map_err(|error| refuse(500, error))?;
+    let trust_state = trust::load(db, &state.root.public()).map_err(|error| refuse(500, error))?;
     match (request.method.as_str(), route) {
-        ("GET", "/status") => status(&db, state, &auth, &trust_state),
-        ("GET", "/facts") => facts(&db, state, &auth, &trust_state, request, &now),
-        ("POST", "/facts") => admit_fact(&db, state, &auth, &trust_state, parsed_body, &now),
-        ("GET", "/snapshot") => snapshot(&db, state, &auth, &trust_state, request, &now),
-        ("GET", "/events") => events(&db, state, &auth, &trust_state, request),
+        ("GET", "/status") => status(db, state, auth, &trust_state),
+        ("GET", "/facts") => facts(db, state, auth, &trust_state, request, now),
+        ("POST", "/facts") => admit_fact(db, state, auth, &trust_state, parsed_body, now),
+        ("GET", "/snapshot") => snapshot(db, state, auth, &trust_state, request, now),
+        ("GET", "/events") => events(db, state, auth, &trust_state, request),
         ("POST", "/authority-registry") => {
-            publish_registry(&db, &auth, &trust_state, parsed_body, &now)
+            publish_registry(db, auth, &trust_state, parsed_body, now)
         }
-        ("GET", "/authority-registry") => authority_registry(&db, &auth),
-        ("POST", "/directory") => {
-            directory_write(&db, state, &auth, &trust_state, parsed_body, &now)
-        }
-        ("POST", "/questions") => post_question(&db, state, &auth, &trust_state, parsed_body, &now),
+        ("GET", "/authority-registry") => authority_registry(db, auth),
+        ("POST", "/directory") => directory_write(db, state, auth, &trust_state, parsed_body, now),
+        ("POST", "/questions") => post_question(db, state, auth, &trust_state, parsed_body, now),
         ("GET", "/questions") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let questions = db
                 .questions(request.query.get("authority_id").map(String::as_str))
                 .map_err(|error| refuse(500, error))?;
@@ -471,9 +469,9 @@ fn handle_authenticated(
                 json!({"questions": questions, "count": questions.len()}),
             ))
         }
-        ("POST", "/answers") => post_answer(&db, state, &auth, &trust_state, parsed_body, &now),
+        ("POST", "/answers") => post_answer(db, state, auth, &trust_state, parsed_body, now),
         ("GET", "/answers") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let question_id = request
                 .query
                 .get("question_id")
@@ -484,19 +482,19 @@ fn handle_authenticated(
                 .map_err(|error| refuse(500, error))?;
             Ok((200, json!({"answers": answers})))
         }
-        ("POST", "/unknowns") => post_unknown(&db, &auth, &trust_state, parsed_body, &now),
+        ("POST", "/unknowns") => post_unknown(db, auth, &trust_state, parsed_body, now),
         ("GET", "/unknowns") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let unknowns = db
                 .unknowns(request.query.get("status").map(String::as_str))
                 .map_err(|error| refuse(500, error))?;
             Ok((200, json!({"unknowns": unknowns})))
         }
         ("POST", "/certificates") => {
-            issue_certificate(&db, state, &auth, &trust_state, parsed_body, &now)
+            issue_certificate(db, state, auth, &trust_state, parsed_body, now)
         }
         ("GET", "/certificates") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let hint = request.query.get("hint").cloned().unwrap_or_default();
             let certificates = if hint.is_empty() {
                 db.all_certificates().map_err(|error| refuse(500, error))?
@@ -506,36 +504,36 @@ fn handle_authenticated(
             };
             Ok((200, json!({"certificates": certificates})))
         }
-        ("POST", "/manifests") => post_manifest(&db, &auth, &trust_state, parsed_body, &now),
+        ("POST", "/manifests") => post_manifest(db, auth, &trust_state, parsed_body, now),
         ("POST", "/revocations") => steward_event(
-            &db,
-            &auth,
+            db,
+            auth,
             &trust_state,
             parsed_body,
             "revocation",
             "revocation",
-            &now,
+            now,
         ),
-        ("GET", "/revocations") => revocations(&db, &auth),
+        ("GET", "/revocations") => revocations(db, auth),
         ("POST", "/rotations") => steward_event(
-            &db,
-            &auth,
+            db,
+            auth,
             &trust_state,
             parsed_body,
             "rotation",
             "rotation",
-            &now,
+            now,
         ),
-        ("POST", "/tokens") => issue_token(&db, &auth, parsed_body, &now),
+        ("POST", "/tokens") => issue_token(db, auth, parsed_body, now),
         ("GET", "/steward-queue") => {
-            require_scope(&auth, "admin:issue")?;
+            require_scope(auth, "admin:issue")?;
             Ok((
                 200,
                 json!({"queue": db.steward_queue().map_err(|error| refuse(500, error))?}),
             ))
         }
         ("GET", path) if path.starts_with("/questions/") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let id = path.trim_start_matches("/questions/");
             match db.question(id).map_err(|error| refuse(500, error))? {
                 Some(mut question) => {
@@ -549,9 +547,9 @@ fn handle_authenticated(
             }
         }
         ("GET", path) if path.starts_with("/directory/") => {
-            require_scope(&auth, "directory:read")?;
+            require_scope(auth, "directory:read")?;
             let id = path.trim_start_matches("/directory/");
-            match db.directory(id, &now).map_err(|error| refuse(500, error))? {
+            match db.directory(id, now).map_err(|error| refuse(500, error))? {
                 Some(entry) => Ok((200, entry)),
                 None => Err(refuse(
                     404,
@@ -560,7 +558,7 @@ fn handle_authenticated(
             }
         }
         ("GET", path) if path.starts_with("/certificates/") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let id = path.trim_start_matches("/certificates/");
             match db.certificate(id).map_err(|error| refuse(500, error))? {
                 // Hand back exactly what was signed; the read-time annotations
@@ -573,7 +571,7 @@ fn handle_authenticated(
             }
         }
         ("GET", path) if path.starts_with("/manifests/") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let id = path.trim_start_matches("/manifests/");
             let branch = request
                 .query
@@ -594,7 +592,7 @@ fn handle_authenticated(
             }
         }
         ("GET", path) if path.starts_with("/facts/") => {
-            fact_detail(&db, state, &auth, &trust_state, path, request, &now)
+            fact_detail(db, state, auth, &trust_state, path, request, now)
         }
         _ => Err(refuse(404, ContractError::invariant("no such endpoint"))),
     }

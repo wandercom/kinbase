@@ -128,18 +128,38 @@ pub fn usage(
     let config = load_service_config(config_path)?;
     let window = crate::usage::Window::parse(since, until)?;
     // A report must not be the thing that creates the store it reports on.
-    if !config.sqlite_path.exists() {
-        return Err(ContractError::refused(
+    //
+    // spec/cli.md's first-run table answers "requested store uninitialized"
+    // with exit 2, but the closed taxonomy has no exit-2 code for a Company
+    // store (REPO_UNCERTIFIED names the Codebase one), and `ContractError::new`
+    // turns a code paired with the wrong exit into RUN_INTEGRITY_FAILED. This
+    // stays CONFIG_INVARIANT (exit 4) until the taxonomy gains a code; the
+    // gap is raised as a spec defect rather than papered over here.
+    let uninitialized = || {
+        ContractError::refused(
             "CONFIG_INVARIANT",
             "the Company store named by sqlite_path does not exist",
             format!(
                 "Run `kinbase company init --config {}` first; no store was created.",
                 config_path.display()
             ),
-        ));
+        )
+    };
+    if !config.sqlite_path.exists() {
+        return Err(uninitialized());
     }
-    // `open` brings a store created before usage rows existed up to date.
-    let db = db::CompanyDb::open(&config.sqlite_path)?;
+    // `connect`, not `open`: the report runs beside a live service, and
+    // `open` chmods the file and takes two write transactions on every run.
+    let db = db::CompanyDb::connect(&config.sqlite_path)?;
+    // A file `company init` never migrated is not a store, and the report
+    // does not get to make it one.
+    if !db.has_table("meta")? {
+        return Err(uninitialized());
+    }
+    // A store created before usage rows existed gets the table, once.
+    if !db.has_table("usage_events")? {
+        db.migrate()?;
+    }
     let mut report = crate::usage::report(&db, &window, bucket)?;
     report["status"] = json!("company-usage");
     report["company_id"] = json!(config.company_id);

@@ -201,6 +201,17 @@ impl CompanyDb {
         Ok(())
     }
 
+    /// Whether the store holds a table named `name`.
+    pub fn has_table(&self, name: &str) -> Result<bool, ContractError> {
+        self.connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                params![name],
+                |row| row.get(0),
+            )
+            .map_err(sqlite_error("schema lookup"))
+    }
+
     pub fn meta(&self, key: &str) -> Result<Option<String>, ContractError> {
         self.connection
             .query_row("SELECT value FROM meta WHERE key=?1", params![key], |row| {
@@ -1335,12 +1346,20 @@ impl CompanyDb {
             .map(|_| ())
             .map_err(sqlite_error("usage"));
         // The connection may serve another write; it goes back to FULL even
-        // when the insert failed.
-        let restored = self
+        // when the insert failed. A failed restore is reported on its own:
+        // folded into the result it turned a row that was stored into a
+        // `usage-record-failed` report.
+        if let Err(error) = self
             .connection
             .execute_batch("PRAGMA synchronous=FULL")
-            .map_err(sqlite_error("usage synchronous"));
-        inserted.and(restored)
+            .map_err(sqlite_error("usage synchronous"))
+        {
+            crate::output::diagnostic(
+                "usage-synchronous-restore-failed",
+                json!({"code": error.code}),
+            );
+        }
+        inserted
     }
 
     /// Aggregates over the usage rows inside `window`, one query per
