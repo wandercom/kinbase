@@ -261,15 +261,35 @@ fn read_lines(path: &std::path::Path, role: &str) -> Result<Vec<String>, Contrac
 mod tests {
     use super::Launcher;
 
+    // Runs the loads in a fresh child of this test binary, under a temp HOME and
+    // XDG dirs, so sibling tests' descriptors and the live config play no part.
     #[test]
     fn a_later_load_ignores_descriptors_the_process_opened() {
-        // Other tests may hold descriptors open at the first load; the guard is
-        // only checkable once a first load has attested.
-        if Launcher::load().is_err() {
+        if std::env::var_os("KINBASE_RELOAD_PROBE").is_some() {
+            // A sibling test can leak a descriptor into this child mid-spawn; start
+            // clean, as a launch would.
+            for fd in 3..1024 {
+                // SAFETY: closing integer descriptors has no memory-safety preconditions.
+                unsafe { libc::close(fd) };
+            }
+            Launcher::load().expect("first load at a clean start");
+            let _open = std::fs::File::open(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))
+                .expect("open Cargo.toml");
+            if let Err(error) = Launcher::load() {
+                panic!("second load: {error}");
+            }
             return;
         }
-        let _open = std::fs::File::open(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")).expect("open Cargo.toml");
-        let second = Launcher::load();
-        assert!(second.is_ok(), "{:?}", second.err().map(|error| error.to_string()));
+        let home = tempfile::tempdir().expect("temp HOME");
+        let output = std::process::Command::new(std::env::current_exe().expect("test binary"))
+            .args(["--exact", "launcher::tests::a_later_load_ignores_descriptors_the_process_opened", "--test-threads=1"])
+            .env("KINBASE_RELOAD_PROBE", "1")
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path().join("config"))
+            .env("XDG_STATE_HOME", home.path().join("state"))
+            .stdin(std::process::Stdio::null())
+            .output()
+            .expect("run the probe");
+        assert!(output.status.success(), "{}{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     }
 }
