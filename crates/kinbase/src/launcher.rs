@@ -12,6 +12,7 @@ use crate::error::ContractError;
 use crate::private::PrivateStore;
 use serde_json::{Value, json};
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 #[derive(Clone)]
 pub struct Launcher {
@@ -35,7 +36,17 @@ impl Launcher {
     pub fn load() -> Result<Self, ContractError> {
         let user = crate::config::load_user_config()?;
         let personal_root = user.as_ref().map(|user| user.personal.data_root.clone());
-        let fd_attestation = crate::sandbox::attest_descriptors(personal_root.as_deref())?;
+        // Inherited descriptors are fixed at launch. A later load in the same
+        // process would also see descriptors the process opened itself (macOS
+        // keeps two open after loading the native TLS roots), so attest once.
+        static ATTESTATION: OnceLock<Value> = OnceLock::new();
+        let fd_attestation = match ATTESTATION.get() {
+            Some(attestation) => attestation.clone(),
+            None => {
+                let attestation = crate::sandbox::attest_descriptors(personal_root.as_deref())?;
+                ATTESTATION.get_or_init(|| attestation).clone()
+            }
+        };
         let shared = match &user {
             Some(user) => user.shared()?,
             None => crate::config::codebase_only_shared(),
