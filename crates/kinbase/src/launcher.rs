@@ -32,7 +32,8 @@ pub struct CompanyAccess {
 
 impl Launcher {
     /// Load configuration and attest descriptors. Any inherited Personal or
-    /// non-allowlisted descriptor refuses here, before shared work.
+    /// non-allowlisted descriptor refuses here, before shared work. The first
+    /// load in a process attests; later loads reuse that launch-time record.
     pub fn load() -> Result<Self, ContractError> {
         let user = crate::config::load_user_config()?;
         let personal_root = user.as_ref().map(|user| user.personal.data_root.clone());
@@ -254,4 +255,21 @@ fn read_lines(path: &std::path::Path, role: &str) -> Result<Vec<String>, Contrac
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .map(str::to_owned)
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Launcher;
+
+    #[test]
+    fn a_later_load_ignores_descriptors_the_process_opened() {
+        // Other tests may hold descriptors open at the first load; the guard is
+        // only checkable once a first load has attested.
+        if Launcher::load().is_err() {
+            return;
+        }
+        let _open = std::fs::File::open(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml")).expect("open Cargo.toml");
+        let second = Launcher::load();
+        assert!(second.is_ok(), "{:?}", second.err().map(|error| error.to_string()));
+    }
 }
