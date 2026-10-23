@@ -5644,6 +5644,8 @@ mod usage_tests {
             config,
             root: PrivateKey::generate(),
             started_at: crate::time::now_rfc3339_millis(),
+            views: Default::default(),
+            snapshots: Default::default(),
         }
     }
 
