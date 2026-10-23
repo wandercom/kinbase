@@ -1560,16 +1560,6 @@ impl EvalCache {
     }
 }
 
-fn evaluate(
-    fact: &CurrentFact,
-    current_set: &[CurrentFact],
-    task: &str,
-    decision: &str,
-) -> Evaluation {
-    let cache = EvalCache::new(&[fact], task, decision);
-    evaluate_cached(fact, current_set, &cache)
-}
-
 fn evaluate_cached(
     fact: &CurrentFact,
     current_set: &[CurrentFact],
@@ -1659,15 +1649,6 @@ fn evaluate_folded(fact: &CurrentFact, set: &SetFold, cache: &EvalCache) -> Eval
 /// Company-owned direction, as opposed to evidence from this repository.
 fn is_direction(fact: &CurrentFact) -> bool {
     fact.store_kind == "company"
-}
-
-fn covers_own_trigger(fact: &CurrentFact) -> bool {
-    let trigger = terms(&fact.distortion.trigger);
-    if trigger.is_empty() {
-        return false;
-    }
-    let statement = terms(&fact.statement);
-    trigger.iter().all(|term| statement.contains(term))
 }
 
 /// Evidence class of an atom: test/runtime/observation evidence versus the
