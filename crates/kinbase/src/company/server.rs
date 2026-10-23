@@ -363,8 +363,9 @@ fn handle_connection(mut stream: TcpStream, state: Arc<ServiceState>) {
     // Rendering the refusal happens inside the guard as well: a panic there
     // closed the connection with no response at all, which the client
     // reports as an outage.
+    let mut usage = None;
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        match handle(&state, &request) {
+        match handle(&state, &request, &mut usage) {
             Ok(answer) => answer,
             Err((status, error)) => (status, http::error_body(&error)),
         }
@@ -380,9 +381,41 @@ fn handle_connection(mut stream: TcpStream, state: Arc<ServiceState>) {
         )
     });
     let _ = http::respond(&mut stream, status, &body);
+    // The caller has its answer before the usage row is written. Written
+    // first, a row queued behind another request's write lock held a
+    // committed answer back, and a client that timed out and retried with a
+    // fresh nonce had its fact admitted twice.
+    drop(stream);
+    if let Some(usage) = usage {
+        usage.write();
+    }
 }
 
-fn handle(state: &ServiceState, request: &Request) -> Handled {
+/// How long a usage row waits for the write lock before it is dropped.
+const USAGE_LOCK_WAIT: Duration = Duration::from_millis(100);
+
+/// A usage row held until the request's answer is on the wire, with the
+/// connection that will write it.
+struct PendingUsage {
+    db: CompanyDb,
+    event: crate::usage::UsageEvent,
+}
+
+impl PendingUsage {
+    /// A busy store costs the row, reported by `usage::record`, rather than
+    /// holding this worker and its connection slot for the ten seconds every
+    /// other write waits.
+    fn write(self) {
+        let _ = self.db.connection.busy_timeout(USAGE_LOCK_WAIT);
+        crate::usage::record(&self.db, &self.event);
+    }
+}
+
+/// Answer one request. An authenticated request that got past the rate
+/// ceiling leaves its usage row in `usage`, for the caller to write once the
+/// answer has gone out.
+fn handle(state: &ServiceState, request: &Request, usage: &mut Option<PendingUsage>) -> Handled {
+    let started = std::time::Instant::now();
     let host = request.header("host").unwrap_or_default();
     // A Host that must be loopback is a DNS-rebinding guard for a service on the
     // operator's own machine. On a non-loopback bind the Host is the Service
@@ -441,43 +474,85 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
         return Err(auth_refusal());
     }
     let auth = authenticate(&db, state, request, &now)?;
+    // Usage is recorded for authenticated requests under the rate ceiling
+    // only. A refusal before authentication has no principal to attribute
+    // it to and is already counted per subject by the auth-failure throttle;
+    // writing a row for it would hand every peer that can reach the port one
+    // SQLite write per connect. A request over the ceiling is likewise
+    // counted by the rate table it was refused from, and a row for it let a
+    // token holder past the limit grow the usage table until the disk filled.
+    enforce_request_rate(&db, state, &auth)?;
+    let mut action = crate::usage::classify(&request.method, &route, None);
+    let answer = handle_authenticated(&db, state, request, &auth, &route, &now, &mut action);
+    if state.config.record_usage {
+        let (status, error_code) = match &answer {
+            Ok((status, _)) => (*status, None),
+            Err((status, error)) => (*status, Some(error.code.clone())),
+        };
+        let event = crate::usage::UsageEvent {
+            recorded_at: now,
+            principal_id: auth.token.principal_id.clone(),
+            client: auth.client_key.chars().take(16).collect(),
+            token_role: auth.token.role.clone(),
+            action: action.name,
+            target: action.target,
+            status,
+            error_code,
+            duration_ms: u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+        };
+        *usage = Some(PendingUsage { db, event });
+    }
+    answer
+}
+
+/// Everything an authenticated request does. `action` starts as the route's
+/// classification and is refined once the body is parsed.
+fn handle_authenticated(
+    db: &CompanyDb,
+    state: &ServiceState,
+    request: &Request,
+    auth: &AuthContext,
+    route: &str,
+    now: &str,
+    action: &mut crate::usage::Action,
+) -> Handled {
+    let parsed_body = if request.body.is_empty() {
+        Ok(None)
+    } else {
+        crate::json::parse_strict_value(&request.body).map(Some)
+    };
+    // Classified before maintenance can refuse: a supersession that met a
+    // maintenance failure was otherwise recorded as a new fact.
+    if let Ok(body) = &parsed_body {
+        *action = crate::usage::classify(&request.method, route, body.as_ref());
+    }
     // Periodic obligations run behind authentication, never in front of it.
     // They prune nonces, retire lapsed manifest observations and sign
     // fact-events with the Company root key; running them on arrival meant an
     // unauthenticated peer drove SQLite writes and root-key signatures by
     // connecting, which on a routable bind is anyone who can reach the port.
-    maintenance(&db, state, &now).map_err(|error| refuse(500, error))?;
-    let parsed_body: Option<Value> = if request.body.is_empty() {
-        None
-    } else {
-        Some(
-            crate::json::parse_strict_value(&request.body).map_err(|error| {
-                refuse(
-                    400,
-                    ContractError::invariant(format!(
-                        "body is not canonical strict JSON ({error})"
-                    )),
-                )
-            })?,
+    maintenance(db, state, now).map_err(|error| refuse(500, error))?;
+    let parsed_body: Option<Value> = parsed_body.map_err(|error| {
+        refuse(
+            400,
+            ContractError::invariant(format!("body is not canonical strict JSON ({error})")),
         )
-    };
-    let trust_state = trust::load(&db, &state.root.public()).map_err(|error| refuse(500, error))?;
-    match (request.method.as_str(), route.as_str()) {
-        ("GET", "/status") => status(&db, state, &auth, &trust_state),
-        ("GET", "/facts") => facts(&db, state, &auth, &trust_state, request, &now),
-        ("POST", "/facts") => admit_fact(&db, state, &auth, &trust_state, parsed_body, &now),
-        ("GET", "/snapshot") => snapshot(&db, state, &auth, &trust_state, request, &now),
-        ("GET", "/events") => events(&db, state, &auth, &trust_state, request),
+    })?;
+    let trust_state = trust::load(db, &state.root.public()).map_err(|error| refuse(500, error))?;
+    match (request.method.as_str(), route) {
+        ("GET", "/status") => status(db, state, auth, &trust_state),
+        ("GET", "/facts") => facts(db, state, auth, &trust_state, request, now),
+        ("POST", "/facts") => admit_fact(db, state, auth, &trust_state, parsed_body, now),
+        ("GET", "/snapshot") => snapshot(db, state, auth, &trust_state, request, now),
+        ("GET", "/events") => events(db, state, auth, &trust_state, request),
         ("POST", "/authority-registry") => {
-            publish_registry(&db, &auth, &trust_state, parsed_body, &now)
+            publish_registry(db, auth, &trust_state, parsed_body, now)
         }
-        ("GET", "/authority-registry") => authority_registry(&db, &auth),
-        ("POST", "/directory") => {
-            directory_write(&db, state, &auth, &trust_state, parsed_body, &now)
-        }
-        ("POST", "/questions") => post_question(&db, state, &auth, &trust_state, parsed_body, &now),
+        ("GET", "/authority-registry") => authority_registry(db, auth),
+        ("POST", "/directory") => directory_write(db, state, auth, &trust_state, parsed_body, now),
+        ("POST", "/questions") => post_question(db, state, auth, &trust_state, parsed_body, now),
         ("GET", "/questions") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let questions = db
                 .questions(request.query.get("authority_id").map(String::as_str))
                 .map_err(|error| refuse(500, error))?;
@@ -486,9 +561,9 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
                 json!({"questions": questions, "count": questions.len()}),
             ))
         }
-        ("POST", "/answers") => post_answer(&db, state, &auth, &trust_state, parsed_body, &now),
+        ("POST", "/answers") => post_answer(db, state, auth, &trust_state, parsed_body, now),
         ("GET", "/answers") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let question_id = request
                 .query
                 .get("question_id")
@@ -499,19 +574,19 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
                 .map_err(|error| refuse(500, error))?;
             Ok((200, json!({"answers": answers})))
         }
-        ("POST", "/unknowns") => post_unknown(&db, &auth, &trust_state, parsed_body, &now),
+        ("POST", "/unknowns") => post_unknown(db, auth, &trust_state, parsed_body, now),
         ("GET", "/unknowns") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let unknowns = db
                 .unknowns(request.query.get("status").map(String::as_str))
                 .map_err(|error| refuse(500, error))?;
             Ok((200, json!({"unknowns": unknowns})))
         }
         ("POST", "/certificates") => {
-            issue_certificate(&db, state, &auth, &trust_state, parsed_body, &now)
+            issue_certificate(db, state, auth, &trust_state, parsed_body, now)
         }
         ("GET", "/certificates") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let hint = request.query.get("hint").cloned().unwrap_or_default();
             let certificates = if hint.is_empty() {
                 db.all_certificates().map_err(|error| refuse(500, error))?
@@ -521,36 +596,36 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
             };
             Ok((200, json!({"certificates": certificates})))
         }
-        ("POST", "/manifests") => post_manifest(&db, &auth, &trust_state, parsed_body, &now),
+        ("POST", "/manifests") => post_manifest(db, auth, &trust_state, parsed_body, now),
         ("POST", "/revocations") => steward_event(
-            &db,
-            &auth,
+            db,
+            auth,
             &trust_state,
             parsed_body,
             "revocation",
             "revocation",
-            &now,
+            now,
         ),
-        ("GET", "/revocations") => revocations(&db, &auth),
+        ("GET", "/revocations") => revocations(db, auth),
         ("POST", "/rotations") => steward_event(
-            &db,
-            &auth,
+            db,
+            auth,
             &trust_state,
             parsed_body,
             "rotation",
             "rotation",
-            &now,
+            now,
         ),
-        ("POST", "/tokens") => issue_token(&db, &auth, parsed_body, &now),
+        ("POST", "/tokens") => issue_token(db, auth, parsed_body, now),
         ("GET", "/steward-queue") => {
-            require_scope(&auth, "admin:issue")?;
+            require_scope(auth, "admin:issue")?;
             Ok((
                 200,
                 json!({"queue": db.steward_queue().map_err(|error| refuse(500, error))?}),
             ))
         }
         ("GET", path) if path.starts_with("/questions/") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let id = path.trim_start_matches("/questions/");
             match db.question(id).map_err(|error| refuse(500, error))? {
                 Some(mut question) => {
@@ -564,9 +639,9 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
             }
         }
         ("GET", path) if path.starts_with("/directory/") => {
-            require_scope(&auth, "directory:read")?;
+            require_scope(auth, "directory:read")?;
             let id = path.trim_start_matches("/directory/");
-            match db.directory(id, &now).map_err(|error| refuse(500, error))? {
+            match db.directory(id, now).map_err(|error| refuse(500, error))? {
                 Some(entry) => Ok((200, entry)),
                 None => Err(refuse(
                     404,
@@ -575,7 +650,7 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
             }
         }
         ("GET", path) if path.starts_with("/certificates/") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let id = path.trim_start_matches("/certificates/");
             match db.certificate(id).map_err(|error| refuse(500, error))? {
                 // Hand back exactly what was signed; the read-time annotations
@@ -588,7 +663,7 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
             }
         }
         ("GET", path) if path.starts_with("/manifests/") => {
-            require_scope(&auth, "facts:read")?;
+            require_scope(auth, "facts:read")?;
             let id = path.trim_start_matches("/manifests/");
             let branch = request
                 .query
@@ -609,7 +684,7 @@ fn handle(state: &ServiceState, request: &Request) -> Handled {
             }
         }
         ("GET", path) if path.starts_with("/facts/") => {
-            fact_detail(&db, state, &auth, &trust_state, path, request, &now)
+            fact_detail(db, state, auth, &trust_state, path, request, now)
         }
         _ => Err(refuse(404, ContractError::invariant("no such endpoint"))),
     }
@@ -774,8 +849,22 @@ fn authenticate(
     }
     db.record_token_client_pair(&token.digest, &client_hex, now)
         .map_err(|error| refuse(500, error))?;
+    Ok(AuthContext {
+        principal_key: format!("{}:{}", token.principal_id, &client_hex[..16]),
+        token,
+        client_key: client_hex,
+    })
+}
+
+/// The per-client-key request ceiling, checked once the credential is known
+/// and before `handle` keeps a usage row: a refusal here writes none.
+fn enforce_request_rate(
+    db: &CompanyDb,
+    state: &ServiceState,
+    auth: &AuthContext,
+) -> Result<(), (u16, ContractError)> {
     let rate = db
-        .bump_request_rate(&client_hex, minute)
+        .bump_request_rate(&auth.client_key, now_minute())
         .map_err(|error| refuse(500, error))?;
     if rate > state.config.requests_per_minute {
         return Err(refuse(
@@ -786,11 +875,7 @@ fn authenticate(
             ),
         ));
     }
-    Ok(AuthContext {
-        principal_key: format!("{}:{}", token.principal_id, &client_hex[..16]),
-        token,
-        client_key: client_hex,
-    })
+    Ok(())
 }
 
 fn require_scope(auth: &AuthContext, scope: &str) -> Result<(), (u16, ContractError)> {
@@ -3822,10 +3907,26 @@ fn issue_token(db: &CompanyDb, auth: &AuthContext, body: Option<Value>, now: &st
     ))
 }
 
+/// Usage rows older than `usage_retention_seconds` go once the oldest of them
+/// is an hour past due. Rows lapse about as fast as requests arrive, and
+/// deleting each one as it lapsed put a write ahead of nearly every response.
+fn prune_usage(db: &CompanyDb, state: &ServiceState, now: &str) -> Result<(), ContractError> {
+    let ago =
+        |seconds: i64| crate::time::plus_seconds(now, -seconds).map_err(ContractError::internal);
+    let retention = state.config.usage_retention_seconds;
+    db.prune_usage(&ago(retention)?, &ago(retention + 3600)?)?;
+    Ok(())
+}
+
 /// Periodic obligations executed on request arrival: manifest observation
-/// expiry, orphan deadlines, nonce pruning.
+/// expiry, orphan deadlines, nonce and usage pruning.
 fn maintenance(db: &CompanyDb, state: &ServiceState, now: &str) -> Result<(), ContractError> {
     db.prune_nonces(now)?;
+    // Like recording, pruning usage rows never changes the answer a caller
+    // gets: a failure is reported, not raised.
+    if let Err(error) = prune_usage(db, state, now) {
+        crate::output::diagnostic("usage-prune-failed", json!({"code": error.code}));
+    }
     for expired in db.expire_manifest_observations(now)? {
         let repository = crate::json::get_str(&expired, "repository_uuid").unwrap_or_default();
         let event = json!({
@@ -4268,6 +4369,8 @@ mod packet11_tests {
             requests_per_minute: 600,
             revocation_freshness_seconds: 900,
             directory_retention_seconds: 365 * 24 * 3600,
+            record_usage: false,
+            usage_retention_seconds: 30 * 24 * 3600,
             facts_token_scopes: Vec::new(),
         };
         let db = CompanyDb::open(&config.sqlite_path).unwrap();
@@ -4348,6 +4451,8 @@ mod auth_subject_tests {
             requests_per_minute: 600,
             revocation_freshness_seconds: 900,
             directory_retention_seconds: 365 * 24 * 3600,
+            record_usage: false,
+            usage_retention_seconds: 30 * 24 * 3600,
             facts_token_scopes: Vec::new(),
         };
         let db = CompanyDb::open(&config.sqlite_path).unwrap();
@@ -5492,5 +5597,366 @@ nonce_retention_seconds = 1300
         .unwrap();
         assert_eq!(historical["status"], "committed");
         assert_eq!(historical["historical_receipt"], true);
+    }
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+    use crate::crypto::PrivateKey;
+
+    const TOKEN: &str = "facts-usage";
+    /// Planted in a path identifier and a query value: neither may reach a
+    /// usage row.
+    const CANARY: &str = "Wilhelmina0xCANARY";
+
+    fn service(temp: &std::path::Path) -> ServiceState {
+        let token_path = temp.join("facts.token");
+        crate::crypto::write_0600(&token_path, TOKEN.as_bytes(), "facts token").unwrap();
+        let config = ServiceConfig {
+            allow_non_loopback: false,
+            path: temp.join("kinbased.toml"),
+            company_id: "usage".to_owned(),
+            sqlite_path: temp.join("company.sqlite"),
+            bind: "127.0.0.1:0".parse().unwrap(),
+            root_key_file: temp.join("root.key"),
+            facts_token_file: token_path,
+            directory_token_file: None,
+            admin_token_file: None,
+            authority_token_file: None,
+            auth_failures_per_minute: 50,
+            default_fact_freshness_seconds: 900,
+            candidate_lifetime_seconds: 900,
+            clock_skew_seconds: 300,
+            nonce_retention_seconds: 1300,
+            read_volume_per_hour: 2_000,
+            read_bytes_per_hour: 64 * 1024 * 1024,
+            requests_per_minute: 600,
+            revocation_freshness_seconds: 900,
+            directory_retention_seconds: 365 * 24 * 3600,
+            record_usage: true,
+            usage_retention_seconds: 30 * 24 * 3600,
+            facts_token_scopes: Vec::new(),
+        };
+        let db = CompanyDb::open(&config.sqlite_path).unwrap();
+        register_tokens(&db, &config).unwrap();
+        ServiceState {
+            config,
+            root: PrivateKey::generate(),
+            started_at: crate::time::now_rfc3339_millis(),
+        }
+    }
+
+    /// A request as `http::read_request` would hand it over, signed by `key`
+    /// when `bearer` is given.
+    fn request(
+        method: &str,
+        target: &str,
+        body: &[u8],
+        bearer: Option<&str>,
+        key: &PrivateKey,
+    ) -> Request {
+        let (route, query_text) = target.split_once('?').unwrap_or((target, ""));
+        let query = query_text
+            .split('&')
+            .filter(|pair| !pair.is_empty())
+            .map(|pair| {
+                let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+                (key.to_owned(), value.to_owned())
+            })
+            .collect();
+        let mut headers = vec![("host".to_owned(), "127.0.0.1:8421".to_owned())];
+        if !body.is_empty() {
+            headers.push(("content-type".to_owned(), "application/json".to_owned()));
+        }
+        if let Some(bearer) = bearer {
+            let nonce = crate::crypto::random_token();
+            let expires_at =
+                crate::time::plus_seconds(&crate::time::now_rfc3339_millis(), 60).unwrap();
+            let signed = json!({
+                "method": method,
+                "path": target,
+                "body_sha256": crate::hash::sha256_bytes(body),
+                "nonce": nonce,
+                "expires_at": expires_at
+            });
+            let signature = key
+                .sign("receipt", &crate::json::canonical_bytes(&signed))
+                .unwrap();
+            headers.extend([
+                ("authorization".to_owned(), format!("Bearer {bearer}")),
+                ("x-kinbase-nonce".to_owned(), nonce),
+                ("x-kinbase-expires-at".to_owned(), expires_at),
+                ("x-kinbase-client-key".to_owned(), key.public().to_hex()),
+                ("x-kinbase-signature".to_owned(), signature),
+            ]);
+        }
+        Request {
+            method: method.to_owned(),
+            path: target.to_owned(),
+            route: route.to_owned(),
+            query,
+            headers,
+            body: body.to_vec(),
+            peer: None,
+        }
+    }
+
+    /// `handle_connection` without the socket: the answer, then its row.
+    fn served(state: &ServiceState, request: &Request) -> Handled {
+        let mut usage = None;
+        let answer = handle(state, request, &mut usage);
+        if let Some(usage) = usage {
+            usage.write();
+        }
+        answer
+    }
+
+    /// Every usage row as (principal, client, role, action, target, status,
+    /// error code), oldest first.
+    fn rows(
+        state: &ServiceState,
+    ) -> Vec<(String, String, String, String, String, u16, Option<String>)> {
+        let db = CompanyDb::connect(&state.config.sqlite_path).unwrap();
+        let mut statement = db
+            .connection
+            .prepare("SELECT principal_id, client, token_role, action, target, status, error_code FROM usage_events ORDER BY id")
+            .unwrap();
+        statement
+            .query_map([], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            })
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn an_authenticated_request_leaves_one_row_naming_its_principal_and_outcome() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = service(temp.path());
+        let key = PrivateKey::generate();
+        let (status, _) =
+            served(&state, &request("GET", "/status", b"", Some(TOKEN), &key)).unwrap();
+        assert_eq!(status, 200);
+        let client: String = key.public().to_hex().chars().take(16).collect();
+        assert_eq!(
+            rows(&state),
+            [(
+                "facts-principal".to_owned(),
+                client,
+                "facts".to_owned(),
+                "info.status".to_owned(),
+                "/status".to_owned(),
+                200,
+                None
+            )]
+        );
+    }
+
+    #[test]
+    fn a_refused_request_is_recorded_with_its_closed_error_code() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = service(temp.path());
+        let key = PrivateKey::generate();
+        // The facts token holds no admin:issue scope.
+        let body = br#"{"principal_id":"someone","scopes":["facts:read"]}"#;
+        let (status, error) =
+            served(&state, &request("POST", "/tokens", body, Some(TOKEN), &key)).unwrap_err();
+        let recorded = rows(&state);
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].3, "token.issue");
+        assert_eq!(recorded[0].5, status);
+        assert_eq!(recorded[0].6.as_deref(), Some(error.code.as_str()));
+
+        // A body that does not parse is still the action its route names.
+        let (status, _) = served(
+            &state,
+            &request("POST", "/facts", b"{not json", Some(TOKEN), &key),
+        )
+        .unwrap_err();
+        assert_eq!(status, 400);
+        let recorded = rows(&state);
+        assert_eq!(
+            (recorded[1].3.as_str(), recorded[1].5),
+            ("fact.create", 400)
+        );
+    }
+
+    #[test]
+    fn a_request_refused_at_the_rate_ceiling_writes_no_row() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = service(temp.path());
+        state.config.requests_per_minute = 1;
+        let key = PrivateKey::generate();
+        // Both requests land in one minute unless the clock rolls over
+        // between them, in which case neither is refused; skip that run.
+        let minute = now_minute();
+        let first = served(&state, &request("GET", "/status", b"", Some(TOKEN), &key));
+        let second = served(&state, &request("GET", "/status", b"", Some(TOKEN), &key));
+        if now_minute() != minute {
+            return;
+        }
+        assert!(first.is_ok());
+        let (status, _) = second.unwrap_err();
+        assert_eq!(status, 429);
+        assert_eq!(rows(&state).len(), 1, "a refused request grew the table");
+    }
+
+    #[test]
+    fn a_service_that_does_not_record_usage_writes_no_row() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = service(temp.path());
+        state.config.record_usage = false;
+        let key = PrivateKey::generate();
+        assert!(served(&state, &request("GET", "/status", b"", Some(TOKEN), &key)).is_ok());
+        assert!(rows(&state).is_empty());
+    }
+
+    #[test]
+    fn a_write_maintenance_refuses_keeps_the_action_its_body_names() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = service(temp.path());
+        let key = PrivateKey::generate();
+        let db = CompanyDb::connect(&state.config.sqlite_path).unwrap();
+        db.connection.execute_batch("DROP TABLE nonces").unwrap();
+        let body = br#"{"supersedes":["fact-1"]}"#;
+        let (status, _) =
+            served(&state, &request("POST", "/facts", body, Some(TOKEN), &key)).unwrap_err();
+        assert_eq!(status, 500);
+        assert_eq!(
+            rows(&state)
+                .iter()
+                .map(|row| (row.3.as_str(), row.5))
+                .collect::<Vec<_>>(),
+            [("fact.update", 500)]
+        );
+    }
+
+    #[test]
+    fn a_usage_row_that_cannot_be_written_changes_nothing_the_caller_sees() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = service(temp.path());
+        let key = PrivateKey::generate();
+        let recorded = served(&state, &request("GET", "/status", b"", Some(TOKEN), &key));
+        let db = CompanyDb::connect(&state.config.sqlite_path).unwrap();
+        db.connection
+            .execute_batch("DROP TABLE usage_events")
+            .unwrap();
+        let unrecorded = served(&state, &request("GET", "/status", b"", Some(TOKEN), &key));
+        assert_eq!(unrecorded.unwrap(), recorded.unwrap());
+    }
+
+    #[test]
+    fn a_row_that_cannot_get_the_write_lock_is_dropped_without_waiting() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = service(temp.path());
+        let key = PrivateKey::generate();
+        let mut usage = None;
+        let request = request("GET", "/status", b"", Some(TOKEN), &key);
+        assert!(handle(&state, &request, &mut usage).is_ok());
+        let holder = CompanyDb::connect(&state.config.sqlite_path).unwrap();
+        holder.connection.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let started = std::time::Instant::now();
+        usage
+            .expect("an authenticated request leaves a row")
+            .write();
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "the row waited out the store's full busy timeout"
+        );
+        holder.connection.execute_batch("ROLLBACK").unwrap();
+        assert!(rows(&state).is_empty());
+    }
+
+    #[test]
+    fn a_principal_that_breaks_the_text_rule_is_never_issued() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut state = service(temp.path());
+        let admin = temp.path().join("admin.token");
+        crate::crypto::write_0600(&admin, b"admin-usage", "administrative token").unwrap();
+        state.config.admin_token_file = Some(admin);
+        let db = CompanyDb::connect(&state.config.sqlite_path).unwrap();
+        register_tokens(&db, &state.config).unwrap();
+        let key = PrivateKey::generate();
+        // Every string in a request body meets the text rule before the
+        // route reads it, so no issued principal can be one a usage row
+        // refuses.
+        let newline = br#"{"principal_id":"ana\nbo","scopes":["facts:read"]}"#;
+        let request_with =
+            |body: &[u8]| request("POST", "/tokens", body, Some("admin-usage"), &key);
+        let (status, _) = served(&state, &request_with(newline)).unwrap_err();
+        assert_eq!(status, 400);
+        let plain = br#"{"principal_id":"ana","scopes":["facts:read"]}"#;
+        let (status, _) = served(&state, &request_with(plain)).unwrap();
+        assert_eq!(status, 201);
+    }
+
+    #[test]
+    fn an_unauthenticated_request_leaves_no_row() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = service(temp.path());
+        let key = PrivateKey::generate();
+        for (target, bearer) in [
+            ("/facts", None),
+            ("/status", None),
+            ("/facts", Some("guess")),
+        ] {
+            assert!(served(&state, &request("GET", target, b"", bearer, &key)).is_err());
+        }
+        assert!(
+            rows(&state).is_empty(),
+            "a refused peer drove a usage write"
+        );
+    }
+
+    #[test]
+    fn path_identifiers_and_query_text_never_reach_a_row() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = service(temp.path());
+        let key = PrivateKey::generate();
+        for target in [
+            format!("/facts/{CANARY}?decision={CANARY}"),
+            format!("/questions/{CANARY}"),
+            format!("/{CANARY}"),
+            format!("/facts?authority_scope={CANARY}"),
+        ] {
+            let _ = served(&state, &request("GET", &target, b"", Some(TOKEN), &key));
+        }
+        let recorded = rows(&state);
+        let actions: Vec<_> = recorded
+            .iter()
+            .map(|row| (row.3.as_str(), row.4.as_str()))
+            .collect();
+        assert_eq!(
+            actions,
+            [
+                ("fact.read", "/facts/{fact_id}"),
+                ("question.read", "/questions/{question_id}"),
+                ("request.unrouted", "unrouted"),
+                ("fact.list", "/facts"),
+            ]
+        );
+        let db = CompanyDb::connect(&state.config.sqlite_path).unwrap();
+        let leaked: i64 = db
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM usage_events WHERE instr(principal_id || client || token_role || action || target || COALESCE(error_code, ''), ?1) > 0",
+                rusqlite::params![CANARY],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            leaked, 0,
+            "a caller's path or query text reached a usage row"
+        );
     }
 }

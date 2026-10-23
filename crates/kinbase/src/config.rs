@@ -1180,6 +1180,14 @@ pub struct ServiceConfig {
     pub requests_per_minute: i64,
     pub revocation_freshness_seconds: i64,
     pub directory_retention_seconds: i64,
+    /// Whether the service writes a usage row per authenticated request. Off
+    /// unless set: a row names the principal and a stable client
+    /// fingerprint, which spec/product.md P-3 keeps out of Company logs until
+    /// a ruling admits them.
+    pub record_usage: bool,
+    /// How long a usage row is kept. At least a day: the store refuses to
+    /// delete a younger row.
+    pub usage_retention_seconds: i64,
     /// Exact canonical authority scopes granted to the facts token issued
     /// from `facts_token_file`; empty grants nothing.
     pub facts_token_scopes: Vec<String>,
@@ -1218,6 +1226,8 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
             "requests_per_minute",
             "revocation_freshness_seconds",
             "directory_retention_seconds",
+            "record_usage",
+            "usage_retention_seconds",
             "facts_token_scopes",
         ],
         "service config",
@@ -1276,6 +1286,8 @@ pub fn load_service_config(path: &Path) -> Result<ServiceConfig, ContractError> 
         requests_per_minute: integer("requests_per_minute", Some(600), 1)?,
         revocation_freshness_seconds: integer("revocation_freshness_seconds", Some(900), 1)?,
         directory_retention_seconds: integer("directory_retention_seconds", Some(365 * 24 * 3600), 1)?,
+        record_usage: optional_bool(&table, "record_usage", "service")?,
+        usage_retention_seconds: integer("usage_retention_seconds", Some(30 * 24 * 3600), 24 * 3600)?,
         facts_token_scopes: table
             .get("facts_token_scopes")
             .map(|value| {
