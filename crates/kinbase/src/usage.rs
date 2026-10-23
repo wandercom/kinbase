@@ -229,7 +229,14 @@ impl Window {
 /// Totals and breakdowns by principal, client installation, action and time
 /// window, as one canonical document.
 pub fn report(db: &CompanyDb, window: &Window, bucket: Bucket) -> Result<Value, ContractError> {
-    let summary = db.usage_summary(window, bucket)?;
+    // A store the service has not opened since usage rows were added has no
+    // table yet. `serve` adds it; a report reads its absence as no rows
+    // rather than writing to a store a live service may be using.
+    let summary = if db.has_table("usage_events")? {
+        db.usage_summary(window, bucket)?
+    } else {
+        Summary::empty()
+    };
     Ok(json!({
         "schema": REPORT_SCHEMA,
         "window": {
@@ -254,6 +261,28 @@ pub struct Summary {
     pub by_window: Vec<Value>,
 }
 
+impl Summary {
+    /// What a store holding no usage rows reports.
+    fn empty() -> Self {
+        Self {
+            totals: json!({
+                "requests": 0,
+                "succeeded": 0,
+                "refused": 0,
+                "failed": 0,
+                "principals": 0,
+                "clients": 0,
+                "first_at": null,
+                "last_at": null
+            }),
+            by_principal: Vec::new(),
+            by_client: Vec::new(),
+            by_action: Vec::new(),
+            by_window: Vec::new(),
+        }
+    }
+}
+
 /// The report as aligned text for a terminal. The JSON form carries the same
 /// numbers; this only lays them out.
 pub fn render_human(report: &Value) -> String {
@@ -272,12 +301,16 @@ pub fn render_human(report: &Value) -> String {
         text(&window["until"]),
         text(&window["bucket"]),
     ));
+    if report["recording"] == false {
+        out.push_str("recording: off; set record_usage = true in the service config\n");
+    }
     let totals = &report["totals"];
     out.push_str(&format!(
-        "requests: {} (succeeded {}, refused {}) from {} principal(s) on {} client(s)\n",
+        "requests: {} (succeeded {}, refused {}, failed {}) from {} principal(s) on {} client(s)\n",
         text(&totals["requests"]),
         text(&totals["succeeded"]),
         text(&totals["refused"]),
+        text(&totals["failed"]),
         text(&totals["principals"]),
         text(&totals["clients"]),
     ));
@@ -299,10 +332,11 @@ pub fn render_human(report: &Value) -> String {
             })
             .unwrap_or_default();
         out.push_str(&format!(
-            "  {:<24} {:>8} req  {:>6} refused  {:>3} client(s)  last {}  {}\n",
+            "  {:<24} {:>8} req  {:>6} refused  {:>6} failed  {:>3} client(s)  last {}  {}\n",
             text(&row["principal_id"]),
             text(&row["requests"]),
             text(&row["refused"]),
+            text(&row["failed"]),
             text(&row["clients"]),
             text(&row["last_at"]),
             actions,
@@ -325,10 +359,11 @@ pub fn render_human(report: &Value) -> String {
     out.push_str("\nby action:\n");
     for row in rows("by_action") {
         out.push_str(&format!(
-            "  {:<24} {:>8} req  {:>6} refused  {:>3} principal(s)  mean {} ms\n",
+            "  {:<24} {:>8} req  {:>6} refused  {:>6} failed  {:>3} principal(s)  mean {} ms\n",
             text(&row["action"]),
             text(&row["requests"]),
             text(&row["refused"]),
+            text(&row["failed"]),
             text(&row["principals"]),
             text(&row["mean_duration_ms"]),
         ));
@@ -336,10 +371,11 @@ pub fn render_human(report: &Value) -> String {
     out.push_str(&format!("\nby {}:\n", text(&window["bucket"])));
     for row in rows("by_window") {
         out.push_str(&format!(
-            "  {:<24} {:>8} req  {:>6} refused  {:>3} principal(s)\n",
+            "  {:<24} {:>8} req  {:>6} refused  {:>6} failed  {:>3} principal(s)\n",
             text(&row["window"]),
             text(&row["requests"]),
             text(&row["refused"]),
+            text(&row["failed"]),
             text(&row["principals"]),
         ));
     }
@@ -448,27 +484,99 @@ mod tests {
         assert_eq!(classify("POST", "/facts", None).name, "fact.create");
     }
 
+    fn count(db: &CompanyDb) -> i64 {
+        db.connection
+            .query_row("SELECT COUNT(*) FROM usage_events", [], |row| row.get(0))
+            .unwrap()
+    }
+
     #[test]
-    fn usage_rows_are_append_only() {
+    fn a_usage_row_cannot_change_and_cannot_go_until_it_is_a_day_old() {
         let (_temp, db) = store();
         let status = classify("GET", "/status", None);
-        db.append_usage(&event("2026-10-01T00:00:00.000Z", "p", "c", status, 200))
+        let now = crate::time::now_rfc3339_millis();
+        let old = crate::time::plus_seconds(&now, -2 * 24 * 3600).unwrap();
+        db.append_usage(&event(&now, "p", "c", status, 200))
+            .unwrap();
+        db.append_usage(&event(&old, "p", "c", status, 200))
             .unwrap();
         assert!(
             db.connection
                 .execute("UPDATE usage_events SET status=500", [])
                 .is_err()
         );
+        // The young row aborts the statement, so neither row goes.
         assert!(
             db.connection
                 .execute("DELETE FROM usage_events", [])
                 .is_err()
         );
-        let count: i64 = db
+        assert_eq!(count(&db), 2);
+        let deleted = db
             .connection
-            .query_row("SELECT COUNT(*) FROM usage_events", [], |row| row.get(0))
+            .execute(
+                "DELETE FROM usage_events WHERE recorded_at = ?1",
+                rusqlite::params![old],
+            )
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!((deleted, count(&db)), (1, 1));
+    }
+
+    #[test]
+    fn rows_past_retention_are_pruned_once_the_oldest_is_due() {
+        let (_temp, db) = store();
+        let status = classify("GET", "/status", None);
+        let now = crate::time::now_rfc3339_millis();
+        let ago = |days: i64| crate::time::plus_seconds(&now, -days * 24 * 3600).unwrap();
+        for at in [ago(40), ago(31), ago(2), now.clone()] {
+            db.append_usage(&event(&at, "p", "c", status, 200)).unwrap();
+        }
+        // Past retention but not yet due: nothing is written.
+        assert_eq!(db.prune_usage(&ago(30), &ago(45)).unwrap(), 0);
+        assert_eq!(db.prune_usage(&ago(30), &ago(35)).unwrap(), 2);
+        assert_eq!(count(&db), 2);
+        // Whatever bound the caller passes, a row younger than a day stays.
+        let ahead = crate::time::plus_seconds(&now, 60).unwrap();
+        assert!(db.prune_usage(&ahead, &ahead).is_err());
+        assert_eq!(count(&db), 2);
+    }
+
+    #[test]
+    fn a_server_failure_is_counted_apart_from_a_refusal() {
+        let (_temp, db) = store();
+        let read = classify("GET", "/facts/f-1", None);
+        for (status, duration_ms) in [(200, 1), (404, 2), (500, 2)] {
+            let mut row = event("2026-10-01T09:00:00.000Z", "ana", "aaaa", read, status);
+            row.duration_ms = duration_ms;
+            db.append_usage(&row).unwrap();
+        }
+        let all = report(&db, &Window::default(), Bucket::Day).unwrap();
+        let outcomes = |row: &Value| {
+            ["requests", "succeeded", "refused", "failed"].map(|key| row[key].as_i64().unwrap())
+        };
+        for row in [
+            &all["totals"],
+            &all["by_principal"][0],
+            &all["by_action"][0],
+            &all["by_window"][0],
+        ] {
+            assert_eq!(outcomes(row), [3, 1, 1, 1], "{row}");
+        }
+        // 5 ms over three requests rounds to 2; integer division said 1.
+        assert_eq!(all["by_action"][0]["mean_duration_ms"], 2);
+        assert!(render_human(&all).contains("(succeeded 1, refused 1, failed 1)"));
+    }
+
+    #[test]
+    fn a_store_without_the_usage_table_reports_what_an_empty_one_does() {
+        let (_temp, db) = store();
+        let empty = report(&db, &Window::default(), Bucket::Day).unwrap();
+        db.connection
+            .execute_batch("DROP TABLE usage_events")
+            .unwrap();
+        let missing = report(&db, &Window::default(), Bucket::Day).unwrap();
+        assert_eq!(missing, empty);
+        assert!(!db.has_table("usage_events").unwrap(), "the report wrote");
     }
 
     #[test]
@@ -477,11 +585,7 @@ mod tests {
         let status = classify("GET", "/status", None);
         let bad = event("2026-10-01T00:00:00.000Z", "p\u{202e}x", "c", status, 200);
         assert!(db.append_usage(&bad).is_err());
-        let count: i64 = db
-            .connection
-            .query_row("SELECT COUNT(*) FROM usage_events", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(count, 0, "a refused row was stored anyway");
+        assert_eq!(count(&db), 0, "a refused row was stored anyway");
     }
 
     #[test]

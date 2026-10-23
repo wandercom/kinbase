@@ -55,6 +55,7 @@ default_fact_freshness_seconds = 900
 candidate_lifetime_seconds = 900
 clock_skew_seconds = 300
 nonce_retention_seconds = 1300
+record_usage = true
 "#,
         db = sqlite.display(),
         root_key = temp.join("company-root.key").display(),
@@ -197,6 +198,7 @@ fn the_report_counts_live_requests_by_principal_client_and_action() {
 
     let all = report(&service.usage(&["--json"]));
     assert_eq!(all["status"], "company-usage");
+    assert_eq!(all["recording"], true);
     assert_eq!(all["company_id"], "company-usage");
     assert_eq!(all["schema"], "kinbase-usage-report/1");
     let totals = &all["totals"];
@@ -238,7 +240,7 @@ fn the_report_counts_live_requests_by_principal_client_and_action() {
     assert!(human.status.success());
     let text = String::from_utf8_lossy(&human.stdout);
     assert!(
-        text.contains("requests: 4 (succeeded 3, refused 1)"),
+        text.contains("requests: 4 (succeeded 3, refused 1, failed 0)"),
         "{text}"
     );
     assert!(text.contains("facts-principal"), "{text}");
@@ -298,7 +300,7 @@ fn a_report_on_a_store_that_does_not_exist_refuses_and_creates_nothing() {
 }
 
 #[test]
-fn a_file_that_was_never_initialized_is_refused_and_an_older_store_gains_the_table() {
+fn only_this_companys_store_is_read_and_the_report_writes_nothing() {
     let temp = TempDir::new().expect("temporary root");
     let (config, sqlite) = write_config(temp.path(), 8421);
     let usage = || {
@@ -309,27 +311,62 @@ fn a_file_that_was_never_initialized_is_refused_and_an_older_store_gains_the_tab
             .output_alone()
             .expect("run company usage")
     };
+    let refused = |output: Output| {
+        assert_eq!(output.status.code(), Some(4));
+        let error: Value = serde_json::from_slice(&output.stdout).expect("typed error document");
+        assert_eq!(error["error"]["code"], "CONFIG_INVARIANT");
+        error["error"]["message"].as_str().unwrap().to_owned()
+    };
+    let bytes = |path: &Path| std::fs::read(path).expect("read store file");
 
     // A file exists at sqlite_path, but `company init` never made it a store.
     std::fs::write(&sqlite, b"").expect("empty file");
-    let output = usage();
-    assert_eq!(output.status.code(), Some(4));
-    let error: Value = serde_json::from_slice(&output.stdout).expect("typed error document");
-    assert_eq!(error["error"]["code"], "CONFIG_INVARIANT");
+    assert!(refused(usage()).contains("not this Company's initialized store"));
     std::fs::remove_file(&sqlite).expect("remove empty file");
 
+    // Another SQLite file with a meta table of its own is refused untouched.
+    let foreign = rusqlite::Connection::open(&sqlite).expect("foreign database");
+    foreign
+        .execute_batch("CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);")
+        .expect("foreign meta table");
+    drop(foreign);
+    let before = bytes(&sqlite);
+    assert!(refused(usage()).contains("not this Company's initialized store"));
+    assert_eq!(bytes(&sqlite), before, "the report wrote to a foreign file");
+    std::fs::remove_file(&sqlite).expect("remove foreign file");
+
     // A store migrated before usage rows existed has no usage_events table;
-    // the report adds it rather than failing on the missing table.
+    // the report reads that as no rows and leaves the table to `serve`.
     let db = kinbase::company::db::CompanyDb::open(&sqlite).expect("initialize store");
+    db.set_meta("company_id", "company-usage")
+        .expect("stamp company");
     db.connection
         .execute_batch("DROP TABLE usage_events")
         .expect("drop usage table");
-    assert!(!db.has_table("usage_events").unwrap());
     drop(db);
     let older = report(&usage());
     assert_eq!(older["totals"]["requests"], 0);
     let db = kinbase::company::db::CompanyDb::connect(&sqlite).expect("reopen store");
-    assert!(db.has_table("usage_events").unwrap());
+    assert!(
+        !db.has_table("usage_events").unwrap(),
+        "the report migrated"
+    );
+
+    // A service that never set record_usage says why its report is empty.
+    let config_text = std::fs::read_to_string(&config).expect("read config");
+    kinbase::crypto::write_0600(
+        &config,
+        config_text.replace("record_usage = true\n", "").as_bytes(),
+        "service config",
+    )
+    .expect("rewrite config");
+    let off = isolated(temp.path())
+        .args(["company", "usage", "--config"])
+        .arg(&config)
+        .output_alone()
+        .expect("run company usage");
+    assert!(off.status.success());
+    assert!(String::from_utf8_lossy(&off.stdout).contains("recording: off"));
 }
 
 #[test]

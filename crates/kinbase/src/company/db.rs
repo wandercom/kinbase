@@ -16,6 +16,22 @@ pub fn sqlite_error(context: &str) -> impl Fn(rusqlite::Error) -> ContractError 
     move |error| ContractError::internal(format!("{context}: {error}"))
 }
 
+/// The three outcome columns of a usage breakdown: requests, succeeded and
+/// failed. A refusal is a 4xx and is what remains; a 5xx is the service
+/// failing, counted apart so a maintenance fault does not read as callers
+/// being turned away.
+const USAGE_OUTCOMES: &str =
+    "COUNT(*), COALESCE(SUM(status < 400), 0), COALESCE(SUM(status >= 500), 0)";
+
+/// `(requests, succeeded, refused, failed)` from the `USAGE_OUTCOMES`
+/// columns starting at `first`.
+fn usage_outcomes(row: &rusqlite::Row<'_>, first: usize) -> rusqlite::Result<(i64, i64, i64, i64)> {
+    let requests: i64 = row.get(first)?;
+    let succeeded: i64 = row.get(first + 1)?;
+    let failed: i64 = row.get(first + 2)?;
+    Ok((requests, succeeded, requests - succeeded - failed, failed))
+}
+
 pub struct CompanyDb {
     pub connection: Connection,
 }
@@ -84,6 +100,30 @@ impl CompanyDb {
                 "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;",
             )
             .map_err(sqlite_error("pragma"))?;
+        Ok(Self { connection })
+    }
+
+    /// Opens a connection that cannot write, for a reader running beside the
+    /// service against whatever file the config names. `connect` would switch
+    /// a foreign file's journal mode before anyone checked what it was.
+    pub fn connect_read_only(path: &Path) -> Result<Self, ContractError> {
+        crate::paths::reject_symlink(path, "Company SQLite")?;
+        let connection = Connection::open_with_flags(
+            path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY
+                | rusqlite::OpenFlags::SQLITE_OPEN_URI
+                | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|error| {
+            ContractError::refused(
+                "CONFIG_INVARIANT",
+                format!("Company SQLite cannot be opened ({error})"),
+                format!("Make {} readable by this user.", path.display()),
+            )
+        })?;
+        connection
+            .busy_timeout(std::time::Duration::from_secs(10))
+            .map_err(sqlite_error("busy timeout"))?;
         Ok(Self { connection })
     }
 
@@ -183,7 +223,8 @@ impl CompanyDb {
                  CREATE TRIGGER IF NOT EXISTS usage_events_immutable_update BEFORE UPDATE ON usage_events
                     BEGIN SELECT RAISE(ABORT, 'usage records are append-only'); END;
                  CREATE TRIGGER IF NOT EXISTS usage_events_immutable_delete BEFORE DELETE ON usage_events
-                    BEGIN SELECT RAISE(ABORT, 'usage records are append-only'); END;",
+                    WHEN OLD.recorded_at >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day')
+                    BEGIN SELECT RAISE(ABORT, 'usage records younger than a day are append-only'); END;",
             )
             .map_err(sqlite_error("company schema"))?;
         self.connection
@@ -1362,6 +1403,29 @@ impl CompanyDb {
         inserted
     }
 
+    /// Deletes up to a thousand usage rows recorded before `before`, oldest
+    /// first, once the oldest was recorded before `due`. The check is one
+    /// index read, so a store with nothing due takes no write lock, and the
+    /// batch bounds how long a backlog holds it.
+    pub fn prune_usage(&self, before: &str, due: &str) -> Result<usize, ContractError> {
+        let oldest: Option<String> = self
+            .connection
+            .query_row("SELECT MIN(recorded_at) FROM usage_events", [], |row| {
+                row.get(0)
+            })
+            .map_err(sqlite_error("usage prune"))?;
+        if oldest.is_none_or(|oldest| oldest.as_str() >= due) {
+            return Ok(0);
+        }
+        self.connection
+            .execute(
+                "DELETE FROM usage_events WHERE id IN (
+                    SELECT id FROM usage_events WHERE recorded_at < ?1 ORDER BY recorded_at LIMIT 1000)",
+                params![before],
+            )
+            .map_err(sqlite_error("usage prune"))
+    }
+
     /// Aggregates over the usage rows inside `window`, one query per
     /// breakdown so the counting happens in SQLite rather than in memory.
     ///
@@ -1396,30 +1460,43 @@ impl CompanyDb {
         window: &crate::usage::Window,
         bucket: crate::usage::Bucket,
     ) -> Result<crate::usage::Summary, ContractError> {
-        const WINDOW: &str =
-            "(?1 IS NULL OR recorded_at >= ?1) AND (?2 IS NULL OR recorded_at < ?2)";
-        let since = window.since.as_deref();
-        let until = window.until.as_deref();
+        // Only the bounds the window has go into the query: `?1 IS NULL OR
+        // recorded_at >= ?1` kept SQLite off the recorded_at index, so even a
+        // narrow window scanned all history once per breakdown.
+        let mut bounds = Vec::new();
+        let mut values = Vec::new();
+        for (operator, value) in [(">=", &window.since), ("<", &window.until)] {
+            if let Some(value) = value {
+                values.push(value.as_str());
+                bounds.push(format!("recorded_at {operator} ?{}", values.len()));
+            }
+        }
+        let from = if bounds.is_empty() {
+            "FROM usage_events".to_owned()
+        } else {
+            format!("FROM usage_events WHERE {}", bounds.join(" AND "))
+        };
+        let bound = || rusqlite::params_from_iter(values.iter());
         let totals = self
             .connection
             .query_row(
                 &format!(
-                    "SELECT COUNT(*), COALESCE(SUM(status < 400), 0), COUNT(DISTINCT principal_id),
-                            COUNT(DISTINCT client), MIN(recorded_at), MAX(recorded_at)
-                     FROM usage_events WHERE {WINDOW}"
+                    "SELECT {USAGE_OUTCOMES}, COUNT(DISTINCT principal_id), COUNT(DISTINCT client),
+                            MIN(recorded_at), MAX(recorded_at)
+                     {from}"
                 ),
-                params![since, until],
+                bound(),
                 |row| {
-                    let requests: i64 = row.get(0)?;
-                    let succeeded: i64 = row.get(1)?;
+                    let (requests, succeeded, refused, failed) = usage_outcomes(row, 0)?;
                     Ok(json!({
                         "requests": requests,
                         "succeeded": succeeded,
-                        "refused": requests - succeeded,
-                        "principals": row.get::<_, i64>(2)?,
-                        "clients": row.get::<_, i64>(3)?,
-                        "first_at": row.get::<_, Option<String>>(4)?,
-                        "last_at": row.get::<_, Option<String>>(5)?
+                        "refused": refused,
+                        "failed": failed,
+                        "principals": row.get::<_, i64>(3)?,
+                        "clients": row.get::<_, i64>(4)?,
+                        "first_at": row.get::<_, Option<String>>(5)?,
+                        "last_at": row.get::<_, Option<String>>(6)?
                     }))
                 },
             )
@@ -1429,10 +1506,10 @@ impl CompanyDb {
             BTreeMap::new();
         for (principal, action, count) in self.usage_rows(
             &format!(
-                "SELECT principal_id, action, COUNT(*) FROM usage_events WHERE {WINDOW}
+                "SELECT principal_id, action, COUNT(*) {from}
                  GROUP BY principal_id, action"
             ),
-            params![since, until],
+            bound(),
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -1446,47 +1523,44 @@ impl CompanyDb {
                 .or_default()
                 .insert(action, Value::from(count));
         }
-        let by_principal = self.usage_rows(
-            &format!(
-                "SELECT principal_id, COUNT(*), COALESCE(SUM(status < 400), 0), COUNT(DISTINCT client),
+        let by_principal = self
+            .usage_rows(
+                &format!(
+                    "SELECT principal_id, {USAGE_OUTCOMES}, COUNT(DISTINCT client),
                         MIN(recorded_at), MAX(recorded_at)
-                 FROM usage_events WHERE {WINDOW}
+                 {from}
                  GROUP BY principal_id ORDER BY COUNT(*) DESC, principal_id"
-            ),
-            params![since, until],
-            |row| {
-                let principal: String = row.get(0)?;
-                let requests: i64 = row.get(1)?;
-                let succeeded: i64 = row.get(2)?;
-                Ok(json!({
-                    "principal_id": principal,
-                    "requests": requests,
-                    "succeeded": succeeded,
-                    "refused": requests - succeeded,
-                    "clients": row.get::<_, i64>(3)?,
-                    "first_at": row.get::<_, String>(4)?,
-                    "last_at": row.get::<_, String>(5)?
-                }))
-            },
-        )?
-        .into_iter()
-        .map(|mut row| {
-            let principal = row["principal_id"].as_str().unwrap_or_default().to_owned();
-            row["actions"] = Value::Object(
-                actions_by_principal
-                    .remove(&principal)
-                    .unwrap_or_default(),
-            );
-            row
-        })
-        .collect();
+                ),
+                bound(),
+                |row| {
+                    let (requests, succeeded, refused, failed) = usage_outcomes(row, 1)?;
+                    Ok(json!({
+                        "principal_id": row.get::<_, String>(0)?,
+                        "requests": requests,
+                        "succeeded": succeeded,
+                        "refused": refused,
+                        "failed": failed,
+                        "clients": row.get::<_, i64>(4)?,
+                        "first_at": row.get::<_, String>(5)?,
+                        "last_at": row.get::<_, String>(6)?
+                    }))
+                },
+            )?
+            .into_iter()
+            .map(|mut row| {
+                let principal = row["principal_id"].as_str().unwrap_or_default().to_owned();
+                row["actions"] =
+                    Value::Object(actions_by_principal.remove(&principal).unwrap_or_default());
+                row
+            })
+            .collect();
         let by_client = self.usage_rows(
             &format!(
                 "SELECT principal_id, client, token_role, COUNT(*), MAX(recorded_at)
-                 FROM usage_events WHERE {WINDOW}
+                 {from}
                  GROUP BY principal_id, client, token_role ORDER BY COUNT(*) DESC, principal_id, client"
             ),
-            params![since, until],
+            bound(),
             |row| {
                 Ok(json!({
                     "principal_id": row.get::<_, String>(0)?,
@@ -1497,44 +1571,48 @@ impl CompanyDb {
                 }))
             },
         )?;
+        // Rounded, not truncated: integer division showed most fast actions
+        // as 0 ms.
         let by_action = self.usage_rows(
             &format!(
-                "SELECT action, COUNT(*), COALESCE(SUM(status < 400), 0), COUNT(DISTINCT principal_id),
-                        SUM(duration_ms) / COUNT(*)
-                 FROM usage_events WHERE {WINDOW}
+                "SELECT action, {USAGE_OUTCOMES}, COUNT(DISTINCT principal_id),
+                        CAST(ROUND(AVG(duration_ms)) AS INTEGER)
+                 {from}
                  GROUP BY action ORDER BY COUNT(*) DESC, action"
             ),
-            params![since, until],
+            bound(),
             |row| {
-                let requests: i64 = row.get(1)?;
-                let succeeded: i64 = row.get(2)?;
+                let (requests, succeeded, refused, failed) = usage_outcomes(row, 1)?;
                 Ok(json!({
                     "action": row.get::<_, String>(0)?,
                     "requests": requests,
                     "succeeded": succeeded,
-                    "refused": requests - succeeded,
-                    "principals": row.get::<_, i64>(3)?,
-                    "mean_duration_ms": row.get::<_, i64>(4)?
+                    "refused": refused,
+                    "failed": failed,
+                    "principals": row.get::<_, i64>(4)?,
+                    "mean_duration_ms": row.get::<_, i64>(5)?
                 }))
             },
         )?;
+        // The prefix length comes from the closed `Bucket`, never the caller.
         let by_window = self.usage_rows(
             &format!(
-                "SELECT substr(recorded_at, 1, ?3) AS bucket, COUNT(*), COALESCE(SUM(status < 400), 0),
+                "SELECT substr(recorded_at, 1, {}) AS bucket, {USAGE_OUTCOMES},
                         COUNT(DISTINCT principal_id)
-                 FROM usage_events WHERE {WINDOW}
-                 GROUP BY bucket ORDER BY bucket"
+                 {from}
+                 GROUP BY bucket ORDER BY bucket",
+                bucket.prefix_len()
             ),
-            params![since, until, bucket.prefix_len() as i64],
+            bound(),
             |row| {
-                let requests: i64 = row.get(1)?;
-                let succeeded: i64 = row.get(2)?;
+                let (requests, succeeded, refused, failed) = usage_outcomes(row, 1)?;
                 Ok(json!({
                     "window": row.get::<_, String>(0)?,
                     "requests": requests,
                     "succeeded": succeeded,
-                    "refused": requests - succeeded,
-                    "principals": row.get::<_, i64>(3)?
+                    "refused": refused,
+                    "failed": failed,
+                    "principals": row.get::<_, i64>(4)?
                 }))
             },
         )?;

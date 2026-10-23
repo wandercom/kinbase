@@ -135,10 +135,10 @@ pub fn usage(
     // turns a code paired with the wrong exit into RUN_INTEGRITY_FAILED. This
     // stays CONFIG_INVARIANT (exit 4) until the taxonomy gains a code; the
     // gap is raised as a spec defect rather than papered over here.
-    let uninitialized = || {
+    let uninitialized = |message: &str| {
         ContractError::refused(
             "CONFIG_INVARIANT",
-            "the Company store named by sqlite_path does not exist",
+            message,
             format!(
                 "Run `kinbase company init --config {}` first; no store was created.",
                 config_path.display()
@@ -146,23 +146,31 @@ pub fn usage(
         )
     };
     if !config.sqlite_path.exists() {
-        return Err(uninitialized());
+        return Err(uninitialized(
+            "the Company store named by sqlite_path does not exist",
+        ));
     }
-    // `connect`, not `open`: the report runs beside a live service, and
-    // `open` chmods the file and takes two write transactions on every run.
-    let db = db::CompanyDb::connect(&config.sqlite_path)?;
-    // A file `company init` never migrated is not a store, and the report
-    // does not get to make it one.
-    if !db.has_table("meta")? {
-        return Err(uninitialized());
-    }
-    // A store created before usage rows existed gets the table, once.
-    if !db.has_table("usage_events")? {
-        db.migrate()?;
+    // Read-only: the report runs beside a live service, against whatever
+    // file sqlite_path names, and writes to neither.
+    let db = db::CompanyDb::connect_read_only(&config.sqlite_path)?;
+    // A store is this Company's once `company init` or `serve` has stamped
+    // its company_id; any other SQLite file, meta table or not, is refused.
+    let company_id = if db.has_table("meta")? {
+        db.meta("company_id")?
+    } else {
+        None
+    };
+    if company_id.as_deref() != Some(config.company_id.as_str()) {
+        return Err(uninitialized(
+            "the file named by sqlite_path is not this Company's initialized store",
+        ));
     }
     let mut report = crate::usage::report(&db, &window, bucket)?;
     report["status"] = json!("company-usage");
     report["company_id"] = json!(config.company_id);
+    // Recording is off unless the service config sets it; an empty report
+    // from a service that was never recording says so.
+    report["recording"] = json!(config.record_usage);
     if json_output {
         crate::output::emit(&report, true);
     } else {
