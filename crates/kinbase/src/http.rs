@@ -419,6 +419,11 @@ pub(crate) fn within<T: Send + 'static>(
     budget: Duration,
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, Abandoned> {
+    // recv_timeout(0) still returns an answer that is already waiting, so work
+    // that finishes at once (an IP literal resolves instantly) beat a spent budget.
+    if budget.is_zero() {
+        return Err(Abandoned::Budget);
+    }
     let (sender, receiver) = std::sync::mpsc::channel();
     if let Err(error) = std::thread::Builder::new().spawn(move || {
         let _ = sender.send(work());
