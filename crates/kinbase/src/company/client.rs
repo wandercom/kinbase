@@ -45,6 +45,7 @@ pub struct Client {
     /// costs, so only they get a deployment's raised budget.
     pub snapshot_timeout: Duration,
     pub oidc: Option<crate::oidc::Config>,
+    pub gateway_key: Option<String>,
     pub bytes_sent: std::cell::Cell<u64>,
 }
 
@@ -70,8 +71,14 @@ impl Client {
         user: Option<&UserConfig>,
     ) -> Result<Self, ContractError> {
         let oidc = user.map(UserConfig::oidc).transpose()?.flatten();
+        let gateway_key = user
+            .and_then(|user| user.company.as_ref())
+            .and_then(|company| company.gateway_api_key_file.as_deref())
+            .map(|path| crate::crypto::read_private_text(path, "company gateway API key"))
+            .transpose()?
+            .map(|key| key.trim().to_owned());
         let (scheme, host, port, base_path) =
-            http::parse_url(url, allow_non_loopback, oidc.is_some())?;
+            http::parse_url(url, allow_non_loopback, oidc.is_some() || gateway_key.is_some())?;
         Ok(Self {
             scheme,
             host,
@@ -84,6 +91,7 @@ impl Client {
             read_timeout: Duration::from_secs(DEFAULT_READ_TIMEOUT_SECONDS),
             snapshot_timeout: Duration::from_secs(DEFAULT_READ_TIMEOUT_SECONDS),
             oidc,
+            gateway_key,
             bytes_sent: std::cell::Cell::new(0),
         })
     }
@@ -137,9 +145,13 @@ impl Client {
         let signature = self
             .key
             .sign("receipt", &crate::json::canonical_bytes(&signed))?;
-        let bearer = id_token.as_deref().unwrap_or(&self.token.token);
+        let authorization = match (&self.gateway_key, id_token.as_deref()) {
+            (Some(key), _) => format!("ApiKey {key}"),
+            (None, Some(id_token)) => format!("Bearer {id_token}"),
+            (None, None) => format!("Bearer {}", self.token.token),
+        };
         let mut headers = vec![
-            ("Authorization".to_owned(), format!("Bearer {bearer}")),
+            ("Authorization".to_owned(), authorization),
             ("X-Kinbase-Nonce".to_owned(), nonce),
             ("X-Kinbase-Expires-At".to_owned(), expires_at),
             (
@@ -148,7 +160,7 @@ impl Client {
             ),
             ("X-Kinbase-Signature".to_owned(), signature),
         ];
-        if self.oidc.is_some() {
+        if self.oidc.is_some() || self.gateway_key.is_some() {
             headers.insert(1, ("X-Kinbase-Token".to_owned(), self.token.token.clone()));
         }
         self.bytes_sent
@@ -533,5 +545,47 @@ mod snapshot_timeout_tests {
         );
         let _ = done.send(());
         holder.join().expect("holder");
+    }
+}
+
+#[cfg(test)]
+mod gateway_key_tests {
+    use super::Client;
+    use crate::config::TokenRecord;
+    use crate::crypto::PrivateKey;
+    use std::io::{Read, Write};
+
+    /// The gateway authenticates the caller on `Authorization: ApiKey` and
+    /// strips it; the store still needs the facts token, so both are sent and
+    /// no bearer reaches the gateway.
+    #[test]
+    fn a_gateway_key_is_sent_as_an_api_key_beside_the_facts_token() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap_or(0) == 1 {
+                head.push(byte[0]);
+            }
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}");
+            String::from_utf8_lossy(&head).to_lowercase()
+        });
+        let mut client = Client::new(
+            &format!("http://127.0.0.1:{port}"),
+            TokenRecord { token: "facts-token".to_owned() },
+            PrivateKey::generate(),
+            None,
+            std::env::temp_dir().join(format!("kinbase-gateway-key-{port}")),
+            false,
+        )
+        .expect("client");
+        client.gateway_key = Some("adapt-key".to_owned());
+        client.get("/v1/status").expect("request");
+        let head = server.join().expect("server");
+        assert!(head.contains("\r\nauthorization: apikey adapt-key\r\n"), "{head}");
+        assert!(head.contains("\r\nx-kinbase-token: facts-token\r\n"), "{head}");
+        assert!(!head.contains("bearer"), "{head}");
     }
 }
