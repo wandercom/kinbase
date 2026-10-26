@@ -23,9 +23,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2.0.0
         with:
           toolchain: 1.98.0
+          # v2 denies warnings by default and kinbase has some; a release builds clean, uncached.
+          build-warnings: warn
+          cache: false
       # REVIEW.md also names hook_install_and_ledger; it fails on main today
       # (stale exit-code expectations), so it is left out until it is repaired.
       - run: cargo test --locked --lib --test authority_boundaries
@@ -64,11 +67,22 @@ jobs:
         with:
           pattern: kinbase-*
           merge-multiple: true
-      # Idempotent: a release made in the UI, or a re-run, gets the assets replaced.
+      # wandercom releases are immutable once published, so the assets go onto a
+      # draft first. A re-run after a partial publish finds the draft and finishes it.
       - env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --generate-notes
+          draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft -q .isDraft 2>/dev/null || true)
+          case "$draft" in
+            false)
+              # Immutable once published: a re-run can only confirm every asset landed.
+              names=$(gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name')
+              for f in kinbase-*.tar.gz*; do
+                grep -qx "$f" <<<"$names" || { echo "::error::$GITHUB_REF_NAME is published without $f"; exit 1; }
+              done
+              echo "$GITHUB_REF_NAME is already published with every asset"; exit 0 ;;
+            "") gh release create "$GITHUB_REF_NAME" --draft --generate-notes ;;
+          esac
           gh release upload "$GITHUB_REF_NAME" kinbase-*.tar.gz* --clobber
+          gh release edit "$GITHUB_REF_NAME" --draft=false

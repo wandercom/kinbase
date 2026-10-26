@@ -76,6 +76,10 @@ pub struct CompanyConfig {
     pub oidc_issuer: Option<String>,
     pub oidc_client_id: Option<String>,
     pub oidc_client_secret_file: Option<PathBuf>,
+    /// A gateway API key for a caller that cannot sign in through a browser
+    /// (an agent sandbox). Sent as `Authorization: ApiKey <key>`; the gateway
+    /// checks and strips it, and the store still checks the facts token.
+    pub gateway_api_key_file: Option<PathBuf>,
     pub facts_token_file: PathBuf,
     pub root_public_key_file: PathBuf,
     pub cache_root: PathBuf,
@@ -597,6 +601,7 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                     "oidc_issuer",
                     "oidc_client_id",
                     "oidc_client_secret_file",
+                    "gateway_api_key_file",
                 ],
                 "[company]",
             )?;
@@ -619,7 +624,17 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                     "company OIDC needs both oidc_issuer and oidc_client_id",
                 ));
             }
-            validate_loopback_url(&url, allow_non_loopback, oidc_issuer.is_some())?;
+            let gateway_api_key_file = optional_path(section, "gateway_api_key_file", "company")?;
+            if oidc_issuer.is_some() && gateway_api_key_file.is_some() {
+                return Err(config_error(
+                    "company takes one gateway credential: OIDC or gateway_api_key_file",
+                ));
+            }
+            let gateway = oidc_issuer.is_some() || gateway_api_key_file.is_some();
+            validate_loopback_url(&url, allow_non_loopback, gateway)?;
+            if gateway_api_key_file.is_some() {
+                crate::oidc::validate_provider_url(&url)?;
+            }
             if let Some(issuer) = &oidc_issuer {
                 crate::oidc::validate_provider_url(issuer)?;
                 crate::oidc::validate_provider_url(&url)?;
@@ -641,6 +656,7 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                 oidc_issuer,
                 oidc_client_id,
                 oidc_client_secret_file,
+                gateway_api_key_file,
                 allow_non_loopback,
                 snapshot_timeout_seconds,
                 facts_token_file: absolute(
@@ -986,6 +1002,15 @@ impl UserConfig {
         self.company
             .as_ref()
             .is_some_and(|company| company.oidc_issuer.is_some())
+    }
+
+    /// Either gateway credential admits the https gateway URL.
+    pub fn gateway_configured(&self) -> bool {
+        self.oidc_configured()
+            || self
+                .company
+                .as_ref()
+                .is_some_and(|company| company.gateway_api_key_file.is_some())
     }
 
     pub fn oidc(&self) -> Result<Option<crate::oidc::Config>, ContractError> {
@@ -1543,5 +1568,40 @@ mod company_snapshot_timeout_tests {
             older.snapshot_timeout_seconds,
             crate::company::client::DEFAULT_READ_TIMEOUT_SECONDS
         );
+    }
+}
+
+#[cfg(test)]
+mod gateway_api_key_tests {
+    use super::*;
+
+    fn company(extra: &str) -> Result<UserConfig, ContractError> {
+        let text = format!(
+            "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n\n[company]\nfacts_token_file = \"/private/example/facts.token\"\nroot_public_key_file = \"/private/example/root.pub\"\ncache_root = \"/private/example/cache\"\n{extra}"
+        );
+        parse_user_config(Path::new("/private/example/config.toml"), &text)
+    }
+
+    #[test]
+    fn a_gateway_api_key_admits_the_https_gateway_and_nothing_looser() {
+        let key = "gateway_api_key_file = \"/private/example/gateway.key\"\n";
+        let gateway = "url = \"https://kinbase.example.com\"\nallow_non_loopback = true\n";
+        let config = company(&format!("{gateway}{key}")).unwrap().company.unwrap();
+        assert_eq!(
+            config.gateway_api_key_file.as_deref(),
+            Some(Path::new("/private/example/gateway.key"))
+        );
+        // Without a gateway credential, https stays refused, as on main.
+        assert!(company(gateway).is_err());
+        // One credential: an API key or OIDC, not both.
+        assert!(company(&format!(
+            "{gateway}{key}oidc_issuer = \"https://accounts.google.com\"\noidc_client_id = \"client\"\n"
+        ))
+        .is_err());
+        // A routable plaintext URL would send the key in the clear.
+        assert!(company(&format!(
+            "url = \"http://kinbase.example.com\"\nallow_non_loopback = true\n{key}"
+        ))
+        .is_err());
     }
 }
