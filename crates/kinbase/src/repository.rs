@@ -2219,11 +2219,11 @@ pub fn issue_certificate(
         .company
         .as_ref()
         .is_some_and(|company| company.allow_non_loopback);
-    let oidc = launcher
+    let gateway = launcher
         .user
         .as_ref()
-        .is_some_and(crate::config::UserConfig::oidc_configured);
-    crate::config::validate_loopback_url(company_url, allow_non_loopback, oidc)?;
+        .is_some_and(crate::config::UserConfig::gateway_configured);
+    crate::config::validate_loopback_url(company_url, allow_non_loopback, gateway)?;
     if launcher.company_env_present {
         return Err(ContractError::new(
             "PROCESSOR_UNAUTHORIZED",

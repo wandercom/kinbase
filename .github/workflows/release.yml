@@ -73,7 +73,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 \
-            || gh release create "$GITHUB_REF_NAME" --draft --generate-notes
+          draft=$(gh release view "$GITHUB_REF_NAME" --json isDraft -q .isDraft 2>/dev/null || true)
+          case "$draft" in
+            false)
+              # Immutable once published: a re-run can only confirm every asset landed.
+              names=$(gh release view "$GITHUB_REF_NAME" --json assets -q '.assets[].name')
+              for f in kinbase-*.tar.gz*; do
+                grep -qx "$f" <<<"$names" || { echo "::error::$GITHUB_REF_NAME is published without $f"; exit 1; }
+              done
+              echo "$GITHUB_REF_NAME is already published with every asset"; exit 0 ;;
+            "") gh release create "$GITHUB_REF_NAME" --draft --generate-notes ;;
+          esac
           gh release upload "$GITHUB_REF_NAME" kinbase-*.tar.gz* --clobber
           gh release edit "$GITHUB_REF_NAME" --draft=false

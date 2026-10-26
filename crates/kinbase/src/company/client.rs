@@ -74,9 +74,9 @@ impl Client {
         let gateway_key = user
             .and_then(|user| user.company.as_ref())
             .and_then(|company| company.gateway_api_key_file.as_deref())
-            .map(|path| crate::crypto::read_private_text(path, "company gateway API key"))
+            .map(|path| TokenRecord::load(path, "company gateway API key"))
             .transpose()?
-            .map(|key| key.trim().to_owned());
+            .map(|record| record.token);
         let (scheme, host, port, base_path) =
             http::parse_url(url, allow_non_loopback, oidc.is_some() || gateway_key.is_some())?;
         Ok(Self {
@@ -587,5 +587,19 @@ mod gateway_key_tests {
         assert!(head.contains("\r\nauthorization: apikey adapt-key\r\n"), "{head}");
         assert!(head.contains("\r\nx-kinbase-token: facts-token\r\n"), "{head}");
         assert!(!head.contains("bearer"), "{head}");
+    }
+
+    /// A key file is copied into a header, so a line break inside it could
+    /// add headers of its own; it is refused like a malformed facts token.
+    #[test]
+    fn a_key_file_with_a_line_break_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("dir");
+        let path = dir.path().join("gateway.key");
+        std::fs::write(&path, "adapt-key\r\nX-Injected: 1\n").expect("write");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+        assert!(TokenRecord::load(&path, "company gateway API key").is_err());
+        std::fs::write(&path, "adapt-key\n").expect("write");
+        assert_eq!(TokenRecord::load(&path, "company gateway API key").expect("load").token, "adapt-key");
     }
 }

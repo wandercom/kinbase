@@ -1185,10 +1185,10 @@ fn session_start(
     let (connect_seconds, reachable) = match launcher.shared.company.as_ref() {
         Some(_) if login_required => (None, false),
         Some(access) if !launcher.company_env_present => {
-            match crate::http::parse_url(&access.url, access.allow_non_loopback, oidc.is_some()) {
+            let gateway = launcher.user.as_ref().is_some_and(|user| user.gateway_configured());
+            match crate::http::parse_url(&access.url, access.allow_non_loopback, gateway) {
                 Ok(_)
-                    if oidc.is_some()
-                        && crate::http::parse_url(&access.url, false, true).is_err() =>
+                    if gateway && crate::http::parse_url(&access.url, false, true).is_err() =>
                 {
                     (None, true)
                 }

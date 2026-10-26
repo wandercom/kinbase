@@ -1004,6 +1004,15 @@ impl UserConfig {
             .is_some_and(|company| company.oidc_issuer.is_some())
     }
 
+    /// Either gateway credential admits the https gateway URL.
+    pub fn gateway_configured(&self) -> bool {
+        self.oidc_configured()
+            || self
+                .company
+                .as_ref()
+                .is_some_and(|company| company.gateway_api_key_file.is_some())
+    }
+
     pub fn oidc(&self) -> Result<Option<crate::oidc::Config>, ContractError> {
         let Some(company) = &self.company else {
             return Ok(None);

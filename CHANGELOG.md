@@ -4,7 +4,16 @@ Notable changes to Kinbase. Dates are UTC.
 
 ## Unreleased
 
+## 0.1.1 - 2026-10-26
+
 ### Added
+
+- `[company] gateway_api_key_file` for callers that cannot sign in through a
+  browser (an agent sandbox): Company requests send `Authorization: ApiKey <key>`
+  beside `X-Kinbase-Token`, and the https gateway URL is admitted as with OIDC.
+  It cannot be combined with OIDC, and a routable `http://` URL is refused.
+- Prebuilt Linux (x86_64) and macOS (arm64) binaries on each `v*` release,
+  attached to a draft and then published.
 
 - Unchanged snapshot receipts. A full `/snapshot` now carries a signed `content_digest`;
   a client offers it back as `known`, and when its content is still Company's answer
