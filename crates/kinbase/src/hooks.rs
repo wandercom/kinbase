@@ -85,7 +85,13 @@ fn host_config(host: &str) -> Result<(PathBuf, String), ContractError> {
         Some(value) => std::path::absolute(&value).map_err(io_error)?,
         None => home.join(default_directory),
     };
-    let path = directory.join(file);
+    // Codex reads hooks.json and config.toml alike; use the one already kept.
+    let json_hooks = directory.join("hooks.json");
+    let path = if host == "codex" && json_hooks.is_file() {
+        json_hooks
+    } else {
+        directory.join(file)
+    };
     let display = path
         .strip_prefix(&home)
         .map(|relative| relative.to_string_lossy().into_owned())
@@ -189,6 +195,30 @@ fn current_program() -> String {
     std::env::current_exe()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "kinbase".to_owned())
+}
+
+/// A Nix store path vanishes at the next update, leaving every hook broken:
+/// a store build hooks the first executable `kinbase` on PATH outside it.
+fn hook_program(current: String, path: &std::ffi::OsStr) -> Result<String, ContractError> {
+    use std::os::unix::fs::PermissionsExt;
+    if !current.starts_with("/nix/store/") {
+        return Ok(current);
+    }
+    std::env::split_paths(path)
+        .filter(|directory| directory.is_absolute() && !directory.starts_with("/nix/store"))
+        .map(|directory| directory.join("kinbase"))
+        .find(|candidate| {
+            std::fs::metadata(candidate)
+                .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+        })
+        .map(|candidate| candidate.to_string_lossy().into_owned())
+        .ok_or_else(|| {
+            ContractError::user_action(
+                "HOOK_APPROVAL_REQUIRED",
+                format!("{current} is in the Nix store, which the next update removes"),
+                "Put a stable kinbase on PATH (a shim or wrapper outside the Nix store), then rerun.",
+            )
+        })
 }
 
 fn shell_quote(value: &str) -> String {
@@ -318,7 +348,8 @@ fn planned_config_content(
     destination: &Path,
     program: &str,
 ) -> Result<String, ContractError> {
-    if host == "claude" {
+    // Claude settings and Codex hooks.json share one nested format.
+    if destination.extension().is_some_and(|extension| extension == "json") {
         let bytes = render_claude_settings(destination, host, program)?;
         String::from_utf8(bytes)
             .map_err(|_| ContractError::internal("rendered Claude settings are not UTF-8"))
@@ -333,7 +364,10 @@ fn plan_payload(
 ) -> Result<Value, ContractError> {
     let host = host_name(host_arg);
     let (destination, relative) = host_config(host)?;
-    let program = current_program();
+    let program = hook_program(
+        current_program(),
+        &std::env::var_os("PATH").unwrap_or_default(),
+    )?;
     let commands = HOOK_EVENTS
         .iter()
         .map(|event| {
@@ -470,11 +504,23 @@ fn render_codex_config(path: &Path, host: &str, program: &str) -> Result<String,
             "existing Codex [hooks] must be a table",
         ));
     };
+    let own = |handler: &toml::Value, event: &str| {
+        handler
+            .get("command")
+            .and_then(toml::Value::as_str)
+            .is_some_and(|command| is_own_dispatch_command(command, host, event))
+    };
     for event in HOOK_EVENTS {
         let command = format!("{} hooks dispatch {} {}", shell_quote(program), host, event);
+        let mut handler = toml::map::Map::new();
+        handler.insert("type".to_owned(), toml::Value::String("command".to_owned()));
+        handler.insert("command".to_owned(), toml::Value::String(command));
+        // Codex runs only handlers grouped under `hooks`.
         let mut entry = toml::map::Map::new();
-        entry.insert("type".to_owned(), toml::Value::String("command".to_owned()));
-        entry.insert("command".to_owned(), toml::Value::String(command));
+        entry.insert(
+            "hooks".to_owned(),
+            toml::Value::Array(vec![toml::Value::Table(handler)]),
+        );
         let handlers = hooks
             .entry(event.to_owned())
             .or_insert_with(|| toml::Value::Array(Vec::new()));
@@ -484,12 +530,19 @@ fn render_codex_config(path: &Path, host: &str, program: &str) -> Result<String,
             )));
         };
         // Additive, as for Claude: foreign handlers stay; only this program's
-        // own dispatcher for the event is replaced.
-        handlers.retain(|handler| {
-            !handler
-                .get("command")
-                .and_then(toml::Value::as_str)
-                .is_some_and(|command| is_own_dispatch_command(command, host, event))
+        // own dispatcher for the event is replaced, nested or the flat entry
+        // earlier builds wrote.
+        handlers.retain(|group| !own(group, event));
+        for group in handlers.iter_mut() {
+            if let Some(toml::Value::Array(nested)) = group.get_mut("hooks") {
+                nested.retain(|handler| !own(handler, event));
+            }
+        }
+        handlers.retain(|group| {
+            group
+                .get("hooks")
+                .and_then(toml::Value::as_array)
+                .is_none_or(|nested| !nested.is_empty())
         });
         handlers.push(toml::Value::Table(entry));
     }
@@ -1327,7 +1380,12 @@ pub fn hook_state(host: &str, ranges: &crate::config::SharedHosts) -> Value {
     let configured = located
         .as_ref()
         .and_then(|(path, _)| std::fs::read_to_string(path).ok())
-        .and_then(|text| hook_config_has_entries(host, &text))
+        .and_then(|text| {
+            let json = located
+                .as_ref()
+                .is_some_and(|(path, _)| path.extension().is_some_and(|e| e == "json"));
+            hook_config_has_entries(host, &text, json)
+        })
         .unwrap_or(false);
     if configured {
         json!({
@@ -1371,21 +1429,18 @@ pub fn doctor_report(ranges: &crate::config::SharedHosts) -> Value {
 /// the rule install uses to replace it (`is_own_dispatch_command`): the text
 /// merely appearing somewhere in the file, or inside someone's compound
 /// command, is not an installed hook.
-fn hook_config_has_entries(host: &str, text: &str) -> Option<bool> {
-    // A handler carries `command` itself, or groups handlers under `hooks`.
-    fn commands(handler: &Value) -> Vec<String> {
+fn hook_config_has_entries(host: &str, text: &str, json: bool) -> Option<bool> {
+    // Hosts run only handlers grouped under `hooks`; a flat entry is not one.
+    fn commands(group: &Value) -> Vec<String> {
         let mut found = Vec::new();
-        if let Some(command) = handler.get("command").and_then(Value::as_str) {
-            found.push(command.to_owned());
-        }
-        for nested in handler.get("hooks").and_then(Value::as_array).into_iter().flatten() {
+        for nested in group.get("hooks").and_then(Value::as_array).into_iter().flatten() {
             if let Some(command) = nested.get("command").and_then(Value::as_str) {
                 found.push(command.to_owned());
             }
         }
         found
     }
-    let hooks: Value = if host == "claude" {
+    let hooks: Value = if json {
         let document: Value = crate::json::parse_user_document(text.as_bytes()).ok()?;
         document.get("hooks")?.clone()
     } else {
@@ -1437,10 +1492,10 @@ mod tests {
             json!({"hooks": hooks}).to_string()
         };
         let own = entries(&|event| format!("'/opt/kinbase' hooks dispatch claude {event}"));
-        assert_eq!(hook_config_has_entries("claude", &own), Some(true));
+        assert_eq!(hook_config_has_entries("claude", &own, true), Some(true));
         let compound =
             entries(&|event| format!("audit; '/opt/kinbase' hooks dispatch claude {event}"));
-        assert_eq!(hook_config_has_entries("claude", &compound), Some(false));
+        assert_eq!(hook_config_has_entries("claude", &compound, true), Some(false));
         // The dispatch text elsewhere in the file is not an installed hook.
         let mentioned = format!(
             r#"{{"note": "{}", "hooks": {{}}}}"#,
@@ -1450,17 +1505,39 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(" ")
         );
-        assert_eq!(hook_config_has_entries("claude", &mentioned), Some(false));
+        assert_eq!(hook_config_has_entries("claude", &mentioned, true), Some(false));
 
-        let codex: String = HOOK_EVENTS
-            .iter()
-            .map(|event| {
-                format!(
-                    "[[hooks.{event}]]\ntype = \"command\"\ncommand = \"kinbase hooks dispatch codex {event}\"\n"
-                )
-            })
-            .collect();
-        assert_eq!(hook_config_has_entries("codex", &codex), Some(true));
+        let codex = |group: &str| -> String {
+            HOOK_EVENTS
+                .iter()
+                .map(|event| {
+                    format!(
+                        "[[hooks.{event}]]\n{}type = \"command\"\ncommand = \"kinbase hooks dispatch codex {event}\"\n",
+                        group.replace("EVENT", event)
+                    )
+                })
+                .collect()
+        };
+        let nested = codex("[[hooks.EVENT.hooks]]\n");
+        assert_eq!(hook_config_has_entries("codex", &nested, false), Some(true));
+        // The flat entries earlier builds wrote are never run.
+        assert_eq!(hook_config_has_entries("codex", &codex(""), false), Some(false));
+    }
+
+    #[test]
+    fn a_nix_store_build_hooks_an_executable_kinbase_outside_the_store() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let shim = temp.path().join("kinbase");
+        let store = "/nix/store/abc-kinbase/bin/.kinbase-wrapped".to_owned();
+        let path = std::env::join_paths([Path::new("/nix/store/abc-kinbase/bin"), temp.path()])
+            .expect("PATH");
+        assert!(hook_program(store.clone(), &path).is_err(), "no shim");
+        std::fs::write(&shim, "#!/bin/sh\n").expect("shim");
+        assert!(hook_program(store.clone(), &path).is_err(), "not executable");
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        assert_eq!(hook_program(store, &path).expect("shim"), shim.to_string_lossy());
+        assert_eq!(hook_program("/opt/kinbase".to_owned(), &path).expect("kept"), "/opt/kinbase");
     }
 
     #[test]
