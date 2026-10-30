@@ -4,6 +4,19 @@ Notable changes to Kinbase. Dates are UTC.
 
 ## Unreleased
 
+## 0.1.2 - 2026-10-30
+
+### Fixed
+
+- `hooks install codex` writes nested hook groups (`{"hooks": [...]}`), the
+  shape Codex runs, into `~/.codex/hooks.json` when the user keeps one. Earlier
+  builds wrote flat entries Codex never ran; a reinstall replaces them (and
+  takes them out of `config.toml` when the hooks move to `hooks.json`), and
+  `doctor` no longer counts them.
+- A Nix-store build no longer hooks its own store path, which the next update
+  removes: it hooks the first executable `kinbase` on PATH outside the store,
+  or refuses and says so.
+
 ## 0.1.1 - 2026-10-26
 
 ### Added
