@@ -213,11 +213,10 @@ fn hook_program(current: String, path: &std::ffi::OsStr) -> Result<String, Contr
         })
         .map(|candidate| candidate.to_string_lossy().into_owned())
         .ok_or_else(|| {
-            ContractError::user_action(
-                "HOOK_APPROVAL_REQUIRED",
-                format!("{current} is in the Nix store, which the next update removes"),
-                "Put a stable kinbase on PATH (a shim or wrapper outside the Nix store), then rerun.",
-            )
+            ContractError::invariant(format!(
+                "{current} is in the Nix store, which the next update removes; put a stable \
+                 kinbase on PATH (a shim or wrapper outside the Nix store), then rerun"
+            ))
         })
 }
 
@@ -352,7 +351,7 @@ fn planned_config_content(
     if destination.extension().is_some_and(|extension| extension == "json") {
         let bytes = render_claude_settings(destination, host, program)?;
         String::from_utf8(bytes)
-            .map_err(|_| ContractError::internal("rendered Claude settings are not UTF-8"))
+            .map_err(|_| ContractError::internal("rendered hook settings are not UTF-8"))
     } else {
         render_codex_config(destination, host, program)
     }
@@ -391,19 +390,36 @@ fn plan_payload(
         ));
     }
     let content = planned_config_content(host, &destination, &program)?;
+    let mut files = vec![json!({
+        "path": relative,
+        "resolved_path": destination.to_string_lossy(),
+        "exists": destination.is_file(),
+        "content": content,
+        "mode": "0600"
+    })];
+    let mut permissions = vec![json!({"path": relative, "mode": "0600"})];
+    if destination.extension().is_some_and(|extension| extension == "json") && host == "codex" {
+        let toml_path = destination.with_file_name("config.toml");
+        if let Some(stripped) = codex_config_without_flat_own(&toml_path, host) {
+            let toml_relative = Path::new(&relative).with_file_name("config.toml");
+            let toml_relative = toml_relative.to_string_lossy();
+            files.push(json!({
+                "path": toml_relative,
+                "resolved_path": toml_path.to_string_lossy(),
+                "exists": true,
+                "content": stripped,
+                "mode": "0600"
+            }));
+            permissions.push(json!({"path": toml_relative, "mode": "0600"}));
+        }
+    }
     let mut base = json!({
         "host_name": host,
         "host": host_details,
         "status": "planned",
-        "files": [{
-            "path": relative,
-            "resolved_path": destination.to_string_lossy(),
-            "exists": destination.is_file(),
-            "content": content,
-            "mode": "0600"
-        }],
+        "files": files,
         "commands": commands,
-        "permissions": [{"path": relative, "mode": "0600"}],
+        "permissions": permissions,
         "required_host_version": host_range(host, ranges),
         "approval": "the host presents its own approval at its next start; no bypass exists"
     });
@@ -440,31 +456,40 @@ fn install(
 ) -> Result<(), ContractError> {
     let plan = plan_payload(host_arg, ranges)?;
     let host = host_name(host_arg);
-    let (destination, relative) = host_config(host)?;
-    if let Some(parent) = destination.parent() {
-        std::fs::create_dir_all(parent).map_err(io_error)?;
+    let files = crate::json::get_array(&plan, "files")
+        .filter(|files| !files.is_empty())
+        .ok_or_else(|| ContractError::internal("the hook plan carries no file content"))?;
+    let mut written = Vec::new();
+    for file in files {
+        // Write exactly the bytes the plan displayed (C9).
+        let (Some(content), Some(resolved), Some(relative)) = (
+            crate::json::get_str(file, "content"),
+            crate::json::get_str(file, "resolved_path"),
+            crate::json::get_str(file, "path"),
+        ) else {
+            return Err(ContractError::internal("the hook plan carries no file content"));
+        };
+        let destination = PathBuf::from(resolved);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(io_error)?;
+        }
+        // Written by rename, so a crash or a full disk never leaves the host's
+        // settings half-written; a symlinked settings file (a dotfiles checkout)
+        // is written at its target and stays a link.
+        let target = if destination.is_symlink() {
+            std::fs::canonicalize(&destination).map_err(io_error)?
+        } else {
+            destination.clone()
+        };
+        crate::paths::write_atomic(&target, content.as_bytes(), 0o600, false)?;
+        set_mode(&target, 0o600)?;
+        written.push(relative.to_owned());
     }
-    // Write exactly the bytes the plan displayed (C9).
-    let content = crate::json::get_array(&plan, "files")
-        .and_then(|files| files.first())
-        .and_then(|file| crate::json::get_str(file, "content"))
-        .ok_or_else(|| ContractError::internal("the hook plan carries no file content"))?
-        .to_owned();
-    // Written by rename, so a crash or a full disk never leaves the host's
-    // settings half-written; a symlinked settings file (a dotfiles checkout)
-    // is written at its target and stays a link.
-    let target = if destination.is_symlink() {
-        std::fs::canonicalize(&destination).map_err(io_error)?
-    } else {
-        destination.clone()
-    };
-    crate::paths::write_atomic(&target, content.as_bytes(), 0o600, false)?;
-    set_mode(&target, 0o600)?;
     let receipt = json!({
         "status": "installed",
         "host": host,
         "plan_digest": plan.get("plan_digest"),
-        "files_written": [relative],
+        "files_written": written,
         "required_host_version": host_range(host, ranges),
         "host": plan.get("host").cloned().unwrap_or(Value::Null)
     });
@@ -551,42 +576,69 @@ fn render_codex_config(path: &Path, host: &str, program: &str) -> Result<String,
     })
 }
 
+/// config.toml without the flat dispatchers earlier builds wrote, when it has
+/// any. Codex never ran them, and beside hooks.json it warns about two hook
+/// sources. Edited as TOML, so nothing else in the file changes value.
+fn codex_config_without_flat_own(path: &Path, host: &str) -> Option<String> {
+    let mut table: toml::Value = std::fs::read_to_string(path).ok()?.parse().ok()?;
+    let hooks = table.get_mut("hooks")?.as_table_mut()?;
+    let mut removed = false;
+    for event in HOOK_EVENTS {
+        let Some(groups) = hooks.get_mut(event).and_then(toml::Value::as_array_mut) else {
+            continue;
+        };
+        let before = groups.len();
+        groups.retain(|group| {
+            !group
+                .get("command")
+                .and_then(toml::Value::as_str)
+                .is_some_and(|command| is_own_dispatch_command(command, host, event))
+        });
+        removed |= groups.len() != before;
+        if groups.is_empty() {
+            hooks.remove(event);
+        }
+    }
+    removed.then(|| toml::to_string_pretty(&table).ok()).flatten()
+}
+
 fn render_claude_settings(
     path: &Path,
     host: &str,
     program: &str,
 ) -> Result<Vec<u8>, ContractError> {
+    let label = if host == "claude" { "Claude settings" } else { "Codex hooks.json" };
     let mut document: Value = if path.exists() {
         let bytes = std::fs::read(path).map_err(io_error)?;
         // The user's settings file is their document, not a Kinbase record:
         // multi-line commands and floats are ordinary in it.
         crate::json::parse_user_document(&bytes).map_err(|error| {
             ContractError::invariant(format!(
-                "existing Claude settings are not valid JSON: {error}"
+                "existing {label} is not valid JSON: {error}"
             ))
         })?
     } else {
         json!({})
     };
     let Value::Object(settings) = &mut document else {
-        return Err(ContractError::invariant(
-            "existing Claude settings must be a JSON object",
-        ));
+        return Err(ContractError::invariant(format!(
+            "existing {label} must be a JSON object"
+        )));
     };
     let hooks = settings
         .entry("hooks".to_owned())
         .or_insert_with(|| json!({}));
     let Value::Object(hooks) = hooks else {
-        return Err(ContractError::invariant(
-            "existing Claude hooks setting must be an object",
-        ));
+        return Err(ContractError::invariant(format!(
+            "existing {label} hooks must be an object"
+        )));
     };
     for event in HOOK_EVENTS {
         let command = format!("{} hooks dispatch {} {}", shell_quote(program), host, event);
         let entries = hooks.entry(event.to_owned()).or_insert_with(|| json!([]));
         let Value::Array(entries) = entries else {
             return Err(ContractError::invariant(format!(
-                "existing Claude hooks.{event} must be an array"
+                "existing {label} hooks.{event} must be an array"
             )));
         };
         // Install is additive: every handler another tool or the user placed
@@ -614,7 +666,7 @@ fn render_claude_settings(
     // Written back as the user's document (their strings and numbers kept,
     // key order preserved), not collapsed into one canonical record line.
     let mut bytes = serde_json::to_vec_pretty(&document).map_err(|error| {
-        ContractError::internal(format!("Claude settings serialization failed: {error}"))
+        ContractError::internal(format!("{label} serialization failed: {error}"))
     })?;
     bytes.push(b'\n');
     Ok(bytes)
