@@ -2774,7 +2774,9 @@ fn merge_receipt(receipt: &mut Value, saga: &Value) {
 // journal (`.kin/local/journal/fanout/<candidate>/<transition>.json`) written
 // before its side effect and completed after it, so a restart replays or
 // rolls back from the journal; the admission lock serializes competing local
-// writers on one repository identity.
+// writers on one repository identity. A saga that reached `done` is listed in
+// `.kin/local/journal/fanout-finished`, so recovery, which runs on every
+// shared admission, reads markers only for the sagas still in flight.
 // ---------------------------------------------------------------------------
 
 const FANOUT_JOURNAL_SCHEMA: &str = "kinbase-fanout-journal/1";
@@ -3685,6 +3687,88 @@ fn write_apology(
     Ok(unknown_id)
 }
 
+/// The list of candidates whose fan-out saga reached `done`, beside the
+/// `fanout/` journal root it describes.
+fn finished_fanouts_path(root: &Path) -> std::path::PathBuf {
+    root.with_file_name("fanout-finished")
+}
+
+/// The candidate ids `finished_fanouts_path` lists, one per line. A missing
+/// or unreadable list is empty, which only costs a `done.json` read per saga.
+fn finished_fanouts(root: &Path) -> std::collections::HashSet<String> {
+    std::fs::read(finished_fanouts_path(root))
+        .map(|bytes| {
+            bytes
+                .split(|byte| *byte == b'\n')
+                .filter_map(|line| std::str::from_utf8(line).ok())
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The fan-out journal directories under `root` whose saga has not reached
+/// `done`. Recovery runs on every shared admission, and reading each saga's
+/// `done.json` to find nothing to replay cost one open, read and strict parse
+/// per saga the repository ever admitted (thousands per Stop hook). A saga
+/// seen finished here is appended to the finished list, and later passes
+/// skip it by name.
+///
+/// The journal directories never move: an admission of the same candidate
+/// in another process (observe and Stop at once) holds its directory's path,
+/// and a saga moved out from under it read as unstarted and was journaled
+/// again in a fresh directory. `done` is terminal and nothing removes a
+/// journal, so a listed saga stays finished.
+fn in_flight_fanout_dirs(root: &Path) -> Result<Vec<std::path::PathBuf>, ContractError> {
+    let finished = finished_fanouts(root);
+    let mut in_flight = Vec::new();
+    let mut newly_finished = String::new();
+    for entry in
+        std::fs::read_dir(root).map_err(|error| ContractError::io("read fan-out journal", error))?
+    {
+        let Ok(entry) = entry else {
+            continue;
+        };
+        let dir = entry.path();
+        let Some(candidate_id) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        if finished.contains(&candidate_id) || !dir.is_dir() {
+            continue;
+        }
+        let journal = FanoutJournal {
+            dir: dir.clone(),
+            candidate_id: candidate_id.clone(),
+            destination: String::new(),
+        };
+        if journal.is_done() {
+            newly_finished.push_str(&candidate_id);
+            newly_finished.push('\n');
+        } else {
+            in_flight.push(dir);
+        }
+    }
+    if !newly_finished.is_empty() {
+        // One unsynced append per pass. The list only saves reads: a lost or
+        // torn line names no directory, so that saga's `done.json` is read
+        // again and the id appended again, and a failed write must not fail
+        // the admission that is recovering.
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        if let Ok(mut list) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(finished_fanouts_path(root))
+        {
+            let _ = list.write_all(newly_finished.as_bytes());
+        }
+    }
+    Ok(in_flight)
+}
+
 /// How many Company sagas one recovery pass retries, so an admission inside a
 /// host hook's budget is not spent draining a backlog.
 const COMPANY_RETRIES_PER_PASS: usize = 8;
@@ -3708,11 +3792,7 @@ fn recover_fanout_journal(
     let mut replayed = Vec::new();
     let mut company_retries = 0usize;
     let mut company_answering = true;
-    let mut entries: Vec<std::path::PathBuf> = std::fs::read_dir(&root)
-        .map_err(|error| ContractError::io("read fan-out journal", error))?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.is_dir())
-        .collect();
+    let mut entries = in_flight_fanout_dirs(&root)?;
     entries.sort();
     // The candidate journal is read once per pass, and only if some fan-out
     // is unfinished: it used to be parsed in full for every journal directory,
@@ -3725,16 +3805,6 @@ fn recover_fanout_journal(
             .unwrap_or_default()
             .to_owned();
         if current_candidate == Some(candidate_id.as_str()) {
-            continue;
-        }
-        // Finished needs only the journal's own directory.
-        let finished = FanoutJournal {
-            dir: dir.clone(),
-            candidate_id: candidate_id.clone(),
-            destination: String::new(),
-        }
-        .is_done();
-        if finished {
             continue;
         }
         let candidates = candidates.get_or_insert_with(|| {
@@ -3925,9 +3995,16 @@ pub fn inflight_journal_state(repo_root: &Path) -> Value {
     let Ok(entries) = std::fs::read_dir(&root) else {
         return json!([]);
     };
+    // Status only reads the finished list; recovery is what extends it.
+    let finished = finished_fanouts(&root);
     for entry in entries.filter_map(Result::ok) {
         let dir = entry.path();
-        if !dir.is_dir() {
+        if !dir.is_dir()
+            || entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| finished.contains(name))
+        {
             continue;
         }
         let done = std::fs::read(dir.join("done.json"))
@@ -4945,5 +5022,109 @@ mod saga_identity_tests {
             json!(crate::json::digest(&registered.to_value()))
         );
         assert_eq!(token["candidate_id"], "cand_1");
+    }
+}
+
+#[cfg(test)]
+mod fanout_finished_list_tests {
+    use super::{FanoutJournal, finished_fanouts, finished_fanouts_path, in_flight_fanout_dirs};
+    use serde_json::json;
+
+    fn repository(root: &std::path::Path) -> crate::codebase::Repository {
+        crate::codebase::Repository {
+            root: root.to_path_buf(),
+            kin: root.join(".kin"),
+            common_dir: root.join(".git"),
+            config: None,
+        }
+    }
+
+    fn journal(repository: &crate::codebase::Repository, candidate: &str) -> FanoutJournal {
+        FanoutJournal::open(repository, candidate, "codebase:test").expect("open journal")
+    }
+
+    fn fanout(repository: &crate::codebase::Repository) -> std::path::PathBuf {
+        repository.local_dir().join("journal").join("fanout")
+    }
+
+    #[test]
+    fn recovery_lists_unfinished_sagas_and_records_the_finished_ones() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let repository = repository(temp.path());
+        let finished = journal(&repository, "cand_finished");
+        finished
+            .complete("receipt", json!({}))
+            .expect("complete receipt");
+        finished.finish().expect("finish");
+        let open = journal(&repository, "cand_open");
+        open.begin("nonce_reservation", json!({}))
+            .expect("begin reservation");
+        let fanout = fanout(&repository);
+
+        let listed = in_flight_fanout_dirs(&fanout).expect("list");
+        assert_eq!(listed, vec![fanout.join("cand_open")]);
+        assert_eq!(
+            std::fs::read_to_string(finished_fanouts_path(&fanout)).expect("finished list"),
+            "cand_finished\n"
+        );
+        assert!(fanout.join("cand_finished").join("receipt.json").is_file());
+
+        // A later pass skips the listed saga by name, without reading its
+        // `done.json`, and appends nothing it already listed.
+        std::fs::write(
+            fanout.join("cand_finished").join("done.json"),
+            b"unreadable",
+        )
+        .expect("spoil done marker");
+        let listed = in_flight_fanout_dirs(&fanout).expect("list again");
+        assert_eq!(listed, vec![fanout.join("cand_open")]);
+        assert_eq!(
+            std::fs::read_to_string(finished_fanouts_path(&fanout)).expect("finished list"),
+            "cand_finished\n"
+        );
+    }
+
+    #[test]
+    fn a_writer_still_holding_a_finished_saga_keeps_its_markers() {
+        // observe and Stop can admit the same candidate at once. One finishes
+        // the saga and another admission's recovery runs while the second
+        // writer still holds its journal: the second writer must still see
+        // every marker, and its next write lands in the same directory.
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let repository = repository(temp.path());
+        let finisher = journal(&repository, "cand_shared");
+        let holder = journal(&repository, "cand_shared");
+        finisher
+            .complete("nonce_reservation", json!({}))
+            .expect("complete reservation");
+        finisher.finish().expect("finish");
+        let fanout = fanout(&repository);
+        in_flight_fanout_dirs(&fanout).expect("recovery pass");
+
+        assert!(holder.is_complete("nonce_reservation"));
+        assert!(holder.is_done());
+        holder.finish().expect("finish again");
+        let reopened = journal(&repository, "cand_shared");
+        assert!(reopened.is_complete("nonce_reservation"));
+        assert!(reopened.is_done());
+    }
+
+    #[test]
+    fn a_torn_finished_list_only_costs_a_reread() {
+        let temp = tempfile::TempDir::new().expect("tempdir");
+        let repository = repository(temp.path());
+        let finished = journal(&repository, "cand_finished");
+        finished.finish().expect("finish");
+        let fanout = fanout(&repository);
+        // Two appends that interleaved, and one cut short by a crash.
+        std::fs::write(finished_fanouts_path(&fanout), b"cand_acand_b\ncand_fini")
+            .expect("torn list");
+
+        assert!(in_flight_fanout_dirs(&fanout).expect("list").is_empty());
+        assert!(!finished_fanouts(&fanout).contains("cand_finished"));
+        // The cut-short line now runs into the appended id; the next pass
+        // reads that saga's `done.json` again and appends it once more.
+        assert!(in_flight_fanout_dirs(&fanout).expect("list").is_empty());
+        assert!(finished_fanouts(&fanout).contains("cand_finished"));
     }
 }
