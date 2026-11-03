@@ -1461,7 +1461,7 @@ const COMPANY_CANDIDATES: &str = "company-candidates.jsonl";
 fn destination_label(destination: &str) -> String {
     if destination.starts_with("codebase:") {
         "codebase".to_owned()
-    } else if destination == "company:root" {
+    } else if destination.starts_with("company:") {
         "company".to_owned()
     } else {
         destination.to_owned()

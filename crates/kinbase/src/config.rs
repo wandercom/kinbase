@@ -80,6 +80,8 @@ pub struct CompanyConfig {
     /// (an agent sandbox). Sent as `Authorization: ApiKey <key>`; the gateway
     /// checks and strips it, and the store still checks the facts token.
     pub gateway_api_key_file: Option<PathBuf>,
+    /// Where an OIDC sign-in for this Company is kept.
+    pub oidc_session_file: PathBuf,
     pub facts_token_file: PathBuf,
     pub root_public_key_file: PathBuf,
     pub cache_root: PathBuf,
@@ -96,6 +98,22 @@ pub struct CompanyConfig {
     /// bound; a deployment raises this instead of shipping a new binary. Other
     /// requests keep the default: hooks post through the same client.
     pub snapshot_timeout_seconds: u64,
+}
+
+/// One `[companies.<name>]` entry: a Company among several, chosen per
+/// repository by `crate::selection`. The name lives only in the user config;
+/// no worktree byte, certificate or hook output carries it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NamedCompany {
+    pub name: String,
+    /// Patterns over the normalized origin URL (`repository::normalize_hint`),
+    /// stored normalized. They only discover; the certificate is the trust.
+    pub discovery_hints: Vec<String>,
+    pub config: CompanyConfig,
+    /// The key paths were defaulted under `config_dir/companies/<name>/`
+    /// rather than named in the file.
+    pub client_key_defaulted: bool,
+    pub maintainer_key_defaulted: bool,
 }
 
 /// The processors a `[classifier]` may send session text to: `local` (the
@@ -131,7 +149,16 @@ pub struct ScannerConfig {
 pub struct UserConfig {
     pub path: PathBuf,
     pub personal: PersonalConfig,
+    /// The Company this invocation uses: the single `[company]`, or the one
+    /// `crate::selection` resolved from `companies` for the invocation's
+    /// repository. Everything downstream reads only this.
     pub company: Option<CompanyConfig>,
+    /// Every `[companies.<name>]` entry; empty under the single form.
+    pub companies: Vec<NamedCompany>,
+    /// `[identity] maintainer_key_file` is set.
+    pub identity_maintainer_key: bool,
+    /// `[identity] share_maintainer_key = true`.
+    pub share_maintainer_key: bool,
     pub classifier: Option<ClassifierConfig>,
     /// `[secret_mask]`: known secrets masked before anything is written,
     /// signed or printed (`crate::secret_mask`). `None` is off; only this
@@ -384,18 +411,32 @@ fn authorized_processor(value: &toml::Value) -> Result<AuthorizedProcessor, Cont
             .and_then(toml::Value::as_str)
             .filter(|value| !value.is_empty() && !value.chars().any(char::is_whitespace))
             .map(str::to_owned)
-            .ok_or_else(|| config_error(format!("personal.kindex_processors entries need {name} (text without spaces)")))
+            .ok_or_else(|| {
+                config_error(format!(
+                    "personal.kindex_processors entries need {name} (text without spaces)"
+                ))
+            })
     };
     let key_env = field("key_env")?;
     if !(key_env.len() > "_API_KEY".len()
         && key_env.ends_with("_API_KEY")
-        && key_env.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+        && key_env
+            .chars()
+            .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
     {
-        return Err(config_error("personal.kindex_processors key_env must be a variable ending in _API_KEY"));
+        return Err(config_error(
+            "personal.kindex_processors key_env must be a variable ending in _API_KEY",
+        ));
     }
     let key_sha256 = field("key_sha256")?;
-    if key_sha256.len() != 64 || !key_sha256.chars().all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)) {
-        return Err(config_error("personal.kindex_processors key_sha256 must be the key's SHA-256 in lowercase hex"));
+    if key_sha256.len() != 64
+        || !key_sha256
+            .chars()
+            .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+    {
+        return Err(config_error(
+            "personal.kindex_processors key_sha256 must be the key's SHA-256 in lowercase hex",
+        ));
     }
     Ok(AuthorizedProcessor {
         provider: field("provider")?,
@@ -418,9 +459,19 @@ fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, 
         return Ok(None);
     }
     let Some(executable) = optional_path(table, "kindex_executable", "personal")? else {
-        for key in ["kindex_executable_sha256", "kindex_config", "kindex_timeout_seconds", "kindex_digest", "kindex_retention_seconds", "kindex_processors", "kindex_team_knowledge"] {
+        for key in [
+            "kindex_executable_sha256",
+            "kindex_config",
+            "kindex_timeout_seconds",
+            "kindex_digest",
+            "kindex_retention_seconds",
+            "kindex_processors",
+            "kindex_team_knowledge",
+        ] {
             if table.contains_key(key) {
-                return Err(config_error(format!("personal.{key} requires personal.kindex_executable")));
+                return Err(config_error(format!(
+                    "personal.{key} requires personal.kindex_executable"
+                )));
             }
         }
         return Ok(None);
@@ -436,8 +487,9 @@ fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, 
         Some(value) => value
             .as_integer()
             .filter(|seconds| *seconds > 0)
-            .ok_or_else(|| config_error("personal.kindex_timeout_seconds must be a positive integer"))?
-            as u64,
+            .ok_or_else(|| {
+                config_error("personal.kindex_timeout_seconds must be a positive integer")
+            })? as u64,
     };
     let digest = match table.get("kindex_digest") {
         None => false,
@@ -451,7 +503,9 @@ fn personal_kindex(table: &toml::Table) -> Result<Option<PersonalKindexConfig>, 
             value
                 .as_integer()
                 .filter(|seconds| *seconds > 0)
-                .ok_or_else(|| config_error("personal.kindex_retention_seconds must be a positive integer"))?,
+                .ok_or_else(|| {
+                    config_error("personal.kindex_retention_seconds must be a positive integer")
+                })?,
         ),
     };
     let processors = match table.get("kindex_processors") {
@@ -517,11 +571,14 @@ pub fn load_user_config() -> Result<Option<UserConfig>, ContractError> {
     enforce_private_file(&path, "user config")?;
     let text = std::fs::read_to_string(&path)
         .map_err(|error| ContractError::unreadable("user config", &error))?;
-    let user = parse_user_config(&path, &text)?;
+    let mut user = parse_user_config(&path, &text)?;
     // The mask is installed by reading the user config and by nothing else:
     // a repository's config, the environment and the process cwd cannot
     // turn it on, off or narrower.
     crate::secret_mask::configure(user.secret_mask.as_ref());
+    // Under the named form `company` becomes the one Company this
+    // invocation's target resolves to; under the single form it stays as read.
+    crate::selection::apply(&mut user);
     Ok(Some(user))
 }
 
@@ -538,6 +595,7 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
             "schema_version",
             "personal",
             "company",
+            "companies",
             "classifier",
             "hosts",
             "scanner",
@@ -584,103 +642,19 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
             let section = value
                 .as_table()
                 .ok_or_else(|| config_error("[company] must be a table"))?;
-            closed_keys(
-                section,
-                &[
-                    "url",
-                    "facts_token_file",
-                    "root_public_key_file",
-                    "cache_root",
-                    "admin_token_file",
-                    "directory_token_file",
-                    "authority_token_file",
-                    "client_key_file",
-                    "maintainer_key_file",
-                    "allow_non_loopback",
-                    "snapshot_timeout_seconds",
-                    "oidc_issuer",
-                    "oidc_client_id",
-                    "oidc_client_secret_file",
-                    "gateway_api_key_file",
-                ],
-                "[company]",
-            )?;
-            let url = required_str(section, "url", "company")?.to_owned();
-            let allow_non_loopback = optional_bool(section, "allow_non_loopback", "company")?;
-            let optional_text = |key: &str| {
-                section
-                    .get(key)
-                    .map(|_| required_str(section, key, "company").map(str::to_owned))
-                    .transpose()
-            };
-            let oidc_issuer = optional_text("oidc_issuer")?;
-            let oidc_client_id = optional_text("oidc_client_id")?;
-            let oidc_client_secret_file =
-                optional_path(section, "oidc_client_secret_file", "company")?;
-            if oidc_issuer.is_some() != oidc_client_id.is_some()
-                || (oidc_issuer.is_none() && oidc_client_secret_file.is_some())
-            {
-                return Err(config_error(
-                    "company OIDC needs both oidc_issuer and oidc_client_id",
-                ));
-            }
-            let gateway_api_key_file = optional_path(section, "gateway_api_key_file", "company")?;
-            if oidc_issuer.is_some() && gateway_api_key_file.is_some() {
-                return Err(config_error(
-                    "company takes one gateway credential: OIDC or gateway_api_key_file",
-                ));
-            }
-            let gateway = oidc_issuer.is_some() || gateway_api_key_file.is_some();
-            validate_loopback_url(&url, allow_non_loopback, gateway)?;
-            if gateway_api_key_file.is_some() {
-                crate::oidc::validate_provider_url(&url)?;
-            }
-            if let Some(issuer) = &oidc_issuer {
-                crate::oidc::validate_provider_url(issuer)?;
-                crate::oidc::validate_provider_url(&url)?;
-            }
-            let snapshot_timeout_seconds = match section.get("snapshot_timeout_seconds") {
-                None => default_snapshot_timeout_seconds(),
-                Some(value) => value
-                    .as_integer()
-                    .filter(|seconds| (1..=600).contains(seconds))
-                    .and_then(|seconds| u64::try_from(seconds).ok())
-                    .ok_or_else(|| {
-                        config_error(
-                            "company.snapshot_timeout_seconds must be an integer within 1..=600",
-                        )
-                    })?,
-            };
-            Some(CompanyConfig {
-                url,
-                oidc_issuer,
-                oidc_client_id,
-                oidc_client_secret_file,
-                gateway_api_key_file,
-                allow_non_loopback,
-                snapshot_timeout_seconds,
-                facts_token_file: absolute(
-                    required_str(section, "facts_token_file", "company")?,
-                    "company.facts_token_file",
-                )?,
-                root_public_key_file: absolute(
-                    required_str(section, "root_public_key_file", "company")?,
-                    "company.root_public_key_file",
-                )?,
-                cache_root: absolute(
-                    required_str(section, "cache_root", "company")?,
-                    "company.cache_root",
-                )?,
-                admin_token_file: optional_path(section, "admin_token_file", "company")?,
-                directory_token_file: optional_path(section, "directory_token_file", "company")?,
-                authority_token_file: optional_path(section, "authority_token_file", "company")?,
-                client_key_file: optional_path(section, "client_key_file", "company")?
-                    .unwrap_or_else(|| config_dir.join("client.key")),
-                maintainer_key_file: optional_path(section, "maintainer_key_file", "company")?
-                    .unwrap_or_else(|| config_dir.join("maintainer.key")),
-            })
+            closed_keys(section, &COMPANY_KEYS, "[company]")?;
+            Some(company_section(section, "company", &config_dir)?)
         }
     };
+    let companies = match table.get("companies") {
+        None => Vec::new(),
+        Some(value) => named_companies(value, &config_dir)?,
+    };
+    if company.is_some() && !companies.is_empty() {
+        return Err(config_error(
+            "[company] and [companies.<name>] are mutually exclusive; move the single Company under a name",
+        ));
+    }
 
     let classifier = match table.get("classifier") {
         None => None,
@@ -820,47 +794,73 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
         }
     };
 
-    let (principal_id, host_instance_id, identity_maintainer_key) = match table.get("identity") {
-        None => (default_principal(), default_host_instance(), None),
-        Some(value) => {
-            let section = value
-                .as_table()
-                .ok_or_else(|| config_error("[identity] must be a table"))?;
-            closed_keys(
-                section,
-                &["principal_id", "host_instance_id", "maintainer_key_file"],
-                "[identity]",
-            )?;
-            (
-                section
-                    .get("principal_id")
-                    .and_then(toml::Value::as_str)
-                    .map(str::to_owned)
-                    .unwrap_or_else(default_principal),
-                section
-                    .get("host_instance_id")
-                    .and_then(toml::Value::as_str)
-                    .map(str::to_owned)
-                    .unwrap_or_else(default_host_instance),
-                // Ruling R-18: the repository maintainer's signing key reaches the
-                // product through `[identity] maintainer_key_file`; it takes
-                // precedence over the legacy `[company]` location.
-                optional_path(section, "maintainer_key_file", "identity")?,
-            )
-        }
-    };
-    let company = match (company, identity_maintainer_key) {
+    let (principal_id, host_instance_id, identity_maintainer_key, share_maintainer_key) =
+        match table.get("identity") {
+            None => (default_principal(), default_host_instance(), None, false),
+            Some(value) => {
+                let section = value
+                    .as_table()
+                    .ok_or_else(|| config_error("[identity] must be a table"))?;
+                closed_keys(
+                    section,
+                    &[
+                        "principal_id",
+                        "host_instance_id",
+                        "maintainer_key_file",
+                        "share_maintainer_key",
+                    ],
+                    "[identity]",
+                )?;
+                (
+                    section
+                        .get("principal_id")
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_owned)
+                        .unwrap_or_else(default_principal),
+                    section
+                        .get("host_instance_id")
+                        .and_then(toml::Value::as_str)
+                        .map(str::to_owned)
+                        .unwrap_or_else(default_host_instance),
+                    // Ruling R-18: the repository maintainer's signing key reaches the
+                    // product through `[identity] maintainer_key_file`; it takes
+                    // precedence over the legacy `[company]` location.
+                    optional_path(section, "maintainer_key_file", "identity")?,
+                    // Under the named form, one maintainer key presented to several
+                    // organizations lets them correlate the person; that is a
+                    // choice the file states, not a side effect of R-18.
+                    optional_bool(section, "share_maintainer_key", "identity")?,
+                )
+            }
+        };
+    let company = match (company, identity_maintainer_key.clone()) {
         (Some(mut company), Some(path)) => {
             company.maintainer_key_file = path;
             Some(company)
         }
         (company, _) => company,
     };
+    // `[identity] maintainer_key_file` names one person's key; with several
+    // Companies it applies to all of them only with `share_maintainer_key`
+    // (`crate::selection` refuses otherwise).
+    let companies = companies
+        .into_iter()
+        .map(|mut named| {
+            if let Some(path) = &identity_maintainer_key {
+                named.config.maintainer_key_file = path.clone();
+                named.maintainer_key_defaulted = false;
+            }
+            named
+        })
+        .collect();
 
     Ok(UserConfig {
         path: path.to_path_buf(),
         personal: PersonalConfig { data_root, kindex },
         company,
+        identity_maintainer_key: identity_maintainer_key.is_some(),
+        share_maintainer_key,
+        companies,
         classifier,
         secret_mask: match table.get("secret_mask") {
             None => None,
@@ -954,6 +954,300 @@ fn optional_bool(
     }
 }
 
+const COMPANY_KEYS: [&str; 15] = [
+    "url",
+    "facts_token_file",
+    "root_public_key_file",
+    "cache_root",
+    "admin_token_file",
+    "directory_token_file",
+    "authority_token_file",
+    "client_key_file",
+    "maintainer_key_file",
+    "allow_non_loopback",
+    "snapshot_timeout_seconds",
+    "oidc_issuer",
+    "oidc_client_id",
+    "oidc_client_secret_file",
+    "gateway_api_key_file",
+];
+
+/// One Company's keys, read the same way under `[company]` and under
+/// `[companies.<name>]`; `label` is how messages name the section.
+fn company_section(
+    section: &toml::Table,
+    label: &str,
+    key_dir: &Path,
+) -> Result<CompanyConfig, ContractError> {
+    let url = required_str(section, "url", label)?.to_owned();
+    let allow_non_loopback = optional_bool(section, "allow_non_loopback", label)?;
+    let optional_text = |key: &str| {
+        section
+            .get(key)
+            .map(|_| required_str(section, key, label).map(str::to_owned))
+            .transpose()
+    };
+    let oidc_issuer = optional_text("oidc_issuer")?;
+    let oidc_client_id = optional_text("oidc_client_id")?;
+    let oidc_client_secret_file = optional_path(section, "oidc_client_secret_file", label)?;
+    if oidc_issuer.is_some() != oidc_client_id.is_some()
+        || (oidc_issuer.is_none() && oidc_client_secret_file.is_some())
+    {
+        return Err(config_error(format!(
+            "{label} OIDC needs both oidc_issuer and oidc_client_id"
+        )));
+    }
+    let gateway_api_key_file = optional_path(section, "gateway_api_key_file", label)?;
+    if oidc_issuer.is_some() && gateway_api_key_file.is_some() {
+        return Err(config_error(format!(
+            "{label} takes one gateway credential: OIDC or gateway_api_key_file"
+        )));
+    }
+    let gateway = oidc_issuer.is_some() || gateway_api_key_file.is_some();
+    validate_loopback_url(&url, allow_non_loopback, gateway)?;
+    if gateway_api_key_file.is_some() {
+        crate::oidc::validate_provider_url(&url)?;
+    }
+    if let Some(issuer) = &oidc_issuer {
+        crate::oidc::validate_provider_url(issuer)?;
+        crate::oidc::validate_provider_url(&url)?;
+    }
+    let snapshot_timeout_seconds = match section.get("snapshot_timeout_seconds") {
+        None => default_snapshot_timeout_seconds(),
+        Some(value) => value
+            .as_integer()
+            .filter(|seconds| (1..=600).contains(seconds))
+            .and_then(|seconds| u64::try_from(seconds).ok())
+            .ok_or_else(|| {
+                config_error(format!(
+                    "{label}.snapshot_timeout_seconds must be an integer within 1..=600"
+                ))
+            })?,
+    };
+    Ok(CompanyConfig {
+        url,
+        oidc_issuer,
+        oidc_client_id,
+        oidc_client_secret_file,
+        gateway_api_key_file,
+        // Beside the Company's own keys: two Companies signed in through
+        // different issuers would otherwise replace each other's session.
+        // Under `[company]` the key directory is the config's own, so the
+        // single form keeps `oidc.json` where it always was.
+        oidc_session_file: key_dir.join("oidc.json"),
+        allow_non_loopback,
+        snapshot_timeout_seconds,
+        facts_token_file: absolute(
+            required_str(section, "facts_token_file", label)?,
+            &format!("{label}.facts_token_file"),
+        )?,
+        root_public_key_file: absolute(
+            required_str(section, "root_public_key_file", label)?,
+            &format!("{label}.root_public_key_file"),
+        )?,
+        cache_root: absolute(
+            required_str(section, "cache_root", label)?,
+            &format!("{label}.cache_root"),
+        )?,
+        admin_token_file: optional_path(section, "admin_token_file", label)?,
+        directory_token_file: optional_path(section, "directory_token_file", label)?,
+        authority_token_file: optional_path(section, "authority_token_file", label)?,
+        client_key_file: optional_path(section, "client_key_file", label)?
+            .unwrap_or_else(|| key_dir.join("client.key")),
+        maintainer_key_file: optional_path(section, "maintainer_key_file", label)?
+            .unwrap_or_else(|| key_dir.join("maintainer.key")),
+    })
+}
+
+/// `[companies.<name>]` tables. Each Company keeps its own cache, root and
+/// endpoint: two entries sharing one would let one organization's state
+/// answer for another's, so the overlap is refused here rather than guessed
+/// at per repository.
+fn named_companies(
+    value: &toml::Value,
+    config_dir: &Path,
+) -> Result<Vec<NamedCompany>, ContractError> {
+    let table = value
+        .as_table()
+        .ok_or_else(|| config_error("[companies] must be a table of [companies.<name>] tables"))?;
+    if table.is_empty() {
+        return Err(config_error("[companies] names no Company"));
+    }
+    let mut companies: Vec<NamedCompany> = Vec::new();
+    for (name, value) in table {
+        if !valid_company_name(name) {
+            return Err(config_error(format!(
+                "Company name `{name}` must be 1-32 characters of a-z, 0-9 and '-', starting with a letter or digit"
+            )));
+        }
+        let label = format!("companies.{name}");
+        let section = value
+            .as_table()
+            .ok_or_else(|| config_error(format!("[{label}] must be a table")))?;
+        let mut allowed = COMPANY_KEYS.to_vec();
+        allowed.push("discovery_hints");
+        closed_keys(section, &allowed, &format!("[{label}]"))?;
+        let key_dir = config_dir.join("companies").join(name);
+        let config = company_section(section, &label, &key_dir)?;
+        plain_path(&config.cache_root, &format!("{label}.cache_root"))?;
+        plain_path(
+            &config.root_public_key_file,
+            &format!("{label}.root_public_key_file"),
+        )?;
+        let discovery_hints = match section.get("discovery_hints") {
+            None => Vec::new(),
+            Some(value) => value
+                .as_array()
+                .ok_or_else(|| {
+                    config_error(format!(
+                        "{label}.discovery_hints must be an array of strings"
+                    ))
+                })?
+                .iter()
+                .map(|pattern| {
+                    pattern
+                        .as_str()
+                        .ok_or_else(|| {
+                            config_error(format!(
+                                "{label}.discovery_hints must be an array of strings"
+                            ))
+                        })
+                        .and_then(|pattern| normalize_hint_pattern(pattern, &label))
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        for other in &companies {
+            let conflict =
+                if other.config.url.trim_end_matches('/') == config.url.trim_end_matches('/') {
+                    Some("url")
+                } else if paths_overlap(&other.config.cache_root, &config.cache_root) {
+                    Some("cache_root")
+                } else if same_path(
+                    &other.config.root_public_key_file,
+                    &config.root_public_key_file,
+                ) {
+                    Some("root_public_key_file")
+                } else {
+                    None
+                };
+            if let Some(field) = conflict {
+                return Err(config_error(format!(
+                    "[companies.{}] and [{label}] share {field}; each Company needs its own",
+                    other.name
+                )));
+            }
+        }
+        companies.push(NamedCompany {
+            name: name.clone(),
+            discovery_hints,
+            client_key_defaulted: section.get("client_key_file").is_none(),
+            maintainer_key_defaulted: section.get("maintainer_key_file").is_none(),
+            config,
+        });
+    }
+    Ok(companies)
+}
+
+pub(crate) fn valid_company_name(name: &str) -> bool {
+    (1..=32).contains(&name.len())
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && !name.starts_with('-')
+}
+
+/// A discovery pattern in the form origins are compared in: the same
+/// normalization `repository::normalize_hint` applies to the origin URL, so
+/// `git@github.com:Acme/*` and `https://github.com/acme/*` mean one thing.
+fn normalize_hint_pattern(pattern: &str, label: &str) -> Result<String, ContractError> {
+    let normalized = crate::repository::normalize_hint(pattern);
+    if normalized.is_empty()
+        || normalized
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err(config_error(format!(
+            "{label}.discovery_hints holds an empty or malformed pattern"
+        )));
+    }
+    if normalized.contains("***") {
+        return Err(config_error(format!(
+            "{label}.discovery_hints pattern `{normalized}` uses `***`; use `*` within a segment or `**` across segments"
+        )));
+    }
+    Ok(normalized)
+}
+
+/// Match a normalized origin against a normalized pattern: `*` is any run
+/// within one path segment, `**` any run across segments, all else literal.
+pub fn hint_matches(pattern: &str, origin: &str) -> bool {
+    fn go(pattern: &[u8], origin: &[u8]) -> bool {
+        match pattern {
+            [] => origin.is_empty(),
+            [b'*', b'*', rest @ ..] => (0..=origin.len()).any(|skip| go(rest, &origin[skip..])),
+            [b'*', rest @ ..] => {
+                let segment = origin
+                    .iter()
+                    .position(|&b| b == b'/')
+                    .unwrap_or(origin.len());
+                (0..=segment).any(|skip| go(rest, &origin[skip..]))
+            }
+            [first, rest @ ..] => origin.first() == Some(first) && go(rest, &origin[1..]),
+        }
+    }
+    go(pattern.as_bytes(), origin.as_bytes())
+}
+
+/// The path a Company's file or directory will resolve to once it exists:
+/// the deepest existing ancestor canonicalized (so symlinks and case are
+/// resolved), then the components not created yet. `..` was refused when the
+/// config was read, so the remainder is plain names.
+fn comparable(path: &Path) -> PathBuf {
+    let mut existing = path.to_path_buf();
+    let mut rest = Vec::new();
+    while !existing.exists() {
+        match (
+            existing.file_name().map(|name| name.to_os_string()),
+            existing.parent(),
+        ) {
+            (Some(name), Some(parent)) => {
+                rest.push(name);
+                existing = parent.to_path_buf();
+            }
+            _ => break,
+        }
+    }
+    let mut resolved = existing.canonicalize().unwrap_or(existing);
+    for name in rest.into_iter().rev() {
+        resolved.push(name);
+    }
+    resolved
+}
+
+/// Company paths are compared for overlap before they exist; a `.` or `..`
+/// component would let two spellings of one directory compare as two.
+fn plain_path(path: &Path, field: &str) -> Result<(), ContractError> {
+    use std::path::Component;
+    if path
+        .components()
+        .any(|component| matches!(component, Component::ParentDir | Component::CurDir))
+    {
+        return Err(config_error(format!(
+            "{field} must not contain `.` or `..` components"
+        )));
+    }
+    Ok(())
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    comparable(left) == comparable(right)
+}
+
+fn paths_overlap(left: &Path, right: &Path) -> bool {
+    let (left, right) = (comparable(left), comparable(right));
+    left.starts_with(&right) || right.starts_with(&left)
+}
+
 fn default_host_instance() -> String {
     std::env::var("KINBASE_HOST_INSTANCE").unwrap_or_else(|_| {
         let host = std::fs::read_to_string("/etc/hostname")
@@ -1031,7 +1325,7 @@ impl UserConfig {
             issuer: issuer.clone(),
             client_id: client_id.clone(),
             client_secret,
-            session_path: self.path.with_file_name("oidc.json"),
+            session_path: company.oidc_session_file.clone(),
         }))
     }
 
@@ -1069,6 +1363,13 @@ impl UserConfig {
                     paths::ensure_private_dir(&company.cache_root, "Company cache root")?;
                 }
                 let client_key = match std::env::var("KINBASE_CLIENT_KEY_FD") {
+                    // One descriptor carries one key; with several Companies
+                    // it would sign for whichever one this repository selects.
+                    Ok(_) if !self.companies.is_empty() => {
+                        return Err(config_error(
+                            "KINBASE_CLIENT_KEY_FD carries one client key and is refused with [companies.<name>]",
+                        ));
+                    }
                     Ok(fd) => {
                         let fd: i32 = fd.parse().map_err(|_| {
                             config_error("KINBASE_CLIENT_KEY_FD must be an integer")
@@ -1435,10 +1736,150 @@ mod personal_recall_build_tests {
         let text = "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\nkindex_executable = \"/opt/example/bin/kin\"\n";
         let error = parse_user_config(Path::new("/private/example/config.toml"), text)
             .expect_err("refused");
-        assert!(error.message.contains("personal-recall"), "{}", error.message);
-        let plain = "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n";
-        let config = parse_user_config(Path::new("/private/example/config.toml"), plain).expect("parses");
+        assert!(
+            error.message.contains("personal-recall"),
+            "{}",
+            error.message
+        );
+        let plain =
+            "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n";
+        let config =
+            parse_user_config(Path::new("/private/example/config.toml"), plain).expect("parses");
         assert!(config.personal.kindex.is_none());
+    }
+}
+
+#[cfg(test)]
+mod named_company_tests {
+    use super::*;
+
+    fn named(hints: &str) -> Result<UserConfig, ContractError> {
+        let text = format!(
+            "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n\n\
+             [companies.alpha]\nurl = \"http://127.0.0.1:8421\"\nfacts_token_file = \"/private/a/facts\"\n\
+             root_public_key_file = \"/private/a/root.pub\"\ncache_root = \"/private/a/cache\"\n\
+             discovery_hints = [{hints}]\n"
+        );
+        parse_user_config(Path::new("/private/example/config.toml"), &text)
+    }
+
+    #[test]
+    fn each_named_company_keeps_its_own_oidc_session() {
+        let oidc = |name: &str| {
+            format!(
+                "[companies.{name}]\nurl = \"https://{name}.example.com\"\nallow_non_loopback = true\n\
+                 facts_token_file = \"/private/{name}/facts\"\nroot_public_key_file = \"/private/{name}/root.pub\"\n\
+                 cache_root = \"/private/{name}/cache\"\noidc_issuer = \"https://accounts.google.com\"\n\
+                 oidc_client_id = \"client\"\ndiscovery_hints = [\"github.com/{name}/*\"]\n"
+            )
+        };
+        let text = format!(
+            "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n\n{}\n{}",
+            oidc("alpha"),
+            oidc("beta")
+        );
+        let config =
+            parse_user_config(Path::new("/private/example/config.toml"), &text).expect("parses");
+        let sessions: Vec<&Path> = config
+            .companies
+            .iter()
+            .map(|company| company.config.oidc_session_file.as_path())
+            .collect();
+        assert_eq!(
+            sessions,
+            [
+                Path::new("/private/example/companies/alpha/oidc.json"),
+                Path::new("/private/example/companies/beta/oidc.json"),
+            ]
+        );
+        // The single form keeps the session where it always was.
+        let single = format!(
+            "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n\n{}",
+            oidc("solo")
+                .replace("[companies.solo]", "[company]")
+                .replace("discovery_hints = [\"github.com/solo/*\"]\n", "")
+        );
+        let config =
+            parse_user_config(Path::new("/private/example/config.toml"), &single).expect("parses");
+        assert_eq!(
+            config.company.expect("company").oidc_session_file,
+            Path::new("/private/example/oidc.json")
+        );
+    }
+
+    #[test]
+    fn hints_are_compared_in_the_form_origins_are() {
+        let config =
+            named("\"https://GitHub.com/Acme/*\", \"git@gitlab.acme.example:platform/**\"")
+                .expect("parses");
+        let hints = &config.companies[0].discovery_hints;
+        assert_eq!(hints[0], "github.com/acme/*");
+        assert_eq!(hints[1], "gitlab.acme.example/platform/**");
+        let origin = |remote: &str| crate::repository::normalize_hint(remote);
+        assert!(hint_matches(
+            &hints[0],
+            &origin("git@github.com:acme/api.git")
+        ));
+        assert!(!hint_matches(
+            &hints[0],
+            &origin("git@github.com:acme/team/api.git")
+        ));
+        assert!(hint_matches(
+            &hints[1],
+            &origin("https://gitlab.acme.example/platform/team/api")
+        ));
+        assert!(!hint_matches(
+            &hints[0],
+            &origin("git@github.com:acme-labs/api.git")
+        ));
+    }
+
+    #[test]
+    fn named_keys_default_per_company_and_identity_sharing_is_recorded() {
+        let config = named("").expect("parses");
+        let alpha = &config.companies[0];
+        assert!(alpha.client_key_defaulted && alpha.maintainer_key_defaulted);
+        assert_eq!(
+            alpha.config.client_key_file,
+            Path::new("/private/example/companies/alpha/client.key")
+        );
+        assert!(
+            config.company.is_none(),
+            "the named form selects later, per repository"
+        );
+    }
+
+    #[test]
+    fn two_spellings_of_one_cache_root_are_refused() {
+        let text = |root_a: &str, root_b: &str| {
+            format!(
+                "schema_version = \"1\"\n\n[personal]\ndata_root = \"/private/example/kindex\"\n\n\
+                 [companies.alpha]\nurl = \"http://127.0.0.1:8421\"\nfacts_token_file = \"/private/a/facts\"\n\
+                 root_public_key_file = \"/private/a/root.pub\"\ncache_root = \"{root_a}\"\n\n\
+                 [companies.beta]\nurl = \"http://127.0.0.1:8422\"\nfacts_token_file = \"/private/b/facts\"\n\
+                 root_public_key_file = \"/private/b/root.pub\"\ncache_root = \"{root_b}\"\n"
+            )
+        };
+        let parse =
+            |text: String| parse_user_config(Path::new("/private/example/config.toml"), &text);
+        let aliased = parse(text(
+            "/tmp/kinbase-org/a/../cache",
+            "/tmp/kinbase-org/cache",
+        ));
+        assert!(aliased.is_err_and(|error| error.message.contains("`..`")));
+        let nested = parse(text(
+            "/tmp/kinbase-org/cache",
+            "/tmp/kinbase-org/cache/inner",
+        ));
+        assert!(nested.is_err_and(|error| error.message.contains("share cache_root")));
+        assert!(parse(text("/tmp/kinbase-org/a", "/tmp/kinbase-org/b")).is_ok());
+    }
+
+    #[test]
+    fn a_malformed_hint_is_refused() {
+        assert!(named("\"github.com/acme/***\"").is_err());
+        assert!(named("\"  \"").is_err());
+        assert!(named("42").is_err());
     }
 }
 

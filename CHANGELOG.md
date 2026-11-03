@@ -4,6 +4,21 @@ Notable changes to Kinbase. Dates are UTC.
 
 ## Unreleased
 
+### Added
+
+- Several Companies for one person. `[companies.<name>]` tables (each with its
+  own URL, root key, cache, keys and `discovery_hints`) replace a single
+  `[company]`; the two forms cannot be combined, and the single form is
+  unchanged. Each invocation selects at most one Company from the repository
+  it acts on: a Company that holds a certificate for the worktree, whose hints
+  match the origin, or whose cache pins the origin. One match is selected,
+  none means Codebase-only, and more than one is refused with
+  `CONFIG_INVARIANT`. Hooks never block on a refusal; SessionStart says so
+  instead. `status` and `doctor --repo` report the selection, and `repo issue
+  --company` takes a Company name. Each named Company keeps its OIDC sign-in
+  in `companies/<name>/oidc.json` beside its keys; `auth login` signs in to
+  the Company the working directory selects.
+
 ## 0.1.2 - 2026-10-30
 
 ### Fixed
