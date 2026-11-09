@@ -174,7 +174,6 @@ fn auth_refusal() -> (u16, ContractError) {
 pub struct AuthContext {
     pub token: super::db::TokenRow,
     pub client_key: String,
-    pub principal_key: String,
 }
 
 fn now_minute() -> i64 {
@@ -850,7 +849,6 @@ fn authenticate(
     db.record_token_client_pair(&token.digest, &client_hex, now)
         .map_err(|error| refuse(500, error))?;
     Ok(AuthContext {
-        principal_key: token.digest.clone(),
         token,
         client_key: client_hex,
     })
@@ -928,7 +926,7 @@ fn charge_read(
     bytes: usize,
 ) -> Result<(), (u16, ContractError)> {
     let (total_count, total_bytes) = db
-        .add_read_volume(&auth.principal_key, now_hour(), count as i64, bytes as i64)
+        .add_read_volume(&auth.token.digest, now_hour(), count as i64, bytes as i64)
         .map_err(|error| refuse(500, error))?;
     if total_count > state.config.read_volume_per_hour
         || total_bytes > state.config.read_bytes_per_hour
@@ -4082,7 +4080,6 @@ nonce_retention_seconds = 1300
         let auth = AuthContext {
             token: db.token(token).unwrap().unwrap(),
             client_key: "aa".repeat(32),
-            principal_key: "packet03-principal".to_owned(),
         };
         let state = ServiceState {
             config,
@@ -4399,7 +4396,6 @@ mod packet11_tests {
         )
         .unwrap();
         assert_ne!(first_auth.client_key, second_auth.client_key);
-        assert_eq!(first_auth.principal_key, second_auth.principal_key);
         assert_eq!(
             db.token_client_key_count(&first_auth.token.digest).unwrap(),
             2
@@ -4614,7 +4610,6 @@ nonce_retention_seconds = 1300
         AuthContext {
             token: service.db.token(token).unwrap().unwrap(),
             client_key: "cc".repeat(32),
-            principal_key: "scope-principal".to_owned(),
         }
     }
 
