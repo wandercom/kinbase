@@ -110,6 +110,11 @@ fn isolated(git: bool) -> (TempDir, PathBuf, PathBuf, PathBuf, PathBuf, PathBuf)
 
 impl Store {
     fn boot(matches_root: bool) -> Self {
+        Self::boot_for(matches_root, 3600)
+    }
+    /// `freshness_seconds` is `default_fact_freshness_seconds`. The service
+    /// refuses a value below 1.
+    fn boot_for(matches_root: bool, freshness_seconds: i64) -> Self {
         let (temp, home, config_home, state_home, personal, scratch) = isolated(false);
         let company_root = PrivateKey::generate();
         let root_path = temp.path().join("company-root.key");
@@ -124,7 +129,7 @@ impl Store {
             .expect("port")
             .port();
         let service = format!(
-            "schema_version = \"1\"\ncompany_id = \"company-demo\"\nsqlite_path = \"{}\"\nbind = \"127.0.0.1:{port}\"\nroot_key_file = \"{}\"\nfacts_token_file = \"{}\"\nauth_failures_per_minute = 1000\ndefault_fact_freshness_seconds = 3600\ncandidate_lifetime_seconds = 900\nclock_skew_seconds = 300\nnonce_retention_seconds = 1300\n",
+            "schema_version = \"1\"\ncompany_id = \"company-demo\"\nsqlite_path = \"{}\"\nbind = \"127.0.0.1:{port}\"\nroot_key_file = \"{}\"\nfacts_token_file = \"{}\"\nauth_failures_per_minute = 1000\ndefault_fact_freshness_seconds = {freshness_seconds}\ncandidate_lifetime_seconds = 900\nclock_skew_seconds = 300\nnonce_retention_seconds = 1300\n",
             temp.path().join("company.sqlite").display(),
             root_path.display(),
             token_path.display()
@@ -227,6 +232,10 @@ impl Store {
             .args(&args)
             .output_alone()
             .expect("ask")
+    }
+    fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 fn write_user_config(
@@ -352,8 +361,7 @@ fn ask_in_a_clean_home_and_nongit_dir_groups_company_facts_and_records_nothing()
         !store.scratch.join(".git").exists(),
         "cwd is a git worktree"
     );
-    // `ask QUESTION` with no flag. Facts were admitted at boot, so the later
-    // wall-clock instant still includes them.
+    // `ask QUESTION` with no flag reduces at the snapshot's signed issued_at.
     let text = store.ask(false, None);
     let rendered = out(&text.stdout);
     assert!(
@@ -371,10 +379,7 @@ fn ask_in_a_clean_home_and_nongit_dir_groups_company_facts_and_records_nothing()
     let open = brief(&store.ask(true, None));
     let pinned = brief(&store.ask(true, Some(&store.as_of)));
     assert_eq!(pinned["as_of"], store.as_of);
-    assert_ne!(
-        open["as_of_source"], pinned["as_of_source"],
-        "no-flag and --as-of share a clock source"
-    );
+    assert_eq!(open["as_of_source"], "authority-snapshot:issued_at");
     assert!(
         pinned["authority_refresh"]["status"]
             .as_str()
@@ -405,6 +410,71 @@ fn ask_in_a_clean_home_and_nongit_dir_groups_company_facts_and_records_nothing()
         );
     }
     personal_quiet(&store.personal);
+}
+
+#[test]
+fn ask_on_one_cached_snapshot_is_identical_and_names_the_snapshot_instant() {
+    let mut store = Store::boot(true);
+    store.plant();
+    let warm = store.ask(false, None);
+    assert!(
+        warm.status.success(),
+        "{}{}",
+        out(&warm.stdout),
+        out(&warm.stderr)
+    );
+    store.stop();
+    let first = store.ask(true, None);
+    std::thread::sleep(Duration::from_secs(1));
+    let second = store.ask(true, None);
+    let rendered = format!(
+        "{}{}{}{}",
+        out(&first.stdout),
+        out(&first.stderr),
+        out(&second.stdout),
+        out(&second.stderr)
+    );
+    assert!(
+        first.status.success() && second.status.success(),
+        "{rendered}"
+    );
+    assert_eq!(first.stdout, second.stdout, "{rendered}");
+    let value = brief(&first);
+    assert_eq!(value["as_of_source"], "authority-snapshot:issued_at");
+    assert_ne!(
+        value["authority_refresh"]["status"].as_str(),
+        Some("ok"),
+        "{rendered}"
+    );
+}
+
+#[test]
+fn ask_presents_no_current_planted_fact_once_cached_fact_validity_has_passed() {
+    let mut store = Store::boot_for(true, 1);
+    store.plant();
+    let warm = store.ask(false, None);
+    let warm_text = out(&warm.stdout);
+    assert!(warm.status.success(), "{warm_text}{}", out(&warm.stderr));
+    for fact in &FACTS {
+        assert!(warm_text.contains(&fact_line(fact)), "{warm_text}");
+    }
+    store.stop();
+    std::thread::sleep(Duration::from_secs(2));
+    let cold = store.ask(false, None);
+    let rendered = format!("{}{}", out(&cold.stdout), out(&cold.stderr));
+    for fact in &FACTS {
+        assert!(!rendered.contains(&fact_line(fact)), "{rendered}");
+    }
+    if cold.status.success() {
+        return;
+    }
+    let code = error_field(&cold, "code");
+    assert!(kinbase::error::CODES.contains(&code.as_str()), "{rendered}");
+    assert_eq!(
+        cold.status.code(),
+        Some(kinbase::error::exit_for(&code)),
+        "{rendered}"
+    );
 }
 
 #[test]
