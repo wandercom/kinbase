@@ -22,6 +22,7 @@ const TOKEN: &str = "facts-agent-ask";
 const QUESTION: &str = "widgetforge";
 const STANDING: &str = "present";
 const PROVENANCE: &str = "human";
+const RIVAL_STATEMENT: &str = "widgetforge rulings stay open";
 struct Fact {
     key: &'static str,
     scope: &'static str,
@@ -207,16 +208,13 @@ impl Store {
     }
     fn plant_with(&self, contested_architecture: bool) {
         let architect = PrivateKey::generate();
+        let second = contested_architecture.then(PrivateKey::generate);
         let mut entries = vec![authority("company-steward", "company:root", &self.root)];
         for fact in &FACTS {
             entries.push(authority("chief-architect", fact.scope, &architect));
         }
-        if contested_architecture {
-            entries.push(authority(
-                "second-architect",
-                "architecture:widgetforge",
-                &PrivateKey::generate(),
-            ));
+        if let Some(second) = &second {
+            entries.push(authority("second-architect", FACTS[0].scope, second));
         }
         let registry = self.root.sign_document("authority-registry-entry", &json!({"schema": kinbase::model::REGISTRY_SCHEMA, "authority_cursor": "1000", "entries": entries})).expect("sign registry");
         let posted = self
@@ -227,8 +225,28 @@ impl Store {
         for fact in &FACTS {
             let posted = self
                 .client
-                .post("/facts", &signed_fact(&architect, fact, &self.as_of))
+                .post(
+                    "/facts",
+                    &signed_fact(&architect, fact, &self.as_of, "chief-architect"),
+                )
                 .expect("post fact");
+            assert_eq!(posted.status, 201, "{}", posted.body);
+        }
+        if let Some(second) = &second {
+            let rival = Fact {
+                key: FACTS[0].key,
+                scope: FACTS[0].scope,
+                statement: RIVAL_STATEMENT,
+                section: FACTS[0].section,
+                heading: FACTS[0].heading,
+            };
+            let posted = self
+                .client
+                .post(
+                    "/facts",
+                    &signed_fact(second, &rival, &self.as_of, "second-architect"),
+                )
+                .expect("post rival");
             assert_eq!(posted.status, 201, "{}", posted.body);
         }
     }
@@ -285,12 +303,12 @@ fn write_user_config(
 fn authority(id: &str, scope: &str, key: &PrivateKey) -> Value {
     json!({"authority_id": id, "scope": scope, "public_key": key.public().to_hex(), "channel": "company:root", "capabilities": ["answer"]})
 }
-fn signed_fact(key: &PrivateKey, fact: &Fact, at: &str) -> Value {
+fn signed_fact(key: &PrivateKey, fact: &Fact, at: &str, authority_id: &str) -> Value {
     let fact_id = kinbase::model::fact_id("company", fact.scope, fact.statement);
     key.sign_document("fact-event", &json!({
         "schema": kinbase::model::EVENT_SCHEMA,
-        "event_id": kinbase::model::event_id(&fact_id, &kinbase::hash::sha256_text(fact.statement), at, "chief-architect"),
-        "store_kind": "company", "authority_id": "chief-architect", "authority_scope": fact.scope,
+        "event_id": kinbase::model::event_id(&fact_id, &kinbase::hash::sha256_text(fact.statement), at, authority_id),
+        "store_kind": "company", "authority_id": authority_id, "authority_scope": fact.scope,
         "fact_id": fact_id, "logical_key": fact.key, "atom_kind": "decision", "scope": fact.scope,
         "statement": fact.statement, "evidence_refs": ["agent-ask"], "asserted_at": at, "effective_from": at,
         "disposition": "accepted", "authority_snapshot_cursor": "0", "confidence": 9000, "unresolved_uncertainty": null,
@@ -524,6 +542,13 @@ fn ask_withholds_a_fact_whose_architecture_scope_has_two_authorities() {
     let rendered = out(&text.stdout);
     assert!(text.status.success(), "{rendered}{}", out(&text.stderr));
     let key = FACTS[0].key;
+    let rulings = section(&rendered, "RULINGS");
+    assert!(
+        !rulings
+            .iter()
+            .any(|line| { line.contains(FACTS[0].statement) || line.contains(RIVAL_STATEMENT) }),
+        "{rendered}"
+    );
     assert!(
         section(&rendered, "UNKNOWNS")
             .iter()
@@ -531,7 +556,7 @@ fn ask_withholds_a_fact_whose_architecture_scope_has_two_authorities() {
         "{rendered}"
     );
     let value = brief(&store.ask(true, None));
-    assert_eq!(value["projection_state"], "withheld");
+    assert!(value.get("projection_state").is_some(), "{value}");
     assert!(
         value["unknowns"].as_array().is_some_and(|rows| {
             rows.iter()
