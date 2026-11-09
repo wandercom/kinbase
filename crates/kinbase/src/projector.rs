@@ -441,8 +441,19 @@ pub fn project_with(
             // A first refused refresh cannot become an empty successful brief.
             if company_only {
                 let snapshot = match launcher.company_cache()? {
-                    Some((cache, _)) if cache.facts_scope().as_deref() == Some("") => {
-                        cache.snapshot()?
+                    Some((cache, _)) => {
+                        let snapshot = cache.snapshot()?;
+                        if snapshot.is_some() && cache.facts_scope().as_deref() != Some("") {
+                            let scope = cache.facts_scope().unwrap_or_else(|| "unknown".to_owned());
+                            return Err(ContractError::degraded(
+                                "CACHE_EXPIRED",
+                                format!(
+                                    "cached Company snapshot is scoped to {scope} and cannot serve a Company-wide read"
+                                ),
+                                "Restore the Company store connection and retry to fetch a Company-wide snapshot.",
+                            ));
+                        }
+                        snapshot
                     }
                     _ => None,
                 };
