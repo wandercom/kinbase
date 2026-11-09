@@ -244,35 +244,37 @@ pub fn ask(
         as_of,
         Recording::ReadOnly,
     )?;
-    let mut brief = json!({
-        "as_of": projection.result["as_of"],
-        "as_of_source": projection.result["as_of_source"],
-        "authority_refresh": projection.result["brief"]["authority_refresh"],
-        "rulings": [], "ownership": [], "past_work": [],
-    });
+    let (mut rulings, mut ownership, mut past_work) = (Vec::new(), Vec::new(), Vec::new());
     for fact in &projection.selected {
-        let section = match fact.logical_key.split('/').next().unwrap_or_default() {
-            "architecture" => "rulings",
-            "ownership" => "ownership",
-            _ => "past_work",
+        let rows = match fact.logical_key.split('/').next().unwrap_or_default() {
+            "architecture" => &mut rulings,
+            "ownership" => &mut ownership,
+            _ => &mut past_work,
         };
-        brief[section].as_array_mut().unwrap().push(json!({
+        rows.push(json!({
             "logical_key": fact.logical_key,
             "standing": fact.standing,
             "provenance": fact.provenance,
             "statement": fact.statement,
         }));
     }
+    let mut brief = json!({
+        "as_of": projection.result["as_of"],
+        "as_of_source": projection.result["as_of_source"],
+        "authority_refresh": projection.result["brief"]["authority_refresh"],
+        "omitted_count": projection.result["omitted_count"],
+        "direction_withheld_evaluations": projection.result["direction_withheld_evaluations"],
+        "rulings": rulings, "ownership": ownership, "past_work": past_work,
+    });
     crate::secret_mask::mask_value(&mut brief);
     if json {
         println!("{}", crate::output::single_line(&brief));
     } else {
-        let count: usize = ["rulings", "ownership", "past_work"]
-            .iter()
-            .map(|key| brief[key].as_array().unwrap().len())
-            .sum();
+        let count = projection.selected.len();
         println!(
-            "facts: {count}; refresh: {}; as_of: {} ({})",
+            "facts: {count}; omitted: {}; direction_withheld_evaluations: {}; refresh: {}; as_of: {} ({})",
+            brief["omitted_count"],
+            brief["direction_withheld_evaluations"],
             brief["authority_refresh"]["status"]
                 .as_str()
                 .unwrap_or_default(),
@@ -285,7 +287,7 @@ pub fn ask(
             ("past_work", "PAST WORK"),
         ] {
             println!("{heading}");
-            let rows = brief[key].as_array().unwrap();
+            let rows = brief[key].as_array().map(Vec::as_slice).unwrap_or_default();
             if rows.is_empty() {
                 println!("(none)");
             }
@@ -372,6 +374,11 @@ pub fn project_with(
     // the rulings that govern this repository, and a cached snapshot fetched
     // for another repository does not count as fresh.
     let company_only = repo.is_none();
+    let recording = if company_only {
+        Recording::ReadOnly
+    } else {
+        recording
+    };
     let repository_uuid = repo
         .and_then(|repo| crate::codebase::Repository::discover(repo).ok())
         .and_then(|repository| {
@@ -429,9 +436,9 @@ pub fn project_with(
     let mut sources = vec![(repo.to_path_buf(), crate::StoreKind::Company)];
     if !company_only {
         sources.push((repo.to_path_buf(), crate::StoreKind::Codebase));
-    }
-    for evidence in evidence_repos.iter().filter(|_| !company_only) {
-        sources.push((evidence.clone(), crate::StoreKind::Codebase));
+        for evidence in evidence_repos {
+            sources.push((evidence.clone(), crate::StoreKind::Codebase));
+        }
     }
     let mut evidence_fact_count = 0usize;
     for (index, (source, store)) in sources.iter().enumerate() {

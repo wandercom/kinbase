@@ -85,7 +85,10 @@ pub enum Command {
     /// Read a compact Company knowledge brief without a repository or recording.
     Ask {
         question: String,
-        #[arg(long = "as-of")]
+        #[arg(
+            long = "as-of",
+            help = "Explicit RFC 3339 UTC reducer instant with millisecond precision and a Z suffix"
+        )]
         as_of: Option<String>,
     },
     Project {
