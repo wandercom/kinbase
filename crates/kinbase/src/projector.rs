@@ -227,6 +227,112 @@ pub fn run(
     Ok(())
 }
 
+/// A stateless Company brief uses the same reduction and selection as project.
+pub fn ask(
+    launcher: &Launcher,
+    question: &str,
+    as_of: &crate::time::AsOf,
+    json: bool,
+) -> Result<(), ContractError> {
+    let projection = project_with(
+        launcher,
+        None,
+        question,
+        question,
+        &[],
+        &[],
+        as_of,
+        Recording::ReadOnly,
+    )?;
+    let mut rows = BTreeMap::new();
+    collect_brief_rows(&projection.result["brief"], &mut rows);
+    collect_brief_rows(&projection.result["selected"], &mut rows);
+    let mut brief = json!({
+        "as_of": projection.result["as_of"],
+        "as_of_source": projection.result["as_of_source"],
+        "authority_refresh": projection.result["brief"]["authority_refresh"],
+        "rulings": [], "ownership": [], "past_work": [],
+    });
+    for (key, row) in rows {
+        let section = match key.split('/').next().unwrap_or_default() {
+            "architecture" => "rulings",
+            "ownership" => "ownership",
+            _ => "past_work",
+        };
+        brief[section].as_array_mut().unwrap().push(row);
+    }
+    crate::secret_mask::mask_value(&mut brief);
+    if json {
+        println!("{}", crate::output::single_line(&brief));
+    } else {
+        let count: usize = ["rulings", "ownership", "past_work"]
+            .iter()
+            .map(|key| brief[key].as_array().unwrap().len())
+            .sum();
+        println!(
+            "facts: {count}; refresh: {}; as_of: {} ({})",
+            brief["authority_refresh"]["status"]
+                .as_str()
+                .unwrap_or_default(),
+            as_of.as_of,
+            as_of.as_of_source,
+        );
+        for (key, heading) in [
+            ("rulings", "RULINGS"),
+            ("ownership", "OWNERSHIP"),
+            ("past_work", "PAST WORK"),
+        ] {
+            println!("{heading}");
+            let rows = brief[key].as_array().unwrap();
+            if rows.is_empty() {
+                println!("(none)");
+            }
+            for row in rows {
+                println!(
+                    "- [{}] ({}, {}) {}",
+                    row["logical_key"].as_str().unwrap_or_default(),
+                    row["standing"].as_str().unwrap_or_default(),
+                    row["provenance"].as_str().unwrap_or_default(),
+                    row["statement"].as_str().unwrap_or_default()
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn collect_brief_rows(value: &Value, rows: &mut BTreeMap<String, Value>) {
+    const FIELDS: [&str; 4] = ["logical_key", "standing", "provenance", "statement"];
+    match value {
+        Value::Object(object)
+            if FIELDS
+                .iter()
+                .all(|key| object.get(*key).is_some_and(Value::is_string)) =>
+        {
+            rows.insert(
+                value["logical_key"].as_str().unwrap().to_owned(),
+                Value::Object(
+                    FIELDS
+                        .iter()
+                        .map(|key| ((*key).to_owned(), value[key].clone()))
+                        .collect(),
+                ),
+            );
+        }
+        Value::Object(object) => {
+            for child in object.values() {
+                collect_brief_rows(child, rows);
+            }
+        }
+        Value::Array(array) => {
+            for child in array {
+                collect_brief_rows(child, rows);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// A projection: the canonical result `run` prints, and the selected facts.
 pub struct Projection {
     pub result: Value,
@@ -253,13 +359,22 @@ pub fn project(
     evidence_repos: &[std::path::PathBuf],
     as_of: &crate::time::AsOf,
 ) -> Result<Projection, ContractError> {
-    project_with(launcher, repo, task, decision, working_set, evidence_repos, as_of, Recording::Full)
+    project_with(
+        launcher,
+        Some(repo),
+        task,
+        decision,
+        working_set,
+        evidence_repos,
+        as_of,
+        Recording::Full,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn project_with(
     launcher: &Launcher,
-    repo: &Path,
+    repo: Option<&Path>,
     task: &str,
     decision: &str,
     working_set: &[String],
@@ -286,10 +401,11 @@ pub fn project_with(
     // Ask as this repository: the service sends company-wide direction plus
     // the rulings that govern this repository, and a cached snapshot fetched
     // for another repository does not count as fresh.
-    let repository_uuid = crate::codebase::Repository::discover(repo)
-        .ok()
+    let company_only = repo.is_none();
+    let repository_uuid = repo
+        .and_then(|repo| crate::codebase::Repository::discover(repo).ok())
         .and_then(|repository| {
-            crate::repository::build_trust(launcher, &repository, false, None)
+            crate::repository::build_trust(launcher, &repository, false, Some(&as_of.as_of))
                 .ok()
                 .and_then(|trust| trust.repository_uuid)
                 .or_else(|| repository.uuid_hint().map(str::to_owned))
@@ -306,16 +422,35 @@ pub fn project_with(
         &as_of.as_of,
     ) {
         Ok((cursor, source)) => json!({"status": "ok", "source": source, "cursor": cursor}),
-        Err(error) => json!({
-            "status": "withheld",
-            "code": error.code,
-            "message": error.message,
-            "remediation": error.remediation,
-        }),
+        Err(error) => {
+            // A first refused refresh cannot become an empty successful brief.
+            if company_only {
+                verified_company_snapshot(launcher)?.ok_or_else(|| error.clone())?;
+            }
+            json!({
+                "status": "withheld",
+                "code": error.code,
+                "message": error.message,
+                "remediation": error.remediation,
+            })
+        }
     };
     // The refresh may have stored a later signed instant than the one the
     // command resolved before it ran.
-    let advanced = crate::repository::advance_as_of(launcher, as_of);
+    if company_only {
+        verified_company_snapshot(launcher)?.ok_or_else(|| {
+            ContractError::degraded(
+                "CACHE_EXPIRED",
+                "no verified Company snapshot is available",
+                "Restore the Company service and retry.",
+            )
+        })?;
+    }
+    let advanced = if company_only {
+        as_of.clone()
+    } else {
+        crate::repository::advance_as_of(launcher, as_of)
+    };
     let as_of = &advanced;
     let mut facts = Vec::new();
     let mut ingested_events = Vec::new();
@@ -327,11 +462,12 @@ pub fn project_with(
     // requests, threads and documents live in a corpus repository that
     // nobody codes in; a projection that only read the repository in front
     // of it never saw any of them.
-    let mut sources: Vec<(std::path::PathBuf, crate::StoreKind)> = vec![
-        (repo.to_path_buf(), crate::StoreKind::Company),
-        (repo.to_path_buf(), crate::StoreKind::Codebase),
-    ];
-    for evidence in evidence_repos {
+    let repo = repo.unwrap_or_else(|| Path::new("."));
+    let mut sources = vec![(repo.to_path_buf(), crate::StoreKind::Company)];
+    if !company_only {
+        sources.push((repo.to_path_buf(), crate::StoreKind::Codebase));
+    }
+    for evidence in evidence_repos.iter().filter(|_| !company_only) {
         sources.push((evidence.clone(), crate::StoreKind::Codebase));
     }
     let mut evidence_fact_count = 0usize;
@@ -358,6 +494,7 @@ pub fn project_with(
     let closed_unknown_ids: BTreeSet<String> =
         [crate::StoreKind::Company, crate::StoreKind::Codebase]
             .into_iter()
+            .filter(|store| !company_only || *store == crate::StoreKind::Company)
             .filter_map(|store| crate::store::read_records(store, repo, "unknowns.jsonl").ok())
             .flatten()
             .filter(|record| {
@@ -911,6 +1048,24 @@ pub fn project_with(
     Ok(Projection { result, selected })
 }
 
+/// Recheck the configured root before a stateless brief releases cached facts.
+fn verified_company_snapshot(launcher: &Launcher) -> Result<Option<Value>, ContractError> {
+    let Some((cache, root)) = launcher.company_cache()? else {
+        return Ok(None);
+    };
+    let Some(snapshot) = cache.snapshot()? else {
+        return Ok(None);
+    };
+    if crate::crypto::PublicKey::verify_document("receipt", &snapshot).as_ref() != Some(&root) {
+        return Err(ContractError::integrity(
+            "SIGNATURE_INVALID",
+            "cached Company snapshot does not verify against the configured root",
+            "Refresh Company state from the store operator; no brief was released.",
+        ));
+    }
+    Ok(Some(snapshot))
+}
+
 fn question_unknown_id(fact: &CurrentFact) -> String {
     format!("unknown_{}", &fact.fact_id[5.min(fact.fact_id.len())..])
 }
@@ -967,7 +1122,7 @@ fn load_view(
     store: crate::StoreKind,
     as_of: &crate::time::AsOf,
 ) -> Result<StoreView, ContractError> {
-    let mut data = crate::corpus::load_store(launcher, repo, store)?;
+    let mut data = crate::corpus::load_store(launcher, repo, store, &as_of.as_of)?;
     let mut references = Vec::new();
     if store == crate::StoreKind::Codebase {
         if let Ok(repository) = crate::codebase::Repository::discover(repo) {

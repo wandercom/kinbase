@@ -664,7 +664,12 @@ pub fn parse_user_config(path: &Path, text: &str) -> Result<UserConfig, Contract
                     "company.facts_token_file",
                 )?,
                 root_public_key_file: absolute(
-                    required_str(section, "root_public_key_file", "company")?,
+                    required_str(section, "root_public_key_file", "company").map_err(|mut error| {
+                        if !section.contains_key("root_public_key_file") {
+                            error.remediation = "Set company.root_public_key_file to the Company store's root public key file; obtain it from the store operator or the setup script.".to_owned();
+                        }
+                        error
+                    })?,
                     "company.root_public_key_file",
                 )?,
                 cache_root: absolute(

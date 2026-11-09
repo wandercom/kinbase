@@ -255,6 +255,15 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             )
             .map_err(internal)?;
         }
+        Command::Ask { question, as_of } => {
+            let instant = match as_of {
+                Some(text) => {
+                    crate::time::AsOf::explicit(&text).map_err(ContractError::invariant)?
+                }
+                None => crate::time::proof_clock(),
+            };
+            crate::projector::ask(&launcher, &question, &instant, json)?;
+        }
         Command::Project {
             repo,
             task,
@@ -306,7 +315,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
                     .and_then(|projection_as_of| {
                         crate::projector::project_with(
                             &launcher,
-                            &repo,
+                            Some(repo.as_path()),
                             &question,
                             &question,
                             &[],

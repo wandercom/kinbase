@@ -82,6 +82,12 @@ pub enum Command {
         #[arg(long = "as-of")]
         as_of: Option<String>,
     },
+    /// Read a compact Company knowledge brief without a repository or recording.
+    Ask {
+        question: String,
+        #[arg(long = "as-of")]
+        as_of: Option<String>,
+    },
     Project {
         #[arg(long)]
         repo: Option<PathBuf>,
