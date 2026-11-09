@@ -59,6 +59,7 @@ struct Store {
     state_home: PathBuf,
     personal: PathBuf,
     scratch: PathBuf,
+    cache: PathBuf,
     child: Child,
     port: u16,
     root: PrivateKey,
@@ -177,10 +178,11 @@ impl Store {
         } else {
             PrivateKey::generate().public().to_hex()
         };
+        let cache = temp.path().join("cache");
         write_user_config(
             &config_home.join("kinbase"),
             &personal,
-            &temp.path().join("cache"),
+            &cache,
             &token_path,
             &format!("http://127.0.0.1:{port}"),
             Some(&hex),
@@ -193,6 +195,7 @@ impl Store {
             state_home,
             personal,
             scratch,
+            cache,
             child,
             port,
             root: company_root,
@@ -200,10 +203,20 @@ impl Store {
         }
     }
     fn plant(&self) {
+        self.plant_with(false);
+    }
+    fn plant_with(&self, contested_architecture: bool) {
         let architect = PrivateKey::generate();
         let mut entries = vec![authority("company-steward", "company:root", &self.root)];
         for fact in &FACTS {
             entries.push(authority("chief-architect", fact.scope, &architect));
+        }
+        if contested_architecture {
+            entries.push(authority(
+                "second-architect",
+                "architecture:widgetforge",
+                &PrivateKey::generate(),
+            ));
         }
         let registry = self.root.sign_document("authority-registry-entry", &json!({"schema": kinbase::model::REGISTRY_SCHEMA, "authority_cursor": "1000", "entries": entries})).expect("sign registry");
         let posted = self
@@ -286,6 +299,9 @@ fn signed_fact(key: &PrivateKey, fact: &Fact, at: &str) -> Value {
         "standing": STANDING, "provenance": PROVENANCE
     })).expect("sign fact")
 }
+fn is_heading(line: &str) -> bool {
+    matches!(line, "RULINGS" | "OWNERSHIP" | "PAST WORK" | "UNKNOWNS")
+}
 fn out(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
@@ -304,7 +320,7 @@ fn section<'a>(text: &'a str, heading: &str) -> Vec<&'a str> {
     lines[start + 1..]
         .iter()
         .copied()
-        .take_while(|line| !matches!(*line, "RULINGS" | "OWNERSHIP" | "PAST WORK"))
+        .take_while(|line| !is_heading(line))
         .filter(|line| !line.is_empty())
         .collect()
 }
@@ -372,14 +388,23 @@ fn ask_in_a_clean_home_and_nongit_dir_groups_company_facts_and_records_nothing()
     assert_eq!(
         rendered
             .lines()
-            .filter(|line| matches!(*line, "RULINGS" | "OWNERSHIP" | "PAST WORK"))
+            .filter(|line| is_heading(line))
             .collect::<Vec<_>>(),
-        ["RULINGS", "OWNERSHIP", "PAST WORK"]
+        ["RULINGS", "OWNERSHIP", "PAST WORK", "UNKNOWNS"]
     );
+    assert_eq!(section(&rendered, "UNKNOWNS"), ["(none)"]);
     let open = brief(&store.ask(true, None));
     let pinned = brief(&store.ask(true, Some(&store.as_of)));
     assert_eq!(pinned["as_of"], store.as_of);
     assert_eq!(open["as_of_source"], "authority-snapshot:issued_at");
+    assert_eq!(open["projection_state"], "projected");
+    assert!(open.get("degraded_policy").is_some(), "{open}");
+    assert!(
+        open["unknowns"]
+            .as_array()
+            .is_some_and(|rows| rows.is_empty()),
+        "{open}"
+    );
     assert!(
         pinned["authority_refresh"]["status"]
             .as_str()
@@ -483,13 +508,98 @@ fn ask_prints_no_brief_when_the_company_root_does_not_verify() {
         !rendered.contains("RULINGS") && !rendered.contains("widgetforge rulings"),
         "{rendered}"
     );
-    let code = error_field(&output, "code");
-    assert!(kinbase::error::CODES.contains(&code.as_str()), "{rendered}");
+    assert_eq!(error_field(&output, "code"), "CACHE_EXPIRED", "{rendered}");
     assert_eq!(
         output.status.code(),
-        Some(kinbase::error::exit_for(&code)),
+        Some(kinbase::error::exit_for("CACHE_EXPIRED")),
         "{rendered}"
     );
+}
+
+#[test]
+fn ask_withholds_a_fact_whose_architecture_scope_has_two_authorities() {
+    let store = Store::boot(true);
+    store.plant_with(true);
+    let text = store.ask(false, None);
+    let rendered = out(&text.stdout);
+    assert!(text.status.success(), "{rendered}{}", out(&text.stderr));
+    let key = FACTS[0].key;
+    assert!(
+        section(&rendered, "UNKNOWNS")
+            .iter()
+            .any(|line| line.starts_with(&format!("- [{key}]"))),
+        "{rendered}"
+    );
+    let value = brief(&store.ask(true, None));
+    assert_eq!(value["projection_state"], "withheld");
+    assert!(
+        value["unknowns"].as_array().is_some_and(|rows| {
+            rows.iter()
+                .any(|row| row["logical_key"].as_str() == Some(key))
+        }),
+        "{value}"
+    );
+}
+
+#[test]
+fn ask_does_not_serve_a_repository_scoped_cache() {
+    // spec/cli.md: tracked `.kin/config` names repository_uuid_hint. A fresh
+    // home has no proof clock, so project takes an explicit --as-of and can
+    // leave the repository-scoped snapshot in the shared cache.
+    let store = Store::boot(true);
+    store.plant();
+    let repo = store.home.join("repo");
+    fs::create_dir_all(repo.join(".kin")).expect("repo");
+    assert!(
+        Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&repo)
+            .status_alone()
+            .unwrap()
+            .success()
+    );
+    fs::write(
+        repo.join(".kin/config"),
+        "schema_version = \"kinbase-repo/1\"\nrepository_uuid_hint = \"018f0000-0000-7000-8000-000000000001\"\nsafe_name = \"widgetforge\"\ndomains = []\n",
+    )
+    .expect("kin config");
+    let repo_arg = repo.display().to_string();
+    let project = kinbase_at(&store.home, &store.config_home, &store.state_home)
+        .current_dir(&repo)
+        .args([
+            "project",
+            "--repo",
+            &repo_arg,
+            "--task",
+            QUESTION,
+            "--decision",
+            "read",
+            "--as-of",
+            &store.as_of,
+            "--json",
+        ])
+        .output_alone()
+        .expect("project");
+    let projected = format!("{}{}", out(&project.stdout), out(&project.stderr));
+    assert!(project.status.success(), "{projected}");
+    let scope: String = rusqlite::Connection::open_with_flags(
+        store.cache.join("facts-cache.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .expect("cache")
+    .query_row(
+        "SELECT value FROM meta WHERE key = 'facts_scope'",
+        [],
+        |row| row.get(0),
+    )
+    .expect("facts_scope");
+    assert!(
+        scope.starts_with("repository:"),
+        "project did not leave a repository-scoped snapshot: {scope}"
+    );
+    let asked = brief(&store.ask(true, None));
+    let source = asked["authority_refresh"]["source"].as_str().unwrap_or("");
+    assert!(!source.is_empty() && source != "cache", "{asked}");
 }
 
 #[test]
