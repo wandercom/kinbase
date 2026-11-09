@@ -19,7 +19,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 use support::SpawnAlone;
 use tempfile::TempDir;
 
@@ -269,6 +269,16 @@ fn second_key_facts(extra: &str) -> (u16, String) {
     let service = Service::start(extra);
     let a = service.client(PrivateKey::generate());
     let b = service.client(PrivateKey::generate());
+    // Both ceilings are UTC windows. Starting within 2s of the next minute
+    // can land B in a fresh bucket; every hour boundary is a minute boundary.
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("clock");
+    let into_minute = (now.as_secs() % 60) * 1_000_000_000 + u64::from(now.subsec_nanos());
+    let left = 60_000_000_000 - into_minute;
+    if left <= 2_000_000_000 {
+        std::thread::sleep(Duration::from_nanos(left + 20_000_000));
+    }
     a.get_ok("/facts").expect("inside the ceiling");
     a.get_ok("/facts").expect("inside the ceiling");
     let response = b.get("/facts").expect("answered");
@@ -299,16 +309,42 @@ fn a_second_client_key_is_accepted_on_a_fresh_token_budget() {
     assert_eq!(b.get("/status").expect("key B").status, 200);
 }
 
-#[test]
-fn a_token_without_a_verifying_signature_is_refused() {
-    let service = Service::start("read_volume_per_hour = 1000\nrequests_per_minute = 1000\n");
-    let response = http_get(
-        &service.address(),
+/// GET /status signed by `signer`, with `presented` sent as the client key.
+fn signed_status(address: &str, signer: &PrivateKey, presented: &str, nonce: &str) -> String {
+    let now = kinbase::time::now_rfc3339_millis();
+    let expires = kinbase::time::plus_seconds(&now, 60).expect("expiry");
+    let bytes = kinbase::json::canonical_bytes(&json!({
+        "body_sha256": kinbase::hash::sha256_bytes(b""),
+        "expires_at": &expires,
+        "method": "GET",
+        "nonce": nonce,
+        "path": "/status",
+    }));
+    let signature = signer.sign("receipt", &bytes).expect("sign");
+    http_get(
+        address,
         "/status",
-        &format!("Authorization: Bearer {TOKEN}\r\n"),
-    );
+        &format!(
+            "Authorization: Bearer {TOKEN}\r\n\
+             X-Kinbase-Nonce: {nonce}\r\n\
+             X-Kinbase-Expires-At: {expires}\r\n\
+             X-Kinbase-Client-Key: {presented}\r\n\
+             X-Kinbase-Signature: {signature}\r\n"
+        ),
+    )
+}
+
+#[test]
+fn a_signature_that_does_not_verify_under_the_presented_key_is_refused() {
+    let service = Service::start("read_volume_per_hour = 1000\nrequests_per_minute = 1000\n");
+    let signer = PrivateKey::generate();
+    let other = PrivateKey::generate();
+    let address = service.address();
+    let accepted = signed_status(&address, &signer, &signer.public().to_hex(), "1");
+    assert!(accepted.contains(" 200 "), "{accepted}");
+    let refused = signed_status(&address, &signer, &other.public().to_hex(), "2");
     assert!(
-        response.contains(" 401 ") && response.contains("AUTHORITY_SCOPE_DENIED"),
-        "{response}"
+        refused.contains(" 401 ") && refused.contains("AUTHORITY_SCOPE_DENIED"),
+        "{refused}"
     );
 }
