@@ -556,7 +556,11 @@ fn ask_withholds_a_fact_whose_architecture_scope_has_two_authorities() {
         "{rendered}"
     );
     let value = brief(&store.ask(true, None));
-    assert!(value.get("projection_state").is_some(), "{value}");
+    assert_eq!(value["projection_state"], "withheld", "{value}");
+    assert_eq!(
+        value["degraded_policy"], "block_dependent_decision",
+        "{value}"
+    );
     assert!(
         value["unknowns"].as_array().is_some_and(|rows| {
             rows.iter()
