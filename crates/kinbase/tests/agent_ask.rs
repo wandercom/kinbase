@@ -300,10 +300,13 @@ fn section<'a>(text: &'a str, heading: &str) -> Vec<&'a str> {
         .collect()
 }
 fn personal_quiet(personal: &Path) {
-    let Ok(connection) = rusqlite::Connection::open(personal.join("kinbase-personal.sqlite3"))
-    else {
+    let path = personal.join("kinbase-personal.sqlite3");
+    if !path.exists() {
         return;
-    };
+    }
+    let connection =
+        rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("personal sqlite");
     for (sql, what) in [
         (
             "SELECT COUNT(*) FROM meta WHERE key LIKE 'proof-clock:%'",
@@ -311,7 +314,7 @@ fn personal_quiet(personal: &Path) {
         ),
         ("SELECT COUNT(*) FROM query_log", "query log"),
     ] {
-        let rows: i64 = connection.query_row(sql, [], |row| row.get(0)).unwrap_or(0);
+        let rows: i64 = connection.query_row(sql, [], |row| row.get(0)).expect(what);
         assert_eq!(rows, 0, "ask recorded a {what}");
     }
 }
