@@ -934,7 +934,7 @@ fn charge_read(
         return Err(refuse(
             429,
             ContractError::limit(
-                "per-principal hourly read volume ceiling exceeded",
+                "hourly read volume ceiling exceeded for this token",
                 json!({"refused_count": count, "omitted_count": count, "count_ceiling": state.config.read_volume_per_hour, "bytes_ceiling": state.config.read_bytes_per_hour}),
             ),
         ));

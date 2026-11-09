@@ -183,6 +183,7 @@ impl CompanyDb {
                  CREATE TABLE IF NOT EXISTS request_rate(
                     client_key TEXT NOT NULL, minute INTEGER NOT NULL, count INTEGER NOT NULL,
                     PRIMARY KEY(client_key, minute));
+                 -- read_volume.principal_key holds the token digest; keep the old column name to avoid a migration.
                  CREATE TABLE IF NOT EXISTS read_volume(
                     principal_key TEXT NOT NULL, hour INTEGER NOT NULL, count INTEGER NOT NULL,
                     bytes INTEGER NOT NULL, PRIMARY KEY(principal_key, hour));
@@ -634,7 +635,7 @@ impl CompanyDb {
 
     pub fn add_read_volume(
         &self,
-        principal_key: &str,
+        token_digest: &str,
         hour: i64,
         count: i64,
         bytes: i64,
@@ -643,13 +644,13 @@ impl CompanyDb {
             .execute(
                 "INSERT INTO read_volume(principal_key, hour, count, bytes) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(principal_key, hour) DO UPDATE SET count=count+excluded.count, bytes=bytes+excluded.bytes",
-                params![principal_key, hour, count, bytes],
+                params![token_digest, hour, count, bytes],
             )
             .map_err(sqlite_error("read volume"))?;
         self.connection
             .query_row(
                 "SELECT count, bytes FROM read_volume WHERE principal_key=?1 AND hour=?2",
-                params![principal_key, hour],
+                params![token_digest, hour],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(sqlite_error("read volume read"))
