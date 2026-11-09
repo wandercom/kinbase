@@ -166,7 +166,7 @@ fn auth_refusal() -> (u16, ContractError) {
         ContractError::refused(
             "AUTHORITY_SCOPE_DENIED",
             "request not authorized",
-            "Present a valid scoped bearer token, its bound client key, a fresh nonce and expiry, and a valid request signature.",
+            "Present a valid scoped bearer token, a client public key, a fresh nonce and expiry, and a valid request signature.",
         ),
     )
 }
@@ -850,13 +850,13 @@ fn authenticate(
     db.record_token_client_pair(&token.digest, &client_hex, now)
         .map_err(|error| refuse(500, error))?;
     Ok(AuthContext {
-        principal_key: format!("{}:{}", token.principal_id, &client_hex[..16]),
+        principal_key: token.digest.clone(),
         token,
         client_key: client_hex,
     })
 }
 
-/// The per-client-key request ceiling, checked once the credential is known
+/// The per-token request ceiling, checked once the credential is known
 /// and before `handle` keeps a usage row: a refusal here writes none.
 fn enforce_request_rate(
     db: &CompanyDb,
@@ -864,13 +864,13 @@ fn enforce_request_rate(
     auth: &AuthContext,
 ) -> Result<(), (u16, ContractError)> {
     let rate = db
-        .bump_request_rate(&auth.client_key, now_minute())
+        .bump_request_rate(&auth.token.digest, now_minute())
         .map_err(|error| refuse(500, error))?;
     if rate > state.config.requests_per_minute {
         return Err(refuse(
             429,
             ContractError::limit(
-                "request rate ceiling exceeded for this client key",
+                "request rate ceiling exceeded for this token",
                 json!({"refused_count": 1, "omitted_count": 1, "ceiling": state.config.requests_per_minute}),
             ),
         ));
@@ -4399,7 +4399,7 @@ mod packet11_tests {
         )
         .unwrap();
         assert_ne!(first_auth.client_key, second_auth.client_key);
-        assert_ne!(first_auth.principal_key, second_auth.principal_key);
+        assert_eq!(first_auth.principal_key, second_auth.principal_key);
         assert_eq!(
             db.token_client_key_count(&first_auth.token.digest).unwrap(),
             2
