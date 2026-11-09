@@ -2571,7 +2571,7 @@ fn events(
             map.insert("payload_withheld".to_owned(), Value::Bool(true));
         }
     }
-    // Event bodies are fact reads, under the same per-principal budget as
+    // Event bodies are fact reads, under the same per-token budget as
     // /facts and /snapshot; a reader refused there was served here.
     if reads_facts {
         let bytes: usize = rows
