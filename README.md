@@ -107,7 +107,8 @@ gateway_api_key_file = "/private/example/kinbase/gateway.key"
 `facts_token_file` grants Company fact scopes; `client_key_file` signs and binds
 requests; `cache_root` holds verified snapshots. `root_public_key_file` is the
 Company store's root public key file, required to verify responses. Obtain it
-from the store operator or the setup script; Kinbase has no compiled-in production
+from the store operator or run `wan-kinbase-setup`, which writes the key file;
+Kinbase has no compiled-in production
 root key. `gateway_api_key_file` holds the gateway credential. As an alternative,
 configure `oidc_issuer` and `oidc_client_id` (and, when needed,
 `oidc_client_secret_file`) and run `kinbase auth login`. Use one gateway credential

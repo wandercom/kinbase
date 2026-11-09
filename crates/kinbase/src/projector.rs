@@ -244,22 +244,24 @@ pub fn ask(
         as_of,
         Recording::ReadOnly,
     )?;
-    let mut rows = BTreeMap::new();
-    collect_brief_rows(&projection.result["brief"], &mut rows);
-    collect_brief_rows(&projection.result["selected"], &mut rows);
     let mut brief = json!({
         "as_of": projection.result["as_of"],
         "as_of_source": projection.result["as_of_source"],
         "authority_refresh": projection.result["brief"]["authority_refresh"],
         "rulings": [], "ownership": [], "past_work": [],
     });
-    for (key, row) in rows {
-        let section = match key.split('/').next().unwrap_or_default() {
+    for fact in &projection.selected {
+        let section = match fact.logical_key.split('/').next().unwrap_or_default() {
             "architecture" => "rulings",
             "ownership" => "ownership",
             _ => "past_work",
         };
-        brief[section].as_array_mut().unwrap().push(row);
+        brief[section].as_array_mut().unwrap().push(json!({
+            "logical_key": fact.logical_key,
+            "standing": fact.standing,
+            "provenance": fact.provenance,
+            "statement": fact.statement,
+        }));
     }
     crate::secret_mask::mask_value(&mut brief);
     if json {
@@ -274,8 +276,8 @@ pub fn ask(
             brief["authority_refresh"]["status"]
                 .as_str()
                 .unwrap_or_default(),
-            as_of.as_of,
-            as_of.as_of_source,
+            brief["as_of"].as_str().unwrap_or_default(),
+            brief["as_of_source"].as_str().unwrap_or_default(),
         );
         for (key, heading) in [
             ("rulings", "RULINGS"),
@@ -299,38 +301,6 @@ pub fn ask(
         }
     }
     Ok(())
-}
-
-fn collect_brief_rows(value: &Value, rows: &mut BTreeMap<String, Value>) {
-    const FIELDS: [&str; 4] = ["logical_key", "standing", "provenance", "statement"];
-    match value {
-        Value::Object(object)
-            if FIELDS
-                .iter()
-                .all(|key| object.get(*key).is_some_and(Value::is_string)) =>
-        {
-            rows.insert(
-                value["logical_key"].as_str().unwrap().to_owned(),
-                Value::Object(
-                    FIELDS
-                        .iter()
-                        .map(|key| ((*key).to_owned(), value[key].clone()))
-                        .collect(),
-                ),
-            );
-        }
-        Value::Object(object) => {
-            for child in object.values() {
-                collect_brief_rows(child, rows);
-            }
-        }
-        Value::Array(array) => {
-            for child in array {
-                collect_brief_rows(child, rows);
-            }
-        }
-        _ => {}
-    }
 }
 
 /// A projection: the canonical result `run` prints, and the selected facts.
@@ -425,7 +395,13 @@ pub fn project_with(
         Err(error) => {
             // A first refused refresh cannot become an empty successful brief.
             if company_only {
-                verified_company_snapshot(launcher)?.ok_or_else(|| error.clone())?;
+                let snapshot = match launcher.company_cache()? {
+                    Some((cache, _)) => cache.snapshot()?,
+                    None => None,
+                };
+                if snapshot.is_none() {
+                    return Err(error);
+                }
             }
             json!({
                 "status": "withheld",
@@ -437,20 +413,7 @@ pub fn project_with(
     };
     // The refresh may have stored a later signed instant than the one the
     // command resolved before it ran.
-    if company_only {
-        verified_company_snapshot(launcher)?.ok_or_else(|| {
-            ContractError::degraded(
-                "CACHE_EXPIRED",
-                "no verified Company snapshot is available",
-                "Restore the Company service and retry.",
-            )
-        })?;
-    }
-    let advanced = if company_only {
-        as_of.clone()
-    } else {
-        crate::repository::advance_as_of(launcher, as_of)
-    };
+    let advanced = crate::repository::advance_as_of(launcher, as_of);
     let as_of = &advanced;
     let mut facts = Vec::new();
     let mut ingested_events = Vec::new();
@@ -1046,24 +1009,6 @@ pub fn project_with(
         launcher.private_store()?.log_query(None, &query_record)?;
     }
     Ok(Projection { result, selected })
-}
-
-/// Recheck the configured root before a stateless brief releases cached facts.
-fn verified_company_snapshot(launcher: &Launcher) -> Result<Option<Value>, ContractError> {
-    let Some((cache, root)) = launcher.company_cache()? else {
-        return Ok(None);
-    };
-    let Some(snapshot) = cache.snapshot()? else {
-        return Ok(None);
-    };
-    if crate::crypto::PublicKey::verify_document("receipt", &snapshot).as_ref() != Some(&root) {
-        return Err(ContractError::integrity(
-            "SIGNATURE_INVALID",
-            "cached Company snapshot does not verify against the configured root",
-            "Refresh Company state from the store operator; no brief was released.",
-        ));
-    }
-    Ok(Some(snapshot))
 }
 
 fn question_unknown_id(fact: &CurrentFact) -> String {
