@@ -258,10 +258,26 @@ pub fn ask(
             "statement": fact.statement,
         }));
     }
+    let unknowns: Vec<Value> = projection.result["unknowns"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|unknown| {
+            json!({
+                "logical_key": unknown["logical_key"],
+                "kind": unknown["kind"],
+                "owner_role": unknown["owner_role"],
+                "decision_blocked": unknown["decision_blocked"],
+            })
+        })
+        .collect();
     let mut brief = json!({
         "as_of": projection.result["as_of"],
         "as_of_source": projection.result["as_of_source"],
         "authority_refresh": projection.result["brief"]["authority_refresh"],
+        "projection_state": projection.result["projection_state"],
+        "degraded_policy": projection.result["degraded_policy"],
+        "unknowns": unknowns,
         "omitted_count": projection.result["omitted_count"],
         "direction_withheld_evaluations": projection.result["direction_withheld_evaluations"],
         "rulings": rulings, "ownership": ownership, "past_work": past_work,
@@ -272,7 +288,8 @@ pub fn ask(
     } else {
         let count = projection.selected.len();
         println!(
-            "facts: {count}; omitted: {}; direction_withheld_evaluations: {}; refresh: {}; as_of: {} ({})",
+            "facts: {count}; projection_state: {}; omitted: {}; direction_withheld_evaluations: {}; refresh: {}; as_of: {} ({})",
+            brief["projection_state"].as_str().unwrap_or_default(),
             brief["omitted_count"],
             brief["direction_withheld_evaluations"],
             brief["authority_refresh"]["status"]
@@ -300,6 +317,22 @@ pub fn ask(
                     row["statement"].as_str().unwrap_or_default()
                 );
             }
+        }
+        println!("UNKNOWNS");
+        let unknowns = brief["unknowns"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if unknowns.is_empty() {
+            println!("(none)");
+        }
+        for unknown in unknowns {
+            println!(
+                "- [{}] {} (owner: {})",
+                unknown["logical_key"].as_str().unwrap_or_default(),
+                unknown["kind"].as_str().unwrap_or_default(),
+                unknown["owner_role"].as_str().unwrap_or_default()
+            );
         }
     }
     Ok(())
@@ -392,19 +425,26 @@ pub fn project_with(
     // outage) leaves the cached snapshot in force, and the brief says so. A
     // ruling that exists but was withheld must not read as a ruling that
     // does not exist.
-    let authority_refresh = match crate::repository::ensure_authority_snapshot_for(
-        launcher,
-        &repository_uuid,
-        None,
-        &as_of.as_of,
-    ) {
+    let refresh = if company_only {
+        crate::repository::ensure_company_authority_snapshot(launcher, &as_of.as_of)
+    } else {
+        crate::repository::ensure_authority_snapshot_for(
+            launcher,
+            &repository_uuid,
+            None,
+            &as_of.as_of,
+        )
+    };
+    let authority_refresh = match refresh {
         Ok((cursor, source)) => json!({"status": "ok", "source": source, "cursor": cursor}),
         Err(error) => {
             // A first refused refresh cannot become an empty successful brief.
             if company_only {
                 let snapshot = match launcher.company_cache()? {
-                    Some((cache, _)) => cache.snapshot()?,
-                    None => None,
+                    Some((cache, _)) if cache.facts_scope().as_deref() == Some("") => {
+                        cache.snapshot()?
+                    }
+                    _ => None,
                 };
                 if snapshot.is_none() {
                     return Err(error);

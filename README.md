@@ -80,7 +80,7 @@ where it is not.
 ## Company gateway reads
 
 `kinbase ask 'PLAT-4880 CLI proof clock'` returns a compact Company-only brief,
-with RULINGS, OWNERSHIP and PAST WORK. It works from any directory without Git,
+with RULINGS, OWNERSHIP and PAST WORK, plus projection state and Unknowns. It works from any directory without Git,
 `.kin`, a repository certificate or a recorded proof clock. It records no question,
 query log or proof clock. Add `--json` for one compact JSON line, or
 `--as-of 2026-11-09T12:00:00.000Z` for an explicit reducer and freshness instant.
