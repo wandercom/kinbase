@@ -179,6 +179,7 @@ impl CompanyDb {
                  CREATE TABLE IF NOT EXISTS auth_failure_subjects(
                     minute INTEGER NOT NULL, subject TEXT NOT NULL, count INTEGER NOT NULL,
                     PRIMARY KEY(minute, subject));
+                 -- request_rate.client_key holds the token digest; keep the old column name to avoid a migration.
                  CREATE TABLE IF NOT EXISTS request_rate(
                     client_key TEXT NOT NULL, minute INTEGER NOT NULL, count INTEGER NOT NULL,
                     PRIMARY KEY(client_key, minute));
@@ -615,17 +616,17 @@ impl CompanyDb {
             .map_err(sqlite_error("auth failure"))
     }
 
-    pub fn bump_request_rate(&self, client_key: &str, minute: i64) -> Result<i64, ContractError> {
+    pub fn bump_request_rate(&self, token_digest: &str, minute: i64) -> Result<i64, ContractError> {
         self.connection
             .execute(
                 "INSERT INTO request_rate(client_key, minute, count) VALUES (?1, ?2, 1) ON CONFLICT(client_key, minute) DO UPDATE SET count=count+1",
-                params![client_key, minute],
+                params![token_digest, minute],
             )
             .map_err(sqlite_error("request rate"))?;
         self.connection
             .query_row(
                 "SELECT count FROM request_rate WHERE client_key=?1 AND minute=?2",
-                params![client_key, minute],
+                params![token_digest, minute],
                 |row| row.get(0),
             )
             .map_err(sqlite_error("request rate read"))
