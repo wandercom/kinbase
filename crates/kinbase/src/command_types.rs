@@ -87,7 +87,7 @@ pub enum Command {
         question: String,
         #[arg(
             long = "as-of",
-            help = "Explicit RFC 3339 UTC reducer instant with millisecond precision and a Z suffix"
+            help = "Explicit RFC 3339 UTC reducer and freshness instant with millisecond precision and a Z suffix; defaults to the signed authority snapshot issued_at for reduction"
         )]
         as_of: Option<String>,
     },

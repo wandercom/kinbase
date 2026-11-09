@@ -83,9 +83,10 @@ where it is not.
 with RULINGS, OWNERSHIP and PAST WORK. It works from any directory without Git,
 `.kin`, a repository certificate or a recorded proof clock. It records no question,
 query log or proof clock. Add `--json` for one compact JSON line, or
-`--as-of 2026-11-09T12:00:00.000Z` for an explicit reducer instant. Otherwise it
-uses the same proof clock that repository initialization records. Facts retain
-standing and provenance; a refused refresh is stated when verified cache is used.
+`--as-of 2026-11-09T12:00:00.000Z` for an explicit reducer and freshness instant.
+Otherwise it reduces at the verified authority snapshot's signed `issued_at`,
+while cache freshness is judged at the wall proof clock. Facts retain standing
+and provenance; a refused refresh is stated when verified cache is used.
 
 Configure the launcher user config for the Company gateway:
 

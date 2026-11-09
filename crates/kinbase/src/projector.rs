@@ -420,7 +420,27 @@ pub fn project_with(
     };
     // The refresh may have stored a later signed instant than the one the
     // command resolved before it ran.
-    let advanced = crate::repository::advance_as_of(launcher, as_of);
+    let advanced = if company_only && !as_of.as_of_source.starts_with("explicit:") {
+        crate::time::AsOf {
+            as_of: crate::repository::authority_snapshot_instant(launcher).ok_or_else(|| {
+                ContractError::degraded(
+                    "CACHE_EXPIRED",
+                    "no signed authority snapshot instant is available",
+                    "Refresh Company state or supply an explicit --as-of instant.",
+                )
+            })?,
+            as_of_source: "authority-snapshot:issued_at".to_owned(),
+        }
+    } else {
+        crate::repository::advance_as_of(launcher, as_of)
+    };
+    // Cache age is judged at the caller's proof time even when reduction
+    // replays an older signed snapshot; an outage cannot make stale facts fresh.
+    let freshness_as_of = if company_only {
+        &as_of.as_of
+    } else {
+        &advanced.as_of
+    };
     let as_of = &advanced;
     let mut facts = Vec::new();
     let mut ingested_events = Vec::new();
@@ -442,7 +462,7 @@ pub fn project_with(
     }
     let mut evidence_fact_count = 0usize;
     for (index, (source, store)) in sources.iter().enumerate() {
-        let store_view = load_view(launcher, source, *store, as_of)?;
+        let store_view = load_view(launcher, source, *store, as_of, freshness_as_of)?;
         conflict_event_ids.extend(
             store_view
                 .view
@@ -1065,7 +1085,14 @@ pub(crate) fn company_view(
     repo: &Path,
     as_of: &crate::time::AsOf,
 ) -> Result<CurrentView, ContractError> {
-    load_view(launcher, repo, crate::StoreKind::Company, as_of).map(|store| store.view)
+    load_view(
+        launcher,
+        repo,
+        crate::StoreKind::Company,
+        as_of,
+        &as_of.as_of,
+    )
+    .map(|store| store.view)
 }
 
 fn load_view(
@@ -1073,6 +1100,7 @@ fn load_view(
     repo: &Path,
     store: crate::StoreKind,
     as_of: &crate::time::AsOf,
+    freshness_as_of: &str,
 ) -> Result<StoreView, ContractError> {
     let mut data = crate::corpus::load_store(launcher, repo, store, &as_of.as_of)?;
     let mut references = Vec::new();
@@ -1120,7 +1148,7 @@ fn load_view(
         .collect();
     let cache_freshness = launcher
         .company_cache()?
-        .map(|(cache, _root)| cache.freshness(&as_of.as_of));
+        .map(|(cache, _root)| cache.freshness(freshness_as_of));
     let input = ReducerInput {
         store_kind: store_name_value.to_owned(),
         events: data.events,
@@ -1138,8 +1166,12 @@ fn load_view(
         authority_owner_by_scope: data.authority_owner_by_scope,
         steward_authority_id: data.steward_authority_id,
     };
+    let fact_expired = input
+        .fact_valid_until
+        .as_ref()
+        .is_some_and(|until| until.as_str() <= freshness_as_of);
     Ok(StoreView {
-        view: crate::reducer::reduce(&input),
+        view: crate::reducer::reduce_with_fact_expiry(&input, fact_expired),
         events: ingested_events,
         references,
     })
