@@ -41,7 +41,7 @@ impl Drop for Service {
 }
 
 impl Service {
-    fn start() -> Self {
+    fn start(extra: &str) -> Self {
         let temp = TempDir::new().expect("temporary root");
         let root = PrivateKey::generate();
         let root_path = temp.path().join("company-root.key");
@@ -70,7 +70,7 @@ default_fact_freshness_seconds = 900
 candidate_lifetime_seconds = 900
 clock_skew_seconds = 300
 nonce_retention_seconds = 1300
-"#,
+{extra}"#,
             db = sqlite.display(),
             root_key = root_path.display(),
             token = token_path.display(),
@@ -111,13 +111,13 @@ nonce_retention_seconds = 1300
         CompanyDb::open(&self.sqlite).expect("open company store")
     }
 
-    fn client(&self) -> Client {
+    fn client(&self, key: PrivateKey) -> Client {
         Client::new(
             &format!("http://127.0.0.1:{}", self.port),
             TokenRecord {
                 token: TOKEN.to_owned(),
             },
-            PrivateKey::generate(),
+            key,
             Some(self.root.public()),
             self._temp.path().join("client-cache"),
             false,
@@ -163,14 +163,16 @@ nonce_retention_seconds = 1300
     }
 }
 
-/// One request carrying no credential at all, written straight onto the
-/// socket: the client cannot be made to send one.
-fn unauthenticated(address: &str, route: &str) -> String {
+/// One GET on the socket. `extra_headers` is `Name: value\r\n` lines, or empty.
+/// The signed client cannot omit its signature.
+fn http_get(address: &str, route: &str, extra_headers: &str) -> String {
     let mut stream = TcpStream::connect(address).expect("connect");
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .expect("read timeout");
-    let request = format!("GET {route} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\n\r\n");
+    let request = format!(
+        "GET {route} HTTP/1.1\r\nHost: {address}\r\n{extra_headers}Connection: close\r\n\r\n"
+    );
     stream.write_all(request.as_bytes()).expect("write request");
     let mut response = Vec::new();
     let _ = stream.read_to_end(&mut response);
@@ -179,12 +181,12 @@ fn unauthenticated(address: &str, route: &str) -> String {
 
 #[test]
 fn an_unauthenticated_request_drives_no_root_key_signature() {
-    let service = Service::start();
+    let service = Service::start("");
     service.plant_lapsed_observation();
     let before = service.event_count();
 
     for route in ["/status", "/facts", "/events"] {
-        let response = unauthenticated(&service.address(), route);
+        let response = http_get(&service.address(), route, "");
         assert!(
             response.contains(" 401 "),
             "{route} answered an unauthenticated peer with something other than a refusal: {response}",
@@ -206,7 +208,7 @@ fn an_unauthenticated_request_drives_no_root_key_signature() {
     // request still pays them, which is what makes the assertions above a
     // statement about authentication rather than about deleted behaviour.
     service
-        .client()
+        .client(PrivateKey::generate())
         .get_ok("/facts")
         .expect("authenticated read");
     assert_eq!(
@@ -222,7 +224,7 @@ fn an_unauthenticated_request_drives_no_root_key_signature() {
 
 #[test]
 fn the_connection_ceiling_refuses_a_peer_that_sends_nothing() {
-    let service = Service::start();
+    let service = Service::start("");
     let address = service.address();
     // Sockets that connect and then say nothing. Each one costs the service a
     // thread parked on the read timeout, which is the whole cost an
@@ -259,5 +261,54 @@ fn the_connection_ceiling_refuses_a_peer_that_sends_nothing() {
     assert!(
         refusal.contains("LIMIT_EXCEEDED"),
         "the ceiling refusal was not the typed envelope: {refusal}",
+    );
+}
+
+// cites: PLAT-4881 (per-token ceilings; R-17 still accepts a second key).
+fn second_key_facts(extra: &str) -> (u16, String) {
+    let service = Service::start(extra);
+    let a = service.client(PrivateKey::generate());
+    let b = service.client(PrivateKey::generate());
+    a.get_ok("/facts").expect("inside the ceiling");
+    a.get_ok("/facts").expect("inside the ceiling");
+    let response = b.get("/facts").expect("answered");
+    (
+        response.status,
+        response.body["error"]["code"].as_str().unwrap_or("").into(),
+    )
+}
+
+#[test]
+fn read_volume_budget_is_per_token_across_client_keys() {
+    let (status, code) = second_key_facts("read_volume_per_hour = 2\nrequests_per_minute = 1000\n");
+    assert_eq!((status, code.as_str()), (429, "LIMIT_EXCEEDED"));
+}
+
+#[test]
+fn request_rate_budget_is_per_token_across_client_keys() {
+    let (status, code) = second_key_facts("requests_per_minute = 2\nread_volume_per_hour = 1000\n");
+    assert_eq!((status, code.as_str()), (429, "LIMIT_EXCEEDED"));
+}
+
+#[test]
+fn a_second_client_key_is_accepted_on_a_fresh_token_budget() {
+    let service = Service::start("read_volume_per_hour = 1000\nrequests_per_minute = 1000\n");
+    let a = service.client(PrivateKey::generate());
+    let b = service.client(PrivateKey::generate());
+    assert_eq!(a.get("/status").expect("key A").status, 200);
+    assert_eq!(b.get("/status").expect("key B").status, 200);
+}
+
+#[test]
+fn a_token_without_a_verifying_signature_is_refused() {
+    let service = Service::start("read_volume_per_hour = 1000\nrequests_per_minute = 1000\n");
+    let response = http_get(
+        &service.address(),
+        "/status",
+        &format!("Authorization: Bearer {TOKEN}\r\n"),
+    );
+    assert!(
+        response.contains(" 401 ") && response.contains("AUTHORITY_SCOPE_DENIED"),
+        "{response}"
     );
 }
