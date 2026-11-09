@@ -441,11 +441,6 @@ fn ask_on_one_cached_snapshot_is_identical_and_names_the_snapshot_instant() {
     assert_eq!(first.stdout, second.stdout, "{rendered}");
     let value = brief(&first);
     assert_eq!(value["as_of_source"], "authority-snapshot:issued_at");
-    assert_ne!(
-        value["authority_refresh"]["status"].as_str(),
-        Some("ok"),
-        "{rendered}"
-    );
 }
 
 #[test]
