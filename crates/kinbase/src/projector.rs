@@ -227,6 +227,117 @@ pub fn run(
     Ok(())
 }
 
+/// A stateless Company brief uses the same reduction and selection as project.
+pub fn ask(
+    launcher: &Launcher,
+    question: &str,
+    as_of: &crate::time::AsOf,
+    json: bool,
+) -> Result<(), ContractError> {
+    let projection = project_with(
+        launcher,
+        None,
+        question,
+        question,
+        &[],
+        &[],
+        as_of,
+        Recording::ReadOnly,
+    )?;
+    let (mut rulings, mut ownership, mut past_work) = (Vec::new(), Vec::new(), Vec::new());
+    for fact in &projection.selected {
+        let rows = match fact.logical_key.split('/').next().unwrap_or_default() {
+            "architecture" => &mut rulings,
+            "ownership" => &mut ownership,
+            _ => &mut past_work,
+        };
+        rows.push(json!({
+            "logical_key": fact.logical_key,
+            "standing": fact.standing,
+            "provenance": fact.provenance,
+            "statement": fact.statement,
+        }));
+    }
+    let unknowns: Vec<Value> = projection.result["unknowns"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|unknown| {
+            json!({
+                "logical_key": unknown["logical_key"],
+                "kind": unknown["kind"],
+                "owner_role": unknown["owner_role"],
+                "decision_blocked": unknown["decision_blocked"],
+            })
+        })
+        .collect();
+    let mut brief = json!({
+        "as_of": projection.result["as_of"],
+        "as_of_source": projection.result["as_of_source"],
+        "authority_refresh": projection.result["brief"]["authority_refresh"],
+        "projection_state": projection.result["projection_state"],
+        "degraded_policy": projection.result["degraded_policy"],
+        "unknowns": unknowns,
+        "omitted_count": projection.result["omitted_count"],
+        "direction_withheld_evaluations": projection.result["direction_withheld_evaluations"],
+        "rulings": rulings, "ownership": ownership, "past_work": past_work,
+    });
+    crate::secret_mask::mask_value(&mut brief);
+    if json {
+        println!("{}", crate::output::single_line(&brief));
+    } else {
+        let count = projection.selected.len();
+        println!(
+            "facts: {count}; projection_state: {}; omitted: {}; direction_withheld_evaluations: {}; refresh: {}; as_of: {} ({})",
+            brief["projection_state"].as_str().unwrap_or_default(),
+            brief["omitted_count"],
+            brief["direction_withheld_evaluations"],
+            brief["authority_refresh"]["status"]
+                .as_str()
+                .unwrap_or_default(),
+            brief["as_of"].as_str().unwrap_or_default(),
+            brief["as_of_source"].as_str().unwrap_or_default(),
+        );
+        for (key, heading) in [
+            ("rulings", "RULINGS"),
+            ("ownership", "OWNERSHIP"),
+            ("past_work", "PAST WORK"),
+        ] {
+            println!("{heading}");
+            let rows = brief[key].as_array().map(Vec::as_slice).unwrap_or_default();
+            if rows.is_empty() {
+                println!("(none)");
+            }
+            for row in rows {
+                println!(
+                    "- [{}] ({}, {}) {}",
+                    row["logical_key"].as_str().unwrap_or_default(),
+                    row["standing"].as_str().unwrap_or_default(),
+                    row["provenance"].as_str().unwrap_or_default(),
+                    row["statement"].as_str().unwrap_or_default()
+                );
+            }
+        }
+        println!("UNKNOWNS");
+        let unknowns = brief["unknowns"]
+            .as_array()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        if unknowns.is_empty() {
+            println!("(none)");
+        }
+        for unknown in unknowns {
+            println!(
+                "- [{}] {} (owner: {})",
+                unknown["logical_key"].as_str().unwrap_or_default(),
+                unknown["kind"].as_str().unwrap_or_default(),
+                unknown["owner_role"].as_str().unwrap_or_default()
+            );
+        }
+    }
+    Ok(())
+}
+
 /// A projection: the canonical result `run` prints, and the selected facts.
 pub struct Projection {
     pub result: Value,
@@ -253,13 +364,22 @@ pub fn project(
     evidence_repos: &[std::path::PathBuf],
     as_of: &crate::time::AsOf,
 ) -> Result<Projection, ContractError> {
-    project_with(launcher, repo, task, decision, working_set, evidence_repos, as_of, Recording::Full)
+    project_with(
+        launcher,
+        Some(repo),
+        task,
+        decision,
+        working_set,
+        evidence_repos,
+        as_of,
+        Recording::Full,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
 pub fn project_with(
     launcher: &Launcher,
-    repo: &Path,
+    repo: Option<&Path>,
     task: &str,
     decision: &str,
     working_set: &[String],
@@ -286,10 +406,16 @@ pub fn project_with(
     // Ask as this repository: the service sends company-wide direction plus
     // the rulings that govern this repository, and a cached snapshot fetched
     // for another repository does not count as fresh.
-    let repository_uuid = crate::codebase::Repository::discover(repo)
-        .ok()
+    let company_only = repo.is_none();
+    let recording = if company_only {
+        Recording::ReadOnly
+    } else {
+        recording
+    };
+    let repository_uuid = repo
+        .and_then(|repo| crate::codebase::Repository::discover(repo).ok())
         .and_then(|repository| {
-            crate::repository::build_trust(launcher, &repository, false, None)
+            crate::repository::build_trust(launcher, &repository, false, Some(&as_of.as_of))
                 .ok()
                 .and_then(|trust| trust.repository_uuid)
                 .or_else(|| repository.uuid_hint().map(str::to_owned))
@@ -299,23 +425,73 @@ pub fn project_with(
     // outage) leaves the cached snapshot in force, and the brief says so. A
     // ruling that exists but was withheld must not read as a ruling that
     // does not exist.
-    let authority_refresh = match crate::repository::ensure_authority_snapshot_for(
-        launcher,
-        &repository_uuid,
-        None,
-        &as_of.as_of,
-    ) {
+    let refresh = if company_only {
+        crate::repository::ensure_company_authority_snapshot(launcher, &as_of.as_of)
+    } else {
+        crate::repository::ensure_authority_snapshot_for(
+            launcher,
+            &repository_uuid,
+            None,
+            &as_of.as_of,
+        )
+    };
+    let authority_refresh = match refresh {
         Ok((cursor, source)) => json!({"status": "ok", "source": source, "cursor": cursor}),
-        Err(error) => json!({
-            "status": "withheld",
-            "code": error.code,
-            "message": error.message,
-            "remediation": error.remediation,
-        }),
+        Err(error) => {
+            // A first refused refresh cannot become an empty successful brief.
+            if company_only {
+                let snapshot = match launcher.company_cache()? {
+                    Some((cache, _)) => {
+                        let snapshot = cache.snapshot()?;
+                        if snapshot.is_some() && cache.facts_scope().as_deref() != Some("") {
+                            let scope = cache.facts_scope().unwrap_or_else(|| "unknown".to_owned());
+                            return Err(ContractError::degraded(
+                                "CACHE_EXPIRED",
+                                format!(
+                                    "cached Company snapshot is scoped to {scope} and cannot serve a Company-wide read"
+                                ),
+                                "Restore the Company store connection and retry to fetch a Company-wide snapshot.",
+                            ));
+                        }
+                        snapshot
+                    }
+                    _ => None,
+                };
+                if snapshot.is_none() {
+                    return Err(error);
+                }
+            }
+            json!({
+                "status": "withheld",
+                "code": error.code,
+                "message": error.message,
+                "remediation": error.remediation,
+            })
+        }
     };
     // The refresh may have stored a later signed instant than the one the
     // command resolved before it ran.
-    let advanced = crate::repository::advance_as_of(launcher, as_of);
+    let advanced = if company_only && !as_of.as_of_source.starts_with("explicit:") {
+        crate::time::AsOf {
+            as_of: crate::repository::authority_snapshot_instant(launcher).ok_or_else(|| {
+                ContractError::degraded(
+                    "CACHE_EXPIRED",
+                    "no signed authority snapshot instant is available",
+                    "Refresh Company state or supply an explicit --as-of instant.",
+                )
+            })?,
+            as_of_source: "authority-snapshot:issued_at".to_owned(),
+        }
+    } else {
+        crate::repository::advance_as_of(launcher, as_of)
+    };
+    // Cache age is judged at the caller's proof time even when reduction
+    // replays an older signed snapshot; an outage cannot make stale facts fresh.
+    let freshness_as_of = if company_only {
+        &as_of.as_of
+    } else {
+        &advanced.as_of
+    };
     let as_of = &advanced;
     let mut facts = Vec::new();
     let mut ingested_events = Vec::new();
@@ -327,16 +503,17 @@ pub fn project_with(
     // requests, threads and documents live in a corpus repository that
     // nobody codes in; a projection that only read the repository in front
     // of it never saw any of them.
-    let mut sources: Vec<(std::path::PathBuf, crate::StoreKind)> = vec![
-        (repo.to_path_buf(), crate::StoreKind::Company),
-        (repo.to_path_buf(), crate::StoreKind::Codebase),
-    ];
-    for evidence in evidence_repos {
-        sources.push((evidence.clone(), crate::StoreKind::Codebase));
+    let repo = repo.unwrap_or_else(|| Path::new("."));
+    let mut sources = vec![(repo.to_path_buf(), crate::StoreKind::Company)];
+    if !company_only {
+        sources.push((repo.to_path_buf(), crate::StoreKind::Codebase));
+        for evidence in evidence_repos {
+            sources.push((evidence.clone(), crate::StoreKind::Codebase));
+        }
     }
     let mut evidence_fact_count = 0usize;
     for (index, (source, store)) in sources.iter().enumerate() {
-        let store_view = load_view(launcher, source, *store, as_of)?;
+        let store_view = load_view(launcher, source, *store, as_of, freshness_as_of)?;
         conflict_event_ids.extend(
             store_view
                 .view
@@ -358,6 +535,7 @@ pub fn project_with(
     let closed_unknown_ids: BTreeSet<String> =
         [crate::StoreKind::Company, crate::StoreKind::Codebase]
             .into_iter()
+            .filter(|store| !company_only || *store == crate::StoreKind::Company)
             .filter_map(|store| crate::store::read_records(store, repo, "unknowns.jsonl").ok())
             .flatten()
             .filter(|record| {
@@ -958,7 +1136,14 @@ pub(crate) fn company_view(
     repo: &Path,
     as_of: &crate::time::AsOf,
 ) -> Result<CurrentView, ContractError> {
-    load_view(launcher, repo, crate::StoreKind::Company, as_of).map(|store| store.view)
+    load_view(
+        launcher,
+        repo,
+        crate::StoreKind::Company,
+        as_of,
+        &as_of.as_of,
+    )
+    .map(|store| store.view)
 }
 
 fn load_view(
@@ -966,8 +1151,9 @@ fn load_view(
     repo: &Path,
     store: crate::StoreKind,
     as_of: &crate::time::AsOf,
+    freshness_as_of: &str,
 ) -> Result<StoreView, ContractError> {
-    let mut data = crate::corpus::load_store(launcher, repo, store)?;
+    let mut data = crate::corpus::load_store(launcher, repo, store, &as_of.as_of)?;
     let mut references = Vec::new();
     if store == crate::StoreKind::Codebase {
         if let Ok(repository) = crate::codebase::Repository::discover(repo) {
@@ -1013,7 +1199,7 @@ fn load_view(
         .collect();
     let cache_freshness = launcher
         .company_cache()?
-        .map(|(cache, _root)| cache.freshness(&as_of.as_of));
+        .map(|(cache, _root)| cache.freshness(freshness_as_of));
     let input = ReducerInput {
         store_kind: store_name_value.to_owned(),
         events: data.events,
@@ -1031,8 +1217,12 @@ fn load_view(
         authority_owner_by_scope: data.authority_owner_by_scope,
         steward_authority_id: data.steward_authority_id,
     };
+    let fact_expired = input
+        .fact_valid_until
+        .as_ref()
+        .is_some_and(|until| until.as_str() <= freshness_as_of);
     Ok(StoreView {
-        view: crate::reducer::reduce(&input),
+        view: crate::reducer::reduce_with_fact_expiry(&input, fact_expired),
         events: ingested_events,
         references,
     })

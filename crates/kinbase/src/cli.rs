@@ -255,6 +255,13 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
             )
             .map_err(internal)?;
         }
+        Command::Ask { question, as_of } => {
+            let instant = match as_of {
+                Some(text) => explicit_as_of(&text)?,
+                None => crate::time::proof_clock(),
+            };
+            crate::projector::ask(&launcher, &question, &instant, json)?;
+        }
         Command::Project {
             repo,
             task,
@@ -306,7 +313,7 @@ fn dispatch(json: bool, command: Command) -> Result<(), ContractError> {
                     .and_then(|projection_as_of| {
                         crate::projector::project_with(
                             &launcher,
-                            &repo,
+                            Some(repo.as_path()),
                             &question,
                             &question,
                             &[],
@@ -437,21 +444,25 @@ fn read_question() -> Result<String, ContractError> {
     Ok(question)
 }
 
+fn explicit_as_of(text: &str) -> Result<crate::time::AsOf, ContractError> {
+    crate::time::AsOf::explicit(text).map_err(|message| {
+        ContractError::new(
+            "CONFIG_INVARIANT",
+            message,
+            "Pass --as-of as RFC 3339 UTC with millisecond precision, e.g. 2026-09-07T12:00:00.000Z.",
+            false,
+            crate::error::ExitCode::Refused,
+        )
+    })
+}
+
 fn resolve_as_of(
     launcher: &crate::launcher::Launcher,
     repo_path: &Path,
     explicit: Option<&str>,
 ) -> Result<crate::time::AsOf, ContractError> {
     if let Some(text) = explicit {
-        return crate::time::AsOf::explicit(text).map_err(|message| {
-            ContractError::new(
-                "CONFIG_INVARIANT",
-                message,
-                "Pass --as-of as RFC 3339 UTC with millisecond precision, e.g. 2026-09-07T12:00:00.000Z.",
-                false,
-                crate::error::ExitCode::Refused,
-            )
-        });
+        return explicit_as_of(text);
     }
 
     let as_of_error = |message: String| {
