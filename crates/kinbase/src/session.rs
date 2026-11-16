@@ -3072,7 +3072,7 @@ fn reserve_nonce(
         })?;
         Ok(Some((canonical, event)))
     };
-    let (canonical, event) = match bound()? {
+    let (mut canonical, mut event) = match bound()? {
         Some(bound) => bound,
         None => {
             let event = build_destination_event(Some(launcher), store, repository_uuid, record)?;
@@ -3083,12 +3083,13 @@ fn reserve_nonce(
         let _generation = repository.admission_lock(repository_uuid)?;
         // Two concurrent retries both found no reservation and each built
         // its own bytes (a different `asserted_at`); the second used to
-        // rebind the nonce to them and commit a second event. Whoever
-        // reserved first under the lock decides the bytes.
-        if journal.is_complete("nonce_reservation")
-            && let Some(reserved) = bound()?
-        {
-            let (canonical, event) = reserved;
+        // rebind the nonce to them and commit a second event. Bytes another
+        // process bound meanwhile win, whether it completed the reservation
+        // or crashed after beginning it.
+        if let Some(reserved) = bound()? {
+            (canonical, event) = reserved;
+        }
+        if journal.is_complete("nonce_reservation") {
             return Ok((canonical.into_bytes(), event));
         }
         journal.begin(
