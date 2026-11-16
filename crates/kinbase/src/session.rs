@@ -2099,7 +2099,14 @@ pub fn checkpoint_internal(session: &str) -> Result<(Value, Option<ContractError
         let launcher = crate::launcher::Launcher::load();
         let latest = latest_receipts(&candidates.keys().map(String::as_str).collect());
         let mut decisions_synced = false;
-        for candidate in candidates.values() {
+        // Company last, as `observe` admits: a Codebase sibling committed
+        // after the Company attempt failed would be owed no apology.
+        let mut ordered: Vec<&Value> = candidates.values().collect();
+        ordered.sort_by_key(|candidate| {
+            crate::json::get_str(candidate, "destination")
+                .is_some_and(|destination| destination.starts_with("company"))
+        });
+        for candidate in ordered {
             let admitted = (|| {
                 let digest = candidate_digest(candidate)?;
                 let latest = latest.as_ref().map_err(Clone::clone)?;
