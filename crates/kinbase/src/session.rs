@@ -3043,20 +3043,24 @@ fn reserve_nonce(
     payload_digest: &str,
     receipt_id: &str,
 ) -> Result<(Vec<u8>, Value), ContractError> {
-    let bound = journal
-        .read("nonce_reservation")
-        .and_then(|marker| crate::json::get_str(&marker, "event_canonical").map(str::to_owned));
-    let (canonical, event) = match bound {
-        Some(canonical) => {
-            let event = crate::json::parse_strict_value(canonical.as_bytes()).map_err(|error| {
-                ContractError::integrity(
-                    "DIGEST_MISMATCH",
-                    format!("journaled event bytes are not canonical: {error}"),
-                    "Preserve the journal; the bound event bytes are never reinterpreted.",
-                )
-            })?;
-            (canonical, event)
-        }
+    let bound = || -> Result<Option<(String, Value)>, ContractError> {
+        let Some(canonical) = journal
+            .read("nonce_reservation")
+            .and_then(|marker| crate::json::get_str(&marker, "event_canonical").map(str::to_owned))
+        else {
+            return Ok(None);
+        };
+        let event = crate::json::parse_strict_value(canonical.as_bytes()).map_err(|error| {
+            ContractError::integrity(
+                "DIGEST_MISMATCH",
+                format!("journaled event bytes are not canonical: {error}"),
+                "Preserve the journal; the bound event bytes are never reinterpreted.",
+            )
+        })?;
+        Ok(Some((canonical, event)))
+    };
+    let (canonical, event) = match bound()? {
+        Some(bound) => bound,
         None => {
             let event = build_destination_event(Some(launcher), store, repository_uuid, record)?;
             (crate::json::record_text(&event)?, event)
@@ -3064,6 +3068,16 @@ fn reserve_nonce(
     };
     if !journal.is_complete("nonce_reservation") {
         let _generation = repository.admission_lock(repository_uuid)?;
+        // Two concurrent retries both found no reservation and each built
+        // its own bytes (a different `asserted_at`); the second used to
+        // rebind the nonce to them and commit a second event. Whoever
+        // reserved first under the lock decides the bytes.
+        if journal.is_complete("nonce_reservation")
+            && let Some(reserved) = bound()?
+        {
+            let (canonical, event) = reserved;
+            return Ok((canonical.into_bytes(), event));
+        }
         journal.begin(
             "nonce_reservation",
             json!({
