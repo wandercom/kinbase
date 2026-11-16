@@ -85,10 +85,6 @@ fn find_question(question_id: &str) -> Result<Value, ContractError> {
         })
 }
 
-fn find_unknown(question_id: &str) -> Result<Value, ContractError> {
-    find_unknown_in(&repo()?, question_id)
-}
-
 fn find_unknown_in(repo: &Path, question_id: &str) -> Result<Value, ContractError> {
     for store in [crate::StoreKind::Company, crate::StoreKind::Codebase] {
         if let Ok(records) = crate::store::read_records(store, repo, "unknowns.jsonl") {
@@ -1094,6 +1090,16 @@ pub(crate) fn authority_fact_event(
     Ok(event)
 }
 
+/// The short form of a closing record's id used in the closure event id: the
+/// twelve characters after a seven-byte prefix (`answer_`), or the whole id
+/// when that range is not on character boundaries. A shrug's fact id has no
+/// such prefix, and byte slicing panicked on a short or multibyte one.
+fn closure_suffix(answer_id: &str) -> &str {
+    answer_id
+        .get(7..min(19, answer_id.len()))
+        .unwrap_or(answer_id)
+}
+
 fn close_unknown(repo: &Path, question: &Value, answer_id: &str) -> Result<String, ContractError> {
     let unknown_id = question
         .get("unknown_id")
@@ -1151,10 +1157,7 @@ fn close_unknown(repo: &Path, question: &Value, answer_id: &str) -> Result<Strin
         &cursor,
     );
     unknown.fact_id = unknown_id.to_owned();
-    unknown.event_id = format!(
-        "{unknown_id}:closed:{}",
-        &answer_id[7..min(19, answer_id.len())]
-    );
+    unknown.event_id = format!("{unknown_id}:closed:{}", closure_suffix(answer_id));
     unknown.status = "closed".to_owned();
     unknown.closure_evidence = vec![answer_id.to_owned()];
     let (private_path, _) = crate::crypto::ensure_keypair(crate::StoreKind::Company, repo)?;
@@ -1175,16 +1178,23 @@ fn close_unknown(repo: &Path, question: &Value, answer_id: &str) -> Result<Strin
 /// Close every still-open question whose key a current `shrug` rules; the
 /// Unknown's closure event names the shrug fact as its evidence. Already-closed questions are untouched,
 /// so repeated projections append nothing.
+///
+/// `shrugs` is keyed by (logical key, scope); a question matches on its key and
+/// the scope of the Unknown it asks about, so a shrug in one store or
+/// repository never closes a question raised about another.
 pub(crate) fn close_shrugged(
     repo: &Path,
-    shrugs: &BTreeMap<&str, &str>,
+    shrugs: &BTreeMap<(String, String), String>,
 ) -> Result<(), ContractError> {
     for question in latest_questions(repo).into_values() {
-        let Some(shrug_id) = question
-            .get("logical_key")
-            .and_then(Value::as_str)
-            .and_then(|key| shrugs.get(key))
-        else {
+        let field = |name: &str| {
+            question
+                .get(name)
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let Some(shrug_id) = shrugs.get(&(field("logical_key"), field("unknown_scope"))) else {
             continue;
         };
         if !matches!(
@@ -1202,6 +1212,19 @@ pub(crate) fn close_shrugged(
         append_company(repo, "questions.jsonl", &updated)?;
     }
     Ok(())
+}
+
+/// The decision an Unknown was first asked under, if any question asks about it.
+pub(crate) fn decision_asked_for(repo: &Path, unknown_id: &str) -> Option<String> {
+    company_records_with_repo(repo, "questions.jsonl")
+        .into_iter()
+        .find(|record| record.get("unknown_id").and_then(Value::as_str) == Some(unknown_id))
+        .and_then(|record| {
+            record
+                .get("decision")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
 }
 
 fn status(question_id: &str, json: bool) -> Result<(), ContractError> {
@@ -1272,4 +1295,17 @@ fn io_error(error: std::io::Error) -> ContractError {
         false,
         ExitCode::InternalFailure,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::closure_suffix;
+
+    #[test]
+    fn a_short_or_multibyte_closing_id_does_not_panic() {
+        assert_eq!(closure_suffix("answer_0123456789abcdef"), "0123456789ab");
+        assert_eq!(closure_suffix("fact_1"), "fact_1");
+        // Byte 7 falls inside the first `é`.
+        assert_eq!(closure_suffix("fact_xéééééééé"), "fact_xéééééééé");
+    }
 }

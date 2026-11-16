@@ -335,6 +335,7 @@ pub fn project_with(
         sources.push((evidence.clone(), crate::StoreKind::Codebase));
     }
     let mut evidence_fact_count = 0usize;
+    let mut own_shrugs: BTreeMap<(String, String), String> = BTreeMap::new();
     for (index, (source, store)) in sources.iter().enumerate() {
         let store_view = load_view(launcher, source, *store, as_of)?;
         conflict_event_ids.extend(
@@ -346,6 +347,22 @@ pub fn project_with(
         );
         if index >= 2 {
             evidence_fact_count += store_view.view.facts.len();
+        } else {
+            // Only this repository's own stores may settle its questions: a
+            // shrug held by an evidence repository is that repository's ruling.
+            own_shrugs.extend(
+                store_view
+                    .view
+                    .facts
+                    .iter()
+                    .filter(|fact| fact.atom_kind == "shrug" && fact.status == "current")
+                    .map(|fact| {
+                        (
+                            (fact.logical_key.clone(), fact.scope.clone()),
+                            fact.fact_id.clone(),
+                        )
+                    }),
+            );
         }
         facts.extend(store_view.view.facts);
         view_unknowns.extend(store_view.view.unknowns);
@@ -357,14 +374,14 @@ pub fn project_with(
     // raised and its persisted Unknown stayed open for every later read, so the
     // shrug never became terminal (amendment 003, `shrug`). Closed before the
     // closure set is read, so this projection already honours it.
-    if recording == Recording::Full {
-        let shrugs: BTreeMap<&str, &str> = facts
-            .iter()
-            .filter(|fact| fact.atom_kind == "shrug" && fact.status == "current")
-            .map(|fact| (fact.logical_key.as_str(), fact.fact_id.as_str()))
-            .collect();
-        if !shrugs.is_empty() {
-            crate::questions::close_shrugged(repo, &shrugs)?;
+    // A failed closure must not refuse the projection: the question stays
+    // open, which is the state it was already in, and the failure is reported.
+    if recording == Recording::Full && !own_shrugs.is_empty() {
+        if let Err(error) = crate::questions::close_shrugged(repo, &own_shrugs) {
+            crate::output::diagnostic(
+                "shrug-closure-failed",
+                json!({"code": error.code, "message": error.message}),
+            );
         }
     }
     // A closure record is authoritative across stores: the original Unknown
@@ -687,7 +704,17 @@ pub fn project_with(
             .iter()
             .filter(|unknown| unknown.loss_if_absent >= 7_000 || unknown.kind == "conflict")
             .partition(|unknown| blocks(unknown));
-        for unknown in blocking.into_iter().chain(elsewhere) {
+        let blocking_count = blocking.len();
+        for (index, unknown) in blocking.into_iter().chain(elsewhere).enumerate() {
+            // A conflict asked from an unrelated decision keeps the question it
+            // already has: the id hashes the decision, so asking under each
+            // caller's decision would open one question per decision.
+            let asked_under = if index >= blocking_count {
+                crate::questions::decision_asked_for(repo, &unknown.unknown_id)
+            } else {
+                None
+            };
+            let decision = asked_under.as_deref().unwrap_or(decision);
             if let Some(id) =
                 crate::questions::ensure_question(repo, unknown, decision, &evidence, &remaining)?
             {
