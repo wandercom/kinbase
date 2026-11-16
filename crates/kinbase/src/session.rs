@@ -597,6 +597,7 @@ pub fn observe(
                 "event_id": event_id,
                 "event_type": "observation",
                 "observed_at": observed_at,
+                "role": record["role"],
                 "text_digest": digest
             }),
         ));
@@ -851,6 +852,9 @@ fn is_hook_prompt_id(id: &str) -> bool {
 /// and receipts, so a Stop returned both sets (V-9 parity). A record whose
 /// text this session already observed, where either side is a hook prompt,
 /// takes the id seen first, so its candidates and receipts are the same ones.
+/// Only user messages qualify on both sides: an assistant turn that echoes a
+/// prompt is a turn of its own, and adopting the prompt's id dropped it as a
+/// duplicate. A seen event without a recorded role is never adopted.
 fn adopt_seen_prompt_ids(session: &str, records: &mut [Map<String, Value>]) {
     let canonical = crate::json::jcs_text(&Value::String(session.to_owned()));
     let Ok(session_text) = serde_json::from_str::<String>(&canonical) else {
@@ -864,9 +868,10 @@ fn adopt_seen_prompt_ids(session: &str, records: &mut [Map<String, Value>]) {
         |line| crate::store::bytes_contain(line, marker.as_bytes()),
     );
     for record in records.iter_mut() {
-        let (Some(id), Some(text)) = (
+        let (Some(id), Some(text), Some("user")) = (
             record.get("id").and_then(Value::as_str),
             record.get("text").and_then(Value::as_str),
+            record.get("role").and_then(Value::as_str),
         ) else {
             continue;
         };
@@ -876,6 +881,7 @@ fn adopt_seen_prompt_ids(session: &str, records: &mut [Map<String, Value>]) {
             .filter(|event| {
                 crate::json::get_str(event, "session_id") == Some(session_text.as_str())
                     && crate::json::get_str(event, "text_digest") == Some(digest.as_str())
+                    && crate::json::get_str(event, "role") == Some("user")
             })
             .filter_map(|event| crate::json::get_str(event, "event_id"))
             .find(|seen_id| *seen_id != id && (is_hook_prompt_id(id) || is_hook_prompt_id(seen_id)))

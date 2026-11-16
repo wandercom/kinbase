@@ -403,14 +403,21 @@ fn the_transcript_copy_of_a_hook_prompt_is_the_same_message() {
     };
     let before = observations();
     assert_eq!(before, 1, "the prompt was observed");
+    // The transcript carries the prompt again and an assistant turn that
+    // echoes it word for word; the echo is a turn of its own.
     let transcript = temp.path().join("transcript.jsonl");
+    let line = |id: &str, role: &str| {
+        json!({"id": id, "role": role, "text": text,
+               "observed_at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
+               "source_kind": "claude_jsonl"})
+        .to_string()
+    };
     fs::write(
         &transcript,
         format!(
-            "{}\n",
-            json!({"id": "host-native-1", "role": "user", "text": text,
-                   "observed_at": chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string(),
-                   "source_kind": "claude_jsonl"})
+            "{}\n{}\n",
+            line("host-native-1", "user"),
+            line("host-native-2", "assistant")
         ),
     )
     .expect("transcript");
@@ -427,7 +434,7 @@ fn the_transcript_copy_of_a_hook_prompt_is_the_same_message() {
         &[],
         b"",
     ));
-    assert_eq!(observations(), before, "{observed}");
+    assert_eq!(observations(), before + 1, "{observed}");
 }
 
 fn pending_dir(world: &World) -> PathBuf {
