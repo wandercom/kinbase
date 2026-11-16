@@ -1942,12 +1942,15 @@ const BOT_MARKERS: [&str; 5] = [
 /// wrote it -- most tools leave no marker at all, so any existing repository's
 /// history is largely unrecoverable. Claiming those commits as deliberate human
 /// direction would manufacture exactly the signal this field exists to protect.
-fn commit_provenance(author: &str, email: &str, trailers: &str, subject: &str) -> String {
+fn commit_provenance(author: &str, email: &str, trailers: &str) -> String {
     let identity = format!("{author} {email}").to_lowercase();
     if BOT_MARKERS.iter().any(|marker| identity.contains(marker)) {
         return "bot".to_owned();
     }
-    let attributed = format!("{trailers} {subject}").to_lowercase();
+    // Only authorship metadata attributes a commit. A subject is prose: "Fix
+    // cursor pagination" names no agent, and reading it marked ordinary history
+    // as agent-written.
+    let attributed = trailers.to_lowercase();
     let agent = AGENT_MARKERS
         .iter()
         .any(|marker| attributed.contains(marker) || identity.contains(marker));
@@ -2061,7 +2064,7 @@ fn scan_git_history(
             tree: parts[2].to_owned(),
             author_date: parts[3].to_owned(),
             subject: parts[7].to_owned(),
-            provenance: commit_provenance(parts[4], parts[5], parts[6], parts[7]),
+            provenance: commit_provenance(parts[4], parts[5], parts[6]),
         });
     }
     let by_sha: BTreeMap<&str, &CommitInfo> = commits.iter().map(|c| (c.sha.as_str(), c)).collect();
@@ -4466,11 +4469,11 @@ mod tests {
     fn an_agent_trailer_beside_a_human_author_is_not_human_review() {
         let trailer = "Claude <noreply@anthropic.com>";
         assert_eq!(
-            commit_provenance("Ada", "ada@example.invalid", trailer, "Fix"),
+            commit_provenance("Ada", "ada@example.invalid", trailer),
             "ai_generated"
         );
         assert_eq!(
-            commit_provenance("Ada", "ada@example.invalid", "", "Fix"),
+            commit_provenance("Ada", "ada@example.invalid", ""),
             "unknown"
         );
     }
