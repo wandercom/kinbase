@@ -4,14 +4,6 @@ Notable changes to Kinbase. Dates are UTC.
 
 ## Unreleased
 
-### Fixed
-
-- `hooks dispatch` no longer exits 4 (`CONFIG_INVARIANT`, "inherited
-  descriptor(s) outside the frozen allowlist") when the host leaks an open
-  descriptor into the hook. Startup attestation closes such descriptors for a
-  hook and names them on stderr; one under the Personal root still fails it.
-  Candidate spec amendment 004 records the change.
-
 ### Changed
 
 - A statement goes to the Company only when it claims organization-wide
@@ -21,9 +13,6 @@ Notable changes to Kinbase. Dates are UTC.
   organization word ("company policy", "the organization's roadmap").
   "The governance guard blocks the edit" and "incorporate" no longer route to
   the Company. (#43)
-
-### Changed (from fixing acceptance failures)
-
 - Omitting `--as-of` on `status`, `fsck`, `explain`, `corpus rebuild` and
   `recall` uses the repository's recorded proof clock again
   (`as_of_source=recorded-proof-clock`), not the cached authority snapshot's
@@ -43,6 +32,11 @@ Notable changes to Kinbase. Dates are UTC.
 
 ### Fixed
 
+- `hooks dispatch` no longer exits 4 (`CONFIG_INVARIANT`, "inherited
+  descriptor(s) outside the frozen allowlist") when the host leaks an open
+  descriptor into the hook. Startup attestation closes such descriptors for a
+  hook and names them on stderr; one under the Personal root still fails it.
+  Candidate spec amendment 004 records the change.
 - A malformed kinbase config at `.kin/config` (one naming `kinbase-repo/`)
   refuses with exit 5 instead of being skipped as Kindex's file.
 - GitHub exports are ordered by one clock: when any export has no date of its
