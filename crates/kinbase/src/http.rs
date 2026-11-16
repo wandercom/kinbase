@@ -620,7 +620,12 @@ pub fn request(
             error.kind()
         ))
         .with_detail(serde_json::json!({
-            "timeout_observed": true,
+            // A read timeout surfaces as WouldBlock on macOS and TimedOut on
+            // Linux; a reset or other read error is not a spent budget.
+            "timeout_observed": matches!(
+                error.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
             "omitted_count": 1
         }))
     })?;
