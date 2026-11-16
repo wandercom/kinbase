@@ -731,12 +731,18 @@ pub fn project_with(
         let to_ask = questions_to_raise(blocking, elsewhere, |unknown_id| {
             crate::questions::decision_asked_for(repo, unknown_id).is_some()
         });
+        // One new question per projection. A blocker already asked under this
+        // decision still answers for it (its question is the one reported), but
+        // the walk goes on, or a second blocker behind it is never asked.
         for unknown in to_ask {
+            let asked_before = crate::questions::asked_under(repo, &unknown.unknown_id, decision);
             if let Some(id) =
                 crate::questions::ensure_question(repo, unknown, decision, &evidence, &remaining)?
             {
-                raised = Some(id);
-                break;
+                raised.get_or_insert(id);
+                if !asked_before {
+                    break;
+                }
             }
         }
         raised

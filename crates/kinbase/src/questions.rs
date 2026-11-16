@@ -1215,6 +1215,14 @@ pub(crate) fn close_shrugged(
 }
 
 /// The decision an Unknown was first asked under, if any question asks about it.
+/// Whether `unknown_id` already has a question under exactly `decision`.
+pub(crate) fn asked_under(repo: &Path, unknown_id: &str, decision: &str) -> bool {
+    company_records_with_repo(repo, "questions.jsonl").iter().any(|record| {
+        record.get("unknown_id").and_then(Value::as_str) == Some(unknown_id)
+            && record.get("decision").and_then(Value::as_str) == Some(decision)
+    })
+}
+
 pub(crate) fn decision_asked_for(repo: &Path, unknown_id: &str) -> Option<String> {
     company_records_with_repo(repo, "questions.jsonl")
         .into_iter()
