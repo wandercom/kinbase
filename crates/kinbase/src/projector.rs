@@ -352,6 +352,21 @@ pub fn project_with(
         ingested_events.extend(store_view.events);
         references.extend(store_view.references);
     }
+    // A `shrug` ruled after a question was raised settles that question too.
+    // The reducer drops the key's derived Unknowns, but a question already
+    // raised and its persisted Unknown stayed open for every later read, so the
+    // shrug never became terminal (amendment 003, `shrug`). Closed before the
+    // closure set is read, so this projection already honours it.
+    if recording == Recording::Full {
+        let shrugs: BTreeMap<&str, &str> = facts
+            .iter()
+            .filter(|fact| fact.atom_kind == "shrug" && fact.status == "current")
+            .map(|fact| (fact.logical_key.as_str(), fact.fact_id.as_str()))
+            .collect();
+        if !shrugs.is_empty() {
+            crate::questions::close_shrugged(repo, &shrugs)?;
+        }
+    }
     // A closure record is authoritative across stores: the original Unknown
     // remains in append-only history, but no later projection may treat it as
     // still blocking after the signed answer.
@@ -616,7 +631,15 @@ pub fn project_with(
         ));
     }
 
-    let question_id = if !has_blocking_unknown || recording == Recording::ReadOnly {
+    // A contested key asks even when it blocks nothing this projection decides.
+    // Gating the question stage on a blocker alone left the conflict branch
+    // below unreachable, so a conflict on a key nobody named as blocked was
+    // never asked about (amendment 003, `unknown`).
+    let has_open_conflict = open_unknowns
+        .iter()
+        .any(|unknown| unknown.kind == "conflict");
+    let may_ask = has_blocking_unknown || has_open_conflict;
+    let question_id = if !may_ask || recording == Recording::ReadOnly {
         None
     } else {
         let evidence: Vec<String> = context
@@ -689,7 +712,8 @@ pub fn project_with(
                     && evaluate_cached(fact, &context, &cache).marginal_value > 0
             }));
     let stopping_reason = stopping_reason(
-        question_id.is_some(),
+        // A question about a conflict elsewhere did not stop this projection.
+        question_id.is_some() && has_blocking_unknown,
         sufficiency,
         residents_filled,
         item_ceiling_hit,

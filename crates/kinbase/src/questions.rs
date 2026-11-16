@@ -86,9 +86,12 @@ fn find_question(question_id: &str) -> Result<Value, ContractError> {
 }
 
 fn find_unknown(question_id: &str) -> Result<Value, ContractError> {
-    let repo = repo()?;
+    find_unknown_in(&repo()?, question_id)
+}
+
+fn find_unknown_in(repo: &Path, question_id: &str) -> Result<Value, ContractError> {
     for store in [crate::StoreKind::Company, crate::StoreKind::Codebase] {
-        if let Ok(records) = crate::store::read_records(store, &repo, "unknowns.jsonl") {
+        if let Ok(records) = crate::store::read_records(store, repo, "unknowns.jsonl") {
             if let Some(record) = records.into_iter().rev().find(|record| {
                 ["unknown_id", "fact_id", "event_id"]
                     .iter()
@@ -1096,7 +1099,7 @@ fn close_unknown(repo: &Path, question: &Value, answer_id: &str) -> Result<Strin
         .get("unknown_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let prior = find_unknown(unknown_id)?;
+    let prior = find_unknown_in(repo, unknown_id)?;
     let field = |key: &str, fallback: &str| {
         prior
             .get(key)
@@ -1167,6 +1170,38 @@ fn close_unknown(repo: &Path, question: &Value, answer_id: &str) -> Result<Strin
     };
     crate::store::append_record(store, repo, "unknowns.jsonl", &unknown.to_value())?;
     Ok(unknown.event_id.clone())
+}
+
+/// Close every still-open question whose key a current `shrug` rules; the
+/// Unknown's closure event names the shrug fact as its evidence. Already-closed questions are untouched,
+/// so repeated projections append nothing.
+pub(crate) fn close_shrugged(
+    repo: &Path,
+    shrugs: &BTreeMap<&str, &str>,
+) -> Result<(), ContractError> {
+    for question in latest_questions(repo).into_values() {
+        let Some(shrug_id) = question
+            .get("logical_key")
+            .and_then(Value::as_str)
+            .and_then(|key| shrugs.get(key))
+        else {
+            continue;
+        };
+        if !matches!(
+            question.get("status").and_then(Value::as_str),
+            Some("open" | "asked" | "awaiting_authority")
+        ) {
+            continue;
+        }
+        let closure_event_id = close_unknown(repo, &question, shrug_id)?;
+        let mut updated = question.clone();
+        if let Value::Object(values) = &mut updated {
+            values.insert("status".to_owned(), json!("closed"));
+            values.insert("closure_event_id".to_owned(), json!(closure_event_id));
+        }
+        append_company(repo, "questions.jsonl", &updated)?;
+    }
+    Ok(())
 }
 
 fn status(question_id: &str, json: bool) -> Result<(), ContractError> {
