@@ -1951,17 +1951,11 @@ fn commit_provenance(author: &str, email: &str, trailers: &str, subject: &str) -
     let agent = AGENT_MARKERS
         .iter()
         .any(|marker| attributed.contains(marker) || identity.contains(marker));
-    if !agent {
-        return "unknown".to_owned();
-    }
-    // An agent is named. If a person's identity is on the commit as well, they
-    // reviewed and took ownership of the output; that is weaker than authorship
-    // but stronger than an unattended write.
-    if AGENT_MARKERS.iter().any(|marker| identity.contains(marker)) {
-        "ai_generated".to_owned()
-    } else {
-        "human_review".to_owned()
-    }
+    // A person's name in the author field beside an agent trailer is not evidence
+    // that anyone reviewed the output: it is whoever ran the tool. Reading it as
+    // `human_review` let trailer-marked commits climb to `prevalent`, which the
+    // provenance ceiling forbids end to end for agent `Co-authored-by:` commits.
+    if agent { "ai_generated" } else { "unknown" }.to_owned()
 }
 
 /// A sweeping refactor touches hundreds of files and says very little about any
@@ -2297,6 +2291,12 @@ fn scan_git_history(
             } else {
                 "unreviewed-branch".to_owned()
             };
+            // A ref is evidence about the commit it names, so it carries that
+            // commit's authorship; left at the default it reported an agent
+            // commit's revision as `unknown`.
+            if let Some(commit) = by_sha.get(sha) {
+                record.provenance = commit.provenance.clone();
+            }
             record.revision = Some(sha.to_owned());
             record.branch = Some(name.trim_start_matches("refs/heads/").to_owned());
             scan.unit_ids.insert(native_id);
@@ -4461,6 +4461,19 @@ fn derive_answers(builder: &mut FactBuilder<'_>, _key: &str, rows: &[&Observatio
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_agent_trailer_beside_a_human_author_is_not_human_review() {
+        let trailer = "Claude <noreply@anthropic.com>";
+        assert_eq!(
+            commit_provenance("Ada", "ada@example.invalid", trailer, "Fix"),
+            "ai_generated"
+        );
+        assert_eq!(
+            commit_provenance("Ada", "ada@example.invalid", "", "Fix"),
+            "unknown"
+        );
+    }
 
     fn git_repo() -> (tempfile::TempDir, Repository) {
         let dir = tempfile::tempdir().expect("temp dir");
