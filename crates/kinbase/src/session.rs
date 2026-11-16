@@ -795,7 +795,15 @@ pub fn observe(
             questions.insert(question);
         }
     }
-    for candidate in &candidate_records {
+    // Company goes last: an apology is owed in every destination committed
+    // when the Company attempt fails, and a Codebase sibling admitted after
+    // that failure got none, so its deadline had no orphan to abandon.
+    let (company, local): (Vec<&Value>, Vec<&Value>) =
+        candidate_records.iter().partition(|candidate| {
+            crate::json::get_str(candidate, "destination")
+                .is_some_and(|destination| destination.starts_with("company"))
+        });
+    for candidate in local.into_iter().chain(company) {
         admissions.push(admit_candidate(&launcher, &repo, candidate)?);
     }
 
