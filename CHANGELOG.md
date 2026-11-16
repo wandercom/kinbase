@@ -22,6 +22,13 @@ Notable changes to Kinbase. Dates are UTC.
   "The governance guard blocks the edit" and "incorporate" no longer route to
   the Company. (#43)
 
+### Fixed
+
+- A prompt the `UserPromptSubmit` hook captured and the transcript's copy of
+  the same message are one message: the transcript copy takes the hook's id,
+  so it mints no second set of candidates and receipts, and a Stop returns
+  each receipt once.
+
 ## 0.1.2 - 2026-10-30
 
 ### Fixed

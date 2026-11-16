@@ -543,6 +543,15 @@ pub fn observe(
             }
         }
     }
+    // A hook prompt's worker and an observe of the transcript can run at
+    // once; each must see the other's events before it picks an id, so the
+    // read below and the ledger appends are serialized.
+    // shortcut: one lock for every session's observes, held through
+    // classification; stripe it by session if live-classifier workers queue.
+    let store = crate::store::store_root(crate::StoreKind::Personal, &repo);
+    crate::paths::ensure_private_dir(&store, "physical store root")?;
+    let observe_lock = crate::paths::lock_file(&store.join(".observe.lock"), "observe lock")?;
+    adopt_seen_prompt_ids(session, &mut records);
     let mut observations = Vec::new();
     for record in &records {
         let event_id = record["id"].as_str().unwrap_or_default().to_owned();
@@ -777,6 +786,7 @@ pub fn observe(
     for candidate in &candidate_records {
         append_personal("candidates.jsonl", candidate)?;
     }
+    drop(observe_lock);
 
     let mut admissions = Vec::new();
     let mut questions = BTreeSet::new();
@@ -819,6 +829,53 @@ pub fn observe(
     });
     print_value(&result, json);
     Ok(())
+}
+
+/// An id `queue_hook_observation` derived for a host prompt.
+fn is_hook_prompt_id(id: &str) -> bool {
+    id.strip_prefix("prompt_")
+        .is_some_and(|rest| rest.len() == 24 && rest.bytes().all(|b| b.is_ascii_hexdigit()))
+}
+
+/// A host prompt and the transcript's copy of it are one message. The hook
+/// queues the prompt under an id derived from its text and the transcript
+/// names it again under the host's own id; each minted its own candidates
+/// and receipts, so a Stop returned both sets (V-9 parity). A record whose
+/// text this session already observed, where either side is a hook prompt,
+/// takes the id seen first, so its candidates and receipts are the same ones.
+fn adopt_seen_prompt_ids(session: &str, records: &mut [Map<String, Value>]) {
+    let canonical = crate::json::jcs_text(&Value::String(session.to_owned()));
+    let Ok(session_text) = serde_json::from_str::<String>(&canonical) else {
+        return;
+    };
+    let marker = format!("\"session_id\":{canonical}");
+    let seen = personal_records_tagged(
+        "session-events.jsonl",
+        "session_id",
+        &[session_text.as_str()],
+        |line| crate::store::bytes_contain(line, marker.as_bytes()),
+    );
+    for record in records.iter_mut() {
+        let (Some(id), Some(text)) = (
+            record.get("id").and_then(Value::as_str),
+            record.get("text").and_then(Value::as_str),
+        ) else {
+            continue;
+        };
+        let digest = sha256_bytes(text.as_bytes());
+        let first = seen
+            .iter()
+            .filter(|event| {
+                crate::json::get_str(event, "session_id") == Some(session_text.as_str())
+                    && crate::json::get_str(event, "text_digest") == Some(digest.as_str())
+            })
+            .filter_map(|event| crate::json::get_str(event, "event_id"))
+            .find(|seen_id| *seen_id != id && (is_hook_prompt_id(id) || is_hook_prompt_id(seen_id)))
+            .map(str::to_owned);
+        if let Some(first) = first {
+            record.insert("id".to_owned(), Value::String(first));
+        }
+    }
 }
 
 /// A host session token is caller-supplied and opaque.  Record it as active
