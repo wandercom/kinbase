@@ -52,6 +52,30 @@ const TIERS: [(&str, i64, i64); 7] = [
     ("broad_search", 250, 250),
 ];
 
+/// The Unknowns a projection may raise its one question about, in order.
+///
+/// Blocking Unknowns come first and keep their question per decision: the
+/// decision is what they block. An Unknown that blocks nothing here is asked
+/// once, ever: one that already has a question is skipped. Otherwise the
+/// first such Unknown returned its existing question on every projection and
+/// took the one-question break, so a second contested key was never asked;
+/// and asking it under each caller's decision (the id hashes the decision)
+/// opened one question per decision for a single conflict.
+fn questions_to_raise<'a>(
+    blocking: Vec<&'a UnknownOut>,
+    elsewhere: Vec<&'a UnknownOut>,
+    already_asked: impl Fn(&str) -> bool,
+) -> Vec<&'a UnknownOut> {
+    blocking
+        .into_iter()
+        .chain(
+            elsewhere
+                .into_iter()
+                .filter(|unknown| !already_asked(&unknown.unknown_id)),
+        )
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct UnknownOut {
     pub(crate) unknown_id: String,
@@ -704,17 +728,10 @@ pub fn project_with(
             .iter()
             .filter(|unknown| unknown.loss_if_absent >= 7_000 || unknown.kind == "conflict")
             .partition(|unknown| blocks(unknown));
-        let blocking_count = blocking.len();
-        for (index, unknown) in blocking.into_iter().chain(elsewhere).enumerate() {
-            // A conflict asked from an unrelated decision keeps the question it
-            // already has: the id hashes the decision, so asking under each
-            // caller's decision would open one question per decision.
-            let asked_under = if index >= blocking_count {
-                crate::questions::decision_asked_for(repo, &unknown.unknown_id)
-            } else {
-                None
-            };
-            let decision = asked_under.as_deref().unwrap_or(decision);
+        let to_ask = questions_to_raise(blocking, elsewhere, |unknown_id| {
+            crate::questions::decision_asked_for(repo, unknown_id).is_some()
+        });
+        for unknown in to_ask {
             if let Some(id) =
                 crate::questions::ensure_question(repo, unknown, decision, &evidence, &remaining)?
             {
@@ -2901,6 +2918,54 @@ mod set_fold_differential_tests {
             }
         }
         assert!(compared > 2_000);
+    }
+}
+
+#[cfg(test)]
+mod question_order_tests {
+    use super::{UnknownOut, questions_to_raise};
+    use std::cell::RefCell;
+    use std::collections::BTreeSet;
+
+    fn conflict(id: &str) -> UnknownOut {
+        UnknownOut {
+            unknown_id: id.to_owned(),
+            logical_key: id.to_owned(),
+            scope: String::new(),
+            decision_blocked: String::new(),
+            owner_role: String::new(),
+            owner_identity: String::new(),
+            question: String::new(),
+            evidence: Vec::new(),
+            loss_if_absent: 9_000,
+            status: "open".to_owned(),
+            kind: "conflict".to_owned(),
+        }
+    }
+
+    #[test]
+    fn every_open_conflict_gets_one_question_across_projections() {
+        let (first, second) = (conflict("unknown_a"), conflict("unknown_b"));
+        let asked = RefCell::new(BTreeSet::new());
+        // Each projection raises at most one question: the first it may ask.
+        let project = || {
+            let order = questions_to_raise(Vec::new(), vec![&first, &second], |id| {
+                asked.borrow().contains(id)
+            });
+            if let Some(unknown) = order.first() {
+                asked.borrow_mut().insert(unknown.unknown_id.clone());
+            }
+        };
+        project();
+        project();
+        assert_eq!(
+            *asked.borrow(),
+            BTreeSet::from(["unknown_a".to_owned(), "unknown_b".to_owned()])
+        );
+        let remaining = questions_to_raise(Vec::new(), vec![&first, &second], |id| {
+            asked.borrow().contains(id)
+        });
+        assert!(remaining.is_empty(), "a conflict was asked twice");
     }
 }
 
