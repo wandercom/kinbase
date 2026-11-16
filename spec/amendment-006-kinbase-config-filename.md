@@ -6,7 +6,8 @@ ratify its exact digest.**
 ## Why
 
 The ratified artifacts name kinbase's tracked repository config `.kin/config`.
-Kindex already owns that path, in YAML, and most Wander repositories carry one.
+Kindex already owns that path, in YAML, and most repositories at one deployment
+carry one.
 Kinbase read Kindex's YAML as a malformed kinbase config and refused with
 `DIGEST_MISMATCH`, so it could not be initialised in those repositories. Commit
 `e970ae5` ("Give kinbase its own config filename so it can share .kin/ with
