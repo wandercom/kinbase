@@ -48,6 +48,14 @@ Notable changes to Kinbase. Dates are UTC.
   so it mints no second set of candidates and receipts, and a Stop returns
   each receipt once.
 
+### Fixed
+
+- `status` no longer slows down as saga abandonments accumulate. It read the
+  whole `orphan-abandonments.jsonl` ledger once per event it reported; it now
+  reads it once per report, and not at all when the repository has no Fact
+  events. On a repository with about 6,400 events and 2,300 abandonments, one
+  report took over 30 seconds.
+
 ## 0.1.2 - 2026-10-30
 
 ### Fixed
