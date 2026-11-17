@@ -29,6 +29,11 @@ Notable changes to Kinbase. Dates are UTC.
 - Once a Company endpoint has used up its read budget, the rest of that
   command fails further requests to it at once with `COMPANY_UNREACHABLE`;
   they stay pending and a later run retries them.
+- Company read-volume and request-rate ceilings are per token, shared by
+  every client key presenting it. Before deploying, operators must raise
+  `read_volume_per_hour`, `read_bytes_per_hour` and `requests_per_minute` to
+  cover all consumers of a shared token. The 401 remediation no longer
+  mentions a bound key. (#62)
 
 ### Fixed
 
