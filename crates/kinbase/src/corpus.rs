@@ -37,7 +37,7 @@ pub fn rebuild(
             let _ = crate::repository::RepoContext::load(launcher, repo, true, Some(&as_of.as_of));
         }
     }
-    let data = load_store(launcher, repo, store)?;
+    let data = load_store(launcher, repo, store, &as_of.as_of)?;
     let private_observations = launcher.private_store()?.values(
         "SELECT record FROM observations ORDER BY observed_at, observation_id",
         &[],
@@ -252,8 +252,8 @@ pub fn explain(
         .company_cache()?
         .and_then(|(cache, _)| cache.meta("cursor"))
         .unwrap_or_else(|| "0".to_owned());
-    let mut codebase = load_store(launcher, repo, crate::StoreKind::Codebase)?;
-    let mut company = load_store(launcher, repo, crate::StoreKind::Company)?;
+    let mut codebase = load_store(launcher, repo, crate::StoreKind::Codebase, &as_of.as_of)?;
+    let mut company = load_store(launcher, repo, crate::StoreKind::Company, &as_of.as_of)?;
     let has_codebase = codebase
         .events
         .iter()
@@ -596,6 +596,7 @@ pub(crate) fn load_store(
     launcher: &Launcher,
     repo: &Path,
     store: crate::StoreKind,
+    as_of: &str,
 ) -> Result<StoreData, ContractError> {
     match store {
         crate::StoreKind::Personal => {
@@ -785,7 +786,7 @@ pub(crate) fn load_store(
                 crate::launcher::Launcher::load()?,
                 repo,
                 false,
-                None,
+                Some(as_of),
             )?;
             let (events, unknowns, tombstones, revocations) = context.reducer_parts()?;
             Ok(StoreData {

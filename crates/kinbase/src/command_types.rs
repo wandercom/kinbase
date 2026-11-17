@@ -82,6 +82,15 @@ pub enum Command {
         #[arg(long = "as-of")]
         as_of: Option<String>,
     },
+    /// Read a compact Company knowledge brief without a repository or recording.
+    Ask {
+        question: String,
+        #[arg(
+            long = "as-of",
+            help = "Explicit RFC 3339 UTC reducer and freshness instant with millisecond precision and a Z suffix; defaults to the signed authority snapshot issued_at for reduction"
+        )]
+        as_of: Option<String>,
+    },
     Project {
         #[arg(long)]
         repo: Option<PathBuf>,

@@ -2063,6 +2063,24 @@ pub fn ensure_authority_snapshot_for(
     requested_cursor: Option<&str>,
     as_of: &str,
 ) -> Result<(String, &'static str), ContractError> {
+    ensure_authority_snapshot_with_scope(launcher, repository_uuid, requested_cursor, as_of, false)
+}
+
+/// A Company-only brief needs all Company facts, not a repository-filtered cache.
+pub(crate) fn ensure_company_authority_snapshot(
+    launcher: &Launcher,
+    as_of: &str,
+) -> Result<(String, &'static str), ContractError> {
+    ensure_authority_snapshot_with_scope(launcher, "", None, as_of, true)
+}
+
+fn ensure_authority_snapshot_with_scope(
+    launcher: &Launcher,
+    repository_uuid: &str,
+    requested_cursor: Option<&str>,
+    as_of: &str,
+    require_exact_scope: bool,
+) -> Result<(String, &'static str), ContractError> {
     let Some(mut company) = launcher.company()? else {
         return Err(ContractError::degraded(
             "CACHE_EXPIRED",
@@ -2081,7 +2099,7 @@ pub fn ensure_authority_snapshot_for(
     } else {
         format!("repository:{repository_uuid}")
     };
-    let scope_matches = repository_uuid.is_empty()
+    let scope_matches = (!require_exact_scope && repository_uuid.is_empty())
         || company.cache.facts_scope().as_deref() == Some(wanted_scope.as_str());
     let cache_fresh = company.cache.state == crate::company::cache::CacheState::Warm
         && !cache_needs_refresh(&company.cache, &now)

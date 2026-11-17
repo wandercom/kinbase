@@ -483,6 +483,16 @@ fn statement_identity(event: &FactEvent) -> String {
 }
 
 pub fn reduce(input: &ReducerInput) -> CurrentView {
+    let fact_expired = input
+        .fact_valid_until
+        .as_ref()
+        .is_some_and(|until| until.as_str() <= input.as_of.as_str());
+    reduce_with_fact_expiry(input, fact_expired)
+}
+
+/// Cache freshness can be judged at a later proof time without changing the
+/// signed reduction instant. The caller supplies the same expiry comparison.
+pub(crate) fn reduce_with_fact_expiry(input: &ReducerInput, fact_expired: bool) -> CurrentView {
     let mut rejected_global = Vec::new();
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let bump = |counts: &mut BTreeMap<String, usize>, name: &str| {
@@ -549,10 +559,6 @@ pub fn reduce(input: &ReducerInput) -> CurrentView {
     let mut registry_unknown_emitted: BTreeSet<String> = BTreeSet::new();
     let mut traces = Vec::new();
     let company_stale = input.store_kind != "personal" && !input.certificate_valid;
-    let fact_expired = input
-        .fact_valid_until
-        .as_ref()
-        .is_some_and(|until| until.as_str() <= input.as_of.as_str());
 
     for (logical_key, group) in groups {
         let mut trace = KeyTrace {
