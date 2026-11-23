@@ -77,6 +77,44 @@ It states what this run proves, what it does not, which gates the instrument its
 fails, and where the independence between the building and certifying seats is real and
 where it is not.
 
+## Company gateway reads
+
+`kinbase ask 'PLAT-4880 CLI proof clock'` returns a compact Company-only brief,
+with RULINGS, OWNERSHIP and PAST WORK, plus projection state and Unknowns. It works from any directory without Git,
+`.kin`, a repository certificate or a recorded proof clock. It records no question,
+query log or proof clock. Add `--json` for one compact JSON line, or
+`--as-of 2026-11-09T12:00:00.000Z` for an explicit reducer and freshness instant.
+Otherwise it reduces at the verified authority snapshot's signed `issued_at`,
+while cache freshness is judged at the wall proof clock. Facts retain standing
+and provenance; a refused refresh is stated when verified cache is used.
+
+Configure the launcher user config for the Company gateway:
+
+```toml
+schema_version = "1"
+
+[personal]
+data_root = "/private/example/kindex"
+
+[company]
+url = "https://knowledge.example.com"
+facts_token_file = "/private/example/kinbase/facts.token"
+client_key_file = "/private/example/kinbase/client.key"
+cache_root = "/private/example/kinbase/cache"
+root_public_key_file = "/private/example/kinbase/company-root.pub"
+gateway_api_key_file = "/private/example/kinbase/gateway.key"
+```
+
+`facts_token_file` grants Company fact scopes; `client_key_file` signs and binds
+requests; `cache_root` holds verified snapshots. `root_public_key_file` is the
+Company store's root public key file, required to verify responses. Obtain it
+from the store operator or run `wan-kinbase-setup`, which writes the key file;
+Kinbase has no compiled-in production
+root key. `gateway_api_key_file` holds the gateway credential. As an alternative,
+configure `oidc_issuer` and `oidc_client_id` (and, when needed,
+`oidc_client_secret_file`) and run `kinbase auth login`. Use one gateway credential
+method. All file paths above are illustrative absolute paths.
+
 ## Personal recall through Kindex (test-only build feature)
 
 The specification makes the Personal store Kindex but the proof of concept never
