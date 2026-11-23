@@ -179,9 +179,11 @@ impl CompanyDb {
                  CREATE TABLE IF NOT EXISTS auth_failure_subjects(
                     minute INTEGER NOT NULL, subject TEXT NOT NULL, count INTEGER NOT NULL,
                     PRIMARY KEY(minute, subject));
+                 -- request_rate.client_key holds the token digest; keep the old column name to avoid a migration.
                  CREATE TABLE IF NOT EXISTS request_rate(
                     client_key TEXT NOT NULL, minute INTEGER NOT NULL, count INTEGER NOT NULL,
                     PRIMARY KEY(client_key, minute));
+                 -- read_volume.principal_key holds the token digest; keep the old column name to avoid a migration.
                  CREATE TABLE IF NOT EXISTS read_volume(
                     principal_key TEXT NOT NULL, hour INTEGER NOT NULL, count INTEGER NOT NULL,
                     bytes INTEGER NOT NULL, PRIMARY KEY(principal_key, hour));
@@ -615,17 +617,17 @@ impl CompanyDb {
             .map_err(sqlite_error("auth failure"))
     }
 
-    pub fn bump_request_rate(&self, client_key: &str, minute: i64) -> Result<i64, ContractError> {
+    pub fn bump_request_rate(&self, token_digest: &str, minute: i64) -> Result<i64, ContractError> {
         self.connection
             .execute(
                 "INSERT INTO request_rate(client_key, minute, count) VALUES (?1, ?2, 1) ON CONFLICT(client_key, minute) DO UPDATE SET count=count+1",
-                params![client_key, minute],
+                params![token_digest, minute],
             )
             .map_err(sqlite_error("request rate"))?;
         self.connection
             .query_row(
                 "SELECT count FROM request_rate WHERE client_key=?1 AND minute=?2",
-                params![client_key, minute],
+                params![token_digest, minute],
                 |row| row.get(0),
             )
             .map_err(sqlite_error("request rate read"))
@@ -633,7 +635,7 @@ impl CompanyDb {
 
     pub fn add_read_volume(
         &self,
-        principal_key: &str,
+        token_digest: &str,
         hour: i64,
         count: i64,
         bytes: i64,
@@ -642,13 +644,13 @@ impl CompanyDb {
             .execute(
                 "INSERT INTO read_volume(principal_key, hour, count, bytes) VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(principal_key, hour) DO UPDATE SET count=count+excluded.count, bytes=bytes+excluded.bytes",
-                params![principal_key, hour, count, bytes],
+                params![token_digest, hour, count, bytes],
             )
             .map_err(sqlite_error("read volume"))?;
         self.connection
             .query_row(
                 "SELECT count, bytes FROM read_volume WHERE principal_key=?1 AND hour=?2",
-                params![principal_key, hour],
+                params![token_digest, hour],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(sqlite_error("read volume read"))

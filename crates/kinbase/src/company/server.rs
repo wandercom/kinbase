@@ -166,7 +166,7 @@ fn auth_refusal() -> (u16, ContractError) {
         ContractError::refused(
             "AUTHORITY_SCOPE_DENIED",
             "request not authorized",
-            "Present a valid scoped bearer token, its bound client key, a fresh nonce and expiry, and a valid request signature.",
+            "Present a valid scoped bearer token, a client public key, a fresh nonce and expiry, and a valid request signature.",
         ),
     )
 }
@@ -174,7 +174,6 @@ fn auth_refusal() -> (u16, ContractError) {
 pub struct AuthContext {
     pub token: super::db::TokenRow,
     pub client_key: String,
-    pub principal_key: String,
 }
 
 fn now_minute() -> i64 {
@@ -850,13 +849,12 @@ fn authenticate(
     db.record_token_client_pair(&token.digest, &client_hex, now)
         .map_err(|error| refuse(500, error))?;
     Ok(AuthContext {
-        principal_key: format!("{}:{}", token.principal_id, &client_hex[..16]),
         token,
         client_key: client_hex,
     })
 }
 
-/// The per-client-key request ceiling, checked once the credential is known
+/// The per-token request ceiling, checked once the credential is known
 /// and before `handle` keeps a usage row: a refusal here writes none.
 fn enforce_request_rate(
     db: &CompanyDb,
@@ -864,13 +862,13 @@ fn enforce_request_rate(
     auth: &AuthContext,
 ) -> Result<(), (u16, ContractError)> {
     let rate = db
-        .bump_request_rate(&auth.client_key, now_minute())
+        .bump_request_rate(&auth.token.digest, now_minute())
         .map_err(|error| refuse(500, error))?;
     if rate > state.config.requests_per_minute {
         return Err(refuse(
             429,
             ContractError::limit(
-                "request rate ceiling exceeded for this client key",
+                "request rate ceiling exceeded for this token",
                 json!({"refused_count": 1, "omitted_count": 1, "ceiling": state.config.requests_per_minute}),
             ),
         ));
@@ -928,7 +926,7 @@ fn charge_read(
     bytes: usize,
 ) -> Result<(), (u16, ContractError)> {
     let (total_count, total_bytes) = db
-        .add_read_volume(&auth.principal_key, now_hour(), count as i64, bytes as i64)
+        .add_read_volume(&auth.token.digest, now_hour(), count as i64, bytes as i64)
         .map_err(|error| refuse(500, error))?;
     if total_count > state.config.read_volume_per_hour
         || total_bytes > state.config.read_bytes_per_hour
@@ -936,7 +934,7 @@ fn charge_read(
         return Err(refuse(
             429,
             ContractError::limit(
-                "per-principal hourly read volume ceiling exceeded",
+                "hourly read volume ceiling exceeded for this token",
                 json!({"refused_count": count, "omitted_count": count, "count_ceiling": state.config.read_volume_per_hour, "bytes_ceiling": state.config.read_bytes_per_hour}),
             ),
         ));
@@ -2573,7 +2571,7 @@ fn events(
             map.insert("payload_withheld".to_owned(), Value::Bool(true));
         }
     }
-    // Event bodies are fact reads, under the same per-principal budget as
+    // Event bodies are fact reads, under the same per-token budget as
     // /facts and /snapshot; a reader refused there was served here.
     if reads_facts {
         let bytes: usize = rows
@@ -4082,7 +4080,6 @@ nonce_retention_seconds = 1300
         let auth = AuthContext {
             token: db.token(token).unwrap().unwrap(),
             client_key: "aa".repeat(32),
-            principal_key: "packet03-principal".to_owned(),
         };
         let state = ServiceState {
             config,
@@ -4399,7 +4396,6 @@ mod packet11_tests {
         )
         .unwrap();
         assert_ne!(first_auth.client_key, second_auth.client_key);
-        assert_ne!(first_auth.principal_key, second_auth.principal_key);
         assert_eq!(
             db.token_client_key_count(&first_auth.token.digest).unwrap(),
             2
@@ -4614,7 +4610,6 @@ nonce_retention_seconds = 1300
         AuthContext {
             token: service.db.token(token).unwrap().unwrap(),
             client_key: "cc".repeat(32),
-            principal_key: "scope-principal".to_owned(),
         }
     }
 
