@@ -3294,6 +3294,14 @@ pub fn status(
         }
     }
     let mut event_records = Vec::new();
+    // Only a Fact event is looked up here, so a repository with none (or no
+    // config, hence no events) leaves the Personal ledger unread, as the
+    // per-event lookup did.
+    let saga_terminal_events = if fact_by_event_id.is_empty() {
+        BTreeMap::new()
+    } else {
+        crate::session::saga_terminal_events()
+    };
     let mut exceptions = Vec::new();
     let mut exception_request_accepted = false;
     // Steward relaxations live in Company; the snapshot publishes them. They
@@ -3362,11 +3370,9 @@ pub fn status(
             // A terminal saga event emitted by the destination service carries
             // the saga's own state for the orphaned claim (withdrawn) and the
             // unresponsive closing authority; the fan-out saga owns that fact.
-            if let Some(Value::Object(saga)) =
-                crate::session::saga_terminal_event_fields(&event.event_id)
-            {
+            if let Some(Value::Object(saga)) = saga_terminal_events.get(event.event_id.as_str()) {
                 for (key, value) in saga {
-                    record[key] = value;
+                    record[key] = value.clone();
                 }
             }
             event_records.push(record);
