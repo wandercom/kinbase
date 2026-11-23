@@ -584,11 +584,8 @@ fn dispatch_refuses_dirty_identifiers_and_paths_instead_of_folding_them() {
         });
         stop[field] = json!(value);
         let output = dispatch(&world, "Stop", stop.to_string().as_bytes(), false);
-        assert_eq!(
-            output.status.code(),
-            Some(3),
-            "dirty {field} must be refused"
-        );
+        // Refused, and reported in the Stop response rather than the status.
+        assert_native_stop_warning("claude", &output, field);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             stderr.contains(field),
@@ -627,8 +624,7 @@ fn dispatch_refuses_a_malformed_envelope_and_says_so_on_stderr() {
     let world = host_world(&temp);
     for host in ["codex", "claude"] {
         let output = dispatch_host(&world, host, "Stop", b"not json at all", false);
-        assert_eq!(output.status.code(), Some(3), "{host}: {output:?}");
-        assert!(output.stdout.is_empty(), "{host}: {output:?}");
+        assert_native_stop_warning(host, &output, "UNSUPPORTED_HOST_VERSION");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             stderr.contains("UNSUPPORTED_HOST_VERSION"),
@@ -652,8 +648,27 @@ fn dispatch_refuses_a_malformed_envelope_and_says_so_on_stderr() {
     );
 }
 
+/// A failed native Stop is still a hook that ran: it exits 0 and answers with
+/// the one Stop response field that warns the user without steering the turn.
+/// Codex rejects any key outside its Stop output schema, and neither host
+/// reads a response from a non-zero exit.
+fn assert_native_stop_warning(host: &str, output: &std::process::Output, expected: &str) {
+    assert_eq!(output.status.code(), Some(0), "{host}: {output:?}");
+    let response: Value = serde_json::from_slice(&output.stdout)
+        .unwrap_or_else(|error| panic!("{host}: Stop response is not JSON ({error}): {output:?}"));
+    let fields = response.as_object().expect("Stop response object");
+    assert_eq!(
+        fields.keys().collect::<Vec<_>>(),
+        ["systemMessage"],
+        "{host}: {response}"
+    );
+    let warning = response["systemMessage"].as_str().expect("warning text");
+    assert!(warning.contains(expected), "{host}: {warning}");
+    assert!(warning.contains("evidence_id:"), "{host}: {warning}");
+}
+
 #[test]
-fn native_stop_reports_launcher_refusal_only_on_stderr() {
+fn native_stop_reports_launcher_refusal_as_a_stop_warning() {
     let temp = TempDir::new().expect("tempdir");
     let world = host_world(&temp);
     let config = world.config_home.join("kinbase/config.toml");
@@ -661,23 +676,24 @@ fn native_stop_reports_launcher_refusal_only_on_stderr() {
 
     for host in ["codex", "claude"] {
         let output = dispatch_host(&world, host, "Stop", b"{}", false);
-        assert_eq!(output.status.code(), Some(4), "{host}: {output:?}");
+        assert_native_stop_warning(host, &output, "user config");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("user config"), "{host}: {stderr:?}");
         assert!(stderr.contains("remediation:"), "{host}: {stderr:?}");
-        assert!(output.stdout.is_empty(), "{host}: {output:?}");
+
+        let diagnostic = dispatch_host(&world, host, "Stop", b"{}", true);
+        assert_eq!(diagnostic.status.code(), Some(4), "{host}: {diagnostic:?}");
     }
 }
 
 #[test]
-fn malformed_native_stop_command_reports_usage_only_on_stderr() {
+fn malformed_native_stop_command_reports_usage_as_a_stop_warning() {
     for host in ["codex", "claude"] {
         let output = Command::new(env!("CARGO_BIN_EXE_kinbase"))
             .args(["hooks", "dispatch", host, "Stop", "--unexpected"])
             .output_alone()
             .expect("run malformed Stop command");
-        assert_eq!(output.status.code(), Some(4), "{host}: {output:?}");
-        assert!(output.stdout.is_empty(), "{host}: {output:?}");
+        assert_native_stop_warning(host, &output, "malformed command line");
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(stderr.contains("malformed command line"), "{host}: {stderr}");
     }
@@ -865,8 +881,7 @@ fn assert_held_admission_on_native_stop(host: &str) {
         .expect("move checkpoint aside");
     fs::create_dir(&checkpoint).expect("make checkpoint ledger unwritable");
     let output = dispatch_host(&world, host, "native", stop.to_string().as_bytes(), false);
-    assert!(!output.status.success(), "{host}: {output:?}");
-    assert!(output.stdout.is_empty(), "{host}: {output:?}");
+    assert_native_stop_warning(host, &output, "Stop checkpoint failed");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("evidence_id:"), "{host}: {stderr}");
 }
