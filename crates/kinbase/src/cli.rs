@@ -30,8 +30,7 @@ pub fn parse_or_exit() -> Cli {
             let native_stop = args.starts_with(&["hooks".into(), "dispatch".into()])
                 && matches!(args.get(2).map(String::as_str), Some("codex" | "claude"))
                 && args.get(3).is_some_and(|event| event == "Stop");
-            print_error(json, &contract_error, native_stop);
-            std::process::exit(contract_error.exit());
+            std::process::exit(print_error(json, &contract_error, native_stop));
         }
     }
 }
@@ -40,12 +39,12 @@ pub fn run(json: bool, command: Command) {
     let mut native_stop = !json && matches!(&command, Command::Hooks(hook) if hook.is_stop_dispatch());
     let result = dispatch(json, command, &mut native_stop);
     if let Err(error) = result {
-        print_error(json, &error, native_stop);
-        std::process::exit(error.exit());
+        std::process::exit(print_error(json, &error, native_stop));
     }
 }
 
-fn print_error(json: bool, error: &ContractError, native_stop: bool) {
+/// Reports `error` and returns the process exit status.
+fn print_error(json: bool, error: &ContractError, native_stop: bool) -> i32 {
     if json {
         let document = error
             .output_document
@@ -64,11 +63,22 @@ fn print_error(json: bool, error: &ContractError, native_stop: bool) {
             error.code, error.message, error.remediation, error.retryable, error.evidence_id
         );
         if native_stop {
+            // Codex and Claude Code read a Stop hook's stdout as its response
+            // only on exit 0, and Codex shows no stderr for any other status.
+            // A failed checkpoint is therefore a successful hook run whose
+            // response carries the warning: `systemMessage` is shown to the
+            // user and, unlike `decision` or `continue`, never steers the turn.
             eprintln!("{message}");
-        } else {
-            println!("{message}");
+            let warning = format!(
+                "kinbase: the Stop checkpoint failed. {}: {} Remediation: {} (retryable: {}, evidence_id: {})",
+                error.code, error.message, error.remediation, error.retryable, error.evidence_id
+            );
+            println!("{}", serde_json::json!({ "systemMessage": warning }));
+            return 0;
         }
+        println!("{message}");
     }
+    error.exit()
 }
 
 /// Convert malformed invocations to the closed configuration contract.

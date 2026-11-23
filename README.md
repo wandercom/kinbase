@@ -250,9 +250,12 @@ This is the same `secret_mask` behaviour Kindex and signet-eval implement.
 
 ## Native Stop hooks
 
-Codex and Claude Code expect a native hook response on stdout. Kinbase's
-native `Stop` checkpoints the session without sending a response. Diagnostics
-go to stderr, and the exit status still reports the checkpoint outcome.
+Codex and Claude Code read a `Stop` hook's stdout as its response, and only
+when the hook exits 0. Kinbase's native `Stop` therefore always exits 0. A
+successful checkpoint sends no response. A failed one sends
+`{"systemMessage": "..."}`, which both hosts show to the user as a warning and
+which never blocks the stop or continues the turn. The same diagnostics go to
+stderr. `--json` keeps the typed error document and its exit status.
 The length-prefixed evidence envelope described in
 [architecture §9](spec/architecture.md#9-host-lifecycle-and-permission-contract)
 is available in the explicit `--json` checkpoint receipt.
